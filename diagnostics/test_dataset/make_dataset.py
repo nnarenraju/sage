@@ -33,6 +33,7 @@ From Pseudo-code:
 Steps:
     1. Call make_segments.py using appropriate opts to create segments.csv (FIN)
     2. Call generate_data.py from ML-MDC1 using segments.csv to make training data (FIN)
+    3. Change generate_data to store each segment as a separate HDF5 file
     3. Verify whether all params and segments are as intended
     4. Cross verify the prior distribution with the observed distribution
     5. Cross verify the location of the GW signal and its 'tc'
