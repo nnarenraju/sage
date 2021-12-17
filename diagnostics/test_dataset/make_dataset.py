@@ -209,7 +209,7 @@ if __name__ == "__main__":
     ## make_injections using pycbc_create_injections (uses self.seed)
     # params will be used to call above function via generate_data.py
     # pycbc_create_injections has been modified by nnarenraju (Dec 15th, 2021)
-    gd.output_segment_file = "segments.csv"
+    gd.output_segment_file = "../../external/ml-mock-data-challenge-1/segments.csv"
     # Start time of segments
     gd.segment_GPS_start_time = 0.0
     # Distance b/w two adjacent 'tc'
