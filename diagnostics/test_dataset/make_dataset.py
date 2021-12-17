@@ -223,7 +223,7 @@ if __name__ == "__main__":
     gd.segment_length = 20
     gd.ninjections = 100
     # Gap b/w adjacent segments (if any)
-    gd.segment_gap = 1.0
+    gd.segment_gap = 1
     
     gd.make_segments()
     gd.call_gendata()  
