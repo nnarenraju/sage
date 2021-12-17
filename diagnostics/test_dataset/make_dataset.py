@@ -162,7 +162,7 @@ class GenerateData:
         
         # sanity check for segments.csv
         if os.path.exists(self.output_segment_file):
-            raw_args += ['--input-segment-file', self.output_segment_file]
+            raw_args += ['--input-segments-file', self.output_segment_file]
         else:
             raise IOError("{} does not exist!".format(self.output_segment_file))
             
