@@ -144,7 +144,7 @@ class GenerateData:
         args += (self.segment_length,)
         args += (self.ninjections,)
         args += (self.output_segment_file,)
-        args += (self.force)
+        args += (self.force,)
         
         # Make segments.csv (equal length assumed)
         mksegments(*args)
