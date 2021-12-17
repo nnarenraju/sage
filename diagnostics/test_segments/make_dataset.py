@@ -91,13 +91,13 @@ class GenerateData:
         self.segment_GPS_start_time = 0.0
         # Distance b/w two adjacent 'tc'
         # For training set, set to a value larger than segment length
-        self.time_step = 20.0
+        self.time_step = 20
         # Time window within which to place the merger
         # 'tc' is located within this window
         self.time_window_llimit = None
         self.time_window_ulimit = None
         # Length of segment/duration (in seconds)
-        self.segment_length = 20.0
+        self.segment_length = 20
         self.ninjections = 0
         # Gap b/w adjacent segments (if any)
         self.segment_gap = None
