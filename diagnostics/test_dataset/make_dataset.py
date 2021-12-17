@@ -167,11 +167,11 @@ class GenerateData:
             raise IOError("{} does not exist!".format(self.output_segment_file))
             
         # Segment parameters
-        raw_args += ['--time-step', self.time_step]
-        raw_args += ['--time-window-llimit', self.time_window_llimit]
-        raw_args += ['--time-window-ulimit', self.time_window_ulimit]
-        raw_args += ['--segment-gap', self.segment_gap]
-        raw_args += ['--unique-dataset-id', self.unique_dataset_id]
+        raw_args += ['--time-step', str(self.time_step)]
+        raw_args += ['--time-window-llimit', str(self.time_window_llimit)]
+        raw_args += ['--time-window-ulimit', str(self.time_window_ulimit)]
+        raw_args += ['--segment-gap', str(self.segment_gap)]
+        raw_args += ['--unique-dataset-id', str(self.unique_dataset_id)]
         
         # generic generate_data script params
         raw_args += ['--seed', str(self.seed)]
