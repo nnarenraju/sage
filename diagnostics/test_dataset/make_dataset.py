@@ -187,8 +187,46 @@ class GenerateData:
         gendata(raw_args)
         
         
-        
-        
+if __name__ == "__main__":
+    
+    gd = GenerateData()
+    
+    gd.dataset = 3
+    # Path to store output HDF5 files
+    gd.output_injection_file = "injections.hdf"
+    gd.output_foreground_file = "foreground.hdf"
+    gd.output_background_file = "background.hdf"
+    # Random seed provided to generate_data script
+    # This will be unique and secret for the testing set
+    gd.seed = 42
+    # Dataset params
+    gd.start_offset = 0
+    gd.dataset_duration = 2000
+    # Other options
+    gd.verbose = True
+    gd.force = True
+    
+    ## make_injections using pycbc_create_injections (uses self.seed)
+    # params will be used to call above function via generate_data.py
+    # pycbc_create_injections has been modified by nnarenraju (Dec 15th, 2021)
+    gd.output_segment_file = "segments.csv"
+    # Start time of segments
+    gd.segment_GPS_start_time = 0.0
+    # Distance b/w two adjacent 'tc'
+    # For training set, set to a value larger than segment length
+    gd.time_step = 20
+    # Time window within which to place the merger
+    # 'tc' is located within this window
+    gd.time_window_llimit = 14
+    gd.time_window_ulimit = 16
+    # Length of segment/duration (in seconds)
+    gd.segment_length = 20
+    gd.ninjections = 100
+    # Gap b/w adjacent segments (if any)
+    gd.segment_gap = 1.0
+    
+    gd.make_segments()
+    gd.call_gendata()  
         
         
         
