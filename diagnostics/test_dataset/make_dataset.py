@@ -31,13 +31,18 @@ From Pseudo-code:
     7. Create a large HDF5 file containing the details (ID, path, target)
 
 Steps:
+    - Main steps
     1. Call make_segments.py using appropriate opts to create segments.csv (FIN)
     2. Call generate_data.py from ML-MDC1 using segments.csv to make training data (FIN)
-    3. Change generate_data to store each segment as a separate HDF5 file
+    3. Change generate_data to store each segment as a separate HDF5 file (FIN)
+    
+    - Verification steps
     3. Verify whether all params and segments are as intended
     4. Cross verify the prior distribution with the observed distribution
     5. Cross verify the location of the GW signal and its 'tc'
     6. Visualise the signals, noise and signal+noise for by-eye verification
+    
+    - Data save steps
     7. After all sanity checks and verification, save dataset in the appropriate format
     8. Create a training.hdf5 that handles ids, paths and target of training data
     9. Store all the above data into a data-read directory for next step of the algorithm
@@ -104,11 +109,32 @@ class GenerateData:
         self.segment_gap = None
         
         # Metadata and identification
-        self.id = uuid.uuid4().hex
+        self.unique_dataset_id = uuid.uuid4().hex
         self.creation_time = datetime.datetime.now()
     
     def __str__(self):
-        pass
+        # All general dataset parameters
+        out = "Generate Data Class:\n"
+        out += f"Dataset type = {self.dataset}\n"
+        out += f"Output injection file path = {self.output_injection_file}\n"
+        out += f"Output foreground file path = {self.output_foreground_file} for each segment\n"
+        out += f"Output background file path = {self.output_background_file} for each segment\n"
+        out += f"Initialisation seed = {self.seed}\n"
+        out += f"Start Offset = {self.start_offset}\n"
+        out += f"Duration of dataset = {self.dataset}\n\n"
+        # Segment parameters
+        out += "Segment Details:\n"
+        out += f"Output segment file = {self.output_segment_file}\n"
+        out += f"Segment GPS start time = {self.segment_GPS_start_time}\n"
+        out += f"Time step b/w adjacent 'tc' = {self.time_step}\n"
+        out += f"Time window for tc placement (llimit) = {self.time_window_llimit}\n"
+        out += f"Time window for tc placement (ulimit) = {self.time_window_ulimit}\n"
+        out += f"Length of each segment = {self.segment_length}\n"
+        out += f"Total number of injections present in dataset = {self.ninjections}\n"
+        out += f"Gap duration between each segment = {self.segment_gap()}\n\n\n"
+        # Identification 
+        out += f"Unique dataset ID = {self.unique_dataset_id}\n"
+        out += f"Time of dataset creation = {self.creation_time}"
     
     def make_segments(self):
         # Make segments.csv to be used by generate_data script
@@ -140,6 +166,14 @@ class GenerateData:
         else:
             raise IOError("{} does not exist!".format(self.output_segment_file))
             
+        # Segment parameters
+        raw_args += ['--time-step', self.time_step]
+        raw_args += ['--time-window-llimit', self.time_window_llimit]
+        raw_args += ['--time-window-ulimit', self.time_window_ulimit]
+        raw_args += ['--segment-gap', self.segment_gap]
+        raw_args += ['--unique-dataset-id', self.unique_dataset_id]
+        
+        # generic generate_data script params
         raw_args += ['--seed', str(self.seed)]
         raw_args += ['--start-offset', str(self.start_offset)]
         raw_args += ['--duration', str(self.dataset_duration)]

@@ -62,8 +62,8 @@ Pseudo-code:
     3. Logging and verbosity should be implemented alongside time profiling
     4. Saving checkpoints, early-stopping, snapshots and other callbacks
     5. Output format for TensorBoard at optimum times to avoid memory overhead
-    6. Check for overfitting optimise
-    7. Hyper-parameter tunin for Pytorch (do this for each architecture)
+    6. Check for overfitting and optimise
+    7. Hyper-parameter tuning for Pytorch (do this for each architecture)
     
     Model Architectures
     -------------------
