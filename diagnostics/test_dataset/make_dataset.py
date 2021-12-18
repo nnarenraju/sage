@@ -193,9 +193,9 @@ if __name__ == "__main__":
     
     gd.dataset = 3
     # Path to store output HDF5 files
-    gd.output_injection_file = "injections.hdf"
-    gd.output_foreground_file = "foreground.hdf"
-    gd.output_background_file = "background.hdf"
+    gd.output_injection_file = "../../external/ml-mock-data-challenge-1/injections.hdf"
+    gd.output_foreground_file = "../../external/ml-mock-data-challenge-1/foreground.hdf"
+    gd.output_background_file = "../../external/ml-mock-data-challenge-1/background.hdf"
     # Random seed provided to generate_data script
     # This will be unique and secret for the testing set
     gd.seed = 42
@@ -226,15 +226,4 @@ if __name__ == "__main__":
     gd.segment_gap = 1
     
     gd.make_segments()
-    gd.call_gendata()  
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+    gd.call_gendata()
