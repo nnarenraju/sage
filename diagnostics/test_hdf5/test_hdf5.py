@@ -21,9 +21,9 @@ import h5py
 import numpy as np
 import pandas as pd
 
-directory = "dataset3_start_0_end_1000_modified_1signalPerSegment"
+directory = ""
 
-foreground_path = directory + "/foreground.hdf"
+foreground_path = directory + "/background.hdf"
 background_path = directory + "/background.hdf"
 injections_path = directory + "/injections.hdf"
 segments_path = directory + "/segments.csv"
