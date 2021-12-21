@@ -127,8 +127,6 @@ class GenerateData:
         self.data_dir = ""
         # Store all required dirs as a dict
         self.dirs = {}
-        # Create storage directory sub-structure
-        self._make_data_dir()
     
     def __str__(self):
         # All general dataset parameters
@@ -212,7 +210,7 @@ class GenerateData:
         
         gendata(raw_args)
     
-    def _make_data_dir(self):
+    def make_data_dir(self):
         # Make directory structure for data storage
         self.dirs['parent'] = os.path.join(self.parent_dir, self.data_dir)
         os.makedirs(self.dirs['parent'], exist_ok=False)
@@ -285,6 +283,8 @@ if __name__ == "__main__":
     # Other directory information
     gd.parent_dir = ""
     gd.data_dir = "dataset_0"
+    # Create storage directory sub-structure
+    gd.make_data_dir()
     # Random seed provided to generate_data script
     # This will be unique and secret for the testing set
     gd.seed = 42
