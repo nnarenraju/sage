@@ -19,6 +19,60 @@ __status__      = inProgress
 
 Github Repository: NULL
 
+
+Timeline:
+    
+    November (No deadline)
+    ----------------------
+    0. Learning and reading
+    1. Data preparation
+    
+    December (deadline 31st, 23:59 PM BST)
+    --------------------------------------
+    1. Continuing Data Preparation
+    2. Data Augmentation
+    3. Multi-rate Sampling
+    4. Use Dataset 4 (most realistic)
+    5. Creating a ranking statistic
+    6. Initialisation and configuration file
+    7. Training and Validation on simplest network
+    
+    January (deadline 31st, 23:59 PM BST)
+    -------------------------------------
+    1. Data visualisation for all input and output
+    2. Create a large dataset for training
+    3. Experiment on different architectures and models
+    4. Hyper-parameter tuning
+    5. Efficient parallelisation and speed
+    6. Read all relevant rival papers and optimise
+    
+    February (deadline 28th, 23:59 PM BST)
+    --------------------------------------
+    1. Create testing/inference module
+    2. Test the best model from January with 1 month data
+    3. Optimise the model and data based on testing/inference
+    
+        By the end of the month, we should have a model that works reasonably well
+        on any given 1 month testing data (in accuracy and runtime)
+    
+    March (deadline 15th, 23:59 PM BST)
+    -----------------------------------
+    1. Most optimal model possible in the given timescale
+    2. Cleaning-up of all code for submission
+    3. Think of the best way to submit the code/model to AEI
+    
+    March (deadline 25th, 23:59 PM BST)
+    -----------------------------------
+    1. Final code/model should be ready for full submission
+    2. Documentation (if time permits)
+    
+    March (deadline 31st, 23:59 PM BST)
+    -----------------------------------
+    Submission.
+    
+    
+    
+
 Pseudo-code:
     
     Data preparation
@@ -36,6 +90,30 @@ Pseudo-code:
     7. Does C++ help with this stage? HDF5 handling is much faster in C++
     8. If [7] is true, does it have any overhead when called from Python
     9. Can [7] be implemented without calling from Python
+    
+    Data Augmentation
+    -----------------
+    1.
+    2.
+    3.
+    
+    Multi-rate Sampling of the input data
+    -------------------------------------
+    1.
+    2.
+    3.
+    
+    Convert pipeline to use Dataset 4 instead of Dataset 3
+    ------------------------------------------------------
+    1.
+    2.
+    3.
+    
+    Create a Ranking Statistic for the Prediction Stage
+    ---------------------------------------------------
+    1.
+    2.
+    3.
     
     Initialisation & Configuration File
     -----------------------------------
@@ -63,7 +141,6 @@ Pseudo-code:
     4. Saving checkpoints, early-stopping, snapshots and other callbacks
     5. Output format for TensorBoard at optimum times to avoid memory overhead
     6. Check for overfitting and optimise
-    7. Hyper-parameter tuning for Pytorch (do this for each architecture)
     
     Model Architectures
     -------------------
@@ -72,6 +149,7 @@ Pseudo-code:
     2. Write our own architecture using PyTorch (use tutorials)
     3. What model is the fastest and which model is the most efficient?
     4. Save all model architectures in an appropriate format
+    5. Hyper-parameter tuning for Pytorch (do this for each architecture)
     
     Testing Data Preparation
     ------------------------
