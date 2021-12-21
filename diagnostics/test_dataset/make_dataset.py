@@ -96,7 +96,7 @@ class GenerateData:
         ## make_injections using pycbc_create_injections (uses self.seed)
         # params will be used to call above function via generate_data.py
         # pycbc_create_injections has been modified by nnarenraju (Dec 15th, 2021)
-        self.output_segment_file = ""
+        self.output_segment_file = "segments.csv"
         # Start time of segments
         self.segment_GPS_start_time = 0.0
         # Distance b/w two adjacent 'tc'
@@ -154,12 +154,13 @@ class GenerateData:
     
     def make_segments(self):
         # Make segments.csv to be used by generate_data script
+        output_segments_file = os.path.join(self.dirs['parent'], self.output_segment_file)
         # Create an object for Segments class
         args =  (self.segment_GPS_start_time,)
         args += (self.segment_gap,)
         args += (self.segment_length,)
         args += (self.ninjections,)
-        args += (self.output_segment_file,)
+        args += (output_segments_file,)
         args += (self.force,)
         
         # Make segments.csv (equal length assumed)
