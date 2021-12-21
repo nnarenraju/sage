@@ -214,17 +214,17 @@ class GenerateData:
     
     def _make_data_dir(self):
         # Make directory structure for data storage
-        parent_path = os.path.join(self.parent_dir, self.data_dir)
-        self.dirs['parent'] = os.makedirs(parent_path, exist_ok=False)
+        self.dirs['parent'] = os.path.join(self.parent_dir, self.data_dir)
+        os.makedirs(self.dirs['parent'], exist_ok=False)
         # Signals
-        self.dirs['signal'] = signals_path = os.path.join(parent_path, "signals")
-        os.makedirs(signals_path, exist_ok=False)
+        self.dirs['signal'] = os.path.join(self.dirs['parent'], "signals")
+        os.makedirs(self.dirs['signal'], exist_ok=False)
         # Background
-        self.dirs['background'] = background_path = os.path.join(parent_path, "background")
-        os.makedirs(background_path, exist_ok=False)
+        self.dirs['background'] = os.path.join(self.dirs['parent'], "background")
+        os.makedirs(self.dirs['background'], exist_ok=False)
         # Foreground
-        self.dirs['foreground'] = foreground_path = os.path.join(parent_path, "foreground")
-        os.makedirs(foreground_path, exist_ok=False)
+        self.dirs['foreground'] = os.path.join(self.dirs['parent'], "foreground")
+        os.makedirs(self.dirs['foreground'], exist_ok=False)
     
     def _make_verification_dir(self, path):
         # Make a directory using the given path
