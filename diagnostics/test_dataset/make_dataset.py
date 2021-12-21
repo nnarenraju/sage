@@ -37,15 +37,13 @@ Steps:
     3. Change generate_data to store each segment as a separate HDF5 file (FIN)
     
     - Verification steps
-    3. Verify whether all params and segments are as intended
-    4. Cross verify the prior distribution with the observed distribution
-    5. Cross verify the location of the GW signal and its 'tc'
-    6. Visualise the signals, noise and signal+noise for by-eye verification
+    3. Verify whether all params and segments are as intended (FIN)
+    4. Cross verify the prior distribution with the observed distribution (FIN)
+    5. Visualise the signals, noise and signal+noise for by-eye verification (FIN)
     
     - Data save steps
-    7. After all sanity checks and verification, save dataset in the appropriate format
-    8. Create a training.hdf5 that handles ids, paths and target of training data
-    9. Store all the above data into a data-read directory for next step of the algorithm
+    6. Create a training.hdf5 that handles ids, paths and target of training data
+    7. Store all the above data into a data-read directory for next step of the algorithm
 
 """
 
@@ -64,6 +62,11 @@ from make_segments import make_segments as mksegments
 sys.path.insert(1, '../../external/ml-mock-data-challenge-1')
 from generate_data import main as gendata
 
+# Verification
+from verify_segments import verify as segment_verification
+from verify_priors import verify as prior_verification
+from verify_signals import verify as signal_verification
+
 
 class GenerateData:
     """
@@ -79,6 +82,7 @@ class GenerateData:
         self.output_injection_file = "injections.hdf"
         self.output_foreground_file = "foreground.hdf"
         self.output_background_file = "background.hdf"
+        self.output_signal_file = "signal.hdf"
         # Random seed provided to generate_data script
         # This will be unique and secret for the testing set
         self.seed = 42
@@ -106,11 +110,25 @@ class GenerateData:
         self.segment_length = 20
         self.ninjections = 0
         # Gap b/w adjacent segments (if any)
-        self.segment_gap = None
+        self.segment_gap = 0
+        
+        # Other options
+        self.sample_rate = 2048.0 # Hz
+        self.check_n_signals = 5 # used in verify_signals
         
         # Metadata and identification
         self.unique_dataset_id = uuid.uuid4().hex
         self.creation_time = datetime.datetime.now()
+        
+        ## Storage options
+        # Data storage drive or /mnt absolute path
+        self.parent_dir = ""
+        # Dataset directory within parent_dir
+        self.data_dir = ""
+        # Store all required dirs as a dict
+        self.dirs = {}
+        # Create storage directory sub-structure
+        self._make_data_dir()
     
     def __str__(self):
         # All general dataset parameters
@@ -150,21 +168,29 @@ class GenerateData:
         mksegments(*args)
 
     def call_gendata(self):
-        # Main params to call generate_data script
+        ## Main params to call generate_data script
+        # Set paths to absolute location of dataset dir
+        inj_path = os.path.join(self.dirs['parent'], self.output_injection_file)
+        bg_path = os.path.join(self.dirs['background'], self.output_background_file)
+        fg_path = os.path.join(self.dirs['foreground'], self.output_foreground_file)
+        seg_path = os.path.join(self.dirs['parent'], self.output_segment_file)
+        sig_path = os.path.join(self.dirs['signal'], self.output_signal_file)
+        
         # Warning! for dataset 4 large noise data download
         if self.dataset == 4:
             warnings.warn("Dataset type 4 downloads an ~94GB noise file.")
             
         raw_args =  ['--data-set', str(self.dataset)]
-        raw_args += ['--output-injection-file', self.output_injection_file]
-        raw_args += ['--output-foreground-file', self.output_foreground_file]
-        raw_args += ['--output-background-file', self.output_background_file]
+        raw_args += ['--output-injection-file', inj_path]
+        raw_args += ['--output-foreground-file', fg_path]
+        raw_args += ['--output-background-file', bg_path]
+        raw_args += ['--output-signal-file', sig_path]
         
         # sanity check for segments.csv
         if os.path.exists(self.output_segment_file):
-            raw_args += ['--input-segments-file', self.output_segment_file]
+            raw_args += ['--input-segments-file', seg_path]
         else:
-            raise IOError("{} does not exist!".format(self.output_segment_file))
+            raise IOError("{} does not exist!".format(seg_path))
             
         # Segment parameters
         raw_args += ['--time-step', str(self.time_step)]
@@ -185,17 +211,80 @@ class GenerateData:
             raw_args += ['--force']
         
         gendata(raw_args)
+    
+    def _make_data_dir(self):
+        # Make directory structure for data storage
+        parent_path = os.path.join(self.parent_dir, self.data_dir)
+        self.dirs['parent'] = os.makedirs(parent_path, exist_ok=False)
+        # Signals
+        self.dirs['signal'] = signals_path = os.path.join(parent_path, "signals")
+        os.makedirs(signals_path, exist_ok=False)
+        # Background
+        self.dirs['background'] = background_path = os.path.join(parent_path, "background")
+        os.makedirs(background_path, exist_ok=False)
+        # Foreground
+        self.dirs['foreground'] = foreground_path = os.path.join(parent_path, "foreground")
+        os.makedirs(foreground_path, exist_ok=False)
+    
+    def _make_verification_dir(self, path):
+        # Make a directory using the given path
+        os.makedirs(path, exist_ok=False)
         
+    def check_segments(self):
+        # No output directory required for verify_segments
+        # dataset_type, seed, uqid, sample_rate, segment_length, segments_path, gap
+        check = {'dataset_type': self.dataset,
+                 'seed': self.seed,
+                 'uqid': self.unique_dataset_id,
+                 'sample_rate': self.sample_rate,
+                 'segment_length': self.segment_length,
+                 'segments_path': self.output_segment_file,
+                 'gap': self.segment_gap}
+        
+        # Verification
+        segment_verification(dirs=self.dirs, check=check)
+        if self.verbose:
+            print("verify_segments: All verifications passed successfully!")
+    
+    def check_priors(self):
+        # Output directory needs to be created
+        # This should create verification directory and priors
+        save_path = os.path.join(self.dirs['parent'], "/verification/priors")
+        self._make_verification_dir(save_path)
+        # Injection file input
+        injection_file = os.path.join(self.dirs['parent'], self.output_injection_file)
+        # save_dir, tc_llimit, tc_ulimit, segment_length, gap
+        check = {'save_dir': save_path,
+                 'tc_llimit': self.time_window_llimit,
+                 'tc_ulimit': self.time_window_ulimit,
+                 'segment_length': self.segment_length,
+                 'gap': self.segment_gap}
+        
+        # Verification
+        prior_verification(injection_file, check)
+        if self.verbose:
+            print("verify_priors: Histograms created using injections file. Verify manually.")
+    
+    def check_signals(self):
+        # Output directory for verify signals
+        # Verification should already exist from check_priors call
+        save_path = os.path.join(self.dirs['parent'], "/verification/signals")
+        self._make_verification_dir(save_path)
+        # ndata
+        check = {'ndata': self.check_n_signals}
+        # Verification
+        signal_verification(self.dirs, check)
+        if self.verbose:
+            print(f"verify_signals: {self.check_n_signals} strain plots created. Check manually.")
         
 if __name__ == "__main__":
     
     gd = GenerateData()
     
     gd.dataset = 3
-    # Path to store output HDF5 files
-    gd.output_injection_file = "../../external/ml-mock-data-challenge-1/injections.hdf"
-    gd.output_foreground_file = "../../external/ml-mock-data-challenge-1/foreground.hdf"
-    gd.output_background_file = "../../external/ml-mock-data-challenge-1/background.hdf"
+    # Other directory information
+    gd.parent_dir = ""
+    gd.data_dir = "dataset_0"
     # Random seed provided to generate_data script
     # This will be unique and secret for the testing set
     gd.seed = 42
@@ -209,7 +298,6 @@ if __name__ == "__main__":
     ## make_injections using pycbc_create_injections (uses self.seed)
     # params will be used to call above function via generate_data.py
     # pycbc_create_injections has been modified by nnarenraju (Dec 15th, 2021)
-    gd.output_segment_file = "../../external/ml-mock-data-challenge-1/segments.csv"
     # Start time of segments
     gd.segment_GPS_start_time = 0.0
     # Distance b/w two adjacent 'tc'
