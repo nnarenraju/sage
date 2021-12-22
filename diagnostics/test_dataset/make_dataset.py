@@ -318,6 +318,9 @@ if __name__ == "__main__":
     try:
         gd.make_segments()
         gd.call_gendata()
+        gd.check_segments()
+        gd.check_priors()
+        gd.check_signals()
     except Exception as e:
         with open(os.path.join(gd.dirs['parent'], "err.txt"), 'w') as file:
             file.write(e)
