@@ -86,14 +86,10 @@ def verify(dirs, check):
     """
     
     # Get the signal, background and foreground filenames
-    signals = glob.glob(os.path.join(dirs['signal'], "/signal_*"))
+    signals = glob.glob(dirs['signal'], "/signal_*")
     backgrounds = glob.glob(dirs['background'] + "/background_*")
     foregrounds = glob.glob(dirs['foreground'] + "/foreground_*")
     injections = dirs['parent'] + "/injections.hdf"
-    
-    print(signals[:5])
-    print(backgrounds[:5])
-    print(foregrounds[:5])
     
     # Read the injections file and obtain 'tc'
     with h5py.File(injections, "r") as foo:
@@ -101,7 +97,6 @@ def verify(dirs, check):
     
     # Choose a random 'n' number of datasets to visualise 
     idxs = random.sample(range(len(foregrounds)), check['ndata'])
-    print(idxs)
     # Create plots of those random idxs in a separate verify directory
     for idx in idxs:
         # Set figure
