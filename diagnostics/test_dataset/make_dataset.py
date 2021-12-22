@@ -284,7 +284,7 @@ class GenerateData:
         if not os.path.isdir(save_path):
             os.makedirs(save_path, exist_ok=False)
         # ndata
-        check = {'ndata': self.check_n_signals}
+        check = {'ndata': self.check_n_signals, 'sample_rate': self.sample_rate}
         # Verification
         signal_verification(self.dirs, check)
         if self.verbose:

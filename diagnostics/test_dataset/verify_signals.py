@@ -47,7 +47,7 @@ def _plot(ax, x, y1, c=None, label=None):
     ax.set_xlabel("GPS Time [s]")
     ax.set_ylabel("Strain")
 
-def _get_data(path):
+def _get_data(path, sample_rate):
     # Read data from HDF5 files
     with h5py.File(path, "r") as sigfile:
         ## Reading all data parameters
@@ -77,7 +77,7 @@ def verify(dirs, check):
     data_dir : dict
         Signal, background, foreground and parent directory paths
     check : dict
-        contains - ndata
+        contains - ndata, sample_rate
 
     Returns
     -------
@@ -102,9 +102,10 @@ def verify(dirs, check):
         # Set figure
         ax = _figure(f"Strain in H1 & L1, Time of coalescence = {tc[idx]}")
         # Read data from signal, background, foreground and injections
-        signal_1, signal_2, time_signal, dets_signal = _get_data(signals[idx])
-        noise_1, noise_2, time_noise, dets_noise = _get_data(backgrounds[idx])
-        combined_1, combined_2, time_combined, dets_comb = _get_data(foregrounds[idx])
+        sr = check['sample_rate']
+        signal_1, signal_2, time_signal, dets_signal = _get_data(signals[idx], sample_rate=sr)
+        noise_1, noise_2, time_noise, dets_noise = _get_data(backgrounds[idx], sample_rate=sr)
+        combined_1, combined_2, time_combined, dets_comb = _get_data(foregrounds[idx], sample_rate=sr)
             
         # Artificial signal data
         _plot(ax[0][0], time_signal, signal_1, c="r", label=f"{dets_signal[0]} signal")
