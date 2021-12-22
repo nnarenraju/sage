@@ -239,7 +239,7 @@ class GenerateData:
                  'uqid': self.unique_dataset_id,
                  'sample_rate': self.sample_rate,
                  'segment_length': self.segment_length,
-                 'segments_path': self.output_segment_file,
+                 'segments_path': os.path.join(self.dirs['parent'], self.output_segment_file),
                  'gap': self.segment_gap}
         
         # Verification
