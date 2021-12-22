@@ -43,7 +43,7 @@ def _common_(gname, gfile, check):
     times_2 = list(detector_group_2.keys())
     # Noise data within each detector
     data_1 = detector_group_1[times_1[0]]
-    data_2 = detector_group_1[times_1[1]]
+    data_2 = detector_group_1[times_2[0]]
     
     attrs = dict(gfile.attrs)
     # [7] Check dataset type of given bg file
