@@ -175,6 +175,9 @@ def verify(dirs, check):
     start_times = segdata[:,1]
     if len(times_bg) != len(start_times) or len(times_fg) != len(start_times):
         raise ValueError("Total number of segments observed not the same as in segments.csv")
+    
+    print(type(times_bg), type(start_times))
+    print(times_bg, start_times)
     if not np.allclose(times_bg, start_times):
         raise ValueError("Times in background files is not the same as segments.csv")
     if not np.allclose(times_fg, start_times):
