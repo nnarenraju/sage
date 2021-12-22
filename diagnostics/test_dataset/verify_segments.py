@@ -52,7 +52,7 @@ def _common_(gname, gfile, check):
     # [16] Data should be a two detector configuration
     assert len(dets) == 2
     # [17] Number of segments is same and one for training data
-    if len(times_1) == 1 and len(times_2) == 1:
+    if len(times_1) != 1 or len(times_2) != 1:
         raise ValueError(f"{gname} has more than one segment stored!\n \
                          Expected=1, Observed={times_1} and {times_2}")
     # [8] Segment time of detectors
