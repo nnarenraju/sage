@@ -153,7 +153,8 @@ def verify(dirs, check):
         with h5py.File(bgname, 'r') as bgfile:
             (noise_1, noise_2), segtime_bg = _common_(bgname, bgfile, check) 
             # [13] Check whether noise generated is different b/w detectors
-            if np.allclose(noise_1, noise_2, rtol=1e-8, atol=1e-8):
+            # Tolerance should be << than typical GW strain
+            if np.allclose(noise_1, noise_2, rtol=1e-46, atol=1e-46):
                 raise ValueError(f"Noise b/w two detectors in {bgname} is the same!")
             # [5] Storing times to check for requested segments
             times_bg.append(segtime_bg)
