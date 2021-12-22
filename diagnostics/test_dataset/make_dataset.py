@@ -323,7 +323,7 @@ if __name__ == "__main__":
         gd.check_signals()
     except Exception as e:
         with open(os.path.join(gd.dirs['parent'], "err.txt"), 'w') as file:
-            file.write(e)
+            file.write(str(e))
         if os.path.exists(gd.dirs['parent']):
             os.remove(gd.dirs['parent'])
         
