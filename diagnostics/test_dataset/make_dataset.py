@@ -55,7 +55,6 @@ import h5py
 import uuid
 import warnings
 import datetime
-import numpy as np
 
 # LOCAL
 from make_segments import make_segments as mksegments
@@ -320,7 +319,8 @@ if __name__ == "__main__":
         gd.make_segments()
         gd.call_gendata()
     except Exception as e:
-        np.savetxt(os.path.join(gd.dirs['parent'], "err.txt"), e)
+        with open(os.path.join(gd.dirs['parent'], "err.txt"), 'w') as file:
+            file.write(e)
         if os.path.exists(gd.dirs['parent']):
             os.remove(gd.dirs['parent'])
         
