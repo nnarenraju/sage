@@ -55,6 +55,7 @@ import h5py
 import uuid
 import warnings
 import datetime
+import numpy as np
 
 # LOCAL
 from make_segments import make_segments as mksegments
@@ -315,5 +316,12 @@ if __name__ == "__main__":
     # Gap b/w adjacent segments (if any)
     gd.segment_gap = 1
     
-    gd.make_segments()
-    gd.call_gendata()
+    try:
+        gd.make_segments()
+        gd.call_gendata()
+    except Exception as e:
+        np.savetxt(os.path.join(gd.dirs['parent'], "err.txt"), e)
+        if os.path.exists(gd.dirs['parent']):
+            os.remove(gd.dirs['parent'])
+        
+        
