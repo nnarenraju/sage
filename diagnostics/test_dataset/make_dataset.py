@@ -286,8 +286,6 @@ if __name__ == "__main__":
     # Other directory information
     gd.parent_dir = ""
     gd.data_dir = "dataset_0"
-    # Create storage directory sub-structure
-    gd.make_data_dir()
     # Random seed provided to generate_data script
     # This will be unique and secret for the testing set
     gd.seed = 42
@@ -317,8 +315,12 @@ if __name__ == "__main__":
     gd.segment_gap = 1
     
     
-    gd.make_segments()
-    gd.call_gendata()
+    if not os.path.exists(gd.dirs['parent']):
+        # Create storage directory sub-structure
+        gd.make_data_dir()
+        gd.make_segments()
+        gd.call_gendata()
+    
     gd.check_segments()
     gd.check_priors()
     gd.check_signals()
