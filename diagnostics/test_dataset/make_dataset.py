@@ -40,6 +40,7 @@ Steps:
     3. Verify whether all params and segments are as intended (FIN)
     4. Cross verify the prior distribution with the observed distribution (FIN)
     5. Visualise the signals, noise and signal+noise for by-eye verification (FIN)
+    6. Check input to antenna pattern functions
     
     - Data save steps
     6. Create a training.hdf5 that handles ids, paths and target of training data
@@ -186,7 +187,7 @@ class GenerateData:
         raw_args += ['--output-signal-file', sig_path]
         
         # sanity check for segments.csv
-        if os.path.exists(self.output_segment_file):
+        if os.path.exists(seg_path):
             raw_args += ['--input-segments-file', seg_path]
         else:
             raise IOError("{} does not exist!".format(seg_path))
