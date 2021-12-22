@@ -86,7 +86,7 @@ def verify(dirs, check):
     """
     
     # Get the signal, background and foreground filenames
-    signals = glob.glob(dirs['signal'], "/signal_*")
+    signals = glob.glob(dirs['signal'] + "/signal_*")
     backgrounds = glob.glob(dirs['background'] + "/background_*")
     foregrounds = glob.glob(dirs['foreground'] + "/foreground_*")
     injections = dirs['parent'] + "/injections.hdf"
