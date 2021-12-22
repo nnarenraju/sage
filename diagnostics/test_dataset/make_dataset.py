@@ -248,6 +248,7 @@ class GenerateData:
     def check_priors(self):
         # Output directory needs to be created
         # This should create verification directory and priors
+        print(self.dirs)
         save_path = os.path.join(self.dirs['parent'], "/verification/priors")
         print(save_path)
         if not os.path.isdir(save_path):
