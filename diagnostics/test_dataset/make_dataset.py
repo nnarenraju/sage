@@ -325,7 +325,8 @@ if __name__ == "__main__":
     except Exception as e:
         with open(os.path.join(gd.dirs['parent'], "err.txt"), 'w') as file:
             file.write(str(e))
+        """
         if os.path.exists(gd.dirs['parent']):
             shutil.rmtree(gd.dirs['parent'])
-        
+        """
         
