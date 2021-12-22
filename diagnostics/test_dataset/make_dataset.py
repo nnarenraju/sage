@@ -248,7 +248,18 @@ class GenerateData:
     def check_priors(self):
         # Output directory needs to be created
         # This should create verification directory and priors
-        # In os.path.join, the second argument shouldn't start with a "/"
+        """
+        In os.path.join, the second argument shouldn't start with a "/"
+        Why not?:
+            t = 'C:\\Users\\Admin'
+
+            In [14]: os.path.join(t, "/verification/priors")
+            Out[14]: 'C:/verification/priors'
+
+            In [15]: os.path.join(t, "verification/priors")
+            Out[15]: 'C:\\Users\\Admin\\verification/priors
+        """
+        
         save_path = os.path.join(self.dirs['parent'], "verification/priors")
         if not os.path.isdir(save_path):
             os.makedirs(save_path, exist_ok=False)
