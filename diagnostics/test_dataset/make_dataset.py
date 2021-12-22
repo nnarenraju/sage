@@ -228,10 +228,6 @@ class GenerateData:
                 return True
         # If False, all dirs created successfully
         return False
-    
-    def _make_verification_dir(self, path):
-        # Make a directory using the given path
-        os.makedirs(path, exist_ok=False)
         
     def check_segments(self):
         # No output directory required for verify_segments
@@ -253,7 +249,8 @@ class GenerateData:
         # Output directory needs to be created
         # This should create verification directory and priors
         save_path = os.path.join(self.dirs['parent'], "/verification/priors")
-        self._make_verification_dir(save_path)
+        if not os.path.isdir(save_path):
+            os.mkdir(save_path) 
         # Injection file input
         injection_file = os.path.join(self.dirs['parent'], self.output_injection_file)
         # save_dir, tc_llimit, tc_ulimit, segment_length, gap
@@ -272,7 +269,8 @@ class GenerateData:
         # Output directory for verify signals
         # Verification should already exist from check_priors call
         save_path = os.path.join(self.dirs['parent'], "/verification/signals")
-        self._make_verification_dir(save_path)
+        if not os.path.isdir(save_path):
+            os.mkdir(save_path)
         # ndata
         check = {'ndata': self.check_n_signals}
         # Verification
