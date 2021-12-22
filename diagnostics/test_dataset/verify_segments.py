@@ -169,15 +169,15 @@ def verify(dirs, check):
             # [5] Storing times to check for requested segments
             times_fg.append(segtime_fg)
     
+    # Converting all lists to np arrays for convenience
+    times_bg = np.array(times_bg)
+    times_fg = np.array(times_fg)
     # [5] Checking for requested segments in segment.csv
     segdata = np.loadtxt(check['segments_path'], delimiter=",")
     # fields: (idx, start_times, end_times)
     start_times = segdata[:,1]
     if len(times_bg) != len(start_times) or len(times_fg) != len(start_times):
         raise ValueError("Total number of segments observed not the same as in segments.csv")
-    
-    print(type(times_bg), type(start_times))
-    print(times_bg, start_times)
     if not np.allclose(times_bg, start_times):
         raise ValueError("Times in background files is not the same as segments.csv")
     if not np.allclose(times_fg, start_times):
