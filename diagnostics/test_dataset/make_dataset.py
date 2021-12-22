@@ -328,7 +328,6 @@ if __name__ == "__main__":
     # Gap b/w adjacent segments (if any)
     gd.segment_gap = 1
     
-    
     if not dataset_exists:
         gd.make_segments()
         gd.call_gendata()
