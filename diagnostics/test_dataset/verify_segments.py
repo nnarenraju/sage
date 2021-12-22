@@ -197,7 +197,7 @@ def verify(dirs, check):
     # [10] Checking the gap between different segments
     gap_fg = times_fg[1:] - end_times_fg[:-1]
     gap_bg = times_bg[1:] - end_times_bg[:-1]
-    if gap_fg.count(gap_fg[0]) != len(gap_fg) or gap_fg[0] != check['gap']:
+    if np.count_nonzero(gap_fg==gap_fg[0]) != len(gap_fg) or gap_fg[0] != check['gap']:
         raise ValueError("Foreground gap b/w segments not equal OR gap value is unexpected")
-    if gap_bg.count(gap_bg[0]) != len(gap_bg) or gap_bg[0] != check['gap']:
+    if np.count_nonzero(gap_bg==gap_bg[0]) != len(gap_bg) or gap_bg[0] != check['gap']:
         raise ValueError("Background gap b/w segments not equal OR gap value is unexpected")
