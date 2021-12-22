@@ -216,16 +216,18 @@ class GenerateData:
     def make_data_dir(self):
         # Make directory structure for data storage
         self.dirs['parent'] = os.path.join(self.parent_dir, self.data_dir)
-        os.makedirs(self.dirs['parent'], exist_ok=False)
-        # Signals
         self.dirs['signal'] = os.path.join(self.dirs['parent'], "signals")
-        os.makedirs(self.dirs['signal'], exist_ok=False)
-        # Background
         self.dirs['background'] = os.path.join(self.dirs['parent'], "background")
-        os.makedirs(self.dirs['background'], exist_ok=False)
-        # Foreground
         self.dirs['foreground'] = os.path.join(self.dirs['parent'], "foreground")
-        os.makedirs(self.dirs['foreground'], exist_ok=False)
+        # Parent, Signals, Background and Foreground
+        for directory in list(self.dirs.values()):
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=False)
+            else:
+                # If True, it already exists
+                return True
+        # If False, all dirs created successfully
+        return False
     
     def _make_verification_dir(self, path):
         # Make a directory using the given path
@@ -286,6 +288,8 @@ if __name__ == "__main__":
     # Other directory information
     gd.parent_dir = ""
     gd.data_dir = "dataset_0"
+    # Create storage directory sub-structure
+    dataset_exists = gd.make_data_dir()
     # Random seed provided to generate_data script
     # This will be unique and secret for the testing set
     gd.seed = 42
@@ -315,9 +319,7 @@ if __name__ == "__main__":
     gd.segment_gap = 1
     
     
-    if not os.path.exists(gd.dirs['parent']):
-        # Create storage directory sub-structure
-        gd.make_data_dir()
+    if not dataset_exists:
         gd.make_segments()
         gd.call_gendata()
     
