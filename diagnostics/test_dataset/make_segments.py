@@ -66,10 +66,8 @@ def make_segments(GPS_start_time: int,
     segments = np.column_stack((range(len(start_times)), start_times, end_times))
     # Savedata (segment.csv)
     if force:
-        try:
+        if os.path.exists(output_filepath):
             print(f"--force: {output_filepath} exists. Overwriting.")
             os.remove(output_filepath)
-        except OSError:
-            pass
     
     np.savetxt(output_filepath, segments, delimiter=",", fmt="%d")
