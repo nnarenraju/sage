@@ -66,7 +66,7 @@ def _get_data(path):
         # Common time axis for all data
         start_time = times_1[0]
         sample_rate = 1.0/attrs['delta_t']
-        end_time = start_time + (len(data_1)//sample_rate)
+        end_time = int(start_time) + (len(data_1)//sample_rate)
         time_axis = np.linspace(start_time, end_time, len(data_1), dtype=np.int32)
         return (data_1, data_2, time_axis, dets)
 
