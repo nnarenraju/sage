@@ -50,7 +50,7 @@ def _plot(ax, x, y1, c=None, label=None, signal=False):
     else:
         ax.set_xlabel("Time [s]")
     
-    plt.legend()
+    ax.legend()
     ax.set_ylabel("Strain")
 
 def _get_data(path, signal=False):
