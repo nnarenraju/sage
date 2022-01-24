@@ -35,20 +35,23 @@ plt.rcParams.update({'font.size': 22})
 
 def _figure(name):
     plt.rc('font', family='serif')
-    plt.rc('xtick', labelsize='medium')
-    plt.rc('ytick', labelsize='medium')
-    fig, axs = plt.subplots(3, 2, figsize=(20.0, 24.0))
-    fig.suptitle(f"{name}", fontsize=20, y=0.95)
+    plt.rc('xtick', labelsize=24)
+    plt.rc('ytick', labelsize=24)
+    fig, axs = plt.subplots(3, 2, figsize=(22.0, 26.0))
+    fig.suptitle(f"{name}", fontsize=26, y=0.95)
     return axs
 
-def _plot(ax, x, y1, c=None, label=None):
+def _plot(ax, x, y1, c=None, label=None, signal=False):
     #ax.plot(x, y1, c=c, linewidth=3.0, ls='solid', label=label)
-    ax.scatter(x, y1, c=c, label=label)
+    ax.scatter(x, y1, c=c, label=label, marker='x')
     ax.grid(True, which='both')
-    ax.set_xlabel("GPS Time [s]")
+    if not signal:
+        ax.set_xlabel("GPS Time [s]")
+    else:
+        ax.set_xlabel("Time [s]")
     ax.set_ylabel("Strain")
 
-def _get_data(path):
+def _get_data(path, signal=False):
     # Read data from HDF5 files
     with h5py.File(path, "r") as sigfile:
         ## Reading all data parameters
@@ -67,10 +70,17 @@ def _get_data(path):
         # Common time axis for all data
         start_time = int(times_1[0])
         sample_rate = 1.0/attrs['delta_t']
-        end_time = start_time + (len(data_1)//sample_rate)
-        print(start_time, len(data_1), sample_rate)
-        time_axis_1 = np.linspace(start_time, end_time, len(data_1), dtype=np.int32)
-        time_axis_2 = np.linspace(start_time, end_time, len(data_2), dtype=np.int32)
+        if not signal:
+            end_time_1 = start_time + (len(data_1)//sample_rate)
+            end_time_2 = start_time + (len(data_2)//sample_rate)
+            time_axis_1 = np.linspace(start_time, end_time_1, len(data_1), dtype=np.int32)
+            time_axis_2 = np.linspace(start_time, end_time_2, len(data_2), dtype=np.int32)
+        else:
+            end_time_1 = 0.0 + (len(data_1)//sample_rate)
+            end_time_2 = 0.0 + (len(data_2)//sample_rate)
+            time_axis_1 = np.linspace(0.0, end_time_1, len(data_1), dtype=np.int32)
+            time_axis_2 = np.linspace(0.0, end_time_2, len(data_2), dtype=np.int32)
+        
         return (data_1, data_2, time_axis_1, time_axis_2, dets)
 
 def verify(dirs, check):
