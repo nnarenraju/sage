@@ -68,6 +68,7 @@ def _get_data(path):
         start_time = int(times_1[0])
         sample_rate = 1.0/attrs['delta_t']
         end_time = start_time + (len(data_1)//sample_rate)
+        print(start_time, len(data_1), sample_rate)
         time_axis_1 = np.linspace(start_time, end_time, len(data_1), dtype=np.int32)
         time_axis_2 = np.linspace(start_time, end_time, len(data_2), dtype=np.int32)
         return (data_1, data_2, time_axis_1, time_axis_2, dets)
