@@ -68,14 +68,9 @@ def _get_data(path):
         start_time = int(times_1[0])
         sample_rate = 1.0/attrs['delta_t']
         end_time = start_time + (len(data_1)//sample_rate)
-        end_time_2 = int(times_2[0]) + (len(data_2)//sample_rate)
-        print("START")
-        print("start_time = {}\nsample_rate = {}\nend_time={}\n".format(start_time, sample_rate, end_time))
-        print("start_time = {}\nsample_rate = {}\nend_time={}\n".format(int(times_2[0]), sample_rate, end_time_2))
-        print(len(data_1), len(data_2))
-        print("FIN")
-        time_axis = np.linspace(start_time, end_time, len(data_1), dtype=np.int32)
-        return (data_1, data_2, time_axis, dets)
+        time_axis_1 = np.linspace(start_time, end_time, len(data_1), dtype=np.int32)
+        time_axis_2 = np.linspace(start_time, end_time, len(data_2), dtype=np.int32)
+        return (data_1, data_2, time_axis_1, time_axis_2, dets)
 
 def verify(dirs, check):
     """
@@ -111,23 +106,23 @@ def verify(dirs, check):
         # Set figure
         ax = _figure(f"Strain in H1 & L1, Time of coalescence = {tc[idx]}")
         # Read data from signal, background, foreground and injections
-        signal_1, signal_2, time_signal, dets_signal = _get_data(signals[idx])
-        noise_1, noise_2, time_noise, dets_noise = _get_data(backgrounds[idx])
-        combined_1, combined_2, time_combined, dets_comb = _get_data(foregrounds[idx])
+        signal_1, signal_2, time_signal_1, time_signal_2, dets_signal = _get_data(signals[idx])
+        noise_1, noise_2, time_noise_1, time_noise_2, dets_noise = _get_data(backgrounds[idx])
+        combined_1, combined_2, time_combined_1, time_combined_2, dets_comb = _get_data(foregrounds[idx])
             
         # Artificial signal data
-        _plot(ax[0][0], time_signal, signal_1, c="r", label=f"{dets_signal[0]} signal")
-        _plot(ax[0][1], time_signal, signal_2, c="b", label=f"{dets_signal[1]} signal")
+        _plot(ax[0][0], time_signal_1, signal_1, c="r", label=f"{dets_signal[0]} signal")
+        _plot(ax[0][1], time_signal_2, signal_2, c="b", label=f"{dets_signal[1]} signal")
         
         # Noise data
-        _plot(ax[1][0], time_noise, noise_1, c="k", label=f"{dets_noise[0]} noise")
-        _plot(ax[1][1], time_noise, noise_2, c="k", label=f"{dets_noise[1]} noise")
+        _plot(ax[1][0], time_noise_1, noise_1, c="k", label=f"{dets_noise[0]} noise")
+        _plot(ax[1][1], time_noise_2, noise_2, c="k", label=f"{dets_noise[1]} noise")
         
         # Overplot combined and signal
-        _plot(ax[2][0], time_combined, combined_1, c="k", label=f"{dets_comb[0]} foreground")
-        _plot(ax[2][1], time_combined, combined_2, c="k", label=f"{dets_comb[1]} foreground")
-        _plot(ax[2][0], time_signal, signal_1, c="r", label=f"{dets_signal[0]} signal")
-        _plot(ax[2][1], time_signal, signal_2, c="b", label=f"{dets_signal[1]} signal")
+        _plot(ax[2][0], time_combined_1, combined_1, c="k", label=f"{dets_comb[0]} foreground")
+        _plot(ax[2][1], time_combined_2, combined_2, c="k", label=f"{dets_comb[1]} foreground")
+        _plot(ax[2][0], time_signal_1, signal_1, c="r", label=f"{dets_signal[0]} signal")
+        _plot(ax[2][1], time_signal_2, signal_2, c="b", label=f"{dets_signal[1]} signal")
         
         # Close and save plot
         save_path = dirs['parent'] + f"/verification/signals/verify_signal_{idx}.png"
