@@ -42,13 +42,15 @@ def _figure(name):
     return axs
 
 def _plot(ax, x, y1, c=None, label=None, signal=False):
-    #ax.plot(x, y1, c=c, linewidth=3.0, ls='solid', label=label)
+    # ax.plot(x, y1, c=c, linewidth=3.0, ls='solid', label=label)
     ax.scatter(x, y1, c=c, label=label, marker='x')
     ax.grid(True, which='both')
     if not signal:
         ax.set_xlabel("GPS Time [s]")
     else:
         ax.set_xlabel("Time [s]")
+    
+    plt.legend()
     ax.set_ylabel("Strain")
 
 def _get_data(path, signal=False):
@@ -117,13 +119,13 @@ def verify(dirs, check):
         # Set figure
         ax = _figure(f"Strain in H1 & L1, Time of coalescence = {tc[idx]}")
         # Read data from signal, background, foreground and injections
-        signal_1, signal_2, time_signal_1, time_signal_2, dets_signal = _get_data(signals[idx])
+        signal_1, signal_2, time_signal_1, time_signal_2, dets_signal = _get_data(signals[idx], signal=True)
         noise_1, noise_2, time_noise_1, time_noise_2, dets_noise = _get_data(backgrounds[idx])
         combined_1, combined_2, time_combined_1, time_combined_2, dets_comb = _get_data(foregrounds[idx])
             
         # Artificial signal data
-        _plot(ax[0][0], time_signal_1, signal_1, c="r", label=f"{dets_signal[0]} signal")
-        _plot(ax[0][1], time_signal_2, signal_2, c="b", label=f"{dets_signal[1]} signal")
+        _plot(ax[0][0], time_signal_1, signal_1, c="r", label=f"{dets_signal[0]} signal", signal=True)
+        _plot(ax[0][1], time_signal_2, signal_2, c="b", label=f"{dets_signal[1]} signal", signal=True)
         
         # Noise data
         _plot(ax[1][0], time_noise_1, noise_1, c="k", label=f"{dets_noise[0]} noise")
@@ -132,11 +134,10 @@ def verify(dirs, check):
         # Overplot combined and signal
         _plot(ax[2][0], time_combined_1, combined_1, c="k", label=f"{dets_comb[0]} foreground")
         _plot(ax[2][1], time_combined_2, combined_2, c="k", label=f"{dets_comb[1]} foreground")
-        _plot(ax[2][0], time_signal_1, signal_1, c="r", label=f"{dets_signal[0]} signal")
-        _plot(ax[2][1], time_signal_2, signal_2, c="b", label=f"{dets_signal[1]} signal")
+        # _plot(ax[2][0], time_signal_1, signal_1, c="r", label=f"{dets_signal[0]} signal")
+        # _plot(ax[2][1], time_signal_2, signal_2, c="b", label=f"{dets_signal[1]} signal")
         
         # Close and save plot
         save_path = dirs['parent'] + f"/verification/signals/verify_signal_{idx}.png"
-        plt.legend()
         plt.savefig(save_path)
         plt.close()
