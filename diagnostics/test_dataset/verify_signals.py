@@ -42,7 +42,8 @@ def _figure(name):
     return axs
 
 def _plot(ax, x, y1, c=None, label=None):
-    ax.plot(x, y1, c=c, linewidth=3.0, ls='solid', label=label)
+    #ax.plot(x, y1, c=c, linewidth=3.0, ls='solid', label=label)
+    ax.scatter(x, y1, c=c, label=label)
     ax.grid(True, which='both')
     ax.set_xlabel("GPS Time [s]")
     ax.set_ylabel("Strain")
@@ -88,9 +89,9 @@ def verify(dirs, check):
     """
     
     # Get the signal, background and foreground filenames
-    signals = glob.glob(dirs['signal'] + "/signal_*")
-    backgrounds = glob.glob(dirs['background'] + "/background_*")
-    foregrounds = glob.glob(dirs['foreground'] + "/foreground_*")
+    signals = sorted(glob.glob(dirs['signal'] + "/signal_*"))
+    backgrounds = sorted(glob.glob(dirs['background'] + "/background_*"))
+    foregrounds = sorted(glob.glob(dirs['foreground'] + "/foreground_*"))
     injections = dirs['parent'] + "/injections.hdf"
     
     # Read the injections file and obtain 'tc'
@@ -124,5 +125,6 @@ def verify(dirs, check):
         
         # Close and save plot
         save_path = dirs['parent'] + f"/verification/signals/verify_signal_{idx}.png"
+        plt.legend()
         plt.savefig(save_path)
         plt.close()
