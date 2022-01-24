@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import os
+import re
 import h5py
 import glob
 import random
@@ -103,9 +104,15 @@ def verify(dirs, check):
     """
     
     # Get the signal, background and foreground filenames
-    signals = sorted(glob.glob(dirs['signal'] + "/signal_*"))
+    signals = glob.glob(dirs['signal'] + "/signal_*")
+    signals.sort(key=lambda f: int(re.sub('\D', '', f)))
+    
     backgrounds = sorted(glob.glob(dirs['background'] + "/background_*"))
+    backgrounds.sort(key=lambda f: int(re.sub('\D', '', f)))
+    
     foregrounds = sorted(glob.glob(dirs['foreground'] + "/foreground_*"))
+    foregrounds.sort(key=lambda f: int(re.sub('\D', '', f)))
+    
     injections = dirs['parent'] + "/injections.hdf"
     
     # Read the injections file and obtain 'tc'
