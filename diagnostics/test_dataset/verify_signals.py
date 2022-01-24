@@ -102,7 +102,7 @@ def verify(dirs, check):
     
     # Read the injections file and obtain 'tc'
     with h5py.File(injections, "r") as foo:
-        tc = np.array(foo['tc'])
+        tc = np.sort(np.array(foo['tc']))
     
     # Choose a random 'n' number of datasets to visualise 
     idxs = random.sample(range(len(foregrounds)), check['ndata'])
