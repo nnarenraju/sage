@@ -44,8 +44,8 @@ Steps:
     
     - Data save steps
     6. Create a training.hdf5 that handles ids, paths and target of training data (FIN)
-    7. Store all the above data into a data-read directory for next step of the algorithm
-
+    7. Store all the above data into a data-read directory for next step of the algorithm (FIN)
+    
 """
 
 # IN-BUILT
@@ -317,7 +317,7 @@ class GenerateData:
         lookup = np.column_stack((ids, all_abspaths, targets))
         # Shuffle the column stack ('tc' is in ascending order, signal and noise are not shuffled)
         # NumPy: "Multi-dimensional arrays are only shuffled along the first axis"
-        np.shuffle(lookup)
+        np.random.shuffle(lookup)
         # Save the dataset paths alongside the target and ids as hdf5
         self.dirs['lookup'] = os.path.join(self.dirs['parent'] + "training.hdf")
         with h5py.File(self.dirs['lookup'], 'a') as foo:
