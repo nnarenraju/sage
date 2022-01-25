@@ -43,14 +43,12 @@ def _figure(name):
     return axs
 
 def _plot(ax, x, y1, c=None, label=None, signal=False):
-    # ax.plot(x, y1, c=c, linewidth=3.0, ls='solid', label=label)
-    ax.scatter(x, y1, c=c, label=label, marker='x')
+    ax.plot(x, y1, c=c, linewidth=3.0, ls='solid', label=label)
     ax.grid(True, which='both')
     if not signal:
         ax.set_xlabel("GPS Time [s]")
     else:
         ax.set_xlabel("Time [s]")
-    
     ax.legend()
     ax.set_ylabel("Strain")
 
