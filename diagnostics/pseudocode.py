@@ -24,8 +24,8 @@ Timeline:
     
     November (No deadline)
     ----------------------
-    0. Learning and reading
-    1. Data preparation
+    0. Learning and reading (FIN)
+    1. Data preparation (FIN)
     
     December (deadline 31st, 23:59 PM BST)
     --------------------------------------
