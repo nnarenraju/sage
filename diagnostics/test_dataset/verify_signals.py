@@ -76,13 +76,13 @@ def _get_data(path, signal=False):
         if not signal:
             end_time_1 = start_time + (len(data_1)//sample_rate)
             end_time_2 = start_time + (len(data_2)//sample_rate)
-            time_axis_1 = np.linspace(start_time, end_time_1, len(data_1), dtype=np.int32)
-            time_axis_2 = np.linspace(start_time, end_time_2, len(data_2), dtype=np.int32)
+            time_axis_1 = np.linspace(start_time, end_time_1, len(data_1), dtype=np.float64)
+            time_axis_2 = np.linspace(start_time, end_time_2, len(data_2), dtype=np.float64)
         else:
             end_time_1 = 0.0 + (len(data_1)//sample_rate)
             end_time_2 = 0.0 + (len(data_2)//sample_rate)
-            time_axis_1 = np.linspace(0.0, end_time_1, len(data_1), dtype=np.int32)
-            time_axis_2 = np.linspace(0.0, end_time_2, len(data_2), dtype=np.int32)
+            time_axis_1 = np.linspace(0.0, end_time_1, len(data_1), dtype=np.float64)
+            time_axis_2 = np.linspace(0.0, end_time_2, len(data_2), dtype=np.float64)
         
         return (data_1, data_2, time_axis_1, time_axis_2, dets)
 
