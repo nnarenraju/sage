@@ -120,7 +120,7 @@ class GenerateData:
         
         # Metadata and identification
         self.unique_dataset_id = uuid.uuid4().hex
-        self.creation_time = datetime.datetime.now()
+        self.creation_time = str(datetime.datetime.now())
         
         ## Storage options
         # Data storage drive or /mnt absolute path
