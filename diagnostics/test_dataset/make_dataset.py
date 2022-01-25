@@ -304,9 +304,16 @@ class GenerateData:
         # Save this data in the hdf5 format
         noise_path = os.path.join(self.dirs['parent'], "background")
         noisy_signal_path = os.path.join(self.dirs['parent'], "foreground")
+        print(noise_path)
+        print(noisy_signal_path)
         # Get all absolute paths of files within fg and bg
         noise_abspaths = self._get_recursive_abspath_(noise_path)
         signal_abspaths = self._get_recursive_abspath_(noisy_signal_path)
+        print("\n\n")
+        print(noise_abspaths)
+        print("")
+        print(signal_abspaths)
+        print("\n\n")
         all_abspaths = np.concatenate((noise_abspaths, signal_abspaths))
         # Get the ids for each data sample
         dataset_length = len(all_abspaths)
