@@ -307,7 +307,7 @@ class GenerateData:
         # Get all absolute paths of files within fg and bg
         noise_abspaths = self._get_recursive_abspath_(noise_path)
         signal_abspaths = self._get_recursive_abspath_(noisy_signal_path)
-        all_abspaths = np.row_stack((noise_abspaths, signal_abspaths))
+        all_abspaths = np.concatenate((noise_abspaths, signal_abspaths))
         # Get the ids for each data sample
         dataset_length = len(all_abspaths)
         ids = np.linspace(0.0, dataset_length, dataset_length, dtype=np.int32)
