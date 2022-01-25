@@ -159,7 +159,7 @@ class GenerateData:
         paths = np.array([])
         for dirpath, _, filenames in os.walk(os.path.abspath(directory)):
             for filename in filenames:
-                 np.append(paths, os.path.join(dirpath, filename))
+                 paths = np.append(paths, os.path.join(dirpath, filename))
         return paths
             
     def make_segments(self):
