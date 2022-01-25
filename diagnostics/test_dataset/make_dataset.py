@@ -319,7 +319,7 @@ class GenerateData:
         # NumPy: "Multi-dimensional arrays are only shuffled along the first axis"
         np.random.shuffle(lookup)
         # Save the dataset paths alongside the target and ids as hdf5
-        self.dirs['lookup'] = os.path.join(self.dirs['parent'] + "training.hdf")
+        self.dirs['lookup'] = os.path.join(self.dirs['parent'], "training.hdf")
         with h5py.File(self.dirs['lookup'], 'a') as foo:
             group = "lookup"
             ds = foo.create_dataset(group, data=lookup,
