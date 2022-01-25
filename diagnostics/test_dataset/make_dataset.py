@@ -43,7 +43,7 @@ Steps:
     6. Check input to antenna pattern functions
     
     - Data save steps
-    6. Create a training.hdf5 that handles ids, paths and target of training data
+    6. Create a training.hdf5 that handles ids, paths and target of training data (FIN)
     7. Store all the above data into a data-read directory for next step of the algorithm
 
 """
@@ -56,6 +56,7 @@ import uuid
 import shutil
 import warnings
 import datetime
+import numpy as np
 
 # LOCAL
 from make_segments import make_segments as mksegments
@@ -101,9 +102,6 @@ class GenerateData:
         self.output_segment_file = "segments.csv"
         # Start time of segments
         self.segment_GPS_start_time = 0.0
-        # Distance b/w two adjacent 'tc'
-        # For training set, set to a value larger than segment length
-        self.time_step = 20
         # Time window within which to place the merger
         # 'tc' is located within this window
         self.time_window_llimit = None
@@ -111,6 +109,8 @@ class GenerateData:
         # Length of segment/duration (in seconds)
         self.segment_length = 20
         self.ninjections = 0
+        # Distance b/w two adjacent 'tc'
+        self.time_step = self.segment_length
         # Gap b/w adjacent segments (if any)
         self.segment_gap = 0
         
@@ -144,7 +144,7 @@ class GenerateData:
         out += "Segment Details:\n"
         out += f"Output segment file = {self.output_segment_file}\n"
         out += f"Segment GPS start time = {self.segment_GPS_start_time}\n"
-        out += f"Time step b/w adjacent 'tc' = {self.time_step}\n"
+        out += f"Time step b/w adjacent 'tc' ~ {self.time_step}\n"
         out += f"Time window for tc placement (llimit) = {self.time_window_llimit}\n"
         out += f"Time window for tc placement (ulimit) = {self.time_window_ulimit}\n"
         out += f"Length of each segment = {self.segment_length}\n"
@@ -154,6 +154,14 @@ class GenerateData:
         out += f"Unique dataset ID = {self.unique_dataset_id}\n"
         out += f"Time of dataset creation = {self.creation_time}"
     
+    def _get_recursive_abspath_(self, directory):
+        # Get abspath of all files within directory
+        paths = np.array([])
+        for dirpath, _, filenames in os.walk(os.path.abspath(directory)):
+            for filename in filenames:
+                 np.append(paths, os.path.join(dirpath, filename))
+        return paths
+            
     def make_segments(self):
         # Make segments.csv to be used by generate_data script
         output_segments_file = os.path.join(self.dirs['parent'], self.output_segment_file)
@@ -289,6 +297,60 @@ class GenerateData:
         signal_verification(self.dirs, check)
         if self.verbose:
             print(f"verify_signals: {self.check_n_signals} strain plots created. Check manually.")
+    
+    def make_training_lookup(self):
+        # Make a lookup table with (id, path, target) for each training data
+        # Should have an equal ratio, shuffled, of both classes (signal and noise)
+        # Save this data in the hdf5 format
+        noise_path = os.path.join(self.dirs['parent'], "background")
+        noisy_signal_path = os.path.join(self.dirs['parent'], "foreground")
+        # Get all absolute paths of files within fg and bg
+        noise_abspaths = self._get_recursive_abspath_(noise_path)
+        signal_abspaths = self._get_recursive_abspath_(noisy_signal_path)
+        all_abspaths = np.row_stack((noise_abspaths, signal_abspaths))
+        # Get the ids for each data sample
+        dataset_length = len(all_abspaths)
+        ids = np.linspace(0.0, dataset_length, dataset_length, dtype=np.int32)
+        # Get the target/label value for each data sample
+        targets = [0]*len(noise_abspaths) + [1]*len(signal_abspaths)
+        # Column stack (ids, path, target) for the entire dataset
+        lookup = np.column_stack((ids, all_abspaths, targets))
+        # Shuffle the column stack ('tc' is in ascending order, signal and noise are not shuffled)
+        # NumPy: "Multi-dimensional arrays are only shuffled along the first axis"
+        np.shuffle(lookup)
+        # Save the dataset paths alongside the target and ids as hdf5
+        self.dirs['lookup'] = os.path.join(self.dirs['parent'] + "training.hdf")
+        with h5py.File(self.dirs['lookup'], 'a') as foo:
+            group = "lookup"
+            ds = foo.create_dataset(group, data=lookup,
+                                    compression='gzip',
+                                    compression_opts=9, shuffle=True)
+            ds.attrs['unique_dataset_id'] = self.unique_dataset_id
+            ds.attrs['creation_time'] = self.creation_time
+            ds.attrs['dataset'] = self.dataset
+            ds.attrs['seed'] = self.seed
+            ds.attrs['segment_length'] = self.segment_length
+            ds.attrs['tc_window_llimit'] = self.time_window_llimit
+            ds.attrs['tc_window_ulimit'] = self.time_window_ulimit
+            ds.attrs['sampling_rate'] = self.sample_rate
+            ds.attrs['noise_num'] = len(noise_abspaths)
+            ds.attrs['signal_num'] = len(signal_abspaths)
+            ds.attrs['dataset_ratio'] = len(signal_abspaths)/len(noise_abspaths)
+        
+        if self.verbose:
+            print("make_training_lookup: Lookup table created successfully!")
+    
+    def check_dataset(self):
+        # Verify whether all required training files are located in the desired dir
+        # This is the last data preparation step before the ML pipeline takes over
+        if not os.path.exists(self.dirs['lookup']):
+            raise ValueError("training.hdf does not exist. ML-Pipeline will fail.")
+        _, extension = os.path.splitext(self.dirs['lookup'])
+        if extension != 'hdf':
+            raise ValueError("Lookup table for training dataset should be .hdf file")
+        # Successful
+        if self.verbose:
+            print("check_dataset: Lookup table has passed verification test.")
         
 if __name__ == "__main__":
     
@@ -315,15 +377,22 @@ if __name__ == "__main__":
     # pycbc_create_injections has been modified by nnarenraju (Dec 15th, 2021)
     # Start time of segments
     gd.segment_GPS_start_time = 0.0
-    # Distance b/w two adjacent 'tc'
-    # For training set, set to a value larger than segment length
-    gd.time_step = 20
     # Time window within which to place the merger
     # 'tc' is located within this window
     gd.time_window_llimit = 14
     gd.time_window_ulimit = 16
     # Length of segment/duration (in seconds)
     gd.segment_length = 20
+    
+    """
+    NOTE: On ninjection variable
+    Only used to create segments.csv
+    If 100 injections with 20 second segments are requested,
+    the total duration in segments.csv will be ~2100.0 seconds including gap.
+    This value may be larger than self.duration which is provided to generate_data.py
+    If we request 200s, we obtain the subset of segments required to produce that 
+    from segments.csv. So, we obtain 10 segments, each with one signal.
+    """
     gd.ninjections = 100
     # Gap b/w adjacent segments (if any)
     gd.segment_gap = 1
@@ -335,6 +404,11 @@ if __name__ == "__main__":
     gd.check_segments()
     gd.check_priors()
     gd.check_signals()
+    
+    # Make dataset lookup table
+    gd.make_training_lookup()
+    # Verify location and extension of lookup for next step
+    gd.check_dataset()
     
     """
     except Exception as e:
