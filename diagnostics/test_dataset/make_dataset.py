@@ -323,15 +323,9 @@ class GenerateData:
         df = pd.DataFrame(data=lookup, columns=["id", "path", "target"])
         # Save the dataset paths alongside the target and ids as hdf5
         self.dirs['lookup'] = os.path.join(self.dirs['parent'], "training.hdf")
-        df.to_hdf(self.dirs['lookup'], "lookup", complib="blosc:lz4", mode='w')
+        df.to_hdf(self.dirs['lookup'], "lookup", complib="blosc:lz4", complevel=9, mode='a')
         
-        
-        """
-        with h5py.File(self.dirs['lookup'], 'a') as foo:
-            group = "lookup"
-            ds = foo.create_dataset(group, data=lookup,
-                                    compression='gzip',
-                                    compression_opts=9, shuffle=True)
+        with h5py.File(self.dirs['lookup'], 'a') as ds:
             ds.attrs['unique_dataset_id'] = self.unique_dataset_id
             ds.attrs['creation_time'] = self.creation_time
             ds.attrs['dataset'] = self.dataset
@@ -343,7 +337,6 @@ class GenerateData:
             ds.attrs['noise_num'] = len(noise_abspaths)
             ds.attrs['signal_num'] = len(signal_abspaths)
             ds.attrs['dataset_ratio'] = len(signal_abspaths)/len(noise_abspaths)
-        """
         
         if self.verbose:
             print("make_training_lookup: Lookup table created successfully!")
@@ -354,7 +347,7 @@ class GenerateData:
         if not os.path.exists(self.dirs['lookup']):
             raise ValueError("training.hdf does not exist. ML-Pipeline will fail.")
         _, extension = os.path.splitext(self.dirs['lookup'])
-        if extension != 'hdf':
+        if extension != '.hdf':
             raise ValueError("Lookup table for training dataset should be .hdf file")
         # Successful
         if self.verbose:
