@@ -57,6 +57,7 @@ import shutil
 import warnings
 import datetime
 import numpy as np
+import pandas as pd
 
 # LOCAL
 from make_segments import make_segments as mksegments
@@ -304,20 +305,13 @@ class GenerateData:
         # Save this data in the hdf5 format
         noise_path = os.path.join(self.dirs['parent'], "background")
         noisy_signal_path = os.path.join(self.dirs['parent'], "foreground")
-        print(noise_path)
-        print(noisy_signal_path)
         # Get all absolute paths of files within fg and bg
         noise_abspaths = self._get_recursive_abspath_(noise_path)
         signal_abspaths = self._get_recursive_abspath_(noisy_signal_path)
-        print("\n\n")
-        print(noise_abspaths)
-        print("")
-        print(signal_abspaths)
-        print("\n\n")
         all_abspaths = np.concatenate((noise_abspaths, signal_abspaths))
         # Get the ids for each data sample
         dataset_length = len(all_abspaths)
-        ids = np.linspace(0.0, dataset_length, dataset_length, dtype=np.int32)
+        ids = np.linspace(0, dataset_length, dataset_length, dtype=np.int32)
         # Get the target/label value for each data sample
         targets = [0]*len(noise_abspaths) + [1]*len(signal_abspaths)
         # Column stack (ids, path, target) for the entire dataset
@@ -325,8 +319,14 @@ class GenerateData:
         # Shuffle the column stack ('tc' is in ascending order, signal and noise are not shuffled)
         # NumPy: "Multi-dimensional arrays are only shuffled along the first axis"
         np.random.shuffle(lookup)
+        # Convert to pandas dataframe
+        df = pd.DataFrame(data=lookup, columns=["id", "path", "target"])
         # Save the dataset paths alongside the target and ids as hdf5
         self.dirs['lookup'] = os.path.join(self.dirs['parent'], "training.hdf")
+        df.to_hdf(self.dirs['lookup'], "lookup", complib="blosc:lz4", mode='w')
+        
+        
+        """
         with h5py.File(self.dirs['lookup'], 'a') as foo:
             group = "lookup"
             ds = foo.create_dataset(group, data=lookup,
@@ -343,6 +343,7 @@ class GenerateData:
             ds.attrs['noise_num'] = len(noise_abspaths)
             ds.attrs['signal_num'] = len(signal_abspaths)
             ds.attrs['dataset_ratio'] = len(signal_abspaths)/len(noise_abspaths)
+        """
         
         if self.verbose:
             print("make_training_lookup: Lookup table created successfully!")
