@@ -27,13 +27,11 @@ Documentation: NULL
 import os
 import shutil
 import pandas as pd
-from pathlib import Path
-import dask.dataframe as dd
 import torch.utils.data as D
 
 # LOCAL
 from configs import *
-from make_dataset import make as make_dataset
+from data.make_dataset import make as make_dataset
 
 class DataModule:
     """
