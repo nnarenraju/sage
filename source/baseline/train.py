@@ -42,9 +42,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     parser.add_argument("--config", type=str, default='Baseline',
-                        help="config name in configs.py")
+                        help="Uses the pipeline architecture as described in configs.py")
+    parser.add_argument("--data-config", type=str, default='Default',
+                        help="Creates or uses a particular dataset as provided in data_configs.py")
     parser.add_argument("--inference", action='store_true',
-                        help="inference")
+                        help="Running the inference module using trained model")
     parser.add_argument("--summary", action='store_true',
                         help="Store model summary using pytorch_summary")
     parser.add_argument("--debug", action='store_true')
@@ -54,16 +56,19 @@ if __name__ == "__main__":
     
     """ Prepare Data """
     # Get model configuration
-    cfg = dat.configure_path(opts)
+    cfg = dat.configure_pipeline(opts)
+    # Get data creation/usage configuration
+    data_cfg = dat.configure_dataset(opts)
     
     # Prepare input data for training and testing
-    # This should create consolidated CSV file at given export_dir
-    dat.get_summary(cfg.input_dir, cfg.export_dir)
+    # TODO: Currently get_summary() does not handle testing dataset
+    # This should create/use a dataset and save a copy of the lookup table
+    dat.get_summary(data_cfg, cfg.export_dir)
     
     # Prepare dataset (read, split and return fold idx)
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
-    # Test data is not split
-    train, test, folds = dat.get_metadata(cfg)
+    # TODO: Test data is not split (Under Construction!)
+    train, folds = dat.get_metadata(cfg)
     
     """ Training """
     # Folds are obtained only by splitting the training dataset
