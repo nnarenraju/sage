@@ -25,13 +25,14 @@ Documentation: NULL
 
 # IN-BUILT
 import torch.nn as nn
+from pathlib import Path
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from sklearn.model_selection import StratifiedKFold
 
 # LOCAL
-from metrics.custom_metrics import AUC
 from data.datasets import MLMDC1
+from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel
 from data.transforms import Unify, Normalise, BandPass
@@ -43,7 +44,7 @@ class Baseline:
     """ Data storage """
     name = "Baseline"
     # Directory to store output from pipeline/lightning
-    export_dir = ""
+    export_dir = Path("")
     
     """ Dataset Splitting """
     # Number of folds (must be at least 2, default = 5)
