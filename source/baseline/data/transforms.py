@@ -44,7 +44,7 @@ class TransformWrapper:
     def __init__(self, always_apply=False):
         self.always_apply = always_apply
 
-    def __call__(self, y: np.ndarray | torch.Tensor):
+    def __call__(self, y: np.ndarray):
         if self.always_apply:
             return self.apply(y)
         else:
@@ -55,7 +55,7 @@ class TransformWrapperPerChannel(TransformWrapper):
     def __init__(self, always_apply=False):
         super().__init__(always_apply=always_apply)
     
-    def __call__(self, y: np.ndarray | torch.Tensor):
+    def __call__(self, y: np.ndarray):
         channels = y.shape[0]
         if isinstance(y, np.ndarray):
             augmented = y.copy()
@@ -83,7 +83,7 @@ class Buffer(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray | torch.Tensor, channel: int):
+    def apply(self, y: np.ndarray, channel: int):
         return y
 
 
@@ -93,7 +93,7 @@ class Normalise(TransformWrapperPerChannel):
         assert len(factors) == 2
         self.factors = factors
 
-    def apply(self, y: np.ndarray | torch.Tensor, channel: int):
+    def apply(self, y: np.ndarray, channel: int):
         return y / self.factors[channel]
 
 
