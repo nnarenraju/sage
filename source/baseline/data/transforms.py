@@ -23,7 +23,6 @@ Documentation: NULL
 
 """
 
-import torch
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
