@@ -182,11 +182,11 @@ class LonelyTimm:
     """ Data Transforms """
     transforms = dict(
         train=Unify([
-            Normalise(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
+            Normalise(factors=[1.0, 1.0]),
             BandPass(lower=12, upper=512),
         ]),
         test=Unify([
-            Normalise(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
+            Normalise(factors=[1.0, 1.0]),
             BandPass(lower=12, upper=512),
         ])
     )
