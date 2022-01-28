@@ -128,6 +128,8 @@ class GenerateData:
         self.parent_dir = ""
         # Dataset directory within parent_dir
         self.data_dir = ""
+        # Save directory for training.hdf
+        self.save_lookup_dir = ""
         # Store all required dirs as a dict
         self.dirs = {}
     
@@ -322,7 +324,7 @@ class GenerateData:
         # Convert to pandas dataframe
         df = pd.DataFrame(data=lookup, columns=["id", "path", "target"])
         # Save the dataset paths alongside the target and ids as hdf5
-        self.dirs['lookup'] = os.path.join(self.dirs['parent'], "training.hdf")
+        self.dirs['lookup'] = os.path.join(self.save_lookup_dir, "training.hdf")
         df.to_hdf(self.dirs['lookup'], "lookup", complib="blosc:lz4", complevel=9, mode='a')
         
         with h5py.File(self.dirs['lookup'], 'a') as ds:
