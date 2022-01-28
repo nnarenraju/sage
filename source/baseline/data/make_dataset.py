@@ -81,7 +81,7 @@ class GenerateData:
     __slots__ = ['dataset', 'parent_dir', 'data_dir', 'seed', 'start_offset', 
                  'dataset_duration', 'verbose', 'force', 'segment_GPS_start_time',
                  'time_window_llimit', 'time_window_ulimit', 'segment_length',
-                 'segment_gap', 'ninjections']
+                 'segment_gap', 'ninjections', 'make_dataset']
 
     
     def __init__(self, **kwargs):
