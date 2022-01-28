@@ -61,9 +61,9 @@ import pandas as pd
 
 # LOCAL
 from data.make_segments import make_segments as mksegments
-# Add MLMDC1 repo from GWastro
+# Add MLMDC1 submodule forked from GWastro
 # insert at 1, 0 is the script path (or '' in REPL)
-sys.path.insert(1, '../../../external/ml-mock-data-challenge-1')
+sys.path.insert(1, '../../external/ml-mock-data-challenge-1')
 from generate_data import main as gendata
 
 # Verification
