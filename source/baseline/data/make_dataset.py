@@ -60,16 +60,16 @@ import numpy as np
 import pandas as pd
 
 # LOCAL
-from make_segments import make_segments as mksegments
+from data.make_segments import make_segments as mksegments
 # Add MLMDC1 repo from GWastro
 # insert at 1, 0 is the script path (or '' in REPL)
-sys.path.insert(1, '../../external/ml-mock-data-challenge-1')
+sys.path.insert(1, '../../../external/ml-mock-data-challenge-1')
 from generate_data import main as gendata
 
 # Verification
-from verify_segments import verify as segment_verification
-from verify_priors import verify as prior_verification
-from verify_signals import verify as signal_verification
+from data.verify_segments import verify as segment_verification
+from data.verify_priors import verify as prior_verification
+from data.verify_signals import verify as signal_verification
 
 
 class GenerateData:
