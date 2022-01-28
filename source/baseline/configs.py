@@ -25,28 +25,25 @@ Documentation: NULL
 
 # IN-BUILT
 import torch.nn as nn
-from pathlib import Path
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from sklearn.model_selection import StratifiedKFold
 
 # LOCAL
 from metrics.custom_metrics import AUC
-from data.datasets import G2NetDataset
+from data.datasets import MLMDC1
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel
-from data.transforms import Compose, Normalize, BandPass
+from data.transforms import Unify, Normalise, BandPass
 
 
 """ DEFAULT """
 class Baseline:
     
-    """ Name and Path """
-    name = 'baseline'
-    input_dir = Path("../dataset/G2Net").absolute()
-    train_path = input_dir/'train.csv'
-    test_path = input_dir/'test.csv'
-    export_dir = Path('../dataset/G2Net').absolute() / name
+    """ Data storage """
+    name = "Baseline"
+    # Directory to store output from pipeline/lightning
+    export_dir = ""
     
     """ Dataset Splitting """
     # Number of folds (must be at least 2, default = 5)
@@ -58,7 +55,7 @@ class Baseline:
     
     """ Dataset """
     # Dataset object (opts, quick access, read only)
-    dataset = G2NetDataset
+    dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
@@ -105,13 +102,15 @@ class Baseline:
     eval_metric = AUC().torch
     
     """ Data Transforms """
+    # Input to Unfy should always be a list
+    # Input to transforms should be a dict
     transforms = dict(
-        train=Compose([
-            Normalize(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
+        train=Unify([
+            Normalise(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
             BandPass(lower=12, upper=512),
         ]),
-        test=Compose([
-            Normalize(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
+        test=Unify([
+            Normalise(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
             BandPass(lower=12, upper=512),
         ])
     )
@@ -124,11 +123,8 @@ class Baseline:
 class LonelyTimm:
     
     """ Name and Path """
-    name = 'lonelytimm'
-    input_dir = Path("../dataset/G2Net").absolute()
-    train_path = input_dir/'train.csv'
-    test_path = input_dir/'test.csv'
-    export_dir = Path('../dataset/G2Net').absolute() / name
+    name = "LonelyTimm"
+    export_dir = ""
     
     """ Dataset Splitting """
     # Number of folds (must be at least 2, default = 5)
@@ -140,7 +136,7 @@ class LonelyTimm:
     
     """ Dataset """
     # Dataset object (opts, quick access, read only)
-    dataset = G2NetDataset
+    dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
@@ -185,12 +181,12 @@ class LonelyTimm:
     
     """ Data Transforms """
     transforms = dict(
-        train=Compose([
-            Normalize(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
+        train=Unify([
+            Normalise(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
             BandPass(lower=12, upper=512),
         ]),
-        test=Compose([
-            Normalize(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
+        test=Unify([
+            Normalise(factors=[4.61e-20, 4.23e-20, 1.11e-20]),
             BandPass(lower=12, upper=512),
         ])
     )
