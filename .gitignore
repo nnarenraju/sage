@@ -129,4 +129,4 @@ dmypy.json
 .pyre/
 
 ## Directories to ignore
-data/
+datasets/
