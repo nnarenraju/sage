@@ -31,6 +31,7 @@ import torch.utils.data as D
 
 # LOCAL
 from configs import *
+from data_configs import *
 from data.make_dataset import make as make_dataset
 
 class DataModule:
