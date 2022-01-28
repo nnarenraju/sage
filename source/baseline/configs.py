@@ -113,7 +113,8 @@ class Baseline:
         test=Unify([
             Normalise(factors=[1.0, 1.0]),
             BandPass(lower=12, upper=512),
-        ])
+        ]),
+        target=None
     )
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
@@ -189,7 +190,8 @@ class LonelyTimm:
         test=Unify([
             Normalise(factors=[1.0, 1.0]),
             BandPass(lower=12, upper=512),
-        ])
+        ]),
+        target=None
     )
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
