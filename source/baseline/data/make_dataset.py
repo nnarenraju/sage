@@ -81,8 +81,10 @@ class GenerateData:
     __slots__ = ['dataset', 'parent_dir', 'data_dir', 'seed', 'start_offset', 
                  'dataset_duration', 'verbose', 'force', 'segment_GPS_start_time',
                  'time_window_llimit', 'time_window_ulimit', 'segment_length',
-                 'segment_gap', 'ninjections', 'make_dataset']
-
+                 'segment_gap', 'ninjections', 'make_dataset', 'export_dir', 
+                 'output_injection_file', 'output_foreground_file', 'output_background_file',
+                 'output_signal_file', 'output_segment_file', 'time_step', 'sample_rate', 
+                 'check_n_signals', 'unique_dataset_id', 'creation_time', 'dirs']
     
     def __init__(self, **kwargs):
         ## Get slots magic attributes via input dict (use **kwargs)
