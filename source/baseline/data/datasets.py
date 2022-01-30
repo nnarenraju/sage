@@ -114,4 +114,4 @@ class MLMDC1(Dataset):
         signal = signal.to(dtype=data_type, device=self.train_device)
         target = target.to(dtype=data_type, device=self.train_device)
         # Return as tuple for immutability
-        return tuple(signal, target)
+        return (signal, target)
