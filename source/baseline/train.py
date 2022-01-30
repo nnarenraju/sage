@@ -95,7 +95,7 @@ if __name__ == "__main__":
         
         # Model Summary (frontend + backend)
         if opts.summary:
-            summary(ModelClass, (3, 4096), batch_size=8)
+            summary(ModelClass, (2, 2048), batch_size=4)
             print("")
         
         # Optimizer and Scheduler
