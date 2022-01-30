@@ -181,7 +181,7 @@ class GammaModel(pl.LightningModule):
                 torch.nn.MaxPool1d(4),                      # 16x  29
                 torch.nn.ELU(),                             # 16x  29
                 torch.nn.Flatten(),                         #     464
-                torch.nn.Linear(464, 32),                   #      32
+                torch.nn.Linear(26880, 32),                 #      32
                 torch.nn.Dropout(p=0.5),                    #      32
                 torch.nn.ELU(),                             #      32
                 torch.nn.Linear(32, 16),                    #      16
