@@ -40,7 +40,7 @@ class MLMDC1(Dataset):
     """
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
-                 training=False, testing=False, store_device='cpu', train_device='cpu'):
+                 training=False, testing=False, store_device='cuda:0', train_device='cuda:0'):
         
         self.data_paths = data_paths
         self.targets = targets

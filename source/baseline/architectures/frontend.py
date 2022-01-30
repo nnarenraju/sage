@@ -151,7 +151,7 @@ class GammaModel(pl.LightningModule):
                  pretrained=False,
                  in_channels: int = 2,
                  out_channels: int = 2,
-                 store_device='cpu'):
+                 store_device='cuda:0'):
         
         super().__init__()
         
