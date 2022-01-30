@@ -84,7 +84,11 @@ class MLMDC1(Dataset):
             
             # Get the 'tc' attribute from the foreground file IF in training phase
             if self.training:
+                print(data_path)
                 attrs = dict(gfile.attrs)
+                for key, value in attrs.items():
+                    print(f"{key} = {value}")
+                    
                 tc = attrs['tc']
                 # Normalise 'tc' such that it is always b/w 0 and 1
                 start_time = attrs['start_time']
