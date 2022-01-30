@@ -147,7 +147,9 @@ class GammaModel(pl.LightningModule):
                  model_name='simple', 
                  pretrained=False,
                  in_channels: int = 2,
-                 out_channels: int = 2):
+                 out_channels: int = 2,
+                 dtype=torch.float32,
+                 device='cpu'):
         
         super().__init__()
         
@@ -155,6 +157,8 @@ class GammaModel(pl.LightningModule):
         self.pretrained = pretrained
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.dtype = dtype
+        self.device = device
         # Initialise Frontend Model
         # Add the following line as last layer if softmax is needed
         # torch.nn.Softmax(dim=1) --> 2 outputs
@@ -184,6 +188,9 @@ class GammaModel(pl.LightningModule):
                 torch.nn.ELU(),                             #      16
                 torch.nn.Linear(16, 2)                      #       2
         )
+    
+        # Convert network into given dtype and store in proper device
+        self.frontend.to(dtype=self.dtype, device=self.device)
     
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):

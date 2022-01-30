@@ -38,7 +38,8 @@ class MLMDC1(Dataset):
     """
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
-                 training=False, testing=False):
+                 training=False, testing=False, store_device='cpu', train_device='cpu',
+                 dtype=torch.float32):
         
         self.data_paths = data_paths
         self.targets = targets
@@ -46,6 +47,9 @@ class MLMDC1(Dataset):
         self.target_transforms = target_transforms
         self.training = training
         self.testing = testing
+        self.store_device = store_device
+        self.train_device = train_device
+        self.dtype = dtype
         
         if training:
             assert testing == False
@@ -104,7 +108,10 @@ class MLMDC1(Dataset):
             target = self.target_transforms(target)
         
         # Convert signal/target to Tensor objects
-        signal = torch.as_tensor(signal)
-        target = torch.as_tensor(target)
+        signal = torch.from_numpy(signal)
+        target = torch.from_numpy(target)
+        # Set the device and dtype
+        signal = signal.to(dtype=self.dtype, device=self.train_device)
+        target = target.to(dtype=self.dtype, device=self.train_device)
         # Return as tuple for immutability
         return tuple(signal, target)
