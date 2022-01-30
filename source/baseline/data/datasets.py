@@ -39,7 +39,7 @@ class MLMDC1(Dataset):
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
                  training=False, testing=False, store_device='cpu', train_device='cpu',
-                 dtype=torch.float32):
+                 data_type=torch.float32):
         
         self.data_paths = data_paths
         self.targets = targets
@@ -49,7 +49,7 @@ class MLMDC1(Dataset):
         self.testing = testing
         self.store_device = store_device
         self.train_device = train_device
-        self.dtype = dtype
+        self.dtype = data_type
         
         if training:
             assert testing == False

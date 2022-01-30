@@ -148,7 +148,7 @@ class GammaModel(pl.LightningModule):
                  pretrained=False,
                  in_channels: int = 2,
                  out_channels: int = 2,
-                 dtype=torch.float32,
+                 data_type=torch.float32,
                  device='cpu'):
         
         super().__init__()
@@ -157,7 +157,7 @@ class GammaModel(pl.LightningModule):
         self.pretrained = pretrained
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.dtype = dtype
+        self.dtype = data_type
         self.device = device
         # Initialise Frontend Model
         # Add the following line as last layer if softmax is needed
