@@ -97,7 +97,6 @@ if __name__ == "__main__":
         if opts.summary:
             summary(ModelClass, (2, 40960), batch_size=cfg.batch_size)
             print("")
-            raise
         
         # Optimizer and Scheduler
         optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
