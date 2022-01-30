@@ -28,6 +28,9 @@ import timm
 import torch
 import pytorch_lightning as pl
 
+# Datatype for storage
+data_type=torch.float32
+
 class AlphaModel(pl.LightningModule):
     """
     Alpha-type Model Architecture
@@ -148,7 +151,6 @@ class GammaModel(pl.LightningModule):
                  pretrained=False,
                  in_channels: int = 2,
                  out_channels: int = 2,
-                 data_type=torch.float32,
                  device='cpu'):
         
         super().__init__()
@@ -157,7 +159,6 @@ class GammaModel(pl.LightningModule):
         self.pretrained = pretrained
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.dtype = data_type
         self.device = device
         # Initialise Frontend Model
         # Add the following line as last layer if softmax is needed
@@ -190,7 +191,7 @@ class GammaModel(pl.LightningModule):
         )
     
         # Convert network into given dtype and store in proper device
-        self.frontend.to(dtype=self.dtype, device=self.device)
+        self.frontend.to(dtype=data_type, device=self.device)
     
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):

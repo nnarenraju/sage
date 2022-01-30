@@ -29,6 +29,8 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
+# Datatype for storage
+data_type=torch.float32
 
 """ Dataset Objects """
 
@@ -38,8 +40,7 @@ class MLMDC1(Dataset):
     """
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
-                 training=False, testing=False, store_device='cpu', train_device='cpu',
-                 data_type=torch.float32):
+                 training=False, testing=False, store_device='cpu', train_device='cpu'):
         
         self.data_paths = data_paths
         self.targets = targets
@@ -49,7 +50,6 @@ class MLMDC1(Dataset):
         self.testing = testing
         self.store_device = store_device
         self.train_device = train_device
-        self.dtype = data_type
         
         if training:
             assert testing == False
@@ -111,7 +111,7 @@ class MLMDC1(Dataset):
         signal = torch.from_numpy(signal)
         target = torch.from_numpy(target)
         # Set the device and dtype
-        signal = signal.to(dtype=self.dtype, device=self.train_device)
-        target = target.to(dtype=self.dtype, device=self.train_device)
+        signal = signal.to(dtype=data_type, device=self.train_device)
+        target = target.to(dtype=data_type, device=self.train_device)
         # Return as tuple for immutability
         return tuple(signal, target)
