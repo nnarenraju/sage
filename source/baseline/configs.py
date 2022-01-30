@@ -87,7 +87,7 @@ class Baseline:
     batch_scheduler = False
     
     """ Loss Function """
-    loss_function = nn.BCEWithLogitsLoss
+    loss_function = BCEgw_MSEtc
     
     """ Evaluation Metric """
     eval_metric = None

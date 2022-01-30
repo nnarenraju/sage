@@ -102,7 +102,8 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
                     self.average_batch_loss = []
                 self.check_batch_idx += 1
                 
-            self.log("train_loss", loss)
+            # self.log("train_loss", loss)
+            print("Training loss = {}".format(loss))
             return loss
         
         """
@@ -115,7 +116,8 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
             x, y = val_batch
             logits = ModelClass.forward(x)
             loss = self.compute_loss(logits, y)
-            self.log('val_loss', loss)
+            print("Validation loss = {}".format(loss))
+            # self.log('val_loss', loss)
       
         def configure_optimizers(self):
             # Pass optimizer and scheduler here
