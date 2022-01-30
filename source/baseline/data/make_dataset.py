@@ -211,6 +211,9 @@ class GenerateData:
         if self.force:
             raw_args += ['--force']
         
+        if self.verbose:
+            print("\nCreating training dataset using MLGWSC-1 generate_data.py script")
+            
         gendata(raw_args)
     
     def make_data_dir(self):

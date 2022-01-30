@@ -84,19 +84,18 @@ class MLMDC1(Dataset):
             
             # Get the 'tc' attribute from the foreground file IF in training phase
             if self.training:
-                print(data_path)
                 attrs = dict(gfile.attrs)
-                for key, value in attrs.items():
-                    print(f"{key} = {value}")
-                    
-                tc = attrs['tc']
-                # Normalise 'tc' such that it is always b/w 0 and 1
-                start_time = attrs['start_time']
-                # NOTE: For training, we assume that global start time is always 0.0
-                # Normalisation (Subtract start_time from 'tc' and normalise wrt duration)
-                # NOTE: Also assuming a constant 20.0 second segment for all training data
-                # Depending on llimit and ulimit for 'tc', the value should be ~[0.6, 0.9]
-                tc = (tc - start_time) / 20.0
+                try:
+                    tc = attrs['tc']
+                    # Normalise 'tc' such that it is always b/w 0 and 1
+                    start_time = attrs['start_time']
+                    # NOTE: For training, we assume that global start time is always 0.0
+                    # Normalisation (Subtract start_time from 'tc' and normalise wrt duration)
+                    # NOTE: Also assuming a constant 20.0 second segment for all training data
+                    # Depending on llimit and ulimit for 'tc', the value should be ~[0.6, 0.9]
+                    tc = (tc - start_time) / 20.0
+                except:
+                    tc = 0.0
             
         signal = np.row_stack((signal_1, signal_2)).astype(np.float32)
         
