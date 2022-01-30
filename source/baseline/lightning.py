@@ -25,7 +25,6 @@ Documentation: NULL
 
 # IN-BUILT
 import pytorch_lightning as pl
-from torchmetrics import Accuracy
 
 
 # Work-around to dynamic inheritance
@@ -74,7 +73,6 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
             if hasattr(ModelClass, "backend"):
                 self.backend = ModelClass.backend
             self.frontend = ModelClass.frontend
-            #self.accuracy = Accuracy()
         
         def forward(self, x):
             # Forward from ModelClass inherited
@@ -86,7 +84,7 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
       
         def training_step(self, train_batch, batch_idx):
             x, y = train_batch
-            preds = self(x)
+            # Logits are predictions
             logits = ModelClass.forward(x)
             loss = self.compute_loss(logits, y)
             # Store average loss
@@ -100,9 +98,6 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
                     # Reset avg batch loss for next batch
                     self.average_batch_loss = []
                 self.check_batch_idx += 1
-        
-            # log step metric
-            #self.log('train_acc_step', self.accuracy(preds, y))
                 
             self.log("train_loss", loss)
             return loss

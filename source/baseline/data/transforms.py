@@ -42,7 +42,10 @@ class Unify:
 class TransformWrapper:
     def __init__(self, always_apply=False):
         self.always_apply = always_apply
-
+        
+    def apply(self, y: np.ndarray):
+        raise NotImplementedError
+    
     def __call__(self, y: np.ndarray):
         if self.always_apply:
             return self.apply(y)
