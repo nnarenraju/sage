@@ -164,24 +164,24 @@ class GammaModel(pl.LightningModule):
         # Add the following line as last layer if softmax is needed
         # torch.nn.Softmax(dim=1) --> 2 outputs
         self.frontend = torch.nn.Sequential(                #  Shapes
-                torch.nn.BatchNorm1d(self.in_channels),     #  2x2048
-                torch.nn.Conv1d(2, 4, 64),                  #  4x1985
-                torch.nn.ELU(),                             #  4x1985
-                torch.nn.Conv1d(4, 4, 32),                  #  4x1954
-                torch.nn.MaxPool1d(4),                      #  4x 489
-                torch.nn.ELU(),                             #  4x 489
-                torch.nn.Conv1d(4, 8, 32),                  #  8x 458
-                torch.nn.ELU(),                             #  8x 458
-                torch.nn.Conv1d(8, 8, 16),                  #  8x 443
-                torch.nn.MaxPool1d(3),                      #  8x 147
-                torch.nn.ELU(),                             #  8x 147
-                torch.nn.Conv1d(8, 16, 16),                 # 16x 132
-                torch.nn.ELU(),                             # 16x 132
-                torch.nn.Conv1d(16, 16, 16),                # 16x 117
-                torch.nn.MaxPool1d(4),                      # 16x  29
-                torch.nn.ELU(),                             # 16x  29
-                torch.nn.Flatten(),                         #     464
-                torch.nn.Linear(26880, 32),                 #      32
+                torch.nn.BatchNorm1d(self.in_channels),     #  2x40960
+                torch.nn.Conv1d(2, 4, 64, 2),               #  4x20449
+                torch.nn.ELU(),                             #  4x20449
+                torch.nn.Conv1d(4, 4, 32, 2),               #  4x10209
+                torch.nn.MaxPool1d(4),                      #  4x 2552
+                torch.nn.ELU(),                             #  4x 2552
+                torch.nn.Conv1d(4, 8, 32, 2),               #  8x 1261
+                torch.nn.ELU(),                             #  8x 1261
+                torch.nn.Conv1d(8, 8, 16, 2),               #  8x 623
+                torch.nn.MaxPool1d(3),                      #  8x 207
+                torch.nn.ELU(),                             #  8x 207
+                torch.nn.Conv1d(8, 16, 16),                 # 16x 192
+                torch.nn.ELU(),                             # 16x 192
+                torch.nn.Conv1d(16, 16, 16),                # 16x 177
+                torch.nn.MaxPool1d(4),                      # 16x  44
+                torch.nn.ELU(),                             # 16x  44
+                torch.nn.Flatten(),                         #     704
+                torch.nn.Linear(704, 32),                   #      32
                 torch.nn.Dropout(p=0.5),                    #      32
                 torch.nn.ELU(),                             #      32
                 torch.nn.Linear(32, 16),                    #      16

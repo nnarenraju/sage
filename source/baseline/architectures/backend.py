@@ -61,6 +61,12 @@ class CNN_1D(pl.LightningModule):
         Keep stride = 1 to preserve input shape
         If padding == "same", no striding is allowed
     
+    Working with MaxPool1d:
+        Input size = (N, C, L)
+        Output size = (N, C, Lout)
+        
+        Lout = ((Lin + 2.0*padding - dilation * (kernel_size - 1) - 1)/stride) + 1
+    
     Link to Weight-Initialisation Techniques:
     https://machinelearningmastery.com/weight-initialization-for-deep-learning-neural-networks/
     TL;DR:
