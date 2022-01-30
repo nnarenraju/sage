@@ -89,6 +89,8 @@ class BCEgw_MSEtc(LossWrapper):
         mse_loss = sum([(targets[:,1]-outputs[:,1])/np.var(outputs[:,1])])
         MSEtc = prefix * mse_loss
         
+        print(BCEgw, MSEtc)
+        
         """ 
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
