@@ -102,7 +102,7 @@ class MLMDC1(Dataset):
         # Target for training or testing phase
         target = np.array(self.targets[idx]).astype(np.float32)
         if self.training:
-            target = np.column_stack((target, tc))
+            target = np.column_stack((target, tc))[0]
         
         # Apply transforms to signal and target (if any)
         if self.transforms:
