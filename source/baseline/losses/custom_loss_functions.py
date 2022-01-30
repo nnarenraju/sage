@@ -71,6 +71,15 @@ class BCEgw_MSEtc(LossWrapper):
         outputs_ = np.array(1.0 - outputs)
         
         """
+        
+        
+        # print all outputs for sanity check
+        print("\noutputs[:,0] = {}".format(outputs[:,0]))
+        print("\noutputs[:,1] = {}".format(outputs[:,1]))
+        print("\ntargets[:,0] = {}".format(targets[:,0]))
+        print("\ntargets[:,1] = {}".format(targets[:,1]))
+        
+        
         if not self.pos_weight:
             # Change to '2' if using two class outputs
             self.pos_weight = torch.ones([1])
