@@ -115,7 +115,7 @@ class BandPass(TransformWrapperPerChannel):
         return sos
 
     def butter_bandpass_filter(self, data):
-        sos = self.butter_bandpass(self.lower, self.upper, self.fs, order=self.order)
+        sos = self.butter_bandpass()
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     

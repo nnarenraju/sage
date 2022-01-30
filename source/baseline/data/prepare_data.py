@@ -125,9 +125,9 @@ class DataModule:
             # Check if dataset already exists
             # If it does, check if training.hdf exists within it and save in export dir
             check_dir = os.path.join(dc_attrs['parent_dir'], dc_attrs['data_dir'])
-            if os.path.is_dir(check_dir):
+            if os.path.isdir(check_dir):
                 check_file = os.path.join(check_dir, "training.hdf")
-                if os.path.is_file(check_file):
+                if os.path.isfile(check_file):
                     # Move the training.hdf to export_dir for pipeline
                     shutil.copy(check_file, export_dir)
         
