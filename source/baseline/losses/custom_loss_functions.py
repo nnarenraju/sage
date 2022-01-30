@@ -95,4 +95,4 @@ class BCEgw_MSEtc(LossWrapper):
         """
         custom_loss = BCEgw + MSEtc
         
-        return custom_loss
+        return torch.tensor(custom_loss)
