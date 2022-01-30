@@ -197,5 +197,6 @@ class GammaModel(pl.LightningModule):
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
         # Simple NN frontend (no backend)
+        print(x.shape)
         out = self.frontend(x)
         return out
