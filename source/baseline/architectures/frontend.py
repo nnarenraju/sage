@@ -156,6 +156,8 @@ class GammaModel(pl.LightningModule):
         self.in_channels = in_channels
         self.out_channels = out_channels
         # Initialise Frontend Model
+        # Add the following line as last layer if softmax is needed
+        # torch.nn.Softmax(dim=1) --> 2 outputs
         self.frontend = torch.nn.Sequential(                #  Shapes
                 torch.nn.BatchNorm1d(self.in_channels),     #  2x2048
                 torch.nn.Conv1d(2, 4, 64),                  #  4x1985
@@ -180,8 +182,7 @@ class GammaModel(pl.LightningModule):
                 torch.nn.Linear(32, 16),                    #      16
                 torch.nn.Dropout(p=0.5),                    #      16
                 torch.nn.ELU(),                             #      16
-                torch.nn.Linear(16, 2),                     #       2
-                torch.nn.Softmax(dim=1)                     #       2
+                torch.nn.Linear(16, 2)                      #       2
         )
     
     # x.shape: (batch size, wave channel, length of wave)

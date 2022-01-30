@@ -37,11 +37,22 @@ class MLMDC1(Dataset):
     
     """
     
-    def __init__(self, data_paths, targets, transforms=None, target_transforms=None):
+    def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
+                 training=False, testing=False):
+        
         self.data_paths = data_paths
         self.targets = targets
         self.transforms = transforms
         self.target_transforms = target_transforms
+        self.training = training
+        self.testing = testing
+        
+        if training:
+            assert testing == False
+        if testing:
+            assert training == False
+        if not training and not testing:
+            raise ValueError("Neither training or testing phase chosen for dataset class.")
 
     def __len__(self):
         return len(self.targets)
@@ -67,8 +78,25 @@ class MLMDC1(Dataset):
             data_1.read_direct(signal_1)
             data_2.read_direct(signal_2)
             
+            # Get the 'tc' attribute from the foreground file IF in training phase
+            if self.training:
+                attrs = dict(gfile.attrs)
+                tc = attrs['tc']
+                # Normalise 'tc' such that it is always b/w 0 and 1
+                start_time = attrs['start_time']
+                # NOTE: For training, we assume that global start time is always 0.0
+                # Normalisation (Subtract start_time from 'tc' and normalise wrt duration)
+                # NOTE: Also assuming a constant 20.0 second segment for all training data
+                # Depending on llimit and ulimit for 'tc', the value should be ~[0.6, 0.9]
+                tc = (tc - start_time) / 20.0
+            
         signal = np.row_stack((signal_1, signal_2)).astype(np.float32)
+        
+        # Target for training or testing phase
         target = self.targets[idx]
+        if self.training:
+            target = np.column_stack((target, tc))
+        
         # Apply transforms to signal and target (if any)
         if self.transforms:
             signal = self.transforms(signal)
