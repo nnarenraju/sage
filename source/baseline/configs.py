@@ -45,7 +45,7 @@ class Baseline:
     """ Data storage """
     name = "Baseline"
     # Directory to store output from pipeline/lightning
-    export_dir = Path("")
+    export_dir = Path("/home/nnarenraju")
     
     """ Dataset Splitting """
     # Number of folds (must be at least 2, default = 5)
