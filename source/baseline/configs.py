@@ -34,8 +34,9 @@ from sklearn.model_selection import StratifiedKFold
 from data.datasets import MLMDC1
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
-from architectures.frontend import AlphaModel, BetaModel
+from architectures.frontend import AlphaModel, BetaModel, GammaModel
 from data.transforms import Unify, Normalise, BandPass
+from losses.custom_loss_functions import BCEgw_MSEtc
 
 
 """ DEFAULT """
@@ -60,30 +61,19 @@ class Baseline:
     dataset_params = dict()
     
     """ Architecture """
-    model = AlphaModel
+    model = GammaModel
     
     model_params = dict(
-        # Timm Model
-        model_name='resnet34',
-        timm_params={'in_chans':3},
+        # Simple NN Model
+        model_name='mlmdc_example',
         pretrained=False,
-        num_classes=1,
-        # Trainable Backend
-        backend=CNN_1D,
-        backend_params=dict(
-            in_channels = 3,
-            out_channels = 3,
-            num_channels = (32, 64, 128),
-            kernel_size = 3, 
-            stride = 2,
-            force_out_size = 128,
-            check_out_size = True
-        )
+        in_channels = 2,
+        out_channels = 2
     )
     
     """ Epochs and Batches """
     num_steps = 25000
-    num_epochs = 5
+    num_epochs = 50
     batch_size = 8
     
     """ Optimizer """
@@ -97,10 +87,10 @@ class Baseline:
     batch_scheduler = False
     
     """ Loss Function """
-    loss_function = nn.BCEWithLogitsLoss()
+    loss_function = BCEgw_MSEtc
     
     """ Evaluation Metric """
-    eval_metric = AUC().torch
+    eval_metric = None
     
     """ Data Transforms """
     # Input to Unfy should always be a list
