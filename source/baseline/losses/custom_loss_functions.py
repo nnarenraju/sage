@@ -91,23 +91,19 @@ class BCEgw_MSEtc(LossWrapper):
         MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
         """
         prefix = (self.mse_alpha/outputs.shape[0])
-        mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
+        # mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
+        mse_loss = sum((targets[:,1]-outputs[:,1])**2)
         MSEtc = prefix * mse_loss
         MSEtc = torch.tensor(MSEtc, dtype=torch.float32)
-        
-        print(self.mse_alpha)
-        print(outputs.shape[0])
-        print((targets[:,1]-outputs[:,1])**2)
-        print(np.var(outputs[:,1]))
-        print(MSEtc)
-        
         
         """ 
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
         """
         custom_loss = BCEgw + MSEtc
+        # Not using the following option leads to the following error
+        # RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
+        # Link: https://discuss.pytorch.org/t/runtimeerror-element-0-of-variables-does-not-require-grad-and-does-not-have-a-grad-fn/11074/7
+        custom_loss.requires_grad = True
         
-        print(custom_loss)
-        
-        return torch.tensor(custom_loss)
+        return custom_loss
