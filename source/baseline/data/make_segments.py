@@ -70,7 +70,7 @@ def make_segments(GPS_start_time: int,
     print(gap[-150:])
     start_times = np.concatenate(([start_times[0]], start_times[1:] + gap))
     print(start_times[-150:])
-    start_times = start_times.astype(np.int16)
+    start_times = start_times.astype(np.int32)
     print(start_times[-150:])
     # End-points
     end_times = (start_times + segment_length).astype(np.int16)
