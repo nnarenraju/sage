@@ -59,10 +59,6 @@ class BCEgw_MSEtc(LossWrapper):
         # MSE to add soft weight to the calculation of correct 'tc'
         # Output and target contain (isGW, tc). This is not a two class problem.
         
-        """ Converting to numpy arrays """
-        outputs = outputs.detach().cpu().numpy()
-        targets = targets.detach().cpu().numpy()
-        
         """
         PyTorch - BCEWithLogitsLoss
             >>> target = torch.ones([10, 64], dtype=torch.float32)  # 64 classes, batch size = 10
@@ -84,6 +80,10 @@ class BCEgw_MSEtc(LossWrapper):
         criterion = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
         # Loss Topic: Does the given signal contain a GW or is it pure noise?
         BCEgw = criterion(outputs[:,0].to(dtype=torch.float32), targets[:,0].to(dtype=torch.float32))
+        
+        """ Converting to numpy arrays """
+        outputs = outputs.detach().cpu().numpy()
+        targets = targets.detach().cpu().numpy()
         
         """
         MSE - Mean Squared Error Loss
