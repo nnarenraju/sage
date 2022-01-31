@@ -100,10 +100,11 @@ class BCEgw_MSEtc(LossWrapper):
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
         """
-        custom_loss = BCEgw + MSEtc
+        custom_loss = BCEgw + MSEtc # not a leaf variable
+        custom_loss = torch.tensor(custom_loss) # is a leaf variable
         # Not using the following option leads to the following error
         # RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
         # Link: https://discuss.pytorch.org/t/runtimeerror-element-0-of-variables-does-not-require-grad-and-does-not-have-a-grad-fn/11074/7
-        custom_loss.requires_grad = True
+        custom_loss.requires_grad = True # can be applied only to leaf variable
         
         return custom_loss
