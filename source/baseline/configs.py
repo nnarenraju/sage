@@ -53,7 +53,7 @@ class Baseline:
     # Seed for K-Fold shuffling
     seed = 150914
     # Folds are made by preserving the percentage of samples for each class
-    splitter = StratifiedKFold(n_splits, shuffle=True, random_state=seed)
+    splitter = None
     
     """ Dataset """
     # Dataset object (opts, quick access, read only)
@@ -81,12 +81,13 @@ class Baseline:
     optimizer_params = dict(lr=2e-4, weight_decay=1e-6)
     
     """ Scheduler """
-    scheduler = CosineAnnealingWarmRestarts
-    scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
+    scheduler = None
+    scheduler_params = dict()
     scheduler_target = None
     batch_scheduler = False
     
     """ Loss Function """
+    # Add the () as suffix to loss function, returns object instead
     loss_function = BCEgw_MSEtc()
     
     """ Evaluation Metric """
@@ -96,15 +97,9 @@ class Baseline:
     # Input to Unfy should always be a list
     # Input to transforms should be a dict
     transforms = dict(
-        train=Unify([
-            Normalise(factors=[1.0, 1.0]),
-            BandPass(lower=12, upper=512),
-        ]),
-        test=Unify([
-            Normalise(factors=[1.0, 1.0]),
-            BandPass(lower=12, upper=512),
-        ]),
-        target=None
+        train = None,
+        test = None,
+        target = None
     )
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)

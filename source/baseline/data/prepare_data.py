@@ -162,8 +162,14 @@ class DataModule:
         if cfg.debug:
             train = train.iloc[:10000]
         ## Splitting
-        # Function ensures equal ratio of all classes in each fold
-        folds = list(cfg.splitter.split(train, train['target']))
+        if cfg.splitter is not None:
+            # Function ensures equal ratio of all classes in each fold
+            folds = list(cfg.splitter.split(train, train['target']))
+        else:
+            # Splitting training and validation in 80-20 sections
+            N = len(train)
+            folds = (train[:int(0.8*N)], train[int(0.8*N):])
+            
         return (train, folds)
     
     def get_dataset_objects(cfg, train_fold, valid_fold):
