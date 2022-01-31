@@ -26,6 +26,7 @@ Documentation: NULL
 # IN-BUILT
 import os
 import shutil
+import numpy as np
 import pandas as pd
 import torch.utils.data as D
 
@@ -168,7 +169,8 @@ class DataModule:
         else:
             # Splitting training and validation in 80-20 sections
             N = len(train)
-            folds = (train[:int(0.8*N)], train[int(0.8*N):])
+            idxs = np.arange(N)
+            folds = (idxs[:int(0.8*N)], idxs[int(0.8*N):])
             
         return (train, folds)
     
