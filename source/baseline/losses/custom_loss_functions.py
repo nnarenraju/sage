@@ -77,7 +77,7 @@ class BCEgw_MSEtc(LossWrapper):
             self.pos_weight = torch.ones([1])
         
         # Creating loss function with weighted action
-        criterion = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
+        criterion = torch.nn.BCELoss(pos_weight=self.pos_weight)
         # Loss Topic: Does the given signal contain a GW or is it pure noise?
         BCEgw = criterion(outputs[:,0].to(dtype=torch.float32), targets[:,0].to(dtype=torch.float32))
         
