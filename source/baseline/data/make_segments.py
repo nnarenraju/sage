@@ -71,3 +71,6 @@ def make_segments(GPS_start_time: int,
             os.remove(output_filepath)
     
     np.savetxt(output_filepath, segments, delimiter=",", fmt="%d")
+    
+    print(segments)
+    raise
