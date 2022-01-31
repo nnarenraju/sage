@@ -101,6 +101,8 @@ class BCEgw_MSEtc(LossWrapper):
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
         """
+        print("BCE loss = {} and MSE loss = {}".format(BCEgw, MSEtc))
+        
         custom_loss = BCEgw + MSEtc # not a leaf variable
         custom_loss = torch.tensor(custom_loss) # is a leaf variable
         # Not using the following option leads to the following error

@@ -84,8 +84,12 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
       
         def training_step(self, train_batch, batch_idx):
             x, y = train_batch
+            
+            print("Input data = {}".format(x))
+            print("\n\nTarget = {}".format(y))
             # Logits are predictions
             logits = ModelClass.forward(x)
+            print("\n\nPrediction = {}".format(logits))
             # Temporary display option (sanity check)
             # print("Label = {}".format(y))
             # print("Prediction = {}".format(logits))
