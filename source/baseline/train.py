@@ -98,9 +98,16 @@ if __name__ == "__main__":
             summary(ModelClass, (2, 40960), batch_size=cfg.batch_size)
             print("")
         
-        # Optimizer and Scheduler
-        optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
-        scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
+        # Optimizer and Scheduler (Set to None if unused)
+        if cfg.optimizer is not None:
+            optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
+        else:
+            optimizer = None
+            
+        if cfg.scheduler is not None:
+            scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
+        else:
+            scheduler = None
         
         # Loss function used
         loss_function = cfg.loss_function
