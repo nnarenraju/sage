@@ -93,7 +93,7 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
             # Store average loss
             self.average_batch_loss.append(loss)
             # Manual progress report
-            if batch_idx == self.check_batch_idx:
+            if batch_idx == self.check_batch_idx and False:
                 print(f"Batch {batch_idx} - Loss={loss}")
                 if batch_idx != 0:
                     avg_loss = sum(self.average_batch_loss) / len(self.average_batch_loss)
