@@ -91,13 +91,16 @@ class BCEgw_MSEtc(LossWrapper):
         MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
         """
         prefix = (self.mse_alpha/outputs.shape[0])
-        mse_loss = sum([(targets[:,1]-outputs[:,1])/np.var(outputs[:,1])])
+        mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
         MSEtc = prefix * mse_loss
         MSEtc = torch.tensor(MSEtc, dtype=torch.float32)
         
-        print(BCEgw)
+        print(self.mse_alpha)
+        print(outputs.shape[0])
+        print((targets[:,1]-outputs[:,1])**2)
+        print(np.var(outputs[:,1]))
         print(MSEtc)
-        print(type(MSEtc))
+        
         
         """ 
         CUSTOM LOSS FUNCTION
