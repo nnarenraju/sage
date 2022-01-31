@@ -93,7 +93,7 @@ class BCEgw_MSEtc(LossWrapper):
         prefix = (self.mse_alpha/outputs.shape[0])
         mse_loss = sum([(targets[:,1]-outputs[:,1])/np.var(outputs[:,1])])
         MSEtc = prefix * mse_loss
-        MSEtc = MSEtc.to(dtype=torch.float32)
+        MSEtc = torch.tensor(MSEtc, dtype=torch.float32)
         
         print(BCEgw)
         print(MSEtc)
