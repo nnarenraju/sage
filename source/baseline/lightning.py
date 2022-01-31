@@ -122,7 +122,14 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
         def configure_optimizers(self):
             # Pass optimizer and scheduler here
             # Multiple optimizer can be used as well
-            return [optimizer], [scheduler]
+            if optimizer is not None and scheduler is not None:
+                return [optimizer], [scheduler]
+            if optimizer is None and scheduler is not None:
+                return [scheduler]
+            if optimizer is not None and scheduler is None:
+                return [optimizer]
+            if optimizer is None and scheduler is None:
+                raise NotImplementedError
     
     
     """ Create a Lightning Model """
