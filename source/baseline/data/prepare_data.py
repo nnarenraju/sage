@@ -170,8 +170,8 @@ class DataModule:
             # Splitting training and validation in 80-20 sections
             N = len(train)
             idxs = np.arange(N)
-            folds = (idxs[:int(0.8*N)], idxs[int(0.8*N):])
-            
+            folds = [(idxs[:int(0.8*N)], idxs[int(0.8*N):])]
+        
         return (train, folds)
     
     def get_dataset_objects(cfg, train_fold, valid_fold):
