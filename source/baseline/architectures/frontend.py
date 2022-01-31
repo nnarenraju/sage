@@ -187,7 +187,8 @@ class GammaModel(pl.LightningModule):
                 torch.nn.Linear(32, 16),                    #      16
                 torch.nn.Dropout(p=0.5),                    #      16
                 torch.nn.ELU(),                             #      16
-                torch.nn.Linear(16, 2)                      #       2
+                torch.nn.Linear(16, 2),                     #       2
+                torch.nn.Sigmoid()
         )
     
         # Convert network into given dtype and store in proper device

@@ -87,8 +87,8 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
             # Logits are predictions
             logits = ModelClass.forward(x)
             # Temporary display option (sanity check)
-            print("Label = {}".format(y))
-            print("Prediction = {}".format(logits))
+            # print("Label = {}".format(y))
+            # print("Prediction = {}".format(logits))
             loss = self.compute_loss(logits, y)
             # Store average loss
             self.average_batch_loss.append(loss)
@@ -102,8 +102,8 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
                     self.average_batch_loss = []
                 self.check_batch_idx += 1
                 
-            # self.log("train_loss", loss)
-            print("Training loss = {}".format(loss))
+            self.log("train_loss", loss)
+            # print("Training loss = {}".format(loss))
             return loss
         
         """
@@ -116,8 +116,8 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
             x, y = val_batch
             logits = ModelClass.forward(x)
             loss = self.compute_loss(logits, y)
-            print("Validation loss = {}".format(loss))
-            # self.log('val_loss', loss)
+            # print("Validation loss = {}".format(loss))
+            self.log('val_loss', loss)
       
         def configure_optimizers(self):
             # Pass optimizer and scheduler here
