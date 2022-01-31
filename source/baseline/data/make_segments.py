@@ -57,24 +57,13 @@ def make_segments(GPS_start_time: int,
     end_time = GPS_start_time + duration + offset
     nsegments = int((duration+offset)//segment_length)
     
-    print("duration = {}".format(duration))
-    print(f"offset = {offset}")
-    print(f"start_time = {start_time}")
-    print(f"end_time = {end_time}")
-    print(f"nsegments = {nsegments}")
-    
     # Last point will be end time (ignore)
     start_times = np.linspace(start_time, end_time, nsegments, endpoint=False)
-    print(start_times[-150:])
     gap = np.full(len(start_times[1:]), gap)*np.arange(1, len(start_times[1:])+1)
-    print(gap[-150:])
     start_times = np.concatenate(([start_times[0]], start_times[1:] + gap))
-    print(start_times[-150:])
     start_times = start_times.astype(np.int32)
-    print(start_times[-150:])
     # End-points
-    end_times = (start_times + segment_length).astype(np.int16)
-    print(end_times[-150:])
+    end_times = (start_times + segment_length).astype(np.int32)
     segments = np.column_stack((range(len(start_times)), start_times, end_times))
     # Savedata (segment.csv)
     if force:
@@ -83,6 +72,3 @@ def make_segments(GPS_start_time: int,
             os.remove(output_filepath)
     
     np.savetxt(output_filepath, segments, delimiter=",", fmt="%d")
-    
-    print(segments)
-    raise
