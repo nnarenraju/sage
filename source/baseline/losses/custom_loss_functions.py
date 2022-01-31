@@ -83,17 +83,7 @@ class BCEgw_MSEtc(LossWrapper):
         # Creating loss function with weighted action
         criterion = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
         # Loss Topic: Does the given signal contain a GW or is it pure noise?
-        print(criterion)
-        print(outputs[:,0])
-        print(outputs[:,1])
-        print(targets[:,0])
-        print(targets[:,1])
-        
-        BCEgw = criterion(outputs[:,0], targets[:,0])
-        
-        print(BCEgw)
-        print(type(BCEgw))
-        
+        BCEgw = criterion(outputs[:,0].to(dtype=torch.float32), targets[:,0].to(dtype=torch.float32))
         
         """
         MSE - Mean Squared Error Loss
@@ -103,7 +93,9 @@ class BCEgw_MSEtc(LossWrapper):
         prefix = (self.mse_alpha/outputs.shape[0])
         mse_loss = sum([(targets[:,1]-outputs[:,1])/np.var(outputs[:,1])])
         MSEtc = prefix * mse_loss
+        MSEtc = MSEtc.to(dtype=torch.float32)
         
+        print(BCEgw)
         print(MSEtc)
         print(type(MSEtc))
         
