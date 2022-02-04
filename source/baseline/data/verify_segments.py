@@ -29,6 +29,10 @@ import glob
 import h5py
 import numpy as np
 
+# NOTE: Temporary global variable to store the global absolute maximum
+abs_max_1 = 0.0
+abs_max_2 = 0.0
+
 
 def _common_(gname, gfile, check):
     # All common verifications between foreground and background files
@@ -44,6 +48,16 @@ def _common_(gname, gfile, check):
     # Noise data within each detector
     data_1 = detector_group_1[times_1[0]]
     data_2 = detector_group_2[times_2[0]]
+    
+    # NOTE: Check the absolute maximum of the given data in both detectors
+    global abs_max_1
+    global abs_max_2
+    current_max_1 = max(abs(data_1))
+    current_max_2 = max(abs(data_1))
+    if current_max_1 > abs_max_1:
+        abs_max_1 = current_max_1
+    if current_max_2 > abs_max_2:
+        abs_max_2 = current_max_2
     
     attrs = dict(gfile.attrs)
     # [7] Check dataset type of given bg file
@@ -168,6 +182,10 @@ def verify(dirs, check):
                 raise ValueError(f"Foreground file {fgname} not connected to correct bgfile!")
             # [5] Storing times to check for requested segments
             times_fg.append(segtime_fg)
+    
+    global abs_max_1
+    global abs_max_2
+    print(abs_max_1, abs_max_2)
     
     # Converting all lists to np arrays for convenience
     times_bg = np.sort(np.array(times_bg, dtype=np.int32))
