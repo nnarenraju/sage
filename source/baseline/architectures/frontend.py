@@ -239,31 +239,36 @@ class GammaComplexModel(pl.LightningModule):
         # Add the following line as last layer if softmax is needed
         # torch.nn.Softmax(dim=1) --> 2 outputs
         self.frontend = torch.nn.Sequential(                #  Shapes
-                torch.nn.BatchNorm1d(self.in_channels),     #  2x40960
-                torch.nn.Conv1d(2, 4, 64, 2),               #  4x20449
-                torch.nn.ELU(),                             #  4x20449
-                torch.nn.Conv1d(4, 4, 32, 2),               #  4x10209
-                torch.nn.MaxPool1d(4),                      #  4x 2552
-                torch.nn.ELU(),                             #  4x 2552
-                torch.nn.Conv1d(4, 8, 32, 2),               #  8x 1261
-                torch.nn.ELU(),                             #  8x 1261
-                torch.nn.Conv1d(8, 8, 16, 2),               #  8x 623
-                torch.nn.MaxPool1d(3),                      #  8x 207
-                torch.nn.ELU(),                             #  8x 207
-                torch.nn.Conv1d(8, 16, 16),                 # 16x 192
-                torch.nn.ELU(),                             # 16x 192
-                torch.nn.Conv1d(16, 16, 16),                # 16x 177
-                torch.nn.MaxPool1d(4),                      # 16x  44
-                torch.nn.ELU(),                             # 16x  44
-                torch.nn.Flatten(),                         #     704
-                torch.nn.Linear(704, 32),                   #      32
-                torch.nn.Dropout(p=0.5),                    #      32
-                torch.nn.ELU(),                             #      32
-                torch.nn.Linear(32, 16),                    #      16
-                torch.nn.Dropout(p=0.5),                    #      16
-                torch.nn.ELU(),                             #      16
-                torch.nn.Linear(16, self.out_channels),     #       2
-                torch.nn.Sigmoid()
+                torch.nn.BatchNorm1d(self.in_channels),     #  2  x 40960
+                torch.nn.Conv1d(2, 64, 256),                #  64 x 40705
+                torch.nn.SiLU(),                            #  64 x 40705
+                torch.nn.Conv1d(64, 64, 128),               #  64 x 40578
+                torch.nn.MaxPool1d(4),                      #  64 x 10144
+                torch.nn.SiLU(),                            #  64 x 10144
+                torch.nn.Conv1d(64, 32, 64),                #  32 x 10080
+                torch.nn.SiLU(),                            #  32 x 10080
+                torch.nn.Conv1d(32, 32, 64),                #  32 x 10017
+                torch.nn.MaxPool1d(3),                      #  32 x 3339
+                torch.nn.SiLU(),                            #  32 x 3339
+                torch.nn.Conv1d(32, 16, 32),                #  16 x 3308
+                torch.nn.SiLU(),                            #  16 x 3308
+                torch.nn.Conv1d(16, 16, 32),                #  16 x 3277
+                torch.nn.MaxPool1d(4),                      #  16 x 827
+                torch.nn.SiLU(),                            #  16 x 827
+                torch.nn.Flatten(),                         #       13232
+                torch.nn.Linear(13232, 512),                #       512
+                torch.nn.Dropout(p=0.5),                    #       512
+                torch.nn.SiLU(),                            #       512
+                torch.nn.Linear(512, 128),                  #       128
+                torch.nn.Dropout(p=0.5),                    #       128
+                torch.nn.SiLU(),                            #       128
+                torch.nn.Linear(128, 32),                   #       32
+                torch.nn.Dropout(p=0.5),                    #       32
+                torch.nn.SiLU(),                            #       32
+                torch.nn.Linear(32, 8),                     #       8
+                torch.nn.Dropout(p=0.5),                    #       8
+                torch.nn.SiLU(),                            #       8
+                torch.nn.Linear(8, self.out_channels),      #       2
         )
     
         # Convert network into given dtype and store in proper device
