@@ -100,10 +100,7 @@ class MLMDC1(Dataset):
         signal = np.row_stack((signal_1, signal_2)).astype(np.float32)
         
         # Target for training or testing phase
-        target = np.array(self.targets[idx]).astype(np.float32)
-        
-        # NOTE: Target changed shape to (4, 1) instead of (4, )
-        target = target.reshape(1, 1)
+        target = np.array([self.targets[idx]]).astype(np.float32)
         
         # NOTE: Commented 'tc' out for simplicity
         """
