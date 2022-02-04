@@ -103,7 +103,7 @@ class MLMDC1(Dataset):
         target = np.array(self.targets[idx]).astype(np.float32)
         
         # NOTE: Target changed shape to (4, 1) instead of (4, )
-        target = target.reshape(4, 1)
+        target = target.reshape(1, 1)
         
         # NOTE: Commented 'tc' out for simplicity
         """
