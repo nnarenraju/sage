@@ -23,8 +23,12 @@ Documentation: NULL
 
 """
 
+# BUILT-IN
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
+
+# PyCBC
+import pycbc
 
 
 """ WRAPPERS """
@@ -121,3 +125,13 @@ class BandPass(TransformWrapperPerChannel):
     
     def apply(self, y: np.ndarray, channel: int):
         return self.butter_bandpass_filter(y)
+
+class Whiten(TransformWrapperPerChannel):
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+        
+    def apply(self, y: np.ndarray, channel: int):
+        sample = [pycbc.types.TimeSeries(strain, delta_t=1.0/2048.0) for strain in y]
+        sample = [strain.whiten(20.0, 5.0, remove_corrupted=True, low_frequency_cutoff=20.0) for strain in sample]
+        sample = np.stack([strain.numpy() for strain in sample], axis=0)
+        return sample

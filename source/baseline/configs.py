@@ -34,8 +34,8 @@ from sklearn.model_selection import StratifiedKFold
 from data.datasets import MLMDC1
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
-from architectures.frontend import AlphaModel, BetaModel, GammaModel
-from data.transforms import Unify, Normalise, BandPass
+from architectures.frontend import AlphaModel, BetaModel, GammaModel, GammaComplexModel
+from data.transforms import Unify, Normalise, BandPass, Whiten
 from losses.custom_loss_functions import BCEgw_MSEtc
 
 
@@ -108,8 +108,68 @@ class Baseline:
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
     debug = False
+    
+""" MANUAL BASELINE """
+
+class ManualBaseline:
+    
+    """ Data storage """
+    name = "ManualBaseline"
+    # Directory to store output from pipeline/lightning
+    export_dir = Path("/home/nnarenraju")
+    
+    """ Dataset Splitting """
+    # Folds are made by preserving the percentage of samples for each class
+    splitter = None
+    
+    """ Dataset """
+    # Dataset object (opts, quick access, read only)
+    dataset = MLMDC1
+    dataset_params = dict()
+    
+    """ Architecture """
+    model = None
+    
+    model_params = dict(
+        # Simple NN Model
+        model_name='mlmdc_manual_example',
+        pretrained=False,
+        in_channels = 2,
+        out_channels = 1
+    )
+    
+    """ Epochs and Batches """
+    num_steps = 25000
+    num_epochs = 50
+    batch_size = 4
+    
+    """ Loss Function """
+    # Add the () as suffix to loss function, returns object instead
+    loss_function = None
+    
+    """ Data Transforms """
+    # Input to Unfy should always be a list
+    # Input to transforms should be a dict
+    transforms = dict(
+        train=Unify([
+            Normalise(factors=[1.8021542328645444e-19, 9.216145461527009e-20]),
+            Whiten(),
+        ]),
+        test=Unify([
+            Normalise(factors=[1.8021542328645444e-19, 9.216145461527009e-20]),
+            Whiten(),
+        ]),
+        target=None
+    )
+    
+    # Debugging (size: train_data = 1e4, val_data = 1e3)
+    debug = False
 
 
+
+
+
+""" CUSTOM MODELS FOR EXPERIMENTATION """
 
 class LonelyTimm:
     

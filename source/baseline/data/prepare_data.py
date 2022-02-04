@@ -240,7 +240,7 @@ class DataModule:
             train_data, batch_size=cfg.batch_size, shuffle=True,
             num_workers=0, pin_memory=False)
         valid_loader = D.DataLoader(
-            valid_data, batch_size=cfg.batch_size, shuffle=False,
+            valid_data, batch_size=cfg.batch_size, shuffle=True,
             num_workers=0, pin_memory=False)
         
         return (train_loader, valid_loader)

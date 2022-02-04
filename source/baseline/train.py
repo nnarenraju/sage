@@ -35,6 +35,7 @@ warnings.filterwarnings("ignore")
 # LOCAL
 from lightning import simple
 from data.prepare_data import DataModule as dat
+from architectures.frontend import get_sample_network
 
 
 if __name__ == "__main__":
@@ -47,6 +48,8 @@ if __name__ == "__main__":
                         help="Creates or uses a particular dataset as provided in data_configs.py")
     parser.add_argument("--inference", action='store_true',
                         help="Running the inference module using trained model")
+    parser.add_argument("--manual", action='store_true',
+                        help="Running the pipeline using manual pytorch instead of lightning")
     parser.add_argument("--summary", action='store_true',
                         help="Store model summary using pytorch_summary")
     parser.add_argument("--debug", action='store_true')
@@ -90,33 +93,49 @@ if __name__ == "__main__":
         # Get the Pytorch DataLoader objects of train and valid data
         train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
         
-        # Initialise chosen model architecture (Backend + Frontend)
-        ModelClass = cfg.model(**cfg.model_params)
         
-        # Model Summary (frontend + backend)
-        if opts.summary:
-            summary(ModelClass, (2, 40960), batch_size=cfg.batch_size)
-            print("")
-        
-        # Optimizer and Scheduler (Set to None if unused)
-        if cfg.optimizer is not None:
-            optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
-        else:
-            optimizer = None
+        if not opts.manual:
+            # Initialise chosen model architecture (Backend + Frontend)
+            ModelClass = cfg.model(**cfg.model_params)
             
-        if cfg.scheduler is not None:
-            scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
+            # Model Summary (frontend + backend)
+            if opts.summary:
+                summary(ModelClass, (2, 40960), batch_size=cfg.batch_size)
+                print("")
+            
+            # Optimizer and Scheduler (Set to None if unused)
+            if cfg.optimizer is not None:
+                optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
+            else:
+                optimizer = None
+                
+            if cfg.scheduler is not None:
+                scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
+            else:
+                scheduler = None
+            
+            # Loss function used
+            loss_function = cfg.loss_function
+            
+            # Get Lightning Classifier from lightning.py
+            model = simple(ModelClass, optimizer, scheduler, loss_function)
+            
+            # Initialise trainer
+            trainer = pl.Trainer(max_steps=cfg.num_steps, max_epochs=cfg.num_epochs)
+            
+            """ Fit """
+            trainer.fit(model, train_loader, val_loader)
+        
         else:
-            scheduler = None
-        
-        # Loss function used
-        loss_function = cfg.loss_function
-        
-        # Get Lightning Classifier from lightning.py
-        model = simple(ModelClass, optimizer, scheduler, loss_function)
-        
-        # Initialise trainer
-        trainer = pl.Trainer(max_steps=cfg.num_steps, max_epochs=cfg.num_epochs)
-        
-        """ Fit """
-        trainer.fit(model, train_loader, val_loader)
+            # Running the manual pipeline version using pure PyTorch
+            weights_path = "/home/nnarenraju/weights.pt"
+            output_dir = "/home/nnarenraju"
+            Network = get_sample_network()
+            # Model Summary (frontend + backend)
+            if opts.summary:
+                summary(Network, (2, 40960), batch_size=cfg.batch_size)
+                print("")
+                
+            Network = train(Network, train_loader, val_loader, output_dir, weights_path,
+                        batch_size=cfg.batch_size, learning_rate=5e-5,
+                        epochs=cfg.num_epochs, clip_norm=100.0, verbose=True)
