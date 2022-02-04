@@ -137,6 +137,6 @@ if __name__ == "__main__":
                 summary(Network, (2, 40960), batch_size=cfg.batch_size)
                 print("")
                 
-            Network = train(Network, train_loader, val_loader, output_dir, weights_path,
+            Network = manual_train(Network, train_loader, val_loader, output_dir, weights_path,
                         batch_size=cfg.batch_size, learning_rate=5e-5,
                         epochs=cfg.num_epochs, clip_norm=100.0, verbose=True)
