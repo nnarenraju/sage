@@ -102,6 +102,9 @@ class MLMDC1(Dataset):
         # Target for training or testing phase
         target = np.array(self.targets[idx]).astype(np.float32)
         
+        # NOTE: Target changed shape to (4, 1) instead of (4, )
+        target = target.reshape(4, 1)
+        
         # NOTE: Commented 'tc' out for simplicity
         """
         if self.training:
