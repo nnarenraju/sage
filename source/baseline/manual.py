@@ -25,8 +25,8 @@ Documentation: NULL
 
 # BUILT-IN
 import os
-import tqdm
 import torch
+from tqdm import tqdm
 
 # LOCAL
 from losses.custom_loss_functions import reg_BCELoss
