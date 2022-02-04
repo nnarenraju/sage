@@ -108,6 +108,7 @@ def train(Network, training_dataloader, validation_dataloader, output_training,
                 training_running_loss += training_loss.clone().cpu().item()
                 training_batches += 1
             
+            print("Training loss = {}".format(training_running_loss/training_batches))
             # Evaluation on the validation dataset
             Network.eval()
             with torch.no_grad():
@@ -123,6 +124,7 @@ def train(Network, training_dataloader, validation_dataloader, output_training,
                     validation_batches += 1
             # Print information on the training and validation loss in the current epoch and save current network state
             validation_loss = validation_running_loss/validation_batches
+            print("Validation Loss = {}".format(validation_loss))
             output_string = '%04i    %f    %f' % (epoch, training_running_loss/training_batches, validation_loss)
             outfile.write(output_string + '\n')
             # Save 
