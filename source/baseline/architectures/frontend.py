@@ -166,6 +166,81 @@ class GammaModel(pl.LightningModule):
         self.frontend = torch.nn.Sequential(                #  Shapes
                 torch.nn.BatchNorm1d(self.in_channels),     #  2x40960
                 torch.nn.Conv1d(2, 4, 64, 2),               #  4x20449
+                torch.nn.ReLU(),                             #  4x20449
+                torch.nn.Conv1d(4, 4, 32, 2),               #  4x10209
+                torch.nn.MaxPool1d(4),                      #  4x 2552
+                torch.nn.ReLU(),                             #  4x 2552
+                torch.nn.Conv1d(4, 8, 32, 2),               #  8x 1261
+                torch.nn.ReLU(),                             #  8x 1261
+                torch.nn.Conv1d(8, 8, 16, 2),               #  8x 623
+                torch.nn.MaxPool1d(3),                      #  8x 207
+                torch.nn.ReLU(),                             #  8x 207
+                torch.nn.Conv1d(8, 16, 16),                 # 16x 192
+                torch.nn.ReLU(),                             # 16x 192
+                torch.nn.Conv1d(16, 16, 16),                # 16x 177
+                torch.nn.MaxPool1d(4),                      # 16x  44
+                torch.nn.ReLU(),                             # 16x  44
+                torch.nn.Flatten(),                         #     704
+                torch.nn.Linear(704, 32),                   #      32
+                torch.nn.Dropout(p=0.5),                    #      32
+                torch.nn.ReLU(),                             #      32
+                torch.nn.Linear(32, 16),                    #      16
+                torch.nn.Dropout(p=0.5),                    #      16
+                torch.nn.ReLU(),                             #      16
+                torch.nn.Linear(16, self.out_channels),     #       2
+                torch.nn.Sigmoid()
+        )
+    
+        # Convert network into given dtype and store in proper device
+        self.frontend.to(dtype=data_type, device=self.store_device)
+    
+    # x.shape: (batch size, wave channel, length of wave)
+    def forward(self, x):
+        # batch_size, channel, signal_length = s.shape
+        # Simple NN frontend (no backend)
+        out = self.frontend(x)
+        return out
+    
+
+class GammaComplexModel(pl.LightningModule):
+    """
+    GammaComplex-type Model Architecture
+    
+    Description - consists of a 2-channel simple NN frontend (no backend)
+    
+    Parameters
+    ----------
+    model_name  = 'simple' : string
+        Simple NN model name for Frontend. Save model with this name as attribute.
+    pretrained  = False : Bool
+        Pretrained option for saved models (under construction!)
+        If True, weights are stored under the model_name in saved_models dir
+        If model name already exists, throws an error (safety)
+    num_classes = 1 : int
+        Number of classes to Timm Model
+        
+    """
+
+    def __init__(self, 
+                 model_name='simple', 
+                 pretrained=False,
+                 in_channels: int = 2,
+                 out_channels: int = 1,
+                 store_device='cuda:0'):
+        
+        super().__init__()
+        
+        self.model_name = model_name
+        self.pretrained = pretrained
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.store_device = store_device
+        # Initialise Frontend Model
+        # Add the following line as last layer if softmax is needed
+        # torch.nn.Softmax(dim=1) --> 2 outputs
+        self.frontend = torch.nn.Sequential(                #  Shapes
+                torch.nn.BatchNorm1d(self.in_channels),     #  2x40960
+                torch.nn.Conv1d(2, 4, 64, 2),               #  4x20449
                 torch.nn.ELU(),                             #  4x20449
                 torch.nn.Conv1d(4, 4, 32, 2),               #  4x10209
                 torch.nn.MaxPool1d(4),                      #  4x 2552
