@@ -80,7 +80,7 @@ def train(Network, training_dataloader, validation_dataloader, output_training,
 
     ### Initialize loss function, optimizer and output file
     print("Initializing loss function, optimizer and output file.")
-    loss = reg_BCELoss(dim=2)
+    loss = reg_BCELoss(dim=1)
     opt = torch.optim.Adam(Network.parameters(), lr=learning_rate)
     with open(os.path.join(output_training, 'losses.txt'), 'w') as outfile:
 
