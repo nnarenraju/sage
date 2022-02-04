@@ -100,7 +100,7 @@ class Normalise(TransformWrapperPerChannel):
 
 
 class BandPass(TransformWrapperPerChannel):
-    def __init__(self, always_apply=True, lower=32, upper=256, fs=2048, order=5):
+    def __init__(self, always_apply=True, lower=16, upper=512, fs=2048, order=5):
         super().__init__(always_apply)
         self.lower = lower
         self.upper = upper

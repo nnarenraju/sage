@@ -98,10 +98,10 @@ class Baseline:
     # Input to transforms should be a dict
     transforms = dict(
         train=Unify([
-            Normalise(factors=[1.0, 1.0]),
+            Normalise(factors=[1.8021542328645444e-19, 9.216145461527009e-20]),
         ]),
         test=Unify([
-            Normalise(factors=[1.0, 1.0]),
+            Normalise(factors=[1.8021542328645444e-19, 9.216145461527009e-20]),
         ]),
         target=None
     )
