@@ -153,6 +153,9 @@ def verify(dirs, check):
         msg += "This is asserted for metadata check. The ML pipeline can use an unequal number."
         raise ValueError(msg)
     
+    global abs_max_1
+    global abs_max_2
+    
     times_bg = []
     times_fg = []
     for n, (bgname, fgname) in enumerate(zip(bgfiles, fgfiles)):
@@ -172,7 +175,9 @@ def verify(dirs, check):
                 raise ValueError(f"Noise b/w two detectors in {bgname} is the same!")
             # [5] Storing times to check for requested segments
             times_bg.append(segtime_bg)
-            
+        
+        print(abs_max_1, abs_max_2)
+        
         with h5py.File(fgname, 'r') as fgfile:
             (signal_1, signal_2), segtime_fg = _common_(fgname, fgfile, check)
             # [4] Foregound file should be connected to the correct background file
@@ -182,9 +187,11 @@ def verify(dirs, check):
                 raise ValueError(f"Foreground file {fgname} not connected to correct bgfile!")
             # [5] Storing times to check for requested segments
             times_fg.append(segtime_fg)
+        
+        print(abs_max_1, abs_max_2)
+        
     
-    global abs_max_1
-    global abs_max_2
+    print("Final")
     print(abs_max_1, abs_max_2)
     
     # Converting all lists to np arrays for convenience
