@@ -52,8 +52,8 @@ def _common_(gname, gfile, check):
     # NOTE: Check the absolute maximum of the given data in both detectors
     global abs_max_1
     global abs_max_2
-    current_max_1 = max(abs(data_1))
-    current_max_2 = max(abs(data_1))
+    current_max_1 = np.max(np.abs(data_1))
+    current_max_2 = np.max(np.abs(data_1))
     if current_max_1 > abs_max_1:
         abs_max_1 = current_max_1
     if current_max_2 > abs_max_2:
