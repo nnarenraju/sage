@@ -53,7 +53,7 @@ def _common_(gname, gfile, check):
     global abs_max_1
     global abs_max_2
     current_max_1 = np.max(np.abs(data_1))
-    current_max_2 = np.max(np.abs(data_1))
+    current_max_2 = np.max(np.abs(data_2))
     if current_max_1 > abs_max_1:
         abs_max_1 = current_max_1
     if current_max_2 > abs_max_2:
