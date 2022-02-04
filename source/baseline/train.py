@@ -34,6 +34,7 @@ warnings.filterwarnings("ignore")
 
 # LOCAL
 from lightning import simple
+from manual import train as manual_train
 from data.prepare_data import DataModule as dat
 from architectures.frontend import get_sample_network
 
