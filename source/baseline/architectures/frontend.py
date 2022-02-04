@@ -287,7 +287,7 @@ class GammaComplexModel(pl.LightningModule):
 ### Set data type to be used
 dtype = torch.float32
 
-def get_sample_network(path=None, device='cpu'):
+def get_sample_network(path=None, device='cuda:0'):
     """Return an instance of a network.
     
     Arguments
