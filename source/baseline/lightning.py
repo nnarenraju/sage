@@ -80,6 +80,8 @@ def simple(ModelClass, optimizer, scheduler, loss_function):
             return out
         
         def compute_loss(self, logits, labels):
+            print("\n\nPrediction = {}".format(logits))
+            print("\n\nLabels = {}".format(labels))
             return loss_function(logits, labels)
       
         def training_step(self, train_batch, batch_idx):
