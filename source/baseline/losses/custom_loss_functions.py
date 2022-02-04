@@ -126,7 +126,7 @@ class reg_BCELoss(torch.nn.BCELoss):
         self.regularization_A = epsilon
         self.regularization_B = 1. - epsilon*self.regularization_dim
         
-    def forward(self, inputs, target, *args, **kwargs):
-        assert inputs.shape[-1]==self.regularization_dim
-        transformed_input = self.regularization_A + self.regularization_B*inputs
+    def forward(self, output, target, *args, **kwargs):
+        assert output.shape[-1]==self.regularization_dim
+        transformed_input = self.regularization_A + self.regularization_B*output
         return torch.nn.BCELoss.forward(self, transformed_input, target, *args, **kwargs)

@@ -327,8 +327,8 @@ def get_sample_network(path=None, device='cuda:0'):
             torch.nn.Linear(32, 16),                    #      16
             torch.nn.Dropout(p=0.5),                    #      16
             torch.nn.ReLU(),                            #      16
-            torch.nn.Linear(16, 2),                     #       2
-            torch.nn.Softmax(dim=1)                     #       2
+            torch.nn.Linear(16, 1),                     #       1
+            torch.nn.Softmax(dim=1)                     #       1
     )
     
     if path is not None:
