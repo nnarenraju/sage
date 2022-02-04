@@ -256,7 +256,7 @@ class GammaComplexModel(pl.LightningModule):
                 torch.nn.MaxPool1d(4),                      #  16 x 827
                 torch.nn.SiLU(),                            #  16 x 827
                 torch.nn.Flatten(),                         #       13232
-                torch.nn.Linear(13232, 512),                #       512
+                torch.nn.Linear(13104, 512),                #       512
                 torch.nn.Dropout(p=0.5),                    #       512
                 torch.nn.SiLU(),                            #       512
                 torch.nn.Linear(512, 128),                  #       128
