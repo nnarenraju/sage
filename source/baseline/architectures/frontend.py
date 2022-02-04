@@ -150,7 +150,7 @@ class GammaModel(pl.LightningModule):
                  model_name='simple', 
                  pretrained=False,
                  in_channels: int = 2,
-                 out_channels: int = 2,
+                 out_channels: int = 1,
                  store_device='cuda:0'):
         
         super().__init__()
@@ -187,7 +187,7 @@ class GammaModel(pl.LightningModule):
                 torch.nn.Linear(32, 16),                    #      16
                 torch.nn.Dropout(p=0.5),                    #      16
                 torch.nn.ELU(),                             #      16
-                torch.nn.Linear(16, 2),                     #       2
+                torch.nn.Linear(16, self.out_channels),     #       2
                 torch.nn.Sigmoid()
         )
     

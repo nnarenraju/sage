@@ -68,7 +68,7 @@ class Baseline:
         model_name='mlmdc_example',
         pretrained=False,
         in_channels = 2,
-        out_channels = 2
+        out_channels = 1
     )
     
     """ Epochs and Batches """
@@ -88,7 +88,7 @@ class Baseline:
     
     """ Loss Function """
     # Add the () as suffix to loss function, returns object instead
-    loss_function = BCEgw_MSEtc()
+    loss_function = nn.BCEWithLogitsLoss()
     
     """ Evaluation Metric """
     eval_metric = None
@@ -97,9 +97,13 @@ class Baseline:
     # Input to Unfy should always be a list
     # Input to transforms should be a dict
     transforms = dict(
-        train = None,
-        test = None,
-        target = None
+        train=Unify([
+            Normalise(factors=[1.0, 1.0]),
+        ]),
+        test=Unify([
+            Normalise(factors=[1.0, 1.0]),
+        ]),
+        target=None
     )
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
