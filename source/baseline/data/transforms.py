@@ -128,7 +128,11 @@ class Whiten(TransformWrapperPerChannel):
         super().__init__(always_apply)
         
     def apply(self, y: np.ndarray, channel: int):
+        print(y)
         sample = pycbc.types.TimeSeries(y, delta_t=1.0/2048.0)
-        sample = sample.whiten(20.0, 5.0, remove_corrupted=True, low_frequency_cutoff=20.0)
+        print(sample)
+        sample = sample.whiten(25.0, 5.0, remove_corrupted=True, low_frequency_cutoff=20.0)
+        print(sample)
         sample = sample.numpy()
+        print(sample)
         return sample
