@@ -63,17 +63,14 @@ class TransformWrapperPerChannel(TransformWrapper):
     
     def __call__(self, y: np.ndarray):
         channels = y.shape[0]
-        if isinstance(y, np.ndarray):
-            augmented = y.copy()
-        else:
-            # If we encounter a pytorch Tensor
-            augmented = y.clone()
+        # Store transformed array
+        augmented = []
         for channel in range(channels):
             if self.always_apply:
-                augmented[channel] = self.apply(y[channel], channel)
+                augmented.append(self.apply(y[channel], channel))
             else:
                 pass
-        return augmented
+        return np.array(augmented, dtype=np.float32)
     
 
 #########################################################################################
