@@ -55,6 +55,8 @@ def get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, data_dir)
         for psd in psds:
             with h5py.File(psd, "r") as foo:
                 # Read the data (we should only have one field "data")
+                print(foo['data'])
+                print(foo.attrs['delta_f'])
                 psd_data.append(FrequencySeries(foo['data'], delta_f=foo.attrs['delta_f']))
     
     """ Change delta_f of PSD to align with signals """
