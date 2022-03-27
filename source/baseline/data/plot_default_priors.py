@@ -59,6 +59,9 @@ def plot_priors(data_dir):
     # Plotting each prior distribution histogram
     for name in names:
         data = priors[name]
+        print(name)
+        print(data)
+        print("")
         try:
             _ = max(data)
         except:
