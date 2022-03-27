@@ -45,6 +45,7 @@ class GenerateData:
     
     # Slots magic for parameters input from data_configs.py
     __slots__ = ['dataset', 'parent_dir', 'data_dir', 'seed', 'export_dir', 'dirs',
+                 'make_dataset', 'make_module',
                  'detectors', 'psds', 'skylocation_dist', 'np_gen',
                  'psd_len', 'delta_f', 'noise_low_freq_cutoff',
                  'label_wave', 'label_noise', 'num_waveforms', 'num_noises',
