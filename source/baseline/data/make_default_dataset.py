@@ -123,9 +123,9 @@ class GenerateData:
         """ Creating required dirs """
         # Make directory structure for data storage
         self.dirs['parent'] = os.path.join(self.parent_dir, self.data_dir)
-        self.dirs['injections'] = os.path.join(self.parent_dir, "injections")
-        self.dirs['background'] = os.path.join(self.parent_dir, "background")
-        self.dirs['foreground'] = os.path.join(self.parent_dir, "foreground")
+        self.dirs['injections'] = os.path.join(self.dirs['parent'], "injections")
+        self.dirs['background'] = os.path.join(self.dirs['parent'], "background")
+        self.dirs['foreground'] = os.path.join(self.dirs['parent'], "foreground")
         
         if not os.path.exists(self.dirs['parent']):
             os.makedirs(self.dirs['parent'], exist_ok=False)
