@@ -137,7 +137,7 @@ class GenerateData:
         else:
             raise IOError("make_default_dataset: Dataset dir already exists!")
     
-    def store_ts(path, det, ts, force=False):
+    def store_ts(self, path, det, ts, force=False):
         """
         Utility function to save a time series.
         
@@ -156,10 +156,6 @@ class GenerateData:
         
         if path is None:
             return
-        
-        print(path)
-        print(det)
-        print(ts)
         
         # Saves time series in path with HDF append mode
         group = '{}/{}'.format(det, int(ts.start_time))
@@ -347,10 +343,6 @@ class GenerateData:
             # Save each sample as .hdf with appropriate attrs
             # Store the time_series using PyCBC method
             for detector, time_series in zip(self.detectors_abbr, sample):
-                print(time_series)
-                print(detector)
-                print(time_series.start_time)
-                print(store)
                 self.store_ts(store, detector, time_series)
             
             # Adding all relevant attributes
