@@ -29,18 +29,18 @@ Timeline:
     
     December (deadline 31st, 23:59 PM BST)
     --------------------------------------
-    1. Continuing Data Preparation
+    1. Continuing Data Preparation (FIN)
     2. Data Augmentation
     3. Multi-rate Sampling
     4. Use Dataset 4 (most realistic)
     5. Creating a ranking statistic
     6. Initialisation and configuration file
-    7. Training and Validation on simplest network
+    7. Training and Validation on simplest network (FIN)
     
     January (deadline 31st, 23:59 PM BST)
     -------------------------------------
-    1. Data visualisation for all input and output
-    2. Create a large dataset for training
+    1. Data visualisation for all input and output (FIN)
+    2. Create a large dataset for training (~FIN)
     3. Experiment on different architectures and models
     4. Hyper-parameter tuning
     5. Efficient parallelisation and speed
