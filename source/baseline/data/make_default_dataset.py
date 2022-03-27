@@ -97,7 +97,7 @@ class GenerateData:
         logging.info(("Generating dataset with %i injections and %i pure "
                     "noise samples") % (self.num_waveforms, self.num_noises))
         
-        self.iterable = range(1, self.num_waveforms + self.num_noises+1)
+        self.iterable = range(self.num_waveforms + self.num_noises)
         
     
         """ Generating noise function """
