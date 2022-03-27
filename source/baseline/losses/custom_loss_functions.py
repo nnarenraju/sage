@@ -30,7 +30,7 @@ import torch
 """ WRAPPERS """
 
 class LossWrapper:
-    def __init__(self, always_apply=False):
+    def __init__(self, always_apply=True):
         self.always_apply = always_apply
         
     def forward(self, outputs, targets):
@@ -114,7 +114,7 @@ class BCEgw_MSEtc(LossWrapper):
 
 class regularised_BCELoss(LossWrapper, torch.nn.BCELoss):
     
-    def __init__(self, *args, always_apply=True, epsilon=1e-6, dim=None, **kwargs):
+    def __init__(self, always_apply=True, epsilon=1e-6, dim=None, *args, **kwargs):
         LossWrapper.__init__(always_apply)
         torch.nn.BCELoss.__init__(self, *args, **kwargs)
         assert isinstance(dim, int)
