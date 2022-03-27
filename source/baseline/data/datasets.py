@@ -188,7 +188,7 @@ class MLMDC1(Dataset):
         # labels in training.hdf *ONLY* specify whether given sample is signal or not
         label_check = np.array([float(self.targets[idx]), 1.0-float(self.targets[idx])])
         # Sanity check for labels and storage
-        if label_saved != label_check:
+        if not np.allclose(label_saved, label_check):
             raise ValueError("MLMDC1 dataset: label_saved and label_check are not equal!")
         
         # Save label_saved into the target variable
