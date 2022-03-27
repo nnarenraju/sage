@@ -58,6 +58,10 @@ class GenerateData:
                  'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff']
     
     def __init__(self, **kwargs):
+        ## Get slots magic attributes via input dict (use **kwargs)
+        # This should set all slots given above
+        for key, value in kwargs.items():
+            setattr(self, key, value)
         
         """ Save dir """
         self.export_dir = ""
