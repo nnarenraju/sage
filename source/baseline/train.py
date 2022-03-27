@@ -96,33 +96,31 @@ if __name__ == "__main__":
         # Get the Pytorch DataLoader objects of train and valid data
         train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
         
+        # Initialise chosen model architecture (Backend + Frontend)
+        # Equivalent to the "network" variable in manual mode
+        ModelClass = cfg.model(**cfg.model_params)
         
-        if not opts.manual:
-            # Initialise chosen model architecture (Backend + Frontend)
-            # Equivalent to the "network" variable in manual mode
-            ModelClass = cfg.model(**cfg.model_params)
+        # Model Summary (frontend + backend)
+        if opts.summary:
+            summary(ModelClass, (2, 2048), batch_size=cfg.batch_size)
+            print("")
+        
+        # Optimizer and Scheduler (Set to None if unused)
+        if cfg.optimizer is not None:
+            optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
+        else:
+            optimizer = None
             
-            # Model Summary (frontend + backend)
-            if opts.summary:
-                summary(ModelClass, (2, 2048), batch_size=cfg.batch_size)
-                print("")
+        if cfg.scheduler is not None:
+            scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
+        else:
+            scheduler = None
+        
+        # Loss function used
+        loss_function = cfg.loss_function
+        
             
-            # Optimizer and Scheduler (Set to None if unused)
-            if cfg.optimizer is not None:
-                optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
-            else:
-                optimizer = None
-                
-            if cfg.scheduler is not None:
-                scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
-            else:
-                scheduler = None
-            
-            # Loss function used
-            loss_function = cfg.loss_function
-            
-            raise
-            
+        if opts.lightning:
             # Get Lightning Classifier from lightning.py
             model = simple(ModelClass, optimizer, scheduler, loss_function)
             
@@ -132,7 +130,14 @@ if __name__ == "__main__":
             """ Fit """
             trainer.fit(model, train_loader, val_loader)
         
-        else:
+        if opts.manual:
+            
+            for sample, label in train_loader:
+                print("sample = {}".format(sample))
+                print("label = {}".format(label))
+                print("")
+            
+            raise
             # Running the manual pipeline version using pure PyTorch
             weights_path = "/home/nnarenraju/weights.pt"
             output_dir = "/home/nnarenraju"
