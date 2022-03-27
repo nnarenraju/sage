@@ -38,8 +38,8 @@ import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.distributions, pycbc.detect
 from pycbc import distributions
 
 # LOCAL
-from mlmdc_noise_generator import NoiseGenerator
-from plot_default_priors import plot_priors
+from data.mlmdc_noise_generator import NoiseGenerator
+from data.plot_default_priors import plot_priors
 
 class GenerateData:
     

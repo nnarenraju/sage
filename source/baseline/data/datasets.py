@@ -32,8 +32,8 @@ import numpy as np
 from torch.utils.data import Dataset
 
 # LOCAL
-from snr_calculation import get_network_snr
-from plot_dataloader_unit import plot_unit
+from data.snr_calculation import get_network_snr
+from data.plot_dataloader_unit import plot_unit
 
 # Datatype for storage
 data_type=torch.float32
