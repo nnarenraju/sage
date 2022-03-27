@@ -26,6 +26,7 @@ Documentation: NULL
 # IN-BUILT
 import os
 import h5py
+import glob
 import torch
 import random
 import numpy as np
@@ -151,10 +152,11 @@ class MLMDC1(Dataset):
         """ Finding *ONE* random noise realisation for signals """
         if data_type == 'signal':
             noise_dir = os.path.join(self.data_loc, "background")
-            noise_files = os.listdir(noise_dir)
+            noise_files = glob.glob(noise_dir)
             # Pick a random noise realisation to add to the signal
             noise_data_path = random.choice(noise_files)
             # Read the noise data
+            
             noise_data_params = self._read_(noise_data_path)
             # Sanity check
             if noise_data_params[0] != 'noise':
