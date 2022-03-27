@@ -49,10 +49,11 @@ class GenerateData:
                  'psd_len', 'delta_f', 'noise_low_freq_cutoff',
                  'label_wave', 'label_noise', 'num_waveforms', 'num_noises',
                  'iterable', 'filter_duration', 'sample_rate', 'signal_low_freq_cutoff',
-                 'signal_approximant', 'reference_freq',
+                 'signal_approximant', 'reference_freq', 'detectors_abbr'
                  'save_injection_priors', 'gc_collect_frequency', 
                  'sample_save_frequency', 'signal_length', 'whiten_padding',
-                 'sample_length_in_s', 'sample_length_in_num',
+                 'sample_length_in_s', 'sample_length_in_num', 'waveform_kwargs',
+                 'psd_file_path_det1', 'psd_file_path_det2', 'noise_generator',
                  'prior_low_mass', 'prior_high_mass', 'prior_low_chirp_dist', 'prior_high_chirp_dist',
                  'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff']
     
