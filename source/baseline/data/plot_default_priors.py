@@ -54,15 +54,11 @@ def plot_priors(data_dir):
     data_path = os.path.join(data_dir, 'injections/injections.csv')
     dataset_name = os.path.normpath(data_dir).split(os.path.sep)[-1]
     priors = pd.read_csv(data_path)
-    print(priors)
     names = list(priors.columns.values)
     
     # Plotting each prior distribution histogram
     for name in names:
         data = priors[name]
-        print(name)
-        print(data)
-        print("")
         try:
             _ = max(data)
         except:

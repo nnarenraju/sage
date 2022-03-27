@@ -316,7 +316,7 @@ class GenerateData:
                     with open(inj_path, 'a', newline='') as fp:
                         writer = csv.writer(fp)
                         # Writing the fields into injections.csv
-                        if i == 1:
+                        if i == 0:
                             writer.writerow(list(_save_.keys()))
                         writer.writerow(list(_save_.values()))
                 
