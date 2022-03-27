@@ -414,7 +414,8 @@ class GenerateData:
         dataset_length = len(all_abspaths)
         ids = np.linspace(0, dataset_length, dataset_length, dtype=np.int32)
         # Get the target/label value for each data sample
-        targets = [np.array([0., 1.])]*len(noise_abspaths) + [np.array([1., 0.])]*len(signal_abspaths)
+        # These labels *ONLY* specify whether the given sample is signal or not
+        targets = [1]*len(signal_abspaths) + [0]*len(noise_abspaths)
         # Column stack (ids, path, target) for the entire dataset
         lookup = np.column_stack((ids, all_abspaths, targets))
         # Shuffle the column stack ('tc' is in ascending order, signal and noise are not shuffled)
