@@ -44,7 +44,7 @@ from data.plot_default_priors import plot_priors
 class GenerateData:
     
     # Slots magic for parameters input from data_configs.py
-    __slots__ = ['dataset', 'parent_dir', 'data_dir', 'seed', 'export_dir',
+    __slots__ = ['dataset', 'parent_dir', 'data_dir', 'seed', 'export_dir', 'dirs',
                  'detectors', 'psds', 'skylocation_dist', 'np_gen',
                  'psd_len', 'delta_f', 'noise_low_freq_cutoff',
                  'label_wave', 'label_noise', 'num_waveforms', 'num_noises',

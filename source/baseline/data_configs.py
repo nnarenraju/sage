@@ -98,7 +98,7 @@ class Default:
     """ Make """
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
-    make_dataset = False
+    make_dataset = True
     # Which module to use to create dataset
     # Here, we create a dataset using explicit pycbc functions
     make_module = make_default_dataset
