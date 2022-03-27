@@ -120,7 +120,7 @@ class Default:
     seed = 42
 
     """ Save Toggle """
-    save_injections_priors = True
+    save_injection_priors = True
     
     """ Number of samples """
     # For now, keep both values equal
