@@ -157,6 +157,10 @@ class GenerateData:
         if path is None:
             return
         
+        print(path)
+        print(det)
+        print(ts)
+        
         # Saves time series in path with HDF append mode
         group = '{}/{}'.format(det, int(ts.start_time))
         ts.save(path, group=group)
@@ -346,6 +350,7 @@ class GenerateData:
                 print(time_series)
                 print(detector)
                 print(time_series.start_time)
+                print(store)
                 self.store_ts(store, detector, time_series)
             
             # Adding all relevant attributes
