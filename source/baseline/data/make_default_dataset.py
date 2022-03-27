@@ -211,6 +211,8 @@ class GenerateData:
                 if self.dataset == 1 and psd_save_flag:
                     psd_save_flag = False
                     # Both detectors have the same PSD for dataset 1
+                    if not os.path.exists("data/psds"):
+                        os.makedirs("data/psds", exist_ok=False)
                     self.psd_file_path_det1 = os.path.abspath("data/psds/psd-aLIGOZeroDetHighPower.hdf")
                     self.psd_file_path_det2 = self.psd_file_path_det1
                     # Remove and rewrite if the PSD file already exists
