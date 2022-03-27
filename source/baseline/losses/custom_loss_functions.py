@@ -25,7 +25,6 @@ Documentation: NULL
 
 # IN-BUILT
 import torch
-import numpy as np
 
 
 """ WRAPPERS """
@@ -34,12 +33,12 @@ class LossWrapper:
     def __init__(self, always_apply=False):
         self.always_apply = always_apply
         
-    def apply(self, outputs, targets):
+    def forward(self, outputs, targets):
         raise NotImplementedError
     
     def __call__(self, outputs, targets):
         if self.always_apply:
-            return self.apply(outputs, targets)
+            return self.forward(outputs, targets)
         else:
             pass
 
@@ -54,7 +53,7 @@ class BCEgw_MSEtc(LossWrapper):
         self.mse_alpha = mse_alpha
         self.pos_weight = class_weight
         
-    def apply(self, outputs, targets):
+    def forward(self, outputs, targets):
         # BCE to check whether the signal contains GW or is pure noise
         # MSE to add soft weight to the calculation of correct 'tc'
         # Output and target contain (isGW, tc). This is not a two class problem.
@@ -113,6 +112,22 @@ class BCEgw_MSEtc(LossWrapper):
         return custom_loss
 
 
+class regularised_BCELoss(LossWrapper, torch.nn.BCELoss):
+    
+    def __init__(self, *args, always_apply=True, epsilon=1e-6, dim=None, **kwargs):
+        LossWrapper.__init__(always_apply)
+        torch.nn.BCELoss.__init__(self, *args, **kwargs)
+        assert isinstance(dim, int)
+        self.regularization_dim = dim
+        self.regularization_A = epsilon
+        self.regularization_B = 1. - epsilon*self.regularization_dim
+        
+    def forward(self, outputs, targets, *args, **kwargs):
+        assert outputs.shape[-1] == self.regularization_dim
+        transformed_input = self.regularization_A + self.regularization_B*outputs
+        return torch.nn.BCELoss.forward(self, transformed_input, targets, *args, **kwargs)
+        
+        
 
 
 """ FOR DIRECT USE ONLY, DO *NOT* USE WITH PYTORCH LIGHTNING """

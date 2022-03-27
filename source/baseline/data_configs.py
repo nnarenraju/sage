@@ -27,25 +27,30 @@ Documentation: NULL
 
 
 # LOCAL
-
+from data.make_mlmdc_dataset import make as make_mlmdc_dataset
+from data.make_default_dataset import make as make_default_dataset
 
 
 # WARNING: Removing any of the parameters present in default will result in errors.
 
 """ DEFAULT """
-class Default:
+
+class Default_MLMDC1:
     
-    """ Make or Use """
+    """ Make """
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
-    make_dataset = True
+    make_dataset = False
+    # Which module to use to create dataset
+    # Here, we use the wrapper for the MLMDC1 generate_data.py code
+    make_module = make_mlmdc_dataset
     
     """ Location """
     # Dataset location directory
     # Data storage drive or /mnt absolute path
-    parent_dir = ""
+    parent_dir = "/data/wiay/nnarenraju"
     # Dataset directory within parent_dir
-    data_dir = "dataset_0"
+    data_dir = "dataset_mlmdc_<size>_20s_D1"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -86,3 +91,79 @@ class Default:
     # If we request 200s, we obtain the subset of segments required to produce that 
     # from segments.csv. So, we obtain 10 segments, each with one signal.
     ninjections = 100
+
+
+class Default:
+    
+    """ Make """
+    # if True, a new dataset is created based on the options below
+    # else, searches for existing dataset located at os.join(parent_dir, data_dir)
+    make_dataset = False
+    # Which module to use to create dataset
+    # Here, we create a dataset using explicit pycbc functions
+    make_module = make_default_dataset
+    
+    """ Location (these params used if make_dataset == False, as search loc) """
+    # Dataset location directory
+    # Data storage drive or /mnt absolute path
+    parent_dir = "/data/wiay/nnarenraju"
+    # Dataset directory within parent_dir
+    data_dir = "dataset_closest_1e4_1s_D1"
+    
+    """ Basic dataset options """
+    # These options are used by generate_data.py
+    # Type of dataset (1, 2, 3 or 4)
+    # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
+    dataset = 1
+    # Random seed provided to generate_data script
+    # This will be unique and secret for the testing set
+    seed = 42
+
+    """ Save Toggle """
+    save_injections_priors = True
+    
+    """ Number of samples """
+    # For now, keep both values equal
+    num_waveforms = 10000
+    num_noises = 10000
+    
+    """ Save frequency """
+    # Save every 'n' number of iterations
+    gc_collect_frequency = 1
+    ## this param used if make_dataset == False
+    sample_save_frequency = 1000
+    
+    """ Signal Params """
+    sample_rate = 2048. # Hz
+    signal_length = 1.0  # seconds
+    whiten_padding = 0.25 # seconds (padding/2.0 on each side of signal_length)
+    sample_length_in_s = signal_length + whiten_padding # seconds
+    sample_length_in_num = round(sample_length_in_s * sample_rate)
+    
+    signal_low_freq_cutoff = 20.0 # Hz
+    signal_approximant = 'IMRPhenomXPHM'
+    reference_freq = 20.0 # Hz
+    
+    prior_low_mass = 10.0 # Msun
+    prior_high_mass = 50.0 # Msun
+    prior_low_chirp_dist = 130.0
+    prior_high_chirp_dist = 350.0
+    
+    tc_inject_lower = 0.5 # seconds
+    tc_inject_upper = 0.7 # seconds
+    
+    """ PSD Params """
+    noise_low_freq_cutoff = 15.0 # Hz
+    noise_high_freq_cutoff = 1024.8 # Hz
+    delta_f = 1./sample_length_in_s
+    psd_len = round(noise_high_freq_cutoff/delta_f)
+    
+    """ generate_data.py Noise Params (if used) """
+    # Only used in dataset 2 and 3
+    # TODO: Not implemented yet. Do not use.
+    # if use_example_psd == False
+    filter_duration = 128.
+    
+    
+    
+    

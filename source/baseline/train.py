@@ -49,8 +49,10 @@ if __name__ == "__main__":
                         help="Creates or uses a particular dataset as provided in data_configs.py")
     parser.add_argument("--inference", action='store_true',
                         help="Running the inference module using trained model")
+    parser.add_argument("--lightning", action='store_true',
+                        help="Running the pipeline using PyTorch Lightning")
     parser.add_argument("--manual", action='store_true',
-                        help="Running the pipeline using manual pytorch instead of lightning")
+                        help="Running the pipeline using manual PyTorch")
     parser.add_argument("--summary", action='store_true',
                         help="Store model summary using pytorch_summary")
     parser.add_argument("--debug", action='store_true')
@@ -89,7 +91,7 @@ if __name__ == "__main__":
         val_fold = train.iloc[val_idx]
 
         # Get the dataset objects for training and validation
-        train_data, val_data = dat.get_dataset_objects(cfg, train_fold, val_fold)
+        train_data, val_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
         
         # Get the Pytorch DataLoader objects of train and valid data
         train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
@@ -97,11 +99,12 @@ if __name__ == "__main__":
         
         if not opts.manual:
             # Initialise chosen model architecture (Backend + Frontend)
+            # Equivalent to the "network" variable in manual mode
             ModelClass = cfg.model(**cfg.model_params)
             
             # Model Summary (frontend + backend)
             if opts.summary:
-                summary(ModelClass, (2, 40960), batch_size=cfg.batch_size)
+                summary(ModelClass, (2, 2048), batch_size=cfg.batch_size)
                 print("")
             
             # Optimizer and Scheduler (Set to None if unused)
@@ -117,6 +120,8 @@ if __name__ == "__main__":
             
             # Loss function used
             loss_function = cfg.loss_function
+            
+            raise
             
             # Get Lightning Classifier from lightning.py
             model = simple(ModelClass, optimizer, scheduler, loss_function)

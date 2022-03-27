@@ -34,25 +34,27 @@ from sklearn.model_selection import StratifiedKFold
 from data.datasets import MLMDC1
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
-from architectures.frontend import AlphaModel, BetaModel, GammaModel, GammaComplexModel
+from architectures.frontend import AlphaModel, BetaModel, GammaModel
 from data.transforms import Unify, Normalise, BandPass, Whiten
-from losses.custom_loss_functions import BCEgw_MSEtc
+from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 
 
-""" DEFAULT """
+""" DEFAULT (Lightning Baseline)"""
+
 class Baseline:
     
     """ Data storage """
     name = "Baseline"
     # Directory to store output from pipeline/lightning
-    export_dir = Path("/home/nnarenraju")
+    export_dir = Path("/home/nnarenraju") / name
     
     """ Dataset Splitting """
     # Number of folds (must be at least 2, default = 5)
     n_splits = 2
     # Seed for K-Fold shuffling
-    seed = 150914
+    seed = 42
     # Folds are made by preserving the percentage of samples for each class
+    # If set to None, dataset is split into 80-20 ratio for training and validation by default
     splitter = None
     
     """ Dataset """
@@ -68,17 +70,17 @@ class Baseline:
         model_name='mlmdc_example',
         pretrained=False,
         in_channels = 2,
-        out_channels = 1
+        out_channels = 2
     )
     
     """ Epochs and Batches """
     num_steps = 25000
-    num_epochs = 50
-    batch_size = 4
+    num_epochs = 25
+    batch_size = 100
     
     """ Optimizer """
     optimizer = optim.Adam
-    optimizer_params = dict(lr=2e-4, weight_decay=1e-6)
+    optimizer_params = dict(lr=5e-5, weight_decay=1e-6)
     
     """ Scheduler """
     scheduler = None
@@ -88,7 +90,7 @@ class Baseline:
     
     """ Loss Function """
     # Add the () as suffix to loss function, returns object instead
-    loss_function = nn.BCEWithLogitsLoss()
+    loss_function = regularised_BCELoss()
     
     """ Evaluation Metric """
     eval_metric = None
@@ -97,17 +99,14 @@ class Baseline:
     # Input to Unfy should always be a list
     # Input to transforms should be a dict
     transforms = dict(
-        train=Unify([
-            Normalise(factors=[1.8021542328645444e-19, 9.216145461527009e-20]),
-        ]),
-        test=Unify([
-            Normalise(factors=[1.8021542328645444e-19, 9.216145461527009e-20]),
-        ]),
+        train=None,
+        test=None,
         target=None
     )
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
     debug = False
+    
     
 """ MANUAL BASELINE """
 
@@ -115,7 +114,7 @@ class ManualBaseline:
     
     """ Data storage """
     name = "ManualBaseline"
-    # Directory to store output from pipeline/lightning
+    # Directory to store output from pipeline
     export_dir = Path("/home/nnarenraju")
     
     """ Dataset Splitting """
@@ -162,11 +161,10 @@ class ManualBaseline:
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
     debug = False
-
-
-
-
-
+    
+    
+    
+    
 """ CUSTOM MODELS FOR EXPERIMENTATION """
 
 class LonelyTimm:
