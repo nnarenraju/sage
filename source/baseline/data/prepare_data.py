@@ -33,7 +33,9 @@ import torch.utils.data as D
 # LOCAL
 from configs import *
 from data_configs import *
-from data.make_dataset import make as make_dataset
+from data.make_mlmdc_dataset import make as make_mlmdc_dataset
+from data.make_default_dataset import make as make_defualt_dataset
+
 
 class DataModule:
     """
@@ -71,7 +73,7 @@ class DataModule:
         # cfg contains the model class (see config.py)
         cfg = eval(opts.config)
         # Results directory (preferred: /mnt/nnarenraju)
-        cfg.export_dir.mkdir(parents=True, exist_ok=True)
+        cfg.export_dir.mkdir(parents=True, exist_ok=False)
         return cfg
     
     def configure_dataset(opts):
@@ -114,14 +116,16 @@ class DataModule:
         None.
     
         """
-        # TODO: A testing dataset should also be created in a similar format
         
         # Getting the attributes of data_config class as dict
         dc_attrs = {key:value for key, value in cfg.__dict__.items() if not key.startswith('__') and not callable(key)}
         
+        # Set "make_dataset" to the appropriate method
+        make_module = dc_attrs['make_module']
+        
         # Training data
         if dc_attrs['make_dataset']:
-            make_dataset(dc_attrs, export_dir)
+            make_module(dc_attrs, export_dir)
         else:
             # Check if dataset already exists
             # If it does, check if training.hdf exists within it and save in export dir
@@ -131,8 +135,11 @@ class DataModule:
                 if os.path.isfile(check_file):
                     # Move the training.hdf to export_dir for pipeline
                     shutil.copy(check_file, export_dir)
+            else:
+                raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
         
         # Testing data
+        # TODO: A testing dataset should also be created in a similar format
         # Under construction!
             
     def get_metadata(cfg):
@@ -155,26 +162,27 @@ class DataModule:
             
         """
         
-        # Using a dask Dataframe for larger CSV files
+        # Using a dask Dataframe for larger CSV files (if using)
         train = pd.read_hdf(os.path.join(cfg.export_dir, "training.hdf"), 'lookup')
         # TODO: Do the same prodecure for testing dataset. Does not require splitting.
         # Under construction!
         # if debug, use a data subset
         if cfg.debug:
-            train = train.iloc[:10000]
+            train = train.iloc[:1000]
         ## Splitting
         if cfg.splitter is not None:
             # Function ensures equal ratio of all classes in each fold
             folds = list(cfg.splitter.split(train, train['target']))
         else:
             # Splitting training and validation in 80-20 sections
+            # This essentially has all the data in 1 fold
             N = len(train)
             idxs = np.arange(N)
             folds = [(idxs[:int(0.8*N)], idxs[int(0.8*N):])]
         
         return (train, folds)
     
-    def get_dataset_objects(cfg, train_fold, valid_fold):
+    def get_dataset_objects(cfg, data_cfg, train_fold, valid_fold):
         """
         Initialise Training/Validation/Testing Dataset
         
@@ -199,17 +207,21 @@ class DataModule:
         valid_dataset : map-style dataset object
         
         """
-        # TODO: Dataset object needs to be manipulated to handle the hdf formats for foreground
+        
+        data_loc = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+        save_freq = data_cfg.sample_save_frequency
         
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
-                training = True, **cfg.dataset_params)
+                training = True, data_loc=data_loc, sample_save_frequency=save_freq,
+                **cfg.dataset_params)
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
                 transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
-                training=True, **cfg.dataset_params)
+                training=True, data_loc=data_loc, sample_save_frequency=save_freq,
+                **cfg.dataset_params)
         
         return (train_dataset, valid_dataset)
     

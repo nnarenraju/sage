@@ -24,10 +24,16 @@ Documentation: NULL
 """
 
 # IN-BUILT
+import os
 import h5py
 import torch
+import random
 import numpy as np
 from torch.utils.data import Dataset
+
+# LOCAL
+from snr_calculation import get_network_snr
+from plot_dataloader_unit import plot_unit
 
 # Datatype for storage
 data_type=torch.float32
@@ -40,7 +46,8 @@ class MLMDC1(Dataset):
     """
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
-                 training=False, testing=False, store_device='cuda:0', train_device='cuda:0'):
+                 training=False, testing=False, store_device='cpu', train_device='cpu',
+                 data_loc="", sample_save_frequency=None):
         
         self.data_paths = data_paths
         self.targets = targets
@@ -50,19 +57,29 @@ class MLMDC1(Dataset):
         self.testing = testing
         self.store_device = store_device
         self.train_device = train_device
+        self.data_loc = data_loc
+        
+        # Saving frequency with idx plotting
+        # TODO: Add compatibility for using cfg.splitter with K-folds
+        if sample_save_frequency == None:
+            self.sample_save_frequency = int(len(self.data_paths)/100.0)
+        else:
+            self.sample_save_frequency = sample_save_frequency
         
         if training:
             assert testing == False
         if testing:
             assert training == False
         if not training and not testing:
-            raise ValueError("Neither training or testing phase chosen for dataset class.")
+            raise ValueError("Neither training or testing phase chosen for dataset class. Bruh?")
+
 
     def __len__(self):
-        return len(self.targets)
+        return len(self.data_paths)
+
     
-    def __getitem__(self, idx):
-        data_path = self.data_paths[idx]
+    def _read_(self, data_path):
+        """ Read sample and return necessary training params """
         with h5py.File(data_path, "r") as gfile:
             ## Reading all data parameters
             # Detectors
@@ -76,49 +93,142 @@ class MLMDC1(Dataset):
             # Noise data within each detector
             data_1 = detector_group_1[times_1[0]]
             data_2 = detector_group_2[times_2[0]]
-            # Convert both data segments into numpy arrays
-            signal_1 = np.zeros(data_1.shape)
-            signal_2 = np.zeros(data_2.shape)
-            data_1.read_direct(signal_1)
-            data_2.read_direct(signal_2)
+            # Stack the signals together
+            signals = np.stack([data_1, data_2], axis=0)
             
-            # Get the 'tc' attribute from the foreground file IF in training phase
-            if self.training:
-                attrs = dict(gfile.attrs)
-                try:
-                    tc = attrs['tc']
-                    # Normalise 'tc' such that it is always b/w 0 and 1
-                    start_time = attrs['start_time']
-                    # NOTE: For training, we assume that global start time is always 0.0
-                    # Normalisation (Subtract start_time from 'tc' and normalise wrt duration)
-                    # NOTE: Also assuming a constant 20.0 second segment for all training data
-                    # Depending on llimit and ulimit for 'tc', the value should be ~[0.6, 0.9]
-                    tc = (tc - start_time) / 20.0
-                except:
-                    tc = 0.0
+            # Get the target variable from HDF5 attribute
+            attrs = dict(gfile.attrs)
+            label_saved = attrs['label']
             
-        signal = np.row_stack((signal_1, signal_2)).astype(np.float32)
+            # if the sample is pure noise
+            if label_saved == np.array([0., 1.]):
+                sample_rate = attrs['sample_rate']
+                # *Only* noise files have these attributes
+                noise_low_freq_cutoff = attrs['noise_low_freq_cutoff']
+                psd_1 = attrs['psd_file_path_det1']
+                psd_2 = attrs['psd_file_path_det2']
+            
+            # if the sample is pure signal
+            if label_saved == np.array([1., 0.]):
+                m1 = attrs['mass_1']
+                m2 = attrs['mass_2']
+            
+            # Use Normalised 'tc' such that it is always b/w 0 and 1
+            # if place_tc = [0.5, 0.7]s in a 1.0 second sample
+            # then normalised tc will be (place_tc-0.5)/(0.7-0.5)
+            # tc is the GPS time in O3 era when injection is made
+            tc = attrs['tc']
+            normalised_tc = attrs['normalised_tc']
         
-        # Target for training or testing phase
-        target = np.array([self.targets[idx]]).astype(np.float32)
+        # Return necessary params
+        if label_saved == np.array([1., 0.]): # pure signal
+            return ('signal', signals, label_saved, tc, normalised_tc, m1, m2)
+        elif label_saved == np.array([0., 1.]): # pure noise
+            return ('noise', signals, label_saved, sample_rate, noise_low_freq_cutoff, 
+                    psd_1, psd_2, tc, normalised_tc)
+        else:
+            raise ValueError("MLMDC1 dataset: sample label is not one of (1., 0.), (0., 1.)")
+    
+    
+    def __getitem__(self, idx):
         
-        # NOTE: Commented 'tc' out for simplicity
-        """
-        if self.training:
-            target = np.column_stack((target, tc))[0]
-        """
+        data_path = self.data_paths[idx]
         
+        """ Read the sample """
+        # check whether the sample is noise/signal for adding random noise realisation
+        data_params = self._read_(data_path)
+        data_type = data_params[0]
+        
+        # Get sample params
+        if data_type == 'signal':
+            _, signals, label_saved, tc, normalised_tc, m1, m2 = data_params
+        elif data_type == 'noise':
+            _, noise, label_saved, sample_rate, noise_low_freq_cutoff, \
+            psd_1, psd_2, tc, normalised_tc = data_params
+            # Concat psds
+            psds = [psd_1, psd_2]
+        
+        """ Finding *ONE* random noise realisation for signals """
+        if data_type == 'signal':
+            noise_dir = os.path.join(self.data_loc, "background")
+            noise_files = os.listdir(noise_dir)
+            # Pick a random noise realisation to add to the signal
+            noise_data_path = random.choice(noise_files)
+            # Read the noise data
+            noise_data_params = self._read_(noise_data_path)
+            # Sanity check
+            if noise_data_params[0] != 'noise':
+                raise ValueError("MLMDC1 dataset: random noise path did not return noise file!")
+            
+            # Extracting the noise params
+            _, noise, _, sample_rate, noise_low_freq_cutoff, psd_1, psd_2, _, _ = noise_data_params
+            # Concat PSD paths
+            psds = [psd_1, psd_2]
+        
+            ############################################################################
+            # For 'N' random noise realisations:
+            #     If we need 'n' random noise realisation for each signal, then
+            #     duplicate the signal data_paths in training.hdf 'n' times.
+            #     Each of these duplicates will be assigned a random noise path and
+            #     thus can be considered an entirely new signal.
+            ############################################################################
+        
+            """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
+            network_snr = get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, self.data_loc)
+            
+            """ Adding noise to signals """
+            raw_sample = noise + signals
+        
+        else:
+            raw_sample = noise
+            
+        
+        """ Target """
+        # Target for training or testing phase (obtained from training.hdf)
+        label_check = self.targets[idx]
+        # Sanity check for labels and storage
+        if label_saved != label_check:
+            raise ValueError("MLMDC1 dataset: label_saved and label_check are not equal!")
+        
+        # Save label_saved into the target variable
+        # Both label_saved and label_check should be a numpy array
+        target = label_saved.astype(np.float64)
+        # Concatenating the normalised_tc within the target variable
+        target = np.append(target, normalised_tc)
+        ## Target should look like (1., 0., 0.567) for signal
+        ## Target should look like (0., 1., -1.0) for noise
+        
+        
+        """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
-            signal = self.transforms(signal)
+            sample = self.transforms(raw_sample, psds)
         if self.target_transforms:
             target = self.target_transforms(target)
         
+        
+        """ Plotting idx data (if flag is set to True) """
+        if data_type == 'signal' and idx % self.sample_save_frequency == 0:
+            # Input parameters
+            pure_signal = signals
+            pure_noise = noise
+            noisy_signal = raw_sample
+            trans_pure_signal = self.transforms(pure_signal, psds)
+            trans_noisy_signal = sample
+            save_path = self.data_loc
+            data_dir = os.path.normpath(save_path).split(os.path.sep)[-1]
+            # Plotting unit data
+            plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_noisy_signal,
+                      m1, m2, network_snr, sample_rate, save_path, data_dir, idx)
+        
+        
+        """ Tensorification and Device Compatibility """
         # Convert signal/target to Tensor objects
-        signal = torch.from_numpy(signal)
+        sample = torch.from_numpy(sample)
         target = torch.from_numpy(target)
         # Set the device and dtype
-        signal = signal.to(dtype=data_type, device=self.train_device)
+        sample = sample.to(dtype=data_type, device=self.train_device)
         target = target.to(dtype=data_type, device=self.train_device)
+        
         # Return as tuple for immutability
-        return (signal, target)
+        return (sample, target)

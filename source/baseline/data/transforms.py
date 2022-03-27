@@ -24,11 +24,13 @@ Documentation: NULL
 """
 
 # BUILT-IN
+import h5py
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
 # PyCBC
-import pycbc
+from pycbc.psd import inverse_spectrum_truncation, interpolate
+from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
 
 
 """ WRAPPERS """
@@ -37,48 +39,45 @@ class Unify:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray):
-        for trns in self.transforms:
-            y = trns(y)
+    def __call__(self, y: np.ndarray, psds=None):
+        for transform in self.transforms:
+            y = transform(y, psds)
         return y
     
 
 class TransformWrapper:
-    def __init__(self, always_apply=False):
+    def __init__(self, always_apply=True):
         self.always_apply = always_apply
-        
-    def apply(self, y: np.ndarray):
-        raise NotImplementedError
     
-    def __call__(self, y: np.ndarray):
+    def __call__(self, y: np.ndarray, psds=None):
         if self.always_apply:
-            return self.apply(y)
+            return self.apply(y, psds)
         else:
             pass
 
 
 class TransformWrapperPerChannel(TransformWrapper):
-    def __init__(self, always_apply=False):
+    def __init__(self, always_apply=True):
         super().__init__(always_apply=always_apply)
     
-    def __call__(self, y: np.ndarray):
+    def __call__(self, y: np.ndarray, psds=None):
         channels = y.shape[0]
         # Store transformed array
         augmented = []
         for channel in range(channels):
             if self.always_apply:
-                augmented.append(self.apply(y[channel], channel))
+                augmented.append(self.apply(y[channel], channel, psds[channel]))
             else:
                 pass
-        return np.array(augmented, dtype=np.float32)
+        return np.array(augmented, dtype=np.float64)
     
 
 #########################################################################################
 #                             Transforms & their Functionality
-# [0] Buffer - absolutely nothing, say it again y'all
-# [1] Normalise
-# [2] BandPass
-#
+# [0] Buffer - Absolutely nothing, say it again y'all
+# [1] Normalise - Normalisation of each sample wrt entire dataset
+# [2] BandPass - Butter bandpass filter. Uses sosfiltfilt function for stability.
+# [3] Whitening - PyCBC whitening function. PSD input required to whiten.
 #
 #########################################################################################
 
@@ -86,7 +85,7 @@ class Buffer(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, channel: int):
+    def apply(self, y: np.ndarray, psds=None):
         return y
 
 
@@ -96,7 +95,7 @@ class Normalise(TransformWrapperPerChannel):
         assert len(factors) == 2
         self.factors = factors
 
-    def apply(self, y: np.ndarray, channel: int):
+    def apply(self, y: np.ndarray, channel: int, psd=None):
         return y / self.factors[channel]
 
 
@@ -120,19 +119,90 @@ class BandPass(TransformWrapperPerChannel):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, channel: int):
+    def apply(self, y: np.ndarray, channel: int, psd=None):
         return self.butter_bandpass_filter(y)
 
+
 class Whiten(TransformWrapperPerChannel):
-    def __init__(self, always_apply=True):
+    def __init__(self, always_apply=True, max_filter_duration=None, trunc_method='hann',
+                 remove_corrupted=True, low_frequency_cutoff=None, sample_rate=None):
         super().__init__(always_apply)
+        self.max_filter_duration = max_filter_duration
+        self.trunc_method = trunc_method
+        self.remove_corrupted = remove_corrupted
+        self.low_frequency_cutoff = low_frequency_cutoff
+        self.sample_rate = sample_rate
         
-    def apply(self, y: np.ndarray, channel: int):
-        print(y)
-        sample = pycbc.types.TimeSeries(y, delta_t=1.0/2048.0)
-        print(sample)
-        sample = sample.whiten(20.0, 5.0, remove_corrupted=True, low_frequency_cutoff=20.0)
-        print(sample)
-        sample = sample.numpy()
-        print(sample)
-        return sample
+    def whiten(self, signal, psd):
+        """
+        Return a whitened time series
+
+        Parameters
+        ----------
+        signal : time_series object
+            TimeSeries object of the sample
+        psd : frequency_series
+            PSD used to create the noise_sample
+            For dataset 2 & 3, separate file paths for each detector would be given.
+            These files are read and passed as frequency_series objects to psd
+        max_filter_duration : int
+            Maximum length of the time-domain filter in seconds.
+        trunc_method : {None, 'hann'}
+            Function used for truncating the time-domain filter.
+            None produces a hard truncation at `max_filter_len`.
+        remove_corrupted : {True, boolean}
+            If True, the region of the time series corrupted by the whitening
+            is excised before returning. If false, the corrupted regions
+            are not excised and the full time series is returned.
+        low_frequency_cutoff : {None, float}
+            Low frequency cutoff to pass to the inverse spectrum truncation.
+            This should be matched to a known low frequency cutoff of the
+            data if there is one.
+
+        Returns
+        -------
+        whitened_data : TimeSeries
+            The whitened time series
+        
+        """
+        
+        max_filter_len = int(round(self.max_filter_duration * self.sample_rate))
+        
+        """ Manipulate PSD for usage in whitening """
+        # Calculating delta_f of signal and providing that to the PSD interpolation method
+        sample_length_in_s = len(signal)/self.sample_rate
+        delta_f = 1./sample_length_in_s
+        # Interpolate the PSD to the required delta_f
+        psd = interpolate(psd, delta_f)
+        
+        # Interpolate and smooth to the desired corruption length
+        psd = inverse_spectrum_truncation(psd,
+                                          max_filter_len=max_filter_len,
+                                          low_frequency_cutoff=self.low_frequency_cutoff,
+                                          trunc_method=self.trunc_method)
+        
+        """ Whitening """
+        # Whiten the data by the asd
+        white = (signal.to_frequencyseries() / psd**0.5).to_timeseries()
+
+        if self.remove_corrupted:
+            white = white[int(max_filter_len/2):int(len(self)-max_filter_len/2)]
+
+        return white
+        
+    def apply(self, y: np.ndarray, channel: int, psd=None):
+        # Convert signal to TimeSeries object
+        signal = TimeSeries(y, delta_t=1./self.sample_rate)
+        # Read the PSD from the given psd_file_path
+        try:
+            # This should load the PSD as a FrequencySeries object with delta_f assigned
+            psd_data = load_frequencyseries(psd)
+        except:
+            with h5py.File(psd, "r") as foo:
+                # Read the data (we should only have one field "data")
+                psd_data = FrequencySeries(foo['data'], delta_f=foo.attrs['delta_f'])
+        
+        # Whiten
+        whitened_sample = self.whiten(signal, psd_data)
+        
+        return whitened_sample
