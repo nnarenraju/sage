@@ -343,6 +343,10 @@ class GenerateData:
             # Save each sample as .hdf with appropriate attrs
             # Store the time_series using PyCBC method
             for detector, time_series in zip(self.detectors_abbr, sample):
+                print(time_series)
+                print(detector)
+                print(time_series.start_time)
+                raise
                 self.store_ts(store, detector, time_series)
             
             # Adding all relevant attributes
