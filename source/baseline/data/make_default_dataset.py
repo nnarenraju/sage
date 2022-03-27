@@ -49,7 +49,7 @@ class GenerateData:
                  'psd_len', 'delta_f', 'noise_low_freq_cutoff',
                  'label_wave', 'label_noise', 'num_waveforms', 'num_noises',
                  'iterable', 'filter_duration', 'sample_rate', 'signal_low_freq_cutoff',
-                 'signal_approximant', 'reference_freq', 'detectors_abbr'
+                 'signal_approximant', 'reference_freq', 'detectors_abbr',
                  'save_injection_priors', 'gc_collect_frequency', 
                  'sample_save_frequency', 'signal_length', 'whiten_padding',
                  'sample_length_in_s', 'sample_length_in_num', 'waveform_kwargs',
