@@ -101,7 +101,7 @@ class MLMDC1(Dataset):
             label_saved = attrs['label']
             
             # if the sample is pure noise
-            if label_saved == np.array([0., 1.]):
+            if np.allclose(label_saved, np.array([0., 1.])):
                 sample_rate = attrs['sample_rate']
                 # *Only* noise files have these attributes
                 noise_low_freq_cutoff = attrs['noise_low_freq_cutoff']
@@ -109,7 +109,7 @@ class MLMDC1(Dataset):
                 psd_2 = attrs['psd_file_path_det2']
             
             # if the sample is pure signal
-            if label_saved == np.array([1., 0.]):
+            if np.allclose(label_saved, np.array([1., 0.])):
                 m1 = attrs['mass_1']
                 m2 = attrs['mass_2']
             
@@ -121,9 +121,9 @@ class MLMDC1(Dataset):
             normalised_tc = attrs['normalised_tc']
         
         # Return necessary params
-        if label_saved == np.array([1., 0.]): # pure signal
+        if np.allclose(label_saved, np.array([1., 0.])): # pure signal
             return ('signal', signals, label_saved, tc, normalised_tc, m1, m2)
-        elif label_saved == np.array([0., 1.]): # pure noise
+        elif np.allclose(label_saved, np.array([0., 1.])): # pure noise
             return ('noise', signals, label_saved, sample_rate, noise_low_freq_cutoff, 
                     psd_1, psd_2, tc, normalised_tc)
         else:
