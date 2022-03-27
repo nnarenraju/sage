@@ -352,7 +352,7 @@ class GenerateData:
                 fp.attrs['seed'] = self.seed
                 fp.attrs['sample_rate'] = self.sample_rate
                 fp.attrs['sample_length_in_s'] = self.sample_length_in_s
-                fp.attrs['detectors'] = self.detectors
+                fp.attrs['detectors'] = self.detectors_abbr
                 # Common training parameter
                 fp.attrs['label'] = label
                 
