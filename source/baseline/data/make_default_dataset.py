@@ -469,4 +469,4 @@ def make(slots_magic_params, export_dir):
     # Make dataset lookup table
     gd.make_training_lookup()
     # Making the prior distribution plots
-    plot_priors(gc.dirs['parent'])
+    plot_priors(gd.dirs['parent'])
