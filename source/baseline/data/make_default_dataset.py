@@ -157,9 +157,8 @@ class GenerateData:
         if path is None:
             return
         
-        print(f"{ts.start_time}")
         # Saves time series in path with HDF append mode
-        group = f'{det}/{int(ts.start_time)}'
+        group = '{}/{}'.format(det, int(ts.start_time))
         ts.save(path, group=group)
     
     def generate_dataset(self):
