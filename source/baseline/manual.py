@@ -261,7 +261,8 @@ def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, v
             
             """ Save the best weights (if global loss reduces) """
             if validation_loss < best_loss:
-                torch.save(Network.state_dict(), cfg.model_params['weights_path'])
+                weights_save_path = os.path.join(cfg.export_dir, cfg.model_params['weights_path'])
+                torch.save(Network.state_dict(), weights_save_path)
                 best_loss = validation_loss
 
 
