@@ -89,10 +89,10 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
     
     # Input is a signal (pred_prob_tp)
     if vlabels[0] == 1:
-        save_data([voutput_0.cpu().detach().numpy()], save_tp)
+        save_data(voutput_0.cpu().detach().numpy().tolist(), save_tp)
     # Input is noise (pred_prob_tn)
     if vlabels[1] == 1:
-        save_data([voutput_0.cpu().detach().numpy()], save_tn)
+        save_data(voutput_0.cpu().detach().numpy().tolist(), save_tn)
 
 
 def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
