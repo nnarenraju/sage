@@ -90,7 +90,7 @@ class Baseline:
     
     """ Loss Function """
     # Add the () as suffix to loss function, returns object instead
-    loss_function = regularised_BCELoss()
+    loss_function = BCEgw_MSEtc()
     
     """ Evaluation Metric """
     eval_metric = None
