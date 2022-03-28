@@ -187,7 +187,7 @@ class Whiten(TransformWrapperPerChannel):
         white = (signal.to_frequencyseries() / psd**0.5).to_timeseries()
 
         if self.remove_corrupted:
-            white = white[int(max_filter_len/2):int(len(self)-max_filter_len/2)]
+            white = white[int(max_filter_len/2):int(len(signal)-max_filter_len/2)]
 
         return white
         
