@@ -54,7 +54,7 @@ def get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, data_dir)
     except:
         psd_data = []
         for psd in psds:
-            data = pd.read_hdf(psd, 'data')['psd_data']
+            data = pd.read_hdf(psd, 'data')
             with h5py.File(psd, "r") as foo:
                 # Read the data (we should only have one field "data")
                 print(foo.attrs['delta_f'])
