@@ -37,7 +37,7 @@ from data.snr_calculation import get_network_snr
 from data.plot_dataloader_unit import plot_unit
 
 # Datatype for storage
-data_type=torch.float32
+tensor_dtype=torch.float32
 
 """ Dataset Objects """
 
@@ -232,8 +232,9 @@ class MLMDC1(Dataset):
         sample = torch.from_numpy(sample)
         target = torch.from_numpy(target)
         # Set the device and dtype
-        sample = sample.to(dtype=data_type, device=self.train_device)
-        target = target.to(dtype=data_type, device=self.train_device)
+        global tensor_dtype
+        sample = sample.to(dtype=tensor_dtype, device=self.train_device)
+        target = target.to(dtype=tensor_dtype, device=self.train_device)
         
         # Return as tuple for immutability
         return (sample, target)
