@@ -88,13 +88,13 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
     save_tn = os.path.join(save_dir, "pred_prob_tn_epoch_{}.csv".format(nep))
     
     data = voutput_0.cpu().detach().numpy().tolist()
-    print(data)
+
     # Input is a signal (pred_prob_tp)
     if vlabels[0] == 1:
-        save_data(data, save_tp)
+        save_data([[data]], save_tp)
     # Input is noise (pred_prob_tn)
     if vlabels[1] == 1:
-        save_data(data, save_tn)
+        save_data([[data]], save_tn)
 
 
 def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
