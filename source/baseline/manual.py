@@ -53,7 +53,7 @@ def calculate_accuracy(output, labels, threshold = 0.5):
 
 def save_data(rowsdata, file_path):
     # Append row data to the given CSV file path
-    with open('name', 'a', newline='') as fp:
+    with open(file_path, 'a', newline='') as fp:
         writer = csv.writer(fp)
         for rowdata in rowsdata:
             writer.writerow(rowdata)
@@ -218,6 +218,7 @@ def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, v
                         """ Prediction Probabilties """
                         # Storing predicted probabilities
                         if nep % cfg.save_freq == 0:
+                            print("saving pred prob")
                             prediction_probability_save_data(nep, vlabel, voutput[0], cfg.export_dir)
                             
                         """ Confusion Matrix """
