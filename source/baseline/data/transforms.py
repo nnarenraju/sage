@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # BUILT-IN
+import os
 import h5py
 import numpy as np
 import pandas as pd
@@ -32,6 +33,9 @@ from scipy.signal import butter, sosfiltfilt
 # PyCBC
 from pycbc.psd import inverse_spectrum_truncation, interpolate
 from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
+
+# Addressing HDF5 error with file locking
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
 """ WRAPPERS """

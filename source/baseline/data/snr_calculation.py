@@ -35,6 +35,10 @@ from pycbc.psd import interpolate
 from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
 from pycbc.filter.matchedfilter import sigmasq
 
+# Addressing HDF5 version issue with file locking
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+
 def calculate_network_snr(strains, psds, noise_low_freq_cutoff):
     # SNR Calculation
     return np.sqrt(sum([sigmasq(strain, psd=psd, low_frequency_cutoff=noise_low_freq_cutoff)
