@@ -71,8 +71,7 @@ class Baseline:
         pretrained=False,
         in_channels = 2,
         out_channels = 2,
-        storage_device = 'cpu',
-        weights_path = ''
+        weights_path = 'weights.pt'
     )
     
     """ Epochs and Batches """
