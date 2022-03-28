@@ -112,21 +112,23 @@ class BCEgw_MSEtc(LossWrapper):
         return custom_loss
 
 
-class regularised_BCELoss(LossWrapper, torch.nn.BCELoss):
+class regularised_BCELoss(torch.nn.BCELoss):
     
-    def __init__(self, always_apply=True, epsilon=1e-6, dim=None, *args, **kwargs):
-        LossWrapper.__init__(always_apply)
+    def __init__(self, *args, epsilon=1e-6, dim=None, **kwargs):
         torch.nn.BCELoss.__init__(self, *args, **kwargs)
         assert isinstance(dim, int)
         self.regularization_dim = dim
         self.regularization_A = epsilon
         self.regularization_B = 1. - epsilon*self.regularization_dim
-        
+    
+    def __call__(self, outputs, targets):
+        return self.forward(outputs, targets)
+    
     def forward(self, outputs, targets, *args, **kwargs):
         assert outputs.shape[-1] == self.regularization_dim
         transformed_input = self.regularization_A + self.regularization_B*outputs
         return torch.nn.BCELoss.forward(self, transformed_input, targets, *args, **kwargs)
-        
+
         
 
 

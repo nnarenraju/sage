@@ -144,7 +144,7 @@ if __name__ == "__main__":
             Network = get_sample_network()
             # Model Summary (frontend + backend)
             if opts.summary:
-                summary(Network, (2, 40960), batch_size=cfg.batch_size)
+                summary(Network, (2, 2048), batch_size=cfg.batch_size)
                 print("")
                 
             Network = manual_train(Network, train_loader, val_loader, output_dir, weights_path,
