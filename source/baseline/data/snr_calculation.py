@@ -54,13 +54,9 @@ def get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, data_dir)
     except:
         psd_data = []
         for psd in psds:
-            data = pd.read_hdf(psd, 'data')['psd_data']
+            data = pd.read_hdf(psd, 'data')['psd_data'].to_numpy()
             with h5py.File(psd, "r") as foo:
                 # Read the data (we should only have one field "data")
-                print(foo.attrs['delta_f'])
-                print(data)
-                print(foo.keys())
-                print(foo['data'])
                 psd_data.append(FrequencySeries(data, delta_f=foo.attrs['delta_f']))
     
     """ Change delta_f of PSD to align with signals """
