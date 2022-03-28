@@ -119,7 +119,11 @@ class Baseline:
             Whiten(max_filter_duration=0.25, trunc_method='hann',
                    remove_corrupted=True, low_frequency_cutoff=15., sample_rate=2048.),
         ]),
-        test=None,
+        test=Unify([
+            BandPass(lower=16, upper=512, fs=2048., order=6),
+            Whiten(max_filter_duration=0.25, trunc_method='hann',
+                   remove_corrupted=True, low_frequency_cutoff=15., sample_rate=2048.),
+        ]),
         target=None
     )
     
