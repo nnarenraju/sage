@@ -28,6 +28,7 @@ import os
 import csv
 import h5py
 import numpy as np
+import pandas as pd
 
 # PyCBC
 from pycbc.psd import interpolate
@@ -53,11 +54,11 @@ def get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, data_dir)
     except:
         psd_data = []
         for psd in psds:
+            data = pd.read_hdf(psd, 'data')['psd_data']
             with h5py.File(psd, "r") as foo:
                 # Read the data (we should only have one field "data")
-                print(foo['data'])
                 print(foo.attrs['delta_f'])
-                psd_data.append(FrequencySeries(foo['data'], delta_f=foo.attrs['delta_f']))
+                psd_data.append(FrequencySeries(data, delta_f=foo.attrs['delta_f']))
     
     """ Change delta_f of PSD to align with signals """
     # Calculating delta_f of signal and providing that to the PSD interpolation method

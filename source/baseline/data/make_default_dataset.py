@@ -219,9 +219,7 @@ class GenerateData:
                     if os.path.exists(self.psd_file_path_det1):
                         os.remove(self.psd_file_path_det1)
                     # Convert psds to pandas dataframe
-                    print(self.psds)
-                    print(self.delta_f)
-                    df = pd.DataFrame(data=self.psds, columns=['psd_1', 'psd_2'])
+                    df = pd.DataFrame(data=self.psds[0], columns=['psd_data'])
                     # Save as hdf5 file with compression
                     df.to_hdf(self.psd_file_path_det1, "data", complib="blosc:lz4", complevel=9, mode='a')
                     # Adding all relevant attributes
