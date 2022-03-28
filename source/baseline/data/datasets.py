@@ -196,7 +196,7 @@ class MLMDC1(Dataset):
         # Both label_saved and label_check should be a numpy array
         target = label_saved.astype(np.float64)
         # Concatenating the normalised_tc within the target variable
-        target = np.append(target, normalised_tc)
+        # target = np.append(target, normalised_tc)
         ## Target should look like (1., 0., 0.567) for signal
         ## Target should look like (0., 1., -1.0) for noise
         
