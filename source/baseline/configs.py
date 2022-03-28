@@ -76,7 +76,7 @@ class Baseline:
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 100
+    batch_size = 4
     
     """ Optimizer """
     optimizer = optim.Adam
