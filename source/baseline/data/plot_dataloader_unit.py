@@ -53,6 +53,9 @@ def plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_no
               mass_1, mass_2, network_snr, sample_rate, save_path, data_dir, idx):
     
     # Plotting a unit from the MLMDC1 datasets object just before training
+    mass_1 = np.around(mass_1, 3)
+    mass_2 = np.around(mass_2, 3)
+    network_snr = np.around(network_snr, 3)
     ax = figure(title="{}: m1={}, m2={}, snr={}".format(data_dir, mass_1, mass_2, network_snr))
     
     """ Pure Signal """
