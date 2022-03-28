@@ -70,13 +70,22 @@ class Baseline:
         model_name='mlmdc_example',
         pretrained=False,
         in_channels = 2,
-        out_channels = 2
+        out_channels = 2,
+        storage_device = 'cpu',
+        weights_path = ''
     )
     
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 100
+    # Equal batch_size for both training and validation
+    batch_size = 100 
+    # every 'n' epochs
+    save_freq = 5
+    
+    """ Gradient Clipping """
+    # Clip gradients to make convergence somewhat easier
+    clip_norm = 100
     
     """ Optimizer """
     optimizer = optim.Adam
@@ -90,10 +99,17 @@ class Baseline:
     
     """ Loss Function """
     # Add the () as suffix to loss function, returns object instead
-    loss_function = BCEgw_MSEtc()
+    loss_function = regularised_BCELoss(dim=2)
+    output_loss_file = "losses.txt"
     
     """ Evaluation Metric """
     eval_metric = None
+    # Normalised threshold for accuracy
+    accuracy_thresh = 0.5
+    
+    """ Storage Devices """
+    store_device = 'cpu'
+    train_device = 'cpu'
     
     """ Data Transforms """
     # Input to Unfy should always be a list

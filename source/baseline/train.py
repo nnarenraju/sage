@@ -36,7 +36,6 @@ warnings.filterwarnings("ignore")
 from lightning import simple
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
-from architectures.frontend import get_sample_network
 
 
 if __name__ == "__main__":
@@ -97,7 +96,7 @@ if __name__ == "__main__":
         train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
         
         # Initialise chosen model architecture (Backend + Frontend)
-        # Equivalent to the "network" variable in manual mode
+        # Equivalent to the "Network" variable in manual mode
         ModelClass = cfg.model(**cfg.model_params)
         
         # Model Summary (frontend + backend)
@@ -119,34 +118,23 @@ if __name__ == "__main__":
         # Loss function used
         loss_function = cfg.loss_function
         
+        
+        """ Training and Validation Methods """
+        if opts.manual:
+            # Running the manual pipeline version using pure PyTorch
+            # Initialise the trainer
+            manual_train(cfg, ModelClass, optimizer, scheduler, loss_function, 
+                         train_loader, val_loader)
             
+            # Loading the network with the best weights path
+            # Network.load_state_dict(torch.load(weights_path))
+        
         if opts.lightning:
             # Get Lightning Classifier from lightning.py
             model = simple(ModelClass, optimizer, scheduler, loss_function)
             
-            # Initialise trainer
+            # Initialise the trainer
             trainer = pl.Trainer(max_steps=cfg.num_steps, max_epochs=cfg.num_epochs)
             
             """ Fit """
             trainer.fit(model, train_loader, val_loader)
-        
-        if opts.manual:
-            
-            for sample, label in train_loader:
-                print("sample = {}".format(sample))
-                print("label = {}".format(label))
-                print("")
-            
-            raise
-            # Running the manual pipeline version using pure PyTorch
-            weights_path = "/home/nnarenraju/weights.pt"
-            output_dir = "/home/nnarenraju"
-            Network = get_sample_network()
-            # Model Summary (frontend + backend)
-            if opts.summary:
-                summary(Network, (2, 2048), batch_size=cfg.batch_size)
-                print("")
-                
-            Network = manual_train(Network, train_loader, val_loader, output_dir, weights_path,
-                        batch_size=cfg.batch_size, learning_rate=5e-5,
-                        epochs=cfg.num_epochs, clip_norm=100.0, verbose=True)
