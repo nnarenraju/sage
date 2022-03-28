@@ -26,6 +26,7 @@ Documentation: NULL
 # BUILT-IN
 import h5py
 import numpy as np
+import pandas as pd
 from scipy.signal import butter, sosfiltfilt
 
 # PyCBC
@@ -193,14 +194,15 @@ class Whiten(TransformWrapperPerChannel):
     def apply(self, y: np.ndarray, channel: int, psd=None):
         # Convert signal to TimeSeries object
         signal = TimeSeries(y, delta_t=1./self.sample_rate)
-        # Read the PSD from the given psd_file_path
+        # Read the PSDs from the given psd_file_path
         try:
             # This should load the PSD as a FrequencySeries object with delta_f assigned
             psd_data = load_frequencyseries(psd)
         except:
+            data = pd.read_hdf(psd, 'data')['psd_data'].to_numpy()
             with h5py.File(psd, "r") as foo:
                 # Read the data (we should only have one field "data")
-                psd_data = FrequencySeries(foo['data'], delta_f=foo.attrs['delta_f'])
+                psd_data = FrequencySeries(data, delta_f=foo.attrs['delta_f'])
         
         # Whiten
         whitened_sample = self.whiten(signal, psd_data)
