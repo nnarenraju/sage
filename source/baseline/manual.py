@@ -26,7 +26,11 @@ Documentation: NULL
 # BUILT-IN
 import os
 import csv
+import h5py
 import torch
+import shutil
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 
@@ -97,7 +101,67 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
         save_data([[data]], save_tn)
 
 
-def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
+def save_samples_to_hdf(dataloader, store_dir, mode=''):
+    # Iterate through the DataLoader and save all samples in HDF5 format
+    # mode can either be 'tdata' or 'vdata'
+    # We also have to save target for creating trainable.hdf
+    targets = []
+    all_abspaths = []
+    """ Store Trainable Training/Validation Data """
+    for n, (samples, labels) in enumerate(dataloader):
+        # Saving target and path
+        targets.append(labels)
+        # Iterate throught the trainDL and store all trainable training data in HDF5 format
+        store_path = os.path.join(store_dir, "trainable_{}_{}.hdf".format(mode, n))
+        # Store path
+        all_abspaths.append(os.path.abspath(store_path))
+        # This was measured to have the fastest IO (r->46ms, w->172ms)
+        # Convert training_samples to dataframe
+        df = pd.DataFrame(data=samples, columns=['trainable'])
+        # Save as hdf5 file with compression
+        df.to_hdf(store_path, "data", complib="blosc:lz4", complevel=9, mode='a')
+        # Adding all relevant attributes
+        with h5py.File(store_path, 'a') as fp:
+            fp.attrs['label'] = labels
+    return targets, all_abspaths
+
+
+def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
+    # Saving trainable dataset after transforms
+    # Path to store trainable dataset
+    store_dir = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+    store_tdata = os.path.join(store_dir, "trainable_tdata")
+    store_vdata = os.path.join(store_dir, "trainable_vdata")
+    
+    if not os.path.exists(store_tdata):
+        os.makedirs(store_tdata, exist_ok=False)
+    if not os.path.exists(store_vdata):
+        os.makedirs(store_vdata, exist_ok=False)
+    
+    """ Store trainable data for training and validation """
+    targets_train, train_abspaths = save_samples_to_hdf(trainDL, store_tdata, mode='tdata')
+    targets_valid, valid_abspaths = save_samples_to_hdf(validDL, store_vdata, mode='vdata')
+    
+    """ Save trainable.hdf for lookup """
+    targets = targets_train + targets_valid
+    all_abspaths = train_abspaths + valid_abspaths
+    ## Creating trainable.hdf similar to training.hdf
+    ids = np.arange(len(targets))
+    # Column stack (ids, path, target) for the entire dataset
+    lookup = np.column_stack((ids, all_abspaths, targets))
+    # Shuffling is not required as the DataLoader should have already shuffled it
+    # Convert to pandas dataframe
+    df = pd.DataFrame(data=lookup, columns=["id", "path", "target"])
+    # Save the dataset paths alongside the target and ids as hdf5
+    lookup_trainable = os.path.join(cfg.export_dir, "trainable.hdf")
+    df.to_hdf(lookup_trainable, "lookup", complib="blosc:lz4", complevel=9, mode='a')
+    # Create a copy of trainable.hdf to the dataset directory
+    shutil.copy(lookup_trainable, data_cfg.parent_dir)
+    print("manual.py: Trainable dataset has been created and stored!")
+    
+    
+def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, 
+          verbose=False, trainable_dataset_save_mode=False):
     
     """
     Train a network on given data.
@@ -127,6 +191,17 @@ def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, v
     
     """
     
+    """ Trainable data storage snippet """
+    # Create the necessary directories
+    if trainable_dataset_save_mode:
+        save_trainable_dataset(cfg, data_cfg, trainDL, validDL)
+        # Return and leave if trainable data storage is complete
+        print("manual.py: Trainable data storage complete. Train with simple DataLoader.")
+        # Training and validation is not done when this option is on.
+        return
+        
+    
+    """ Training and Validation """
     with open(os.path.join(cfg.export_dir, cfg.output_loss_file), 'w') as outfile:
 
         ### Training loop
@@ -153,7 +228,7 @@ def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, v
             PHASE 1 - Training
                 [1] Do gradient clipping. Set value in cfg.
             """
-            print("\n\nTraining Phase Initiated")
+            print("\nTraining Phase Initiated")
             for training_samples, training_labels in trainDL:
                 # Optimizer step on a single batch of training data
                 optimizer.zero_grad()
@@ -182,7 +257,7 @@ def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, v
                 [1] Save confusion matrix elements and prediction probabilties
                 [2] Save the ROC save data
             """            
-            print("Validation Phase Initiated")
+            print("\nValidation Phase Initiated")
             # Evaluation on the validation dataset
             Network.eval()
             with torch.no_grad():
@@ -218,7 +293,6 @@ def train(cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, v
                         """ Prediction Probabilties """
                         # Storing predicted probabilities
                         if nep % cfg.save_freq == 0:
-                            print("saving pred prob")
                             prediction_probability_save_data(nep, vlabel, voutput[0], cfg.export_dir)
                             
                         """ Confusion Matrix """

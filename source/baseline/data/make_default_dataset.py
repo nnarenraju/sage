@@ -56,7 +56,9 @@ class GenerateData:
                  'sample_length_in_s', 'sample_length_in_num', 'waveform_kwargs',
                  'psd_file_path_det1', 'psd_file_path_det2', 'noise_generator',
                  'prior_low_mass', 'prior_high_mass', 'prior_low_chirp_dist', 'prior_high_chirp_dist',
-                 'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff']
+                 'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff',
+                 'max_signal_length', 'ringdown_leeway', 'merger_leeway', 'start_freq_factor',
+                 'fs_reduction_factor', 'fbin_reduction_factor']
     
     def __init__(self, **kwargs):
         ## Get slots magic attributes via input dict (use **kwargs)
@@ -271,19 +273,41 @@ class GenerateData:
                 h_plus, h_cross = waveform
                 # Properly time and project the waveform
                 start_time = injection_time + h_plus.get_sample_times()[0]
-                h_plus.start_time = start_time
-                h_cross.start_time = start_time
+                h_plus_end_time = h_plus.get_sample_times()[-1]
+                # Pad h_plus and h_cross with zeros on both end for slicing
+                # Prepend zeros if we need samples before signal begins
+                h_plus.prepend_zeros(self.sample_length_in_num)
+                h_cross.prepend_zeros(self.sample_length_in_num)
+                # Set the start time of h_plus and h_plus after accounting for prepended zeros
+                h_plus.start_time = start_time - self.sample_length_in_s
+                h_cross.start_time = start_time - self.sample_length_in_s
+                # Append zeros if we need samples after signal ends
                 h_plus.append_zeros(self.sample_length_in_num)
                 h_cross.append_zeros(self.sample_length_in_num)
                 strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in self.detectors]
+                
+                ## Computing the frequency evolution of TD waveform
+                # hp, hc = h_plus.trim_zeros(), h_cross.trim_zeros()
+                # Variation of amiplitude and frequency wrt time
+                # amp = pycbc.waveform.utils.amplitude_from_polarizations(hp, hc)
+                # f = pycbc.waveform.utils.frequency_from_polarizations(hp, hc)
+                
                 # Place merger randomly within the window between lower and upper bound
                 place_tc = self.np_gen.uniform(self.tc_inject_lower, self.tc_inject_upper)
                 time_placement = place_tc + (self.whiten_padding/2.0)
                 time_interval = injection_time-time_placement
                 time_interval = (time_interval, injection_time+(self.signal_length-time_placement) + 
                                  self.whiten_padding-0.001) # subtract for length error
+                # Checking whether end time of time interval contains the end of simulated ringdown
+                if time_interval[1] - injection_time <= h_plus_end_time:
+                    raise ValueError("generate_dataset: end time of slice is less than ringdown end time!")
+                    
                 strains = [strain.time_slice(*time_interval) for strain in strains]
                 normalised_tc = (place_tc-self.tc_inject_lower)/(self.tc_inject_upper-self.tc_inject_lower)
+                
+                # Get sample frequencies from the strains
+                # To do above, convert to frequency series first
+                # fstrains = [strain.to_frequencyseries() for strain in strains]
                 
                 # Sanity check for sample_length
                 for strain in strains:
@@ -326,7 +350,7 @@ class GenerateData:
                 # Use the following to convert to numpy:
                 # sample = np.stack([strain.numpy() for strain in strains], axis=0)
                 sample = strains
-    
+                
             # if in the second part of the dataset, merely use pure noise as the full sample
             else:
                 sample = noise

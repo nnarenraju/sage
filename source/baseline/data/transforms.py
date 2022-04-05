@@ -30,6 +30,9 @@ import numpy as np
 import pandas as pd
 from scipy.signal import butter, sosfiltfilt
 
+# LOCAL
+from data.multirate_sampling import multirate_sampling
+
 # PyCBC
 from pycbc.psd import inverse_spectrum_truncation, interpolate
 from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
@@ -44,9 +47,9 @@ class Unify:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, psds=None):
+    def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
         for transform in self.transforms:
-            y = transform(y, psds)
+            y = transform(y, psds, data_cfg)
         return y
     
 
@@ -54,9 +57,9 @@ class TransformWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, psds=None):
+    def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
         if self.always_apply:
-            return self.apply(y, psds)
+            return self.apply(y, psds, data_cfg)
         else:
             pass
 
@@ -65,13 +68,13 @@ class TransformWrapperPerChannel(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply=always_apply)
     
-    def __call__(self, y: np.ndarray, psds=None):
+    def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
         channels = y.shape[0]
         # Store transformed array
         augmented = []
         for channel in range(channels):
             if self.always_apply:
-                augmented.append(self.apply(y[channel], channel, psds[channel]))
+                augmented.append(self.apply(y[channel], channel, psds[channel], data_cfg))
             else:
                 pass
         return np.array(augmented, dtype=np.float64)
@@ -90,7 +93,7 @@ class Buffer(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, psds=None):
+    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
         return y
 
 
@@ -100,7 +103,7 @@ class Normalise(TransformWrapperPerChannel):
         assert len(factors) == 2
         self.factors = factors
 
-    def apply(self, y: np.ndarray, channel: int, psd=None):
+    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         return y / self.factors[channel]
 
 
@@ -124,21 +127,17 @@ class BandPass(TransformWrapperPerChannel):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, channel: int, psd=None):
+    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         return self.butter_bandpass_filter(y)
 
 
 class Whiten(TransformWrapperPerChannel):
-    def __init__(self, always_apply=True, max_filter_duration=None, trunc_method='hann',
-                 remove_corrupted=True, low_frequency_cutoff=None, sample_rate=None):
+    def __init__(self, always_apply=True, trunc_method='hann', remove_corrupted=True):
         super().__init__(always_apply)
-        self.max_filter_duration = max_filter_duration
         self.trunc_method = trunc_method
         self.remove_corrupted = remove_corrupted
-        self.low_frequency_cutoff = low_frequency_cutoff
-        self.sample_rate = sample_rate
         
-    def whiten(self, signal, psd):
+    def whiten(self, signal, psd, data_cfg):
         """
         Return a whitened time series
 
@@ -171,33 +170,38 @@ class Whiten(TransformWrapperPerChannel):
         
         """
         
-        max_filter_len = int(round(self.max_filter_duration * self.sample_rate))
+        max_filter_len = int(round(data_cfg.whiten_padding * data_cfg.sample_rate))
         
-        """ Manipulate PSD for usage in whitening """
+        """ 
+        Manipulate PSD for usage in whitening 
+        This need not be done (i think) as the psds are created based on signal len anyway
+        What would we do when we start using multi-rate sampling?
+        """
         # Calculating delta_f of signal and providing that to the PSD interpolation method
-        sample_length_in_s = len(signal)/self.sample_rate
+        sample_length_in_s = len(signal)/data_cfg.sample_rate
         delta_f = 1./sample_length_in_s
         # Interpolate the PSD to the required delta_f
-        psd = interpolate(psd, delta_f)
+        # psd1 = interpolate(psd, delta_f)
         
+
         # Interpolate and smooth to the desired corruption length
         psd = inverse_spectrum_truncation(psd,
                                           max_filter_len=max_filter_len,
-                                          low_frequency_cutoff=self.low_frequency_cutoff,
+                                          low_frequency_cutoff=data_cfg.noise_low_freq_cutoff,
                                           trunc_method=self.trunc_method)
         
         """ Whitening """
         # Whiten the data by the asd
-        white = (signal.to_frequencyseries() / psd**0.5).to_timeseries()
+        white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
 
         if self.remove_corrupted:
             white = white[int(max_filter_len/2):int(len(signal)-max_filter_len/2)]
 
         return white
         
-    def apply(self, y: np.ndarray, channel: int, psd=None):
+    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Convert signal to TimeSeries object
-        signal = TimeSeries(y, delta_t=1./self.sample_rate)
+        signal = TimeSeries(y, delta_t=1./data_cfg.sample_rate)
         # Read the PSDs from the given psd_file_path
         try:
             # This should load the PSD as a FrequencySeries object with delta_f assigned
@@ -209,6 +213,17 @@ class Whiten(TransformWrapperPerChannel):
                 psd_data = FrequencySeries(data, delta_f=foo.attrs['delta_f'])
         
         # Whiten
-        whitened_sample = self.whiten(signal, psd_data)
+        whitened_sample = self.whiten(signal, psd_data, data_cfg)
         
         return whitened_sample
+
+
+class MultirateSampling(TransformWrapperPerChannel):
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+
+    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
+        # Call multi-rate sampling module for usage
+        # This is kept separate since further experimentation might be required
+        multirate_signal = multirate_sampling(y, data_cfg)
+        return multirate_signal

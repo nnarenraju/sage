@@ -35,6 +35,7 @@ from configs import *
 from data_configs import *
 from data.make_mlmdc_dataset import make as make_mlmdc_dataset
 from data.make_default_dataset import make as make_defualt_dataset
+from data.fast_tensor_dataloader import FastTensorDataLoader
 
 
 class DataModule:
@@ -162,8 +163,14 @@ class DataModule:
             
         """
         
+        # set lookup table
+        if cfg.dataset.__name__ == "Simple":
+            lookup_table = "trainable.hdf"
+        else:
+            lookup_table = "training.hdf"
+        
         # Using a dask Dataframe for larger CSV files (if using)
-        train = pd.read_hdf(os.path.join(cfg.export_dir, "training.hdf"), 'lookup')
+        train = pd.read_hdf(os.path.join(cfg.export_dir, lookup_table), 'lookup')
         # TODO: Do the same prodecure for testing dataset. Does not require splitting.
         # Under construction!
         # if debug, use a data subset
@@ -208,20 +215,15 @@ class DataModule:
         
         """
         
-        data_loc = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
-        save_freq = data_cfg.sample_save_frequency
-        
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
-                training = True, data_loc=data_loc, sample_save_frequency=save_freq,
-                **cfg.dataset_params)
+                training = True, data_cfg=data_cfg, **cfg.dataset_params)
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
                 transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
-                training=True, data_loc=data_loc, sample_save_frequency=save_freq,
-                **cfg.dataset_params)
+                training=True, data_cfg=data_cfg, **cfg.dataset_params)
         
         return (train_dataset, valid_dataset)
     

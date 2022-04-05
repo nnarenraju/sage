@@ -106,9 +106,9 @@ class Default:
     """ Location (these params used if make_dataset == False, as search loc) """
     # Dataset location directory
     # Data storage drive or /mnt absolute path
-    parent_dir = "/data/wiay/nnarenraju"
+    parent_dir = "/Users/nnarenraju/Desktop"
     # Dataset directory within parent_dir
-    data_dir = "dataset_closest_1e4_1s_D1"
+    data_dir = "dataset_closest_1e4_20s_D1"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -134,9 +134,12 @@ class Default:
     sample_save_frequency = 1000
     
     """ Signal Params """
+    ## these params may be used if make_dataset == False
+    # Create a new class for a different problem instead of changing this config
     sample_rate = 2048. # Hz
-    signal_length = 1.0  # seconds
-    whiten_padding = 0.25 # seconds (padding/2.0 on each side of signal_length)
+    signal_length = 20.0  # seconds
+    # whiten_padding is also known as max_filter_duration in some modules
+    whiten_padding = 5.0 # seconds (padding/2.0 on each side of signal_length)
     sample_length_in_s = signal_length + whiten_padding # seconds
     sample_length_in_num = round(sample_length_in_s * sample_rate)
     
@@ -149,14 +152,19 @@ class Default:
     prior_low_chirp_dist = 130.0
     prior_high_chirp_dist = 350.0
     
-    tc_inject_lower = 0.5 # seconds
-    tc_inject_upper = 0.7 # seconds
+    tc_inject_lower = 18.0 # seconds
+    tc_inject_upper = 18.2 # seconds
     
     """ PSD Params """
     noise_low_freq_cutoff = 15.0 # Hz
     noise_high_freq_cutoff = 1024.8 # Hz
     delta_f = 1./sample_length_in_s
-    psd_len = round(noise_high_freq_cutoff/delta_f)
+    # psd_len = round(noise_high_freq_cutoff/delta_f) -> definition depricated
+    # Following definition of psd_len taken from:
+    # https://pycbc.org/pycbc/latest/html/_modules/pycbc/types/timeseries.html#TimeSeries.to_frequencyseries
+    # Got an error in transforms where signal.to_frequencyseries did not have the correct length
+    # NOTE: Verified to produce correct results for 1.0 s and 20.0 s signals (March 30th, 2022)
+    psd_len = int(int(sample_length_in_num+0.5) / 2 + 1)
     
     """ generate_data.py Noise Params (if used) """
     # Only used in dataset 2 and 3
@@ -164,6 +172,31 @@ class Default:
     # if use_example_psd == False
     filter_duration = 128.
     
-    
-    
-    
+    """ Multirate sampling params """
+    ### Reused params for multi-rate sampling to create bins
+    # signal_low_freq_cutoff
+    # sample_rate
+    # prior_low_mass
+    # signal_low_freq_cutoff
+    # sample_rate
+    # tc_inject_lower
+    # tc_inject_upper
+    ###
+    # Maximum possible signal length in the entire dataset
+    # Defined in MLMDC1 as being the longest signal in the testing dataset
+    max_signal_length = 20.0 # s
+    # Conservative value for max length of ringdown in seconds
+    # This ringdown section will be sampled at max possible sample rate
+    ringdown_leeway = 0.5 # s
+    # Seconds before merger to include in max possible sample rate
+    merger_leeway=0.05 # s
+    # f_ISCO is multiplied by this factor and used a starting sample freq. at merger
+    # If this factor == 2.0, the sampling freq. will be at Nyquist limit
+    start_freq_factor=2.5
+    # The starting freq. will be reduced by this factor**(n) for n = [0, N], 'N'is num of bins
+    # If facrtor==2.0, the sampling freq. is halved every time the signal freq. reduced by
+    # a factor equal to fbin_reduction_factor
+    fs_reduction_factor=1.9
+    # Check value where signal freq. reduces by this factor
+    # When this happens, that data idx is store in bins as one of the edges for MR-sampling
+    fbin_reduction_factor=2.0

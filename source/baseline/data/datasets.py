@@ -30,6 +30,7 @@ import glob
 import torch
 import random
 import numpy as np
+import pandas as pd
 from torch.utils.data import Dataset
 
 # LOCAL
@@ -48,7 +49,7 @@ class MLMDC1(Dataset):
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
                  training=False, testing=False, store_device='cpu', train_device='cpu',
-                 data_loc="", sample_save_frequency=None):
+                 data_cfg=None):
         
         self.data_paths = data_paths
         self.targets = targets
@@ -58,14 +59,15 @@ class MLMDC1(Dataset):
         self.testing = testing
         self.store_device = store_device
         self.train_device = train_device
-        self.data_loc = data_loc
+        self.data_cfg = data_cfg
+        self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         
         # Saving frequency with idx plotting
         # TODO: Add compatibility for using cfg.splitter with K-folds
-        if sample_save_frequency == None:
+        if self.data_cfg.sample_save_frequency == None:
             self.sample_save_frequency = int(len(self.data_paths)/100.0)
         else:
-            self.sample_save_frequency = sample_save_frequency
+            self.sample_save_frequency = data_cfg.sample_save_frequency
         
         if training:
             assert testing == False
@@ -204,7 +206,7 @@ class MLMDC1(Dataset):
         """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
-            sample = self.transforms(raw_sample, psds)
+            sample = self.transforms(raw_sample, psds, self.data_cfg)
         if self.target_transforms:
             target = self.target_transforms(target)
         
@@ -216,7 +218,7 @@ class MLMDC1(Dataset):
             pure_noise = noise
             noisy_signal = raw_sample
             if self.transforms:
-                trans_pure_signal = self.transforms(pure_signal, psds)
+                trans_pure_signal = self.transforms(pure_signal, psds, self.data_cfg)
             else:
                 trans_pure_signal = None
             trans_noisy_signal = sample
@@ -226,6 +228,85 @@ class MLMDC1(Dataset):
             plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_noisy_signal,
                       m1, m2, network_snr, sample_rate, save_path, data_dir, idx)
         
+        
+        """ Tensorification and Device Compatibility """
+        # Convert signal/target to Tensor objects
+        sample = torch.from_numpy(sample)
+        target = torch.from_numpy(target)
+        # Set the device and dtype
+        global tensor_dtype
+        sample = sample.to(dtype=tensor_dtype, device=self.train_device)
+        target = target.to(dtype=tensor_dtype, device=self.train_device)
+        
+        # Return as tuple for immutability
+        return (sample, target)
+
+
+
+
+class Simple(Dataset):
+    """
+    Simple read-and-load-type dataset object
+    Designed to be be used alongside save_trainable_dataset = True
+    
+    """
+    
+    def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
+                 training=False, testing=False, store_device='cpu', train_device='cpu',
+                 data_cfg=None):
+        
+        self.data_paths = data_paths
+        self.targets = targets
+        self.transforms = transforms
+        self.target_transforms = target_transforms
+        self.training = training
+        self.testing = testing
+        self.store_device = store_device
+        self.train_device = train_device
+        self.data_cfg = data_cfg
+        self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
+        
+        # Saving frequency with idx plotting
+        # TODO: Add compatibility for using cfg.splitter with K-folds
+        if self.data_cfg.sample_save_frequency == None:
+            self.sample_save_frequency = int(len(self.data_paths)/100.0)
+        else:
+            self.sample_save_frequency = data_cfg.sample_save_frequency
+        
+        if training:
+            assert testing == False
+        if testing:
+            assert training == False
+        if not training and not testing:
+            raise ValueError("Neither training or testing phase chosen for dataset class. Bruh?")
+
+
+    def __len__(self):
+        return len(self.data_paths)
+
+    def _read_(self, data_path):
+        """ Read sample and return necessary training params """
+        return pd.read_hdf(data_path, 'data')['trainable'].to_numpy()
+    
+    def __getitem__(self, idx):
+        
+        data_path = self.data_paths[idx]
+        
+        """ Read the sample """
+        # check whether the sample is noise/signal for adding random noise realisation
+        sample = self._read_(data_path)
+        
+        """ Target """
+        # Target for training or testing phase (obtained from trainable.hdf)
+        # labels in trainable.hdf *ONLY* specify whether given sample is signal or not
+        label = np.array([float(self.targets[idx]), 1.0-float(self.targets[idx])])
+        # Convert label to suitable training format
+        target = label.astype(np.float64)
+        # Concatenating the normalised_tc within the target variable
+        # This can be used when normalised_tc is also stored in trainable.hdf
+        # target = np.append(target, normalised_tc)
+        ## Target should look like (1., 0., 0.567) for signal
+        ## Target should look like (0., 1., -1.0) for noise
         
         """ Tensorification and Device Compatibility """
         # Convert signal/target to Tensor objects

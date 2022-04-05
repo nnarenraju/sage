@@ -74,7 +74,7 @@ if __name__ == "__main__":
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
     # TODO: Test data is not split (Under Construction!)
     train, folds = dat.get_metadata(cfg)
-    
+
     """ Training """
     # Folds are obtained only by splitting the training dataset
     # Use folds for cross-validation
@@ -123,8 +123,9 @@ if __name__ == "__main__":
         if opts.manual:
             # Running the manual pipeline version using pure PyTorch
             # Initialise the trainer
-            manual_train(cfg, ModelClass, optimizer, scheduler, loss_function, 
-                         train_loader, val_loader)
+            manual_train(cfg, data_cfg, ModelClass, optimizer, scheduler, loss_function, 
+                         train_loader, val_loader, verbose=cfg.verbose, 
+                         trainable_dataset_save_mode=cfg.save_trainable_dataset)
             
             # Loading the network with the best weights path
             # Network.load_state_dict(torch.load(weights_path))

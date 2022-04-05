@@ -32,7 +32,7 @@ import pytorch_lightning as pl
 # Datatype for storage
 data_type=torch.float32
 
-class AlphaModel(pl.LightningModule):
+class AlphaModel(torch.nn.Module):
     """
     Alpha-type Model Architecture
     
@@ -85,7 +85,7 @@ class AlphaModel(pl.LightningModule):
         return out
 
 
-class BetaModel(pl.LightningModule):
+class BetaModel(torch.nn.Module):
     """
     Beta-type Model Architecture
     
@@ -128,7 +128,7 @@ class BetaModel(pl.LightningModule):
         return out
 
 
-class GammaModel(pl.LightningModule):
+class GammaModel(torch.nn.Module):
     """
     Gamma-type Model Architecture
     
@@ -158,7 +158,7 @@ class GammaModel(pl.LightningModule):
                  pretrained=False,
                  in_channels: int = 2,
                  out_channels: int = 2,
-                 store_device='cpu',
+                 store_device: str = 'cpu',
                  weights_path: str = ''):
         
         super().__init__()
@@ -191,7 +191,7 @@ class GammaModel(pl.LightningModule):
                 torch.nn.MaxPool1d(4),                      # 16x  29
                 torch.nn.ELU(),                             # 16x  29
                 torch.nn.Flatten(),                         #     464
-                torch.nn.Linear(464, 32),                   #      32
+                torch.nn.Linear(1088, 32),                  #      32
                 torch.nn.Dropout(p=0.5),                    #      32
                 torch.nn.ELU(),                             #      32
                 torch.nn.Linear(32, 16),                    #      16

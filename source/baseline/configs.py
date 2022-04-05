@@ -35,7 +35,7 @@ from data.datasets import MLMDC1
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel, GammaModel
-from data.transforms import Unify, Normalise, BandPass, Whiten
+from data.transforms import Unify, Normalise, BandPass, Whiten, MultirateSampling
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 
 
@@ -44,9 +44,9 @@ from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 class Baseline:
     
     """ Data storage """
-    name = "Baseline"
+    name = "Baseline_longer"
     # Directory to store output from pipeline/lightning
-    export_dir = Path("/home/nnarenraju") / name
+    export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset Splitting """
     # Number of folds (must be at least 2, default = 5)
@@ -59,6 +59,7 @@ class Baseline:
     
     """ Dataset """
     # Dataset object (opts, quick access, read only)
+    # if dataset object is set to 'simple', trainable.hdf should exist
     dataset = MLMDC1
     dataset_params = dict()
     
@@ -71,14 +72,22 @@ class Baseline:
         pretrained=False,
         in_channels = 2,
         out_channels = 2,
+        store_device = 'cpu',
         weights_path = 'weights.pt'
     )
+    
+    """ Save trainable train and valid data """
+    # Saves trainable data after transforms are applied as HDF5 files
+    # This can then be used alongside a simple DataLoader
+    # Set batch_size to 1, so each sample is stored separately (unless chunks are req.)
+    ## WARNING: This may take a while. Check storage space before continuing.
+    save_trainable_dataset = False
     
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
     # Equal batch_size for both training and validation
-    batch_size = 100 
+    batch_size = 100
     # every 'n' epochs
     save_freq = 5
     
@@ -99,6 +108,7 @@ class Baseline:
     """ Loss Function """
     # Add the () as suffix to loss function, returns object instead
     loss_function = regularised_BCELoss(dim=2)
+    # This is automatically written in export_dir
     output_loss_file = "losses.txt"
     
     """ Evaluation Metric """
@@ -113,22 +123,25 @@ class Baseline:
     """ Data Transforms """
     # Input to Unfy should always be a list
     # Input to transforms should be a dict
+    # The following transforms are performed in the given order
     transforms = dict(
         train=Unify([
             BandPass(lower=16, upper=512, fs=2048., order=6),
-            Whiten(max_filter_duration=0.25, trunc_method='hann',
-                   remove_corrupted=True, low_frequency_cutoff=15., sample_rate=2048.),
+            Whiten(trunc_method='hann', remove_corrupted=True),
+            MultirateSampling(),
         ]),
         test=Unify([
             BandPass(lower=16, upper=512, fs=2048., order=6),
-            Whiten(max_filter_duration=0.25, trunc_method='hann',
-                   remove_corrupted=True, low_frequency_cutoff=15., sample_rate=2048.),
+            Whiten(trunc_method='hann', remove_corrupted=True),
+            MultirateSampling(),
         ]),
         target=None
     )
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
     debug = False
+    # Verbosity (Not properly implemented yet. Use logger.)
+    verbose = False
     
     
 """ MANUAL BASELINE """
