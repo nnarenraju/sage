@@ -99,9 +99,7 @@ Pseudo-code:
     
     Multi-rate Sampling of the input data
     -------------------------------------
-    1.
-    2.
-    3.
+    1. Completed
     
     Convert pipeline to use Dataset 4 instead of Dataset 3
     ------------------------------------------------------
