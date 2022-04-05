@@ -130,3 +130,7 @@ dmypy.json
 
 ## Directories to ignore
 datasets/
+source/baseline/data/psds/
+
+# Ignore DS store on MAC machines
+.DS_Store
