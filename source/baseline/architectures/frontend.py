@@ -219,58 +219,13 @@ class GammaModel(torch.nn.Module):
         return out
 
 
+"""
+
+9,614,912 params - backend Conv - without Timm (default)
+1,327,136 params - backend Conv - filter = 16, kernel = 32 instead of 32 & 64
 
 
-""" FOR MANUAL USAGE ONLY, *DO NOT* USE WITH PYTORCH LIGHTNING """
 
-### Set data type to be used
-dtype = torch.float32
 
-def get_sample_network(path=None, device='cuda:0'):
-    """Return an instance of a network.
-    
-    Arguments
-    ---------
-    path : {None or str, None}
-        Path to the network (weights) that should be loaded. If None
-        a new network will be initialized.
-    device : {str, 'cpu'}
-        The device on which the network is located.
-    
-    Returns
-    -------
-    network
-    """
 
-    frontend = torch.nn.Sequential(                     #  Shapes
-            torch.nn.BatchNorm1d(2),                    #  2x40960
-            torch.nn.Conv1d(2, 4, 64, 2),               #  4x20449
-            torch.nn.ReLU(),                            #  4x20449
-            torch.nn.Conv1d(4, 4, 32, 2),               #  4x10209
-            torch.nn.MaxPool1d(4),                      #  4x 2552
-            torch.nn.ReLU(),                            #  4x 2552
-            torch.nn.Conv1d(4, 8, 32, 2),               #  8x 1261
-            torch.nn.ReLU(),                            #  8x 1261
-            torch.nn.Conv1d(8, 8, 16, 2),               #  8x 623
-            torch.nn.MaxPool1d(3),                      #  8x 207
-            torch.nn.ReLU(),                            #  8x 207
-            torch.nn.Conv1d(8, 16, 16),                 # 16x 192
-            torch.nn.ReLU(),                            # 16x 192
-            torch.nn.Conv1d(16, 16, 16),                # 16x 177
-            torch.nn.MaxPool1d(4),                      # 16x  44
-            torch.nn.ReLU(),                            # 16x  44
-            torch.nn.Flatten(),                         #     704
-            torch.nn.Linear(704, 32),                   #      32
-            torch.nn.Dropout(p=0.5),                    #      32
-            torch.nn.ReLU(),                            #      32
-            torch.nn.Linear(32, 16),                    #      16
-            torch.nn.Dropout(p=0.5),                    #      16
-            torch.nn.ReLU(),                            #      16
-            torch.nn.Linear(16, 1),                     #       1
-            torch.nn.Softmax(dim=1)                     #       1
-    )
-    
-    if path is not None:
-        frontend.load_state_dict(torch.load(path))
-    frontend.to(dtype=dtype, device=device)
-    return frontend
+"""
