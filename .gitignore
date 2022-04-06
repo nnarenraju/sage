@@ -134,3 +134,6 @@ source/baseline/data/psds/
 
 # Ignore DS store on MAC machines in all directories
 **/.DS_Store
+
+# Ignore particular file types
+*.hdf
