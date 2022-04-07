@@ -120,7 +120,7 @@ def save_samples_to_hdf(dataloader, store_dir, mode=''):
         all_abspaths.append(os.path.abspath(store_path))
         # This was measured to have the fastest IO (r->46ms, w->172ms)
         # Convert training_samples to dataframe
-        df = pd.DataFrame(data=samples, columns=['det1', 'det2'])
+        df = pd.DataFrame(data=samples)
         # Save as hdf5 file with compression
         df.to_hdf(store_path, "data", complib="blosc:lz4", complevel=9, mode='a')
         # Adding all relevant attributes
