@@ -218,12 +218,14 @@ class DataModule:
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
-                training = True, data_cfg=data_cfg, **cfg.dataset_params)
+                training = True, data_cfg=data_cfg, store_device=cfg.store_device,
+                train_device=cfg.train_device, **cfg.dataset_params)
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
                 transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
-                training=True, data_cfg=data_cfg, **cfg.dataset_params)
+                training=True, data_cfg=data_cfg, store_device=cfg.store_device,
+                train_device=cfg.train_device, **cfg.dataset_params)
         
         return (train_dataset, valid_dataset)
     

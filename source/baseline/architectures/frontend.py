@@ -269,7 +269,6 @@ class KappaModel(torch.nn.Module):
         # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
         self._det1 = ConvBlock(self.filter_size, self.kernel_size)
         self._det2 = ConvBlock(self.filter_size, self.kernel_size)
-        self.backend = {'det1': self._det1, 'det2': self._det2}
         _initialize_weights(self)
         
         """ Frontend """
@@ -287,14 +286,21 @@ class KappaModel(torch.nn.Module):
         self.signal_or_noise = nn.Linear(self.frontend.num_features, 2)
         self.coalescence_time = nn.Linear(self.frontend.num_features, 1)
         # Manipulation layers
-        self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
-        self.avg_pool_1d = nn.AdaptiveAvgPool2d(1)
+        self.avg_pool_2d = nn.AdaptiveAvgPool2d((128, 128))
+        self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
         self.flatten = nn.Flatten(start_dim=1)
         self.dropout = nn.Dropout(0.25)
         self.softmax = torch.nn.Softmax(dim=1)
         self.ReLU = nn.ReLU()
         
-        # Convert network into given dtype and store in proper device
+        ## Convert network into given dtype and store in proper device
+        # Mod layers
+        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
+        self.coalescence_time.to(dtype=data_type, device=self.store_device)
+        # Main layers
+        self._det1.to(dtype=data_type, device=self.store_device)
+        self._det2.to(dtype=data_type, device=self.store_device)
+        self.backend = {'det1': self._det1, 'det2': self._det2}
         self.frontend.to(dtype=data_type, device=self.store_device)
     
     # x.shape: (batch size, wave channel, length of wave)
@@ -302,11 +308,12 @@ class KappaModel(torch.nn.Module):
         # batch_size, channel, signal_length = s.shape
         # Conv Backend
         x = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
+        x = self.avg_pool_2d(x)
         # Timm Frontend
         x = self.frontend(x)
         ## Manipulate encoder output to get params
         # Global Pool
-        x = self.flatten(self.avg_pool_2d(x))
+        x = self.flatten(self.avg_pool_1d(x))
         # In the Kaggle architecture a dropout is added at this point
         # I see no reason to include at this stage. But we can experiment.
         ## Output necessary params
