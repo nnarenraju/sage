@@ -31,7 +31,7 @@ from torch import nn
 import pytorch_lightning as pl
 
 # Importing architecture snippets from zoo
-from zoo.kaggle import ConvBlock, _initialize_weights
+from architectures.zoo.kaggle import ConvBlock, _initialize_weights
 
 # Datatype for storage
 data_type=torch.float32
