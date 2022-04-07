@@ -24,6 +24,9 @@ Documentation: NULL
 """
 
 # IN-BUILT
+import os
+import gc
+import torch
 import argparse
 import pytorch_lightning as pl
 from torchsummary import summary
@@ -99,9 +102,20 @@ if __name__ == "__main__":
         # Equivalent to the "Network" variable in manual mode
         ModelClass = cfg.model(**cfg.model_params)
         
+        # Load weights snapshot
+        if cfg.pretrained and cfg.weights_path!='':
+            if os.path.exists(cfg.weights_path):
+                weights = torch.load(cfg.weights_path, cfg.store_device)
+                ModelClass.load_state_dict(weights)
+                del weights; gc.collect()
+            else:
+                raise ValueError("train.py: cfg.weights_path does not exist!")
+        elif cfg.pretrained and cfg.weights_path=='':
+            raise ValueError("CFG: pretrained==True, but no weights path provided!")
+        
         # Model Summary (frontend + backend)
         if opts.summary:
-            summary(ModelClass, (2, 2048), batch_size=cfg.batch_size)
+            summary(ModelClass, (2, 3715), batch_size=cfg.batch_size)
             print("")
         
         # Optimizer and Scheduler (Set to None if unused)
@@ -126,9 +140,6 @@ if __name__ == "__main__":
             manual_train(cfg, data_cfg, ModelClass, optimizer, scheduler, loss_function, 
                          train_loader, val_loader, verbose=cfg.verbose, 
                          trainable_dataset_save_mode=cfg.save_trainable_dataset)
-            
-            # Loading the network with the best weights path
-            # Network.load_state_dict(torch.load(weights_path))
         
         if opts.lightning:
             # Get Lightning Classifier from lightning.py
@@ -139,3 +150,7 @@ if __name__ == "__main__":
             
             """ Fit """
             trainer.fit(model, train_loader, val_loader)
+
+        # Loading the network with the best weights path
+        # This step is mandatory before the inference/testing module
+        # Network.load_state_dict(torch.load(cfg.weights_path))
