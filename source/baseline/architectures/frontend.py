@@ -31,7 +31,7 @@ from torch import nn
 import pytorch_lightning as pl
 
 # Importing architecture snippets from zoo
-from zoo import kaggle
+from zoo.kaggle import ConvBlock, _initialize_weights
 
 # Datatype for storage
 data_type=torch.float32
@@ -267,10 +267,10 @@ class KappaModel(torch.nn.Module):
         """ Backend """
         # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
         # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
-        self._det1 = kaggle.ConvBlock(self.filter_size, self.kernel_size)
-        self._det2 = kaggle.ConvBlock(self.filter_size, self.kernel_size)
+        self._det1 = ConvBlock(self.filter_size, self.kernel_size)
+        self._det2 = ConvBlock(self.filter_size, self.kernel_size)
         self.backend = {'det1': self._det1, 'det2': self._det2}
-        kaggle._initialize_weights(self)
+        _initialize_weights(self)
         
         """ Frontend """
         # resnet34 --> 21 Mil. trainable params trainable frontend
