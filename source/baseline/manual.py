@@ -110,8 +110,8 @@ def save_samples_to_hdf(dataloader, store_dir, mode=''):
     """ Store Trainable Training/Validation Data """
     for n, (samples, labels) in enumerate(dataloader):
         # We need to detach from cuda and use .cpu() to access host memory
-        samples = samples.cpu().detach().numpy()
-        labels = labels.cpu().detach().numpy()
+        samples = samples.cpu().detach().numpy()[0]
+        labels = labels.cpu().detach().numpy()[0]
         # Saving target and path
         targets.append(labels)
         # Iterate throught the trainDL and store all trainable training data in HDF5 format
