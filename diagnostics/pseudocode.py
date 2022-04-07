@@ -31,24 +31,24 @@ Timeline:
     --------------------------------------
     1. Continuing Data Preparation (FIN)
     2. Data Augmentation
-    3. Multi-rate Sampling
+    3. Multi-rate Sampling (FIN)
     4. Use Dataset 4 (most realistic)
-    5. Creating a ranking statistic
-    6. Initialisation and configuration file
+    5. Creating a ranking statistic (FIN)
+    6. Initialisation and configuration file (FIN)
     7. Training and Validation on simplest network (FIN)
     
     January (deadline 31st, 23:59 PM BST)
     -------------------------------------
     1. Data visualisation for all input and output (FIN)
     2. Create a large dataset for training (~FIN)
-    3. Experiment on different architectures and models
+    3. Experiment on different architectures and models (FIN)
     4. Hyper-parameter tuning
     5. Efficient parallelisation and speed
-    6. Read all relevant rival papers and optimise
+    6. Read all relevant papers and optimise
     
     February (deadline 28th, 23:59 PM BST)
     --------------------------------------
-    1. Create testing/inference module
+    1. Create testing/inference module (FINs)
     2. Test the best model from January with 1 month data
     3. Optimise the model and data based on testing/inference
     
@@ -58,7 +58,7 @@ Timeline:
     March (deadline 15th, 23:59 PM BST)
     -----------------------------------
     1. Most optimal model possible in the given timescale
-    2. Cleaning-up of all code for submission
+    2. Cleaning-up of all code for submission (FIN)
     3. Think of the best way to submit the code/model to AEI
     
     March (deadline 25th, 23:59 PM BST)
@@ -99,19 +99,21 @@ Pseudo-code:
     
     Multi-rate Sampling of the input data
     -------------------------------------
-    1. Completed
+    1. We get a factor of 11.02 reduction in number of samples when using a 20s data segment
+    2. Testing to verify sampling rate is above Nyquist Limit with a buffer
+    3. Verify whether all bins are made for the worst possible scenario in given dataset type
     
     Convert pipeline to use Dataset 4 instead of Dataset 3
     ------------------------------------------------------
-    1.
-    2.
-    3.
+    1. Will not be completed before the deadline.
     
-    Create a Ranking Statistic for the Prediction Stage
-    ---------------------------------------------------
-    1.
-    2.
-    3.
+    Obtain the normalised time of coalescence from the network
+    ----------------------------------------------------------
+    1. Using the complex network alongside a linear layer to predict 'tc'
+    2. As mentioned, normalise the 'tc' such that it varies from 0 to 1
+    3. For cases where the output is noise, 'tc' should be negative
+    4. This negative value can either be constant -1 or random uniform in the range [-1, 0)
+    5. Check which method works better (betting on the random uniform)
     
     Initialisation & Configuration File
     -----------------------------------
@@ -161,5 +163,3 @@ Pseudo-code:
     
     
 """
-    
-    
