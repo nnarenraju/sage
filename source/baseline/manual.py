@@ -234,10 +234,16 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 optimizer.zero_grad()
                 # Obtain training output from network
                 training_output = Network(training_samples)
+                # Get necessary output params from dict output
+                pred_prob = training_output['pred_prob']
+                if 'tc' in list(training_output.keys()):
+                    tc = training_output['tc']
+                
+                ## TODO: Loss and accuracy need to be redefined to include 'tc'
                 # Loss calculation
-                training_loss = loss_function(training_output, training_labels)
+                training_loss = loss_function(pred_prob, training_labels)
                 # Accuracy calculation
-                accuracy = calculate_accuracy(training_output, training_labels, cfg.accuracy_thresh)
+                accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
                 # Backward propogation using loss_function
                 training_loss.backward()
                 # Clip gradients to make convergence somewhat easier
@@ -268,9 +274,15 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 for validation_samples, validation_labels in validDL:
                     # Evaluation of a single validation batch
                     validation_output = Network(validation_samples)
-                    validation_loss = loss_function(validation_output, validation_labels)
+                    # Get necessary output params from dict output
+                    pred_prob = validation_output['pred_prob']
+                    if 'tc' in list(validation_output.keys()):
+                        tc = validation_output['tc']
+                    
+                    ## TODO: loss and accuracy must be redefined to include 'tc'
+                    validation_loss = loss_function(pred_prob, validation_labels)
                     # Accuracy calculation
-                    accuracy = calculate_accuracy(validation_output, validation_labels, cfg.accuracy_thresh)
+                    accuracy = calculate_accuracy(pred_prob, validation_labels, cfg.accuracy_thresh)
                     # Update running loss and batches
                     validation_running_loss += validation_loss.clone().cpu().item()
                     validation_batches += 1
@@ -281,11 +293,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
 
                     """ ROC Curve save data """
                     if nep % cfg.save_freq == 0:
-                        roc_save_data(nep, validation_output, validation_labels, cfg.export_dir)
+                        roc_save_data(nep, pred_prob, validation_labels, cfg.export_dir)
 
                     """ Calculating confusion matrix and Pred Probs """
                     apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    for voutput, vlabel in zip(validation_output, validation_labels):
+                    for voutput, vlabel in zip(pred_prob, validation_labels):
                         # Get labels based on threshold
                         coutput = [apply_thresh(float(voutput[0])), apply_thresh(float(voutput[1]))]
                         clabel = [apply_thresh(float(vlabel[0])), apply_thresh(float(vlabel[1]))]
