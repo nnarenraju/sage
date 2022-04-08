@@ -374,8 +374,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             # Display stuff
                             pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
                             batch_validation_loss += vloss.clone().cpu().item()
-                            validation_labels = validation_labels[0]
-                            print(validation_labels)
                             # Updating things but now its validation
                             accuracies.append(accuracy)
                             pred_prob.append(preds.cpu().detach().numpy())
@@ -384,7 +382,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     else:
                         # Run training phase and get loss and accuracy
                         validation_loss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
-                                                                     validation_samples, validation_labels)
+                                                                     validation_samples, validation_labels[0])
                         
                         # Display stuff
                         pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
@@ -401,12 +399,12 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
 
                     """ ROC Curve save data """
                     if nep % cfg.save_freq == 0 and nep!=0:
-                        roc_save_data(nep, pred_prob, validation_labels, cfg.export_dir)
+                        roc_save_data(nep, pred_prob, validation_labels[0], cfg.export_dir)
 
                     """ Calculating confusion matrix and Pred Probs """
                     apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
                     print(validation_labels)
-                    for voutput, vlabel in zip(pred_prob, validation_labels):
+                    for voutput, vlabel in zip(pred_prob, validation_labels[0]):
                         # Get labels based on threshold
                         vlabel = vlabel.cpu().detach().numpy()
                         coutput = [apply_thresh(float(voutput[0])), apply_thresh(float(voutput[1]))]
