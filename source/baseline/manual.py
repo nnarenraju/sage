@@ -71,8 +71,8 @@ def save_data(rowsdata, file_path):
 def roc_save_data(nep, output, labels, export_dir):
     # ROC Curve save data
     # Convert output to saveable format
-    voutput = [list(foo) for foo in output.detach().numpy()]
-    vlabels = [list(foo) for foo in labels.detach().numpy()]
+    voutput = [list(foo) for foo in output]
+    vlabels = [list(foo) for foo in labels]
     # Save (append) the above list of lists to CSV file
     save_dir = os.path.join(export_dir, "data_roc_curve")
     if not os.path.exists(save_dir):
