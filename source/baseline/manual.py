@@ -120,7 +120,7 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
         samples = samples.cpu().detach().numpy()[:]
         labels = labels.cpu().detach().numpy()[:]
         # Saving target and path (this will be a list of np arrays of labels from each batch)
-        targets.append(labels.to_list())
+        targets.append(labels.tolist())
         # Iterate throught the trainDL and store all trainable training data in HDF5 format
         store_path = os.path.join(store_dir, "trainable_{}.hdf".format(n+id_offset))
         pbar.set_description("Processing nsample {} into {}".format(n, "trainable_{}.hdf".format(n+id_offset)))
