@@ -106,7 +106,7 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
         save_data([[data]], save_tn)
 
 
-def save_batch_to_hdf(dataloader, store_dir):
+def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
     # Iterate through the DataLoader and save all samples in HDF5 format
     # We also have to save target for creating trainable.hdf
     targets = []
@@ -121,7 +121,7 @@ def save_batch_to_hdf(dataloader, store_dir):
         # Saving target and path (this will be a list of np arrays of labels from each batch)
         targets.append(labels)
         # Iterate throught the trainDL and store all trainable training data in HDF5 format
-        store_path = os.path.join(store_dir, "trainable_{}.hdf".format(n))
+        store_path = os.path.join(store_dir, "trainable_{}.hdf".format(n+id_offset))
         # Store path (one path for each batch)
         all_abspaths.append(os.path.abspath(store_path))
         # HDF5 was measured to have the fastest IO (r->46ms, w->172ms)
@@ -137,7 +137,7 @@ def save_batch_to_hdf(dataloader, store_dir):
             for nsample, sample in enumerate(samples):
                 dst[nsample] = sample
         
-    return targets, all_abspaths
+    return targets, all_abspaths, n+1
 
 
 def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
@@ -150,9 +150,10 @@ def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
         os.makedirs(store_dir, exist_ok=False)
     
     """ Store trainable data for training and validation """
+    print("Running pipeline using trainable option. Saving transformed trainable dataset.")
     # Training and validation will the saved in the same place and split (no need to distinguish)
-    targets_train, train_abspaths = save_batch_to_hdf(trainDL, store_dir)
-    targets_valid, valid_abspaths = save_batch_to_hdf(validDL, store_dir)
+    targets_train, train_abspaths, offset = save_batch_to_hdf(trainDL, store_dir)
+    targets_valid, valid_abspaths, _ = save_batch_to_hdf(validDL, store_dir, offset)
     
     """ Save trainable.json for lookup """
     targets = targets_train + targets_valid
