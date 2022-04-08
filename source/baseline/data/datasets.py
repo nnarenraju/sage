@@ -307,11 +307,6 @@ class BatchLoader(Dataset):
         # TODO: This is very inefficient. Fix me!!!
         batch_targets = np.array(list(self.targets[idx]), dtype=np.float64)
         
-        print(batch_targets.shape)
-        print(batch_samples.shape)
-        print(batch_targets[0].shape)
-        print(batch_samples[0].shape)
-        raise
         # Concatenating the normalised_tc within the target variable
         # This can be used when normalised_tc is also stored in trainable.hdf
         # target = np.append(target, normalised_tc)
