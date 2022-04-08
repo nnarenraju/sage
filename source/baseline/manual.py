@@ -393,7 +393,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         pred_prob.append(preds)
                         validation_batches += 1
                     
-                    pred_prob = np.row_stack(pred_prob)
+                    pred_prob = np.row_stack(pred_prob.cpu().detach().numpy())
                     # Update losses and accuracy
                     validation_running_loss += batch_validation_loss
                     acc_valid.extend(accuracies)
