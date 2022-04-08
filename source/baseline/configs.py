@@ -158,7 +158,7 @@ class Baseline:
 class KaggleFirst:
     
     """ Data storage """
-    name = "Baseline_kaggle_test"
+    name = "Baseline_check_pipeline"
     export_dir = Path("/home/nnarenraju/Research") / name
     
     """ Dataset Splitting """
@@ -167,7 +167,7 @@ class KaggleFirst:
     splitter = None
     
     """ Dataset """
-    dataset = MLMDC1
+    dataset = BatchLoader
     dataset_params = dict()
     
     """ Architecture """
@@ -195,9 +195,9 @@ class KaggleFirst:
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 100
+    batch_size = 5
     save_freq = 5
-    early_stopping = True
+    early_stopping = False
     
     """ Gradient Clipping """
     clip_norm = 100
