@@ -32,6 +32,10 @@ import shutil
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import torch.utils.data as D
+
+# LOCAL
+from data.datasets import Simple
 
 
 def display_outputs(training_output, training_labels):
@@ -159,7 +163,48 @@ def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
     shutil.copy(lookup_trainable, data_cfg.parent_dir)
     print("manual.py: Trainable dataset has been created and stored!")
     
+
+def training_phase(cfg, Network, optimizer, loss_function, training_samples, training_labels):
+    # Optimizer step on a single batch of training data
+    optimizer.zero_grad()
+    # Obtain training output from network
+    training_output = Network(training_samples)
+    # Get necessary output params from dict output
+    pred_prob = training_output['pred_prob']
+    if 'tc' in list(training_output.keys()):
+        tc = training_output['tc']
     
+    ## TODO: Loss and accuracy need to be redefined to include 'tc'
+    # Loss calculation
+    training_loss = loss_function(pred_prob, training_labels)
+    # Accuracy calculation
+    accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
+    # Backward propogation using loss_function
+    training_loss.backward()
+    # Clip gradients to make convergence somewhat easier
+    torch.nn.utils.clip_grad_norm_(Network.parameters(), max_norm=cfg.clip_norm)
+    # Make the actual optimizer step and save the batch loss
+    optimizer.step()
+    
+    return (training_loss, accuracy)
+
+
+def validation_phase(cfg, nep, Network, optimizer, loss_function, validation_samples, validation_labels):
+    # Evaluation of a single validation batch
+    validation_output = Network(validation_samples)
+    # Get necessary output params from dict output
+    pred_prob = validation_output['pred_prob']
+    if 'tc' in list(validation_output.keys()):
+        tc = validation_output['tc']
+    
+    ## TODO: loss and accuracy must be redefined to include 'tc'
+    validation_loss = loss_function(pred_prob, validation_labels)
+    # Accuracy calculation
+    accuracy = calculate_accuracy(pred_prob, validation_labels, cfg.accuracy_thresh)
+    # Returning pred_prob if saving data
+    return (validation_loss, accuracy, pred_prob)
+    
+
 def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, 
           verbose=False, trainable_dataset_save_mode=False):
     
@@ -204,10 +249,13 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     """ Training and Validation """
     with open(os.path.join(cfg.export_dir, cfg.output_loss_file), 'w') as outfile:
 
-        ### Training loop
+        ### Initialise global (over all epochs) params
         best_loss = 1.e10 # impossibly bad value
-
+        overfitting_check = 0
+        
         for nep, epoch in enumerate(range(cfg.num_epochs)):
+            
+            print("\n=========== Epoch {} ===========".format(nep))
             
             # Training epoch
             Network.train()
@@ -229,33 +277,49 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 [1] Do gradient clipping. Set value in cfg.
             """
             print("\nTraining Phase Initiated")
-            for training_samples, training_labels in trainDL:
-                # Optimizer step on a single batch of training data
-                optimizer.zero_grad()
-                # Obtain training output from network
-                training_output = Network(training_samples)
-                # Get necessary output params from dict output
-                pred_prob = training_output['pred_prob']
-                if 'tc' in list(training_output.keys()):
-                    tc = training_output['tc']
+            for training_samples, training_labels in (pbar := tqdm(trainDL)):
                 
-                ## TODO: Loss and accuracy need to be redefined to include 'tc'
-                # Loss calculation
-                training_loss = loss_function(pred_prob, training_labels)
-                # Accuracy calculation
-                accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
-                # Backward propogation using loss_function
-                training_loss.backward()
-                # Clip gradients to make convergence somewhat easier
-                torch.nn.utils.clip_grad_norm_(Network.parameters(), max_norm=cfg.clip_norm)
-                # Make the actual optimizer step and save the batch loss
-                optimizer.step()
-                training_running_loss += training_loss.clone().cpu().item()
-                training_batches += 1
+                batch_training_loss = 0.
+                accuracies = []
+                # Get all mini-folds and run training phase for each batch
+                # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
+                if cfg.dataset.__name__ == "BatchLoader":
+                    # Convert the training_sample into a Simple dataset object
+                    batch_train_dataset = Simple(training_samples, training_labels, 
+                                           store_device=cfg.store_device, 
+                                           train_device=cfg.train_device)
+                    # Pass Simple dataset into a dataloader with cfg.batch_size
+                    batch_train_loader = D.DataLoader(
+                        batch_train_dataset, batch_size=cfg.batch_size, shuffle=True,
+                        num_workers=0, pin_memory=False)
+                    # Now iterate through this dataset and run training phase for each batch
+                    for samples, labels in batch_train_loader:
+                        # Run training phase and get loss and accuracy
+                        tloss, accuracy = training_phase(cfg, Network, optimizer, loss_function, 
+                                                         samples, labels)
+                        
+                        # Display stuff
+                        pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, tloss, accuracy))
+                        # Updating things (Do not judge this comment. It was a Friday evening.)
+                        batch_training_loss += tloss.clone().cpu().item()
+                        accuracies.append(accuracy)
+                        training_batches += 1
+                        
+                else:
+                    # Run training phase and get loss and accuracy
+                    training_loss, accuracy = training_phase(cfg, Network, optimizer, loss_function, 
+                                                             training_samples, training_labels)
+                    
+                    # Display stuff
+                    pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, training_loss, accuracy))
+                    # Updating similar things (same same but different, but still same)
+                    batch_training_loss += training_loss.clone().cpu().item()
+                    accuracies.append(accuracy)
+                    training_batches += 1
                 
-                print("\nEpoch {}: Training Loss = {}".format(nep, training_loss))
-                print("Epoch {}: Training Accuracy = {}".format(nep, accuracy))
-                acc_train.append(accuracy)
+                # Update losses and accuracy
+                training_running_loss += batch_training_loss
+                acc_train.extend(accuracies)
 
             
             """
@@ -271,28 +335,57 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 validation_running_loss = 0.
                 validation_batches = 0
 
-                for validation_samples, validation_labels in validDL:
-                    # Evaluation of a single validation batch
-                    validation_output = Network(validation_samples)
-                    # Get necessary output params from dict output
-                    pred_prob = validation_output['pred_prob']
-                    if 'tc' in list(validation_output.keys()):
-                        tc = validation_output['tc']
+                for validation_samples, validation_labels in (pbar := tqdm(validDL)):
                     
-                    ## TODO: loss and accuracy must be redefined to include 'tc'
-                    validation_loss = loss_function(pred_prob, validation_labels)
-                    # Accuracy calculation
-                    accuracy = calculate_accuracy(pred_prob, validation_labels, cfg.accuracy_thresh)
-                    # Update running loss and batches
-                    validation_running_loss += validation_loss.clone().cpu().item()
-                    validation_batches += 1
+                    batch_validation_loss = 0.
+                    accuracies = []
+                    pred_prob = []
+                    # Get all mini-folds and run training phase for each batch
+                    # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
+                    if cfg.dataset.__name__ == "BatchLoader":
+                        # Convert the training_sample into a Simple dataset object
+                        batch_valid_dataset = Simple(validation_samples, validation_labels, 
+                                               store_device=cfg.store_device, 
+                                               train_device=cfg.train_device)
+                        # Pass Simple dataset into a dataloader with cfg.batch_size
+                        batch_valid_loader = D.DataLoader(
+                            batch_valid_dataset, batch_size=cfg.batch_size, shuffle=True,
+                            num_workers=0, pin_memory=False)
+                        # Now iterate through this dataset and run training phase for each batch
+                        for samples, labels in batch_valid_loader:
+                            # Run training phase and get loss and accuracy
+                            vloss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
+                                                                      samples, labels)
+                            
+                            # Display stuff
+                            pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
+                            batch_validation_loss += vloss.clone().cpu().item()
+                            # Updating things but now its validation
+                            accuracies.append(accuracy)
+                            pred_prob.append(preds)
+                            validation_batches += 1
+                        
+                            
+                    else:
+                        # Run training phase and get loss and accuracy
+                        validation_loss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
+                                                                     validation_samples, validation_labels)
+                        
+                        # Display stuff
+                        pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
+                        # Updating
+                        batch_validation_loss += validation_loss.clone().cpu().item()
+                        accuracies.append(accuracy)
+                        pred_prob.append(preds)
+                        validation_batches += 1
                     
-                    print("\nEpoch {}: Validation Loss = {}".format(nep, validation_loss))
-                    print("Epoch {}: Validation Accuracy = {}".format(nep, accuracy))
-                    acc_valid.append(accuracy)
+                    pred_prob = np.row_stack(pred_prob)
+                    # Update losses and accuracy
+                    validation_running_loss += batch_validation_loss
+                    acc_valid.extend(accuracies)
 
                     """ ROC Curve save data """
-                    if nep % cfg.save_freq == 0:
+                    if nep % cfg.save_freq == 0 and nep!=0:
                         roc_save_data(nep, pred_prob, validation_labels, cfg.export_dir)
 
                     """ Calculating confusion matrix and Pred Probs """
@@ -304,7 +397,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         
                         """ Prediction Probabilties """
                         # Storing predicted probabilities
-                        if nep % cfg.save_freq == 0:
+                        if nep % cfg.save_freq == 0 and nep!=0:
                             prediction_probability_save_data(nep, vlabel, voutput[0], cfg.export_dir)
                             
                         """ Confusion Matrix """
@@ -333,23 +426,35 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 [3] Reload the new weights once all phases are complete
             """
             # Print information on the training and validation loss in the current epoch and save current network state
-            validation_loss = validation_running_loss/validation_batches
-            training_loss = training_running_loss/training_batches
+            epoch_validation_loss = validation_running_loss/validation_batches
+            epoch_training_loss = training_running_loss/training_batches
             avg_acc_valid = sum(acc_valid)/len(acc_valid)
             avg_acc_train = sum(acc_train)/len(acc_train)
             
             # Save output string in losses.txt
             output_string = '%04i    %f    %f    %f    %f    %f    %f    %f    %f' % \
-                            (epoch, training_loss, validation_loss,
+                            (epoch, epoch_training_loss, epoch_validation_loss,
                              avg_acc_train, avg_acc_valid, tp, tn, fp, fn)
                             
             outfile.write(output_string + '\n')
             
             """ Save the best weights (if global loss reduces) """
-            if validation_loss < best_loss:
+            if epoch_validation_loss < best_loss:
                 weights_save_path = os.path.join(cfg.export_dir, cfg.model_params['weights_path'])
                 torch.save(Network.state_dict(), weights_save_path)
-                best_loss = validation_loss
-
-
+                best_loss = epoch_validation_loss
+            
+            """ Epoch Display """
+            print("Best Validation Loss = {}".format(best_loss))
+            print("\nEpoch Validation Loss = {}".format(epoch_validation_loss))
+            print("Epoch Training Loss = {}".format(epoch_training_loss))
+            print("Average Validation Accuracy = {}".format(avg_acc_valid))
+            print("Average Training Accuracy = {}".format(avg_acc_train))
+            if epoch_validation_loss > 1.1*epoch_training_loss and cfg.early_stopping:
+                overfitting_check += 1
+                if overfitting_check > 3:
+                    print("\nThe current model may be overfitting! Terminating.")
+                    break
+        
+        print("\n================================================================")
         print("Training complete with best validation loss = {}".format(best_loss))
