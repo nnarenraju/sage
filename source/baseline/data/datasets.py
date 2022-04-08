@@ -345,7 +345,13 @@ class Simple(Dataset):
         return len(self.targets)
     
     def __getitem__(self, idx):
-        # Change sample and target device before returning
-        sample = self.samples[idx].to(device=self.train_device)
-        target = self.targets[idx].to(device=self.train_device)
+        """ Tensorification and Device Compatibility """
+        # Convert signal/target to Tensor objects
+        sample = torch.from_numpy(self.samples[idx])
+        target = torch.from_numpy(self.targets[idx])
+        # Set the device and dtype
+        global tensor_dtype
+        sample = sample.to(dtype=tensor_dtype, device=self.train_device)
+        target = target.to(dtype=tensor_dtype, device=self.train_device)
+        
         return (sample, target)

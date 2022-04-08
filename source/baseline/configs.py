@@ -31,7 +31,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from sklearn.model_selection import StratifiedKFold
 
 # LOCAL
-from data.datasets import MLMDC1
+from data.datasets import MLMDC1, BatchLoader
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel

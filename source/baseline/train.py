@@ -86,8 +86,9 @@ if __name__ == "__main__":
         # TODO: Implement inference section
         if opts.inference:
             continue
-
-        print(f'\n========================= TRAINING FOLD {fold} =========================\n')
+        
+        if cfg.splitter != None:
+            print(f'\n========================= TRAINING FOLD {fold} =========================\n')
 
         train_fold = train.iloc[train_idx]
         val_fold = train.iloc[val_idx]
