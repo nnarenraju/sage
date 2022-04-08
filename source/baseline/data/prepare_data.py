@@ -264,11 +264,17 @@ class DataModule:
         
         """
         
+        # check cfg and set batch_size to 1 if using BatchLoader
+        if cfg.dataset.__name__ == "BatchLoader":
+            batch_size = 1
+        else:
+            batch_size = cfg.batch_size
+        
         train_loader = D.DataLoader(
-            train_data, batch_size=cfg.batch_size, shuffle=True,
+            train_data, batch_size=batch_size, shuffle=True,
             num_workers=0, pin_memory=False)
         valid_loader = D.DataLoader(
-            valid_data, batch_size=cfg.batch_size, shuffle=True,
+            valid_data, batch_size=batch_size, shuffle=True,
             num_workers=0, pin_memory=False)
         
         return (train_loader, valid_loader)

@@ -306,7 +306,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         num_workers=0, pin_memory=False)
                     # Now iterate through this dataset and run training phase for each batch
                     for samples, labels in batch_train_loader:
-                        print(samples.shape)
                         # Run training phase and get loss and accuracy
                         tloss, accuracy = training_phase(cfg, Network, optimizer, loss_function, 
                                                          samples, labels)
