@@ -374,7 +374,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             # Display stuff
                             pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
                             batch_validation_loss += vloss.clone().cpu().item()
-                            validation_labels = validation_labels[0]
+                            validation_labels = validation_labels[0].cpu().detach().numpy()
                             # Updating things but now its validation
                             accuracies.append(accuracy)
                             pred_prob.append(preds.cpu().detach().numpy())
