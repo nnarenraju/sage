@@ -350,6 +350,4 @@ class Simple(Dataset):
         sample = self.samples[idx].to(dtype=tensor_dtype, device=self.train_device)
         target = self.targets[idx].to(dtype=tensor_dtype, device=self.train_device)
         
-        print(sample.shape)
-        
         return (sample, target)
