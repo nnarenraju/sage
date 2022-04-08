@@ -161,7 +161,7 @@ def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
     targets = targets_train + targets_valid
     all_abspaths = train_abspaths + valid_abspaths
     ## Creating trainable.json similar to training.hdf
-    ids = range(len(targets)) # un-JSONified version (np array is not JSON serializable)
+    ids = np.arange(len(targets)).tolist() # un-JSONified version (np array is not JSON serializable)
     # Shuffling is not required as the DataLoader should have already shuffled it
     # Save the lookup table as a json file (this works better for batch saving)
     lookup = {'ids': ids, 'path': all_abspaths, 'target': targets, 'batch_size': cfg.batch_size}
