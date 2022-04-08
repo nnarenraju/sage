@@ -113,7 +113,7 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
     all_abspaths = []
     """ Store Trainable Training/Validation Data """
     pbar = tqdm(dataloader)
-    for n, (samples, labels) in enumerate():
+    for n, (samples, labels) in enumerate(pbar):
         # We need to detach from cuda and use .cpu() to access host memory
         # example: if batch_size if 100, labels and samples will have have dims (100, len_data)
         # if slice is provided it splits the batch or gets element of batch
@@ -123,7 +123,7 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
         targets.append(labels.to_list())
         # Iterate throught the trainDL and store all trainable training data in HDF5 format
         store_path = os.path.join(store_dir, "trainable_{}.hdf".format(n+id_offset))
-        pbar.set_description("Processing nsample {} into {}".format(n, store_path))
+        pbar.set_description("Processing nsample {} into {}".format(n, "trainable_{}.hdf".format(n+id_offset)))
         # Store path (one path for each batch)
         all_abspaths.append(os.path.abspath(store_path))
         # HDF5 was measured to have the fastest IO (r->46ms, w->172ms)
