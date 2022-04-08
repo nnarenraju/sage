@@ -292,7 +292,7 @@ class BatchLoader(Dataset):
         # Should contain an entire batch of data samples
         with h5py.File(data_path, "r") as fp:
             # Get and return the batch data
-            return fp['data']
+            return np.array(fp['data'][:])
     
     def __getitem__(self, idx):
         
