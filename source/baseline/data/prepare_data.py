@@ -171,7 +171,8 @@ class DataModule:
             with open(lookup_table, 'r') as fp:
                 # train should have (ids, path, target)
                 data = json.load(fp)
-                train = np.row_stack([data['ids'], data['path'], data['target']])
+                train = np.array([data['ids'], data['path'], data['target']], dtype=object)
+                train = np.row_stack((train))
                 train = pd.DataFrame(train)
                 train.columns = list(data.keys())
         else:
