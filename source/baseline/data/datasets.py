@@ -291,10 +291,8 @@ class BatchLoader(Dataset):
         """ Read sample and return necessary training params """
         # Should contain an entire batch of data samples
         with h5py.File(data_path, "r") as fp:
-            # List all groups
-            data_group_key = list(fp.keys())[0]
             # Get and return the batch data
-            return fp[data_group_key]
+            return fp.get('data').value
     
     def __getitem__(self, idx):
         
@@ -346,12 +344,9 @@ class Simple(Dataset):
     
     def __getitem__(self, idx):
         """ Tensorification and Device Compatibility """
-        # Convert signal/target to Tensor objects
-        sample = torch.from_numpy(self.samples[idx])
-        target = torch.from_numpy(self.targets[idx])
-        # Set the device and dtype
+        # Convert signal/target to Tensor objects and set device and data_type
         global tensor_dtype
-        sample = sample.to(dtype=tensor_dtype, device=self.train_device)
-        target = target.to(dtype=tensor_dtype, device=self.train_device)
+        sample = self.samples[idx].to(dtype=tensor_dtype, device=self.train_device)
+        target = self.targets[idx].to(dtype=tensor_dtype, device=self.train_device)
         
         return (sample, target)

@@ -159,7 +159,7 @@ class KaggleFirst:
     
     """ Data storage """
     name = "Baseline_kaggle_test"
-    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    export_dir = Path("/home/nnarenraju/Research") / name
     
     """ Dataset Splitting """
     n_splits = 2
