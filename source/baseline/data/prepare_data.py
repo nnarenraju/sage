@@ -174,7 +174,7 @@ class DataModule:
                 train = np.array([data['ids'], data['path'], data['target']], dtype=object)
                 train = np.column_stack(train)
                 train = pd.DataFrame(train)
-                train.columns = list(data.keys())
+                train.columns = ['ids', 'path', 'target']
         else:
             lookup_table = "training.hdf"
             # Using a dask Dataframe for larger CSV files (if using)
