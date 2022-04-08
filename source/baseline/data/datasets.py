@@ -335,7 +335,6 @@ class Simple(Dataset):
         self.targets = torch.from_numpy(targets)
         self.store_device = store_device
         self.train_device = train_device
-        self.data_cfg = data_cfg
         assert len(self.samples) == len(self.targets)
         
     def __len__(self):

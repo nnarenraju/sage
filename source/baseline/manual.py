@@ -277,7 +277,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 [1] Do gradient clipping. Set value in cfg.
             """
             print("\nTraining Phase Initiated")
-            for training_samples, training_labels in (pbar := tqdm(trainDL)):
+            pbar = tqdm(trainDL)
+            for training_samples, training_labels in pbar:
                 
                 batch_training_loss = 0.
                 accuracies = []
@@ -334,8 +335,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 validation_running_loss = 0.
                 validation_batches = 0
-
-                for validation_samples, validation_labels in (pbar := tqdm(validDL)):
+                
+                pbar = tqdm(validDL)
+                for validation_samples, validation_labels in pbar:
                     
                     batch_validation_loss = 0.
                     accuracies = []
