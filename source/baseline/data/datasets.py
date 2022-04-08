@@ -292,7 +292,7 @@ class BatchLoader(Dataset):
         # Should contain an entire batch of data samples
         with h5py.File(data_path, "r") as fp:
             # Get and return the batch data
-            return fp.get('data').value
+            return fp['data']
     
     def __getitem__(self, idx):
         
@@ -303,7 +303,7 @@ class BatchLoader(Dataset):
         
         """ Target """
         # Target for training or testing phase (obtained from trainable.json)
-        batch_targets = np.array(self.targets, dtype=np.float64)
+        batch_targets = np.array(list(self.targets), dtype=np.float64)
         # Concatenating the normalised_tc within the target variable
         # This can be used when normalised_tc is also stored in trainable.hdf
         # target = np.append(target, normalised_tc)
