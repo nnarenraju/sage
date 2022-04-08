@@ -406,7 +406,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
                     for voutput, vlabel in zip(pred_prob, validation_labels):
                         # Get labels based on threshold
-                        vlabel.cpu().detach().numpy()
+                        vlabel = vlabel.cpu().detach().numpy()
                         coutput = [apply_thresh(float(voutput[0])), apply_thresh(float(voutput[1]))]
                         clabel = [apply_thresh(float(vlabel[0])), apply_thresh(float(vlabel[1]))]
                         
