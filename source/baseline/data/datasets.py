@@ -300,7 +300,6 @@ class BatchLoader(Dataset):
         # check whether the sample is noise/signal for adding random noise realisation
         data_path = self.data_paths[idx]
         batch_samples = self._read_(data_path)
-        print(batch_samples.shape)
         
         """ Target """
         # Target for training or testing phase (obtained from trainable.json)
@@ -350,5 +349,7 @@ class Simple(Dataset):
         global tensor_dtype
         sample = self.samples[idx].to(dtype=tensor_dtype, device=self.train_device)
         target = self.targets[idx].to(dtype=tensor_dtype, device=self.train_device)
+        
+        print(sample.shape)
         
         return (sample, target)
