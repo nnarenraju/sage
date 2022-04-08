@@ -26,6 +26,7 @@ Documentation: NULL
 # BUILT-IN
 import os
 import csv
+import h5py
 import json
 import torch
 import shutil
@@ -125,10 +126,16 @@ def save_batch_to_hdf(dataloader, store_dir):
         all_abspaths.append(os.path.abspath(store_path))
         # HDF5 was measured to have the fastest IO (r->46ms, w->172ms)
         # NPY read/write was not tested. Github says HDF5 is faster.
-        # Convert training_samples to dataframe (store an entire batch)
-        df = pd.DataFrame(data=samples)
-        # Save as hdf5 file with compression
-        df.to_hdf(store_path, "data", complib="blosc:lz4", complevel=9, mode='a')
+        with h5py.File(store_path, 'a') as fp:
+            # create a dataset for batch save
+            dst = fp.create_dataset("data", shape=samples.shape, dtype=np.float64, 
+                                    compression='gzip',
+                                    compression_opts=9, 
+                                    shuffle=True)
+                
+            # fill the <batch_size> number of slots with sample data
+            for nsample, sample in enumerate(samples):
+                dst[nsample] = sample
         
     return targets, all_abspaths
 

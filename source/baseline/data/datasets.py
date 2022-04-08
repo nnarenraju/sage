@@ -290,7 +290,11 @@ class BatchLoader(Dataset):
     def _read_(self, data_path):
         """ Read sample and return necessary training params """
         # Should contain an entire batch of data samples
-        return pd.read_hdf(data_path, 'data')['trainable'].to_numpy()
+        with h5py.File(data_path, "r") as fp:
+            # List all groups
+            data_group_key = list(fp.keys())[0]
+            # Get and return the batch data
+            return fp[data_group_key]
     
     def __getitem__(self, idx):
         
