@@ -318,15 +318,16 @@ class BatchLoader(Dataset):
         samples = torch.from_numpy(batch_samples)
         targets = torch.from_numpy(batch_targets)
         
+        # Set the device and dtype
+        global tensor_dtype
+        samples = samples.to(dtype=tensor_dtype, device=self.train_device)
+        targets = targets.to(dtype=tensor_dtype, device=self.train_device)
+        
         print(samples.shape)
         print(samples.shape)
         print(targets[0].shape)
         print(samples[0].shape)
         raise
-        # Set the device and dtype
-        global tensor_dtype
-        samples = samples.to(dtype=tensor_dtype, device=self.train_device)
-        targets = targets.to(dtype=tensor_dtype, device=self.train_device)
         
         # Return as tuple for immutability
         return (samples, targets)
