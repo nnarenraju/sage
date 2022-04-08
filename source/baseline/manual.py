@@ -150,7 +150,7 @@ def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
     ids = np.arange(len(targets))
     # Shuffling is not required as the DataLoader should have already shuffled it
     # Save the lookup table as a json file (this works better for batch saving)
-    lookup = {'ids': ids, 'paths': all_abspaths, 'targets': targets, 'batch_size': cfg.batch_size}
+    lookup = {'ids': ids, 'path': all_abspaths, 'target': targets, 'batch_size': cfg.batch_size}
     # Save the dataset paths alongside the target and ids as .JSON
     lookup_trainable = os.path.join(cfg.export_dir, "trainable.json")
     with open(lookup_trainable, 'w') as fp:
