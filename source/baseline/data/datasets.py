@@ -333,8 +333,8 @@ class Simple(Dataset):
     def __init__(self, samples, targets, store_device='cpu', train_device='cpu'):
         
         super().__init__()
-        self.samples = torch.from_numpy(samples)
-        self.targets = torch.from_numpy(targets)
+        self.samples = samples
+        self.targets = targets
         self.store_device = store_device
         self.train_device = train_device
         assert len(self.samples) == len(self.targets)
