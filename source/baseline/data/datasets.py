@@ -244,10 +244,11 @@ class MLMDC1(Dataset):
 
 
 
-class Simple(Dataset):
+class BatchLoader(Dataset):
     """
-    Simple read-and-load-type dataset object
-    Designed to be be used alongside save_trainable_dataset = True
+    Simple read-and-load-type batch dataset object
+    Designed to be be used alongside save_trainable_dataset
+    Each file should contain cfg.batch_size number of data samples
     
     """
     
@@ -257,8 +258,8 @@ class Simple(Dataset):
         
         self.data_paths = data_paths
         self.targets = targets
-        self.transforms = transforms
-        self.target_transforms = target_transforms
+        self.transforms = None
+        self.target_transforms = None
         self.training = training
         self.testing = testing
         self.store_device = store_device
