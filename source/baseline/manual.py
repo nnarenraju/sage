@@ -130,8 +130,6 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
         # NPY read/write was not tested. Github says HDF5 is faster.
         with h5py.File(store_path, 'a') as fp:
             # create a dataset for batch save
-            print(samples.shape)
-            raise
             dst = fp.create_dataset("data", shape=samples.shape, dtype=np.float64, 
                                     data=samples,
                                     compression='gzip',
