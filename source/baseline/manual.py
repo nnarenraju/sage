@@ -26,7 +26,7 @@ Documentation: NULL
 # BUILT-IN
 import os
 import csv
-import h5py
+import json
 import torch
 import shutil
 import numpy as np
@@ -101,64 +101,61 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
         save_data([[data]], save_tn)
 
 
-def save_samples_to_hdf(dataloader, store_dir, mode=''):
+def save_batch_to_hdf(dataloader, store_dir):
     # Iterate through the DataLoader and save all samples in HDF5 format
-    # mode can either be 'tdata' or 'vdata'
     # We also have to save target for creating trainable.hdf
     targets = []
     all_abspaths = []
     """ Store Trainable Training/Validation Data """
     for n, (samples, labels) in enumerate(dataloader):
         # We need to detach from cuda and use .cpu() to access host memory
-        samples = samples.cpu().detach().numpy()[0]
-        labels = labels.cpu().detach().numpy()[0]
-        # Saving target and path
+        # example: if batch_size if 100, labels and samples will have have dims (100, len_data)
+        # if slice is provided it splits the batch or gets element of batch
+        samples = samples.cpu().detach().numpy()[:]
+        labels = labels.cpu().detach().numpy()[:]
+        # Saving target and path (this will be a list of np arrays of labels from each batch)
         targets.append(labels)
         # Iterate throught the trainDL and store all trainable training data in HDF5 format
-        store_path = os.path.join(store_dir, "trainable_{}_{}.hdf".format(mode, n))
-        # Store path
+        store_path = os.path.join(store_dir, "trainable_{}.hdf".format(n))
+        # Store path (one path for each batch)
         all_abspaths.append(os.path.abspath(store_path))
-        # This was measured to have the fastest IO (r->46ms, w->172ms)
-        # Convert training_samples to dataframe
+        # HDF5 was measured to have the fastest IO (r->46ms, w->172ms)
+        # NPY read/write was not tested. Github says HDF5 is faster.
+        # Convert training_samples to dataframe (store an entire batch)
         df = pd.DataFrame(data=samples)
         # Save as hdf5 file with compression
         df.to_hdf(store_path, "data", complib="blosc:lz4", complevel=9, mode='a')
-        # Adding all relevant attributes
-        with h5py.File(store_path, 'a') as fp:
-            fp.attrs['label'] = labels
+        
     return targets, all_abspaths
 
 
 def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
     # Saving trainable dataset after transforms
     # Path to store trainable dataset
-    store_dir = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
-    store_tdata = os.path.join(store_dir, "trainable_tdata")
-    store_vdata = os.path.join(store_dir, "trainable_vdata")
+    parent_dir = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+    store_dir = os.path.join(parent_dir, "trainable_batched_dataset")
     
-    if not os.path.exists(store_tdata):
-        os.makedirs(store_tdata, exist_ok=False)
-    if not os.path.exists(store_vdata):
-        os.makedirs(store_vdata, exist_ok=False)
+    if not os.path.exists(store_dir):
+        os.makedirs(store_dir, exist_ok=False)
     
     """ Store trainable data for training and validation """
-    targets_train, train_abspaths = save_samples_to_hdf(trainDL, store_tdata, mode='tdata')
-    targets_valid, valid_abspaths = save_samples_to_hdf(validDL, store_vdata, mode='vdata')
+    # Training and validation will the saved in the same place and split (no need to distinguish)
+    targets_train, train_abspaths = save_batch_to_hdf(trainDL, store_dir)
+    targets_valid, valid_abspaths = save_batch_to_hdf(validDL, store_dir)
     
-    """ Save trainable.hdf for lookup """
+    """ Save trainable.json for lookup """
     targets = targets_train + targets_valid
     all_abspaths = train_abspaths + valid_abspaths
-    ## Creating trainable.hdf similar to training.hdf
+    ## Creating trainable.json similar to training.hdf
     ids = np.arange(len(targets))
-    # Column stack (ids, path, target) for the entire dataset
-    lookup = np.column_stack((ids, all_abspaths, targets))
     # Shuffling is not required as the DataLoader should have already shuffled it
-    # Convert to pandas dataframe
-    df = pd.DataFrame(data=lookup, columns=["id", "path", "target"])
-    # Save the dataset paths alongside the target and ids as hdf5
-    lookup_trainable = os.path.join(cfg.export_dir, "trainable.hdf")
-    df.to_hdf(lookup_trainable, "lookup", complib="blosc:lz4", complevel=9, mode='a')
-    # Create a copy of trainable.hdf to the dataset directory
+    # Save the lookup table as a json file (this works better for batch saving)
+    lookup = {'ids': ids, 'paths': all_abspaths, 'targets': targets, 'batch_size': cfg.batch_size}
+    # Save the dataset paths alongside the target and ids as .JSON
+    lookup_trainable = os.path.join(cfg.export_dir, "trainable.json")
+    with open(lookup_trainable, 'w') as fp:
+        json.dump(lookup, fp)
+    # Create a copy of trainable.json to the dataset directory
     shutil.copy(lookup_trainable, data_cfg.parent_dir)
     print("manual.py: Trainable dataset has been created and stored!")
     
