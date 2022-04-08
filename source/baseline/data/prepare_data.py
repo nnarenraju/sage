@@ -170,7 +170,10 @@ class DataModule:
             lookup_table = os.path.join(cfg.export_dir, "trainable.json")
             with open(lookup_table, 'r') as fp:
                 # train should have (ids, path, target)
-                train = json.load(fp)
+                data = json.load(fp)
+                train = np.row_stack([data['ids'], data['path'], data['target']])
+                train = pd.DataFrame(train)
+                train.columns = list(data.keys())
         else:
             lookup_table = "training.hdf"
             # Using a dask Dataframe for larger CSV files (if using)
