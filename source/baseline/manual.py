@@ -31,7 +31,6 @@ import json
 import torch
 import shutil
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 import torch.utils.data as D
 
@@ -96,7 +95,7 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
     save_tp = os.path.join(save_dir, "pred_prob_tp_epoch_{}.csv".format(nep))
     save_tn = os.path.join(save_dir, "pred_prob_tn_epoch_{}.csv".format(nep))
     
-    data = voutput_0.cpu().detach().numpy().tolist()
+    data = voutput_0
 
     # Input is a signal (pred_prob_tp)
     if vlabels[0] == 1:
