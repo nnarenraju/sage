@@ -297,6 +297,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
                 if cfg.dataset.__name__ == "BatchLoader":
                     # Convert the training_sample into a Simple dataset object
+                    print(training_samples.shape)
                     batch_train_dataset = Simple(training_samples, training_labels, 
                                            store_device=cfg.store_device, 
                                            train_device=cfg.train_device)
