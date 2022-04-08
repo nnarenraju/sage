@@ -293,7 +293,7 @@ class BatchLoader(Dataset):
         with h5py.File(data_path, "r") as fp:
             # Get and return the batch data
             # When BatchLoader is True, batch_size is 1, therefore [0]
-            return np.array(fp['data'][:])[0]
+            return np.array(fp['data'][:])
     
     def __getitem__(self, idx):
         
@@ -305,7 +305,7 @@ class BatchLoader(Dataset):
         """ Target """
         # Target for training or testing phase (obtained from trainable.json)
         # TODO: This is very inefficient. Fix me!!!
-        batch_targets = np.array(list(self.targets[idx]), dtype=np.float64)
+        batch_targets = np.array(list(self.targets[idx]), dtype=np.float64)[0]
         # Concatenating the normalised_tc within the target variable
         # This can be used when normalised_tc is also stored in trainable.hdf
         # target = np.append(target, normalised_tc)
