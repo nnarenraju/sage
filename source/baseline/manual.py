@@ -112,16 +112,18 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
     targets = []
     all_abspaths = []
     """ Store Trainable Training/Validation Data """
-    for n, (samples, labels) in enumerate(dataloader):
+    pbar = tqdm(dataloader)
+    for n, (samples, labels) in enumerate():
         # We need to detach from cuda and use .cpu() to access host memory
         # example: if batch_size if 100, labels and samples will have have dims (100, len_data)
         # if slice is provided it splits the batch or gets element of batch
         samples = samples.cpu().detach().numpy()[:]
         labels = labels.cpu().detach().numpy()[:]
         # Saving target and path (this will be a list of np arrays of labels from each batch)
-        targets.append(labels)
+        targets.append(labels.to_list())
         # Iterate throught the trainDL and store all trainable training data in HDF5 format
         store_path = os.path.join(store_dir, "trainable_{}.hdf".format(n+id_offset))
+        pbar.set_description("Processing nsample {} into {}".format(n, store_path))
         # Store path (one path for each batch)
         all_abspaths.append(os.path.abspath(store_path))
         # HDF5 was measured to have the fastest IO (r->46ms, w->172ms)
@@ -159,7 +161,7 @@ def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
     targets = targets_train + targets_valid
     all_abspaths = train_abspaths + valid_abspaths
     ## Creating trainable.json similar to training.hdf
-    ids = np.arange(len(targets))
+    ids = range(len(targets)) # un-JSONified version (np array is not JSON serializable)
     # Shuffling is not required as the DataLoader should have already shuffled it
     # Save the lookup table as a json file (this works better for batch saving)
     lookup = {'ids': ids, 'path': all_abspaths, 'target': targets, 'batch_size': cfg.batch_size}
