@@ -115,10 +115,10 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
     pbar = tqdm(dataloader)
     for n, (samples, labels) in enumerate(pbar):
         # We need to detach from cuda and use .cpu() to access host memory
-        # example: if batch_size if 100, labels and samples will have have dims (100, len_data)
+        # example: if batch_size if 100, samples will have have dims (100, dimA, dimB)
         # if slice is provided it splits the batch or gets element of batch
-        samples = samples.cpu().detach().numpy()[:]
-        labels = labels.cpu().detach().numpy()[:]
+        samples = samples.cpu().detach().numpy()
+        labels = labels.cpu().detach().numpy()
         # Saving target and path (this will be a list of np arrays of labels from each batch)
         targets.append(labels.tolist())
         # Iterate throught the trainDL and store all trainable training data in HDF5 format
@@ -130,6 +130,8 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
         # NPY read/write was not tested. Github says HDF5 is faster.
         with h5py.File(store_path, 'a') as fp:
             # create a dataset for batch save
+            print(samples.shape)
+            raise
             dst = fp.create_dataset("data", shape=samples.shape, dtype=np.float64, 
                                     data=samples,
                                     compression='gzip',
