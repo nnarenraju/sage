@@ -171,7 +171,7 @@ def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
     with open(lookup_trainable, 'w') as fp:
         json.dump(lookup, fp)
     # Create a copy of trainable.json to the dataset directory
-    shutil.copy(lookup_trainable, data_cfg.parent_dir)
+    shutil.copy(lookup_trainable, parent_dir)
     print("manual.py: Trainable dataset has been created and stored!")
     
 
