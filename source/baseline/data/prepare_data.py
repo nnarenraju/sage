@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import os
+import json
 import shutil
 import numpy as np
 import pandas as pd
@@ -165,12 +166,15 @@ class DataModule:
         
         # set lookup table
         if cfg.dataset.__name__ == "Simple":
-            lookup_table = "trainable.hdf"
+            lookup_table = "trainable.json"
+            with open(lookup_table, 'r') as fp:
+                # train should have (ids, path, target)
+                train = json.load(fp)
         else:
             lookup_table = "training.hdf"
-        
-        # Using a dask Dataframe for larger CSV files (if using)
-        train = pd.read_hdf(os.path.join(cfg.export_dir, lookup_table), 'lookup')
+            # Using a dask Dataframe for larger CSV files (if using)
+            train = pd.read_hdf(os.path.join(cfg.export_dir, lookup_table), 'lookup')
+            
         # TODO: Do the same prodecure for testing dataset. Does not require splitting.
         # Under construction!
         # if debug, use a data subset
@@ -214,6 +218,9 @@ class DataModule:
         valid_dataset : map-style dataset object
         
         """
+        
+        # transforms are not required if the cfg.dataset is made for trainable data
+        # this is automagically taken care of within the BatchLoader datasets class
         
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
