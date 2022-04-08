@@ -332,7 +332,7 @@ class Simple(Dataset):
     
     def __init__(self, samples, targets, store_device='cpu', train_device='cpu'):
         
-        super.__init__(self)
+        super().__init__()
         self.samples = torch.from_numpy(samples)
         self.targets = torch.from_numpy(targets)
         self.store_device = store_device
