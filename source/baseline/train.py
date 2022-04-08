@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # Prepare input data for training and testing
     # TODO: Currently get_summary() does not handle testing dataset
     # This should create/use a dataset and save a copy of the lookup table
-    dat.get_summary(data_cfg, cfg.export_dir)
+    dat.get_summary(cfg, data_cfg, cfg.export_dir)
     
     # Prepare dataset (read, split and return fold idx)
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)

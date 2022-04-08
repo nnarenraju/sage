@@ -96,7 +96,7 @@ class DataModule:
         cfg = eval(opts.data_config)
         return cfg
     
-    def get_summary(cfg, export_dir):
+    def get_summary(cfg, data_cfg, export_dir):
         """
         Creates/uses a training dataset in hdf format
         Consolidate the IDs, target and path into CSV files
@@ -104,7 +104,7 @@ class DataModule:
     
         Parameters
         ----------
-        cfg : class
+        data_cfg : class
             Class containing data_config information
             eg. cfg is Default class in data_configs.py
         
@@ -118,7 +118,7 @@ class DataModule:
         """
         
         # Getting the attributes of data_config class as dict
-        dc_attrs = {key:value for key, value in cfg.__dict__.items() if not key.startswith('__') and not callable(key)}
+        dc_attrs = {key:value for key, value in data_cfg.__dict__.items() if not key.startswith('__') and not callable(key)}
         
         # Set "make_dataset" to the appropriate method
         make_module = dc_attrs['make_module']
