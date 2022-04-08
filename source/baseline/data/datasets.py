@@ -323,12 +323,6 @@ class BatchLoader(Dataset):
         samples = samples.to(dtype=tensor_dtype, device=self.train_device)
         targets = targets.to(dtype=tensor_dtype, device=self.train_device)
         
-        print(samples.shape)
-        print(samples.shape)
-        print(targets[0].shape)
-        print(samples[0].shape)
-        raise
-        
         # Return as tuple for immutability
         return (samples, targets)
 

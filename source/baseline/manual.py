@@ -297,9 +297,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
                 if cfg.dataset.__name__ == "BatchLoader":
                     # Convert the training_sample into a Simple dataset object
-                    print(training_samples.shape)
-                    print(training_labels.shape)
-                    batch_train_dataset = Simple(training_samples, training_labels, 
+                    # We take the first element since we give 1 batch to the BatchLoader
+                    batch_train_dataset = Simple(training_samples[0], training_labels[0], 
                                            store_device=cfg.store_device, 
                                            train_device=cfg.train_device)
                     # Pass Simple dataset into a dataloader with cfg.batch_size
@@ -359,7 +358,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
                     if cfg.dataset.__name__ == "BatchLoader":
                         # Convert the training_sample into a Simple dataset object
-                        batch_valid_dataset = Simple(validation_samples, validation_labels, 
+                        batch_valid_dataset = Simple(validation_samples[0], validation_labels[0], 
                                                store_device=cfg.store_device, 
                                                train_device=cfg.train_device)
                         # Pass Simple dataset into a dataloader with cfg.batch_size
@@ -375,11 +374,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             # Display stuff
                             pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
                             batch_validation_loss += vloss.clone().cpu().item()
+                            validation_labels = validation_labels[0]
                             # Updating things but now its validation
                             accuracies.append(accuracy)
                             pred_prob.append(preds)
                             validation_batches += 1
-                        
                             
                     else:
                         # Run training phase and get loss and accuracy
