@@ -93,11 +93,9 @@ if __name__ == "__main__":
         train_fold = train.iloc[train_idx]
         val_fold = train.iloc[val_idx]
         
-        print(train_fold.shape)
         # Get the dataset objects for training and validation
         train_data, val_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
         
-        print(train_data.shape)
         # Get the Pytorch DataLoader objects of train and valid data
         train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
         
