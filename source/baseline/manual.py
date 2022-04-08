@@ -403,7 +403,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
 
                     """ Calculating confusion matrix and Pred Probs """
                     apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    print(validation_labels)
                     for voutput, vlabel in zip(pred_prob, validation_labels[0]):
                         # Get labels based on threshold
                         vlabel = vlabel.cpu().detach().numpy()
@@ -455,7 +454,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             """ Save the best weights (if global loss reduces) """
             if epoch_validation_loss < best_loss:
-                weights_save_path = os.path.join(cfg.export_dir, cfg.model_params['weights_path'])
+                weights_save_path = os.path.join(cfg.export_dir, cfg.weights_path)
                 torch.save(Network.state_dict(), weights_save_path)
                 best_loss = epoch_validation_loss
             
