@@ -167,7 +167,7 @@ class KaggleFirst:
     splitter = None
     
     """ Dataset """
-    dataset = MLMDC1
+    dataset = BatchLoader
     dataset_params = dict()
     
     """ Architecture """
@@ -190,12 +190,12 @@ class KaggleFirst:
     weights_path = 'weights.pt'
     
     """ Save trainable train and valid data """
-    save_trainable_dataset = True
+    save_trainable_dataset = False
     
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 10
+    batch_size = 5
     save_freq = 5
     early_stopping = False
     
