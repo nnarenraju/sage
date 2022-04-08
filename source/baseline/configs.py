@@ -96,6 +96,8 @@ class Baseline:
     batch_size = 100
     # every 'n' epochs
     save_freq = 5
+    # Overfitting check and Early Stopping
+    early_stopping = True
     
     """ Gradient Clipping """
     # Clip gradients to make convergence somewhat easier
@@ -195,6 +197,7 @@ class KaggleFirst:
     num_epochs = 25
     batch_size = 100
     save_freq = 5
+    early_stopping = True
     
     """ Gradient Clipping """
     clip_norm = 100
