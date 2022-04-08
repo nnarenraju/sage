@@ -377,7 +377,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             validation_labels = validation_labels[0]
                             # Updating things but now its validation
                             accuracies.append(accuracy)
-                            pred_prob.append(preds)
+                            pred_prob.append(preds.cpu().detach().numpy())
                             validation_batches += 1
                             
                     else:
@@ -390,10 +390,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # Updating
                         batch_validation_loss += validation_loss.clone().cpu().item()
                         accuracies.append(accuracy)
-                        pred_prob.append(preds)
+                        pred_prob.append(preds.cpu().detach().numpy())
                         validation_batches += 1
                     
-                    pred_prob = np.row_stack(pred_prob.cpu().detach().numpy())
+                    pred_prob = np.row_stack(pred_prob)
                     # Update losses and accuracy
                     validation_running_loss += batch_validation_loss
                     acc_valid.extend(accuracies)
