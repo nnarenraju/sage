@@ -164,8 +164,7 @@ class DataModule:
         
         # set lookup table
         if cfg.dataset.__name__ == "Simple":
-            lookup_table = os.path.join(cfg.export_dir, "trainable_batched_dataset")
-            lookup_table = os.path.join(lookup_table, "trainable.json")
+            lookup_table = os.path.join(cfg.export_dir, "trainable.json")
             with open(lookup_table, 'r') as fp:
                 # train should have (ids, path, target)
                 train = json.load(fp)
