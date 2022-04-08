@@ -51,6 +51,7 @@ class MLMDC1(Dataset):
                  training=False, testing=False, store_device='cpu', train_device='cpu',
                  data_cfg=None):
         
+        super.__init__(self)
         self.data_paths = data_paths
         self.targets = targets
         self.transforms = transforms
@@ -246,7 +247,7 @@ class MLMDC1(Dataset):
 
 class BatchLoader(Dataset):
     """
-    Simple read-and-load-type batch dataset object
+    Batch read-and-load-type dataset object
     Designed to be be used alongside save_trainable_dataset
     Each file should contain cfg.batch_size number of data samples
     
@@ -256,6 +257,7 @@ class BatchLoader(Dataset):
                  training=False, testing=False, store_device='cpu', train_device='cpu',
                  data_cfg=None):
         
+        super.__init__(self)
         self.data_paths = data_paths
         self.targets = targets
         self.transforms = None
@@ -287,22 +289,19 @@ class BatchLoader(Dataset):
 
     def _read_(self, data_path):
         """ Read sample and return necessary training params """
+        # Should contain an entire batch of data samples
         return pd.read_hdf(data_path, 'data')['trainable'].to_numpy()
     
     def __getitem__(self, idx):
         
-        data_path = self.data_paths[idx]
-        
         """ Read the sample """
         # check whether the sample is noise/signal for adding random noise realisation
-        sample = self._read_(data_path)
+        data_path = self.data_paths[idx]
+        batch_samples = self._read_(data_path)
         
         """ Target """
-        # Target for training or testing phase (obtained from trainable.hdf)
-        # labels in trainable.hdf *ONLY* specify whether given sample is signal or not
-        label = np.array([float(self.targets[idx]), 1.0-float(self.targets[idx])])
-        # Convert label to suitable training format
-        target = label.astype(np.float64)
+        # Target for training or testing phase (obtained from trainable.json)
+        batch_targets = np.array(self.targets, dtype=np.float64)
         # Concatenating the normalised_tc within the target variable
         # This can be used when normalised_tc is also stored in trainable.hdf
         # target = np.append(target, normalised_tc)
@@ -311,12 +310,39 @@ class BatchLoader(Dataset):
         
         """ Tensorification and Device Compatibility """
         # Convert signal/target to Tensor objects
-        sample = torch.from_numpy(sample)
-        target = torch.from_numpy(target)
+        samples = torch.from_numpy(batch_samples)
+        targets = torch.from_numpy(batch_targets)
         # Set the device and dtype
         global tensor_dtype
-        sample = sample.to(dtype=tensor_dtype, device=self.train_device)
-        target = target.to(dtype=tensor_dtype, device=self.train_device)
+        samples = samples.to(dtype=tensor_dtype, device=self.train_device)
+        targets = targets.to(dtype=tensor_dtype, device=self.train_device)
         
         # Return as tuple for immutability
+        return (samples, targets)
+
+
+class Simple(Dataset):
+    """
+    Simple read-and-load-type dataset object
+    Designed to be be used alongside BatchLoader
+    
+    """
+    
+    def __init__(self, samples, targets, store_device='cpu', train_device='cpu'):
+        
+        super.__init__(self)
+        self.samples = torch.from_numpy(samples)
+        self.targets = torch.from_numpy(targets)
+        self.store_device = store_device
+        self.train_device = train_device
+        self.data_cfg = data_cfg
+        assert len(self.samples) == len(self.targets)
+        
+    def __len__(self):
+        return len(self.targets)
+    
+    def __getitem__(self, idx):
+        # Change sample and target device before returning
+        sample = self.samples[idx].to(device=self.train_device)
+        target = self.targets[idx].to(device=self.train_device)
         return (sample, target)
