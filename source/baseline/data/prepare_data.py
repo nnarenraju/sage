@@ -34,8 +34,6 @@ import torch.utils.data as D
 # LOCAL
 from configs import *
 from data_configs import *
-from data.make_mlmdc_dataset import make as make_mlmdc_dataset
-from data.make_default_dataset import make as make_defualt_dataset
 from data.fast_tensor_dataloader import FastTensorDataLoader
 
 
