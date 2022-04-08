@@ -163,7 +163,7 @@ class DataModule:
         """
         
         # set lookup table
-        if cfg.dataset.__name__ == "Simple":
+        if cfg.dataset.__name__ == "BatchLoader":
             lookup_table = os.path.join(cfg.export_dir, "trainable.json")
             with open(lookup_table, 'r') as fp:
                 # train should have (ids, path, target)

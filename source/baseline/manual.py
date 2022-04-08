@@ -131,6 +131,7 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
         with h5py.File(store_path, 'a') as fp:
             # create a dataset for batch save
             dst = fp.create_dataset("data", shape=samples.shape, dtype=np.float64, 
+                                    data=samples,
                                     compression='gzip',
                                     compression_opts=9, 
                                     shuffle=True)
