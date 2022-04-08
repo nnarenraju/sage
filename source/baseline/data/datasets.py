@@ -51,7 +51,7 @@ class MLMDC1(Dataset):
                  training=False, testing=False, store_device='cpu', train_device='cpu',
                  data_cfg=None):
         
-        super().__init__(self)
+        super().__init__()
         self.data_paths = data_paths
         self.targets = targets
         self.transforms = transforms
@@ -257,7 +257,7 @@ class BatchLoader(Dataset):
                  training=False, testing=False, store_device='cpu', train_device='cpu',
                  data_cfg=None):
         
-        super().__init__(self)
+        super().__init__()
         self.data_paths = data_paths
         self.targets = targets
         self.transforms = None
