@@ -270,11 +270,18 @@ class DataModule:
         else:
             batch_size = cfg.batch_size
         
+        # Sometimes in MAC systems, setting num_workers > 0 causes a intraop warning to appear
+        # This does not seem to produce any incorrect results. However it is worrying.
+        # Temporary fix (suppresses the error, but does not fix the underlying issue)
+        os.environ["OMP_NUM_THREADS"] = "1"
+        
         train_loader = D.DataLoader(
             train_data, batch_size=batch_size, shuffle=True,
-            num_workers=0, pin_memory=False)
+            num_workers=cfg.num_workers, pin_memory=cfg.pin_memory, 
+            prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
         valid_loader = D.DataLoader(
             valid_data, batch_size=batch_size, shuffle=True,
-            num_workers=0, pin_memory=False)
+            num_workers=cfg.num_workers, pin_memory=cfg.pin_memory, 
+            prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
         
         return (train_loader, valid_loader)

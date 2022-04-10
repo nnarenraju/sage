@@ -26,12 +26,14 @@ Documentation: NULL
 # IN-BUILT
 import gc
 import csv
+import time
 import h5py
 import shutil
 import logging
 import os, os.path
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 # PyCBC handling
 import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.distributions, pycbc.detector
@@ -58,7 +60,7 @@ class GenerateData:
                  'prior_low_mass', 'prior_high_mass', 'prior_low_chirp_dist', 'prior_high_chirp_dist',
                  'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff',
                  'max_signal_length', 'ringdown_leeway', 'merger_leeway', 'start_freq_factor',
-                 'fs_reduction_factor', 'fbin_reduction_factor']
+                 'fs_reduction_factor', 'fbin_reduction_factor', 'dbins']
     
     def __init__(self, **kwargs):
         ## Get slots magic attributes via input dict (use **kwargs)
@@ -171,11 +173,12 @@ class GenerateData:
         """
         
         psd_save_flag = True
-        for i in self.iterable:
-            
-            print("Num sample = {}".format(i))
+        pbar = tqdm(self.iterable)
+        for i in pbar:
     
             is_waveform = i < self.num_waveforms
+            mode = 'signal' if is_waveform else 'noise'
+            pbar.set_description("Generating Dataset ({})".format(mode))
             
             """ Generate noise """
             if not is_waveform:
@@ -189,7 +192,7 @@ class GenerateData:
                              for psd in self.psds]
                     noise = np.stack(noise, axis=0)
                     """
-                    
+                
                 else:
                     raise NotImplementedError("make_default_dataset: noise gen not implemented for D2,D3")
                     noise_generate_duration = 8. # seconds
@@ -223,7 +226,7 @@ class GenerateData:
                     if os.path.exists(self.psd_file_path_det1):
                         os.remove(self.psd_file_path_det1)
                     # Convert psds to pandas dataframe
-                    df = pd.DataFrame(data=self.psds[0].numpy(), columns=['psd_data'])
+                    df = pd.DataFrame(data=self.psds[0].numpy())
                     # Save as hdf5 file with compression
                     df.to_hdf(self.psd_file_path_det1, "data", complib="blosc:lz4", complevel=9, mode='a')
                     # Adding all relevant attributes
@@ -286,8 +289,8 @@ class GenerateData:
                 # Append zeros if we need samples after signal ends
                 h_plus.append_zeros(self.sample_length_in_num)
                 h_cross.append_zeros(self.sample_length_in_num)
-                strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in self.detectors]
                 
+                strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in self.detectors]
                 ## Computing the frequency evolution of TD waveform
                 # hp, hc = h_plus.trim_zeros(), h_cross.trim_zeros()
                 # Variation of amiplitude and frequency wrt time
@@ -405,8 +408,8 @@ class GenerateData:
                                         invalid 'tc' is ambiguous
                     uniform random negative - model might learn superfluous parameter, but a clear 
                                         boundary can be set between proper 'tc' and invalid 'tc'
-                    
-                    Final Decision = uniform negative 'tc'. Experimentation required.
+                    Nothing - we give the noise case no 'tc' and this will not be used in the loss
+                              at all.
                     """
                     fp.attrs['tc'] = -1.0
                     fp.attrs['normalised_tc'] = -1.0

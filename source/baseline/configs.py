@@ -99,6 +99,10 @@ class Baseline:
     # Overfitting check and Early Stopping
     early_stopping = True
     
+    """ DataLoader params """
+    num_workers = 0
+    pin_memory = False
+    
     """ Gradient Clipping """
     # Clip gradients to make convergence somewhat easier
     clip_norm = 100
@@ -158,7 +162,7 @@ class Baseline:
 class KaggleFirst:
     
     """ Data storage """
-    name = "Baseline_check_pipeline"
+    name = "Baseline_check_MP"
     export_dir = Path("/home/nnarenraju/Research") / name
     
     """ Dataset Splitting """
@@ -190,14 +194,20 @@ class KaggleFirst:
     weights_path = 'weights.pt'
     
     """ Save trainable train and valid data """
-    save_trainable_dataset = False
+    save_trainable_dataset = True
     
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 5
-    save_freq = 5
+    batch_size = 1000
+    save_freq = 200
     early_stopping = False
+    
+    """ Dataloader params """
+    num_workers = 5
+    pin_memory = True
+    prefetch_factor = 2
+    persistent_workers = False
     
     """ Gradient Clipping """
     clip_norm = 100

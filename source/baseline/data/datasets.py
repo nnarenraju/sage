@@ -26,6 +26,7 @@ Documentation: NULL
 # IN-BUILT
 import os
 import h5py
+import time
 import glob
 import torch
 import random
@@ -36,6 +37,10 @@ from torch.utils.data import Dataset
 # LOCAL
 from data.snr_calculation import get_network_snr
 from data.plot_dataloader_unit import plot_unit
+from data.multirate_sampling import get_sampling_rate_bins
+
+# PyCBC
+from pycbc.types import load_frequencyseries, FrequencySeries
 
 # Datatype for storage
 tensor_dtype=torch.float32
@@ -44,6 +49,37 @@ tensor_dtype=torch.float32
 
 class MLMDC1(Dataset):
     """
+    Procedure for data storage:
+        1. Output h_plus and h_cross for each signal, output noise
+        2. Use the h_plus and h_cross to realise a unique signal wrt polarisation, ra, dec
+        3. Augment this signal wrt distance
+        4. If noise, Augment the noise (time shifting)
+        5. Choose a random realisation of noise from the background dir and add to signal
+        6. Apply Bandpass filter
+        7. Apply Whitening
+        8. Apply Multirate sampling
+    
+    Here, the random realisation of noise added to the signal and augmentation of signal/noise
+    happens differently every epoch. This ensures essentially an infinite amount of data. In this
+    setup, each epoch sees the same prior distribution.
+    If we were to save trainable data using this procedure, every epoch will see the same realisation
+    of signal, noise and augmented values. 
+    
+    Questions:
+        1. Is it possible to apply (6, 7, 8) to h_plus and h_cross. If so, we can store transformed
+           h_plus and h_cross in the trainable dataset.
+        2. This trainable dataset can be used with project_wave to obtain a unique signal.
+        3. It can then be augmented by distance.
+        4. Noise will not be affected by applying (6, 7, 8) beforehand.
+        5. The augmented h_t can then be added to a random realisation of noise
+        
+    However, I believe that project_wave cannot be applied to a signal where multi-rate sampling
+    has already been performed.
+    
+    To Check:
+        1. What WallClock overhead does each transformation procedure take? (FIN)
+        2. How to make these transformation as fast as possible. Use C/C++ based libraries. (FIN)
+        3. Is it possible to use num_workers > 0, if using project_wave as a part of transforms
     
     """
     
@@ -63,6 +99,24 @@ class MLMDC1(Dataset):
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         
+        # Store the PSD files here in RAM. This reduces the overhead when whitening.
+        # Read all psds in the data_dir and store then as FrequencySeries
+        self.PSDs = {}
+        psd_files = glob.glob(os.path.join(self.data_loc, "psds/*"))
+        for psd_file in psd_files:
+            try:
+                # This should load the PSD as a FrequencySeries object with delta_f assigned
+                psd_data = load_frequencyseries(psd_file)
+            except:
+                data = pd.read_hdf(psd_file, 'data').to_numpy().flatten()
+                psd_data = FrequencySeries(data, delta_f=data_cfg.delta_f)
+            # Store PSD data into lookup dict
+            self.PSDs[psd_file] = psd_data
+        
+        # Multi-rate sampling
+        # Get the sampling rates and their bins idx
+        data_cfg.dbins = get_sampling_rate_bins(data_cfg)
+            
         # Saving frequency with idx plotting
         # TODO: Add compatibility for using cfg.splitter with K-folds
         if self.data_cfg.sample_save_frequency == None:
@@ -178,7 +232,8 @@ class MLMDC1(Dataset):
             ############################################################################
         
             """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
-            network_snr = get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, self.data_loc)
+            # network_snr = get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, self.data_loc)
+            network_snr = -1
             
             """ Adding noise to signals """
             raw_sample = noise + signals
@@ -207,19 +262,22 @@ class MLMDC1(Dataset):
         """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
-            sample = self.transforms(raw_sample, psds, self.data_cfg)
+            psds_data = [self.PSDs[psd_name] for psd_name in psds]
+            sample = self.transforms(raw_sample, psds_data, self.data_cfg)
         if self.target_transforms:
             target = self.target_transforms(target)
         
         
         """ Plotting idx data (if flag is set to True) """
-        if data_type == 'signal' and idx % self.sample_save_frequency == 0:
+        # TODO: This does not save when needed. Look into this!
+        if data_type == 'signal' and idx % self.sample_save_frequency == 0 and idx!=0:
             # Input parameters
             pure_signal = signals
             pure_noise = noise
             noisy_signal = raw_sample
             if self.transforms:
-                trans_pure_signal = self.transforms(pure_signal, psds, self.data_cfg)
+                psds_data = [self.PSDs[psd_name] for psd_name in psds]
+                trans_pure_signal = self.transforms(pure_signal, psds_data, self.data_cfg)
             else:
                 trans_pure_signal = None
             trans_noisy_signal = sample
@@ -232,6 +290,7 @@ class MLMDC1(Dataset):
         
         """ Tensorification and Device Compatibility """
         # Convert signal/target to Tensor objects
+        # Check: Converting to a tensor normalises a sample b/w the range [0., 1.]
         sample = torch.from_numpy(sample)
         target = torch.from_numpy(target)
         # Set the device and dtype
@@ -243,7 +302,7 @@ class MLMDC1(Dataset):
         return (sample, target)
 
 
-
+""" Other Loaders """
 
 class BatchLoader(Dataset):
     """
@@ -301,6 +360,9 @@ class BatchLoader(Dataset):
         # check whether the sample is noise/signal for adding random noise realisation
         data_path = self.data_paths[idx]
         batch_samples = self._read_(data_path)
+        
+        ## TODO: We should add a random noise realisation to the signal here!!!
+        ## Remove that method from the save trainable dataset method
         
         """ Target """
         # Target for training or testing phase (obtained from trainable.json)

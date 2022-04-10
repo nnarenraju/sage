@@ -104,10 +104,20 @@ Multi-rate Sampling Theory and Description:
 
 """
 
-def get_sampling_rate_bins(low_mass=10.0, max_signal_length=20.0, signal_low_freq_cutoff=20.0,
-                           sample_rate=2048., tc_inject_lower=18.0, tc_inject_upper=18.2,
-                           ringdown_leeway=0.4, merger_leeway=0.05, start_freq_factor=2.5,
-                           fs_reduction_factor=1.9, fbin_reduction_factor=2.0):
+def get_sampling_rate_bins(data_cfg):
+    
+    # Get data_cfg input params
+    signal_low_freq_cutoff=data_cfg.signal_low_freq_cutoff
+    sample_rate=data_cfg.sample_rate
+    low_mass=data_cfg.prior_low_mass
+    max_signal_length=data_cfg.max_signal_length
+    tc_inject_lower=data_cfg.tc_inject_lower 
+    tc_inject_upper=data_cfg.tc_inject_upper
+    ringdown_leeway=data_cfg.ringdown_leeway
+    merger_leeway=data_cfg.merger_leeway
+    start_freq_factor=data_cfg.start_freq_factor
+    fs_reduction_factor=data_cfg.fs_reduction_factor
+    fbin_reduction_factor=data_cfg.fbin_reduction_factor
     
     # Signal low freq cutoff is taken to happen at max_signal_length for worst case
     ## Approximate value for f_ISCO with BBH system both with lowest mass in priors
@@ -221,21 +231,11 @@ def get_sampling_rate_bins(low_mass=10.0, max_signal_length=20.0, signal_low_fre
     return np.array(detailed_bins)
     
     
-def multirate_sampling(signal, data_cfg):
+def multirate_sampling(signals, data_cfg):
     # Downsample the data into required sampling rates and slice intervals
     # These intervals are stitched together to for a sample with MRsampling
-    # Get the sampling rates and their bins idx
-    dbins = get_sampling_rate_bins(signal_low_freq_cutoff=data_cfg.signal_low_freq_cutoff, 
-                                   sample_rate=data_cfg.sample_rate,
-                                   low_mass=data_cfg.prior_low_mass, 
-                                   max_signal_length=data_cfg.max_signal_length,
-                                   tc_inject_lower=data_cfg.tc_inject_lower, 
-                                   tc_inject_upper=data_cfg.tc_inject_upper,
-                                   ringdown_leeway=data_cfg.ringdown_leeway,
-                                   merger_leeway=data_cfg.merger_leeway, 
-                                   start_freq_factor=data_cfg.start_freq_factor,
-                                   fs_reduction_factor=data_cfg.fs_reduction_factor, 
-                                   fbin_reduction_factor=data_cfg.fbin_reduction_factor)
+    # Get data bins (pre-calculated for given problem in dataset object)
+    dbins = data_cfg.dbins
     
     multirate_chunks = []
     new_sample_rates = []
@@ -259,7 +259,7 @@ def multirate_sampling(signal, data_cfg):
             
             # Sanity check
             if decimation_factor > 13:
-                tmp_signal = signal[:]
+                tmp_signals = signals[:]
                 # The decimation factor should always be of type 2**n
                 # So factorisation should be quite straight-forward (depricated on April 1st, 2022)
                 # Is the above deprication an April's Fools joke? Absolutely not.
@@ -274,16 +274,16 @@ def multirate_sampling(signal, data_cfg):
                     
                 # Decimate the signal 'nfactor' times using the prime factors
                 for factor in factors:
-                    tmp_signal = decimate(tmp_signal, factor)
+                    tmp_signals = [decimate(tmp_signal, factor) for tmp_signal in tmp_signals]
                 # Store the final decimated signal
-                decimated_signal = tmp_signal
+                decimated_signals = tmp_signals
             
             else:
-                decimated_signal = decimate(signal, decimation_factor)
+                decimated_signals = [decimate(signal, decimation_factor) for signal in signals]
             
             # Now slice the appropriate parts of the decimated signals using bin idx
             # Note than the bin idx was made using the original sampling rate
-            num_samples_original = len(signal)
+            num_samples_original = len(signals[0])
             num_samples_decimated = int(num_samples_original/decimation_factor)
             
             ## Convert the bin idxs to decimated idxs
@@ -295,15 +295,15 @@ def multirate_sampling(signal, data_cfg):
             eidx_dec = int(end_idx_norm * num_samples_decimated)
             
             # Slice the decimated signals using the start and end decimated idx
-            chunk = decimated_signal[sidx_dec:eidx_dec]
+            chunk = [decimated_signal[sidx_dec:eidx_dec] for decimated_signal in decimated_signals]
         else:
             # No decimation done, original sample rate is used
-            chunk = signal[int(start_idx):int(end_idx)]
+            chunk = [signal[int(start_idx):int(end_idx)] for signal in signals]
         
         # Append the decimated chunk together
-        multirate_chunks.append(chunk)
+        multirate_chunks.append(np.stack(chunk, axis=0))
     
     # Now properly concatenate all the decimated chunks together using numpy
-    multirate_signal = np.concatenate(multirate_chunks)
+    multirate_signals = np.column_stack(tuple(multirate_chunks))
     
-    return multirate_signal
+    return multirate_signals

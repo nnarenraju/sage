@@ -26,6 +26,7 @@ Documentation: NULL
 # BUILT-IN
 import os
 import h5py
+import time
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, sosfiltfilt
@@ -107,7 +108,7 @@ class Normalise(TransformWrapperPerChannel):
         return y / self.factors[channel]
 
 
-class BandPass(TransformWrapperPerChannel):
+class BandPass(TransformWrapper):
     def __init__(self, always_apply=True, lower=16, upper=512, fs=2048, order=5):
         super().__init__(always_apply)
         self.lower = lower
@@ -127,11 +128,13 @@ class BandPass(TransformWrapperPerChannel):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
+    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
+        # Verified to produce the same results as PerChannel mode
         return self.butter_bandpass_filter(y)
 
 
 class Whiten(TransformWrapperPerChannel):
+    # PSDs can be different between the channels, so we use perChannel method
     def __init__(self, always_apply=True, trunc_method='hann', remove_corrupted=True):
         super().__init__(always_apply)
         self.trunc_method = trunc_method
@@ -178,12 +181,10 @@ class Whiten(TransformWrapperPerChannel):
         What would we do when we start using multi-rate sampling?
         """
         # Calculating delta_f of signal and providing that to the PSD interpolation method
-        sample_length_in_s = len(signal)/data_cfg.sample_rate
-        delta_f = 1./sample_length_in_s
+        delta_f = data_cfg.delta_f
         # Interpolate the PSD to the required delta_f
         # psd1 = interpolate(psd, delta_f)
         
-
         # Interpolate and smooth to the desired corruption length
         psd = inverse_spectrum_truncation(psd,
                                           max_filter_len=max_filter_len,
@@ -196,34 +197,22 @@ class Whiten(TransformWrapperPerChannel):
 
         if self.remove_corrupted:
             white = white[int(max_filter_len/2):int(len(signal)-max_filter_len/2)]
-
+            
         return white
         
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Convert signal to TimeSeries object
         signal = TimeSeries(y, delta_t=1./data_cfg.sample_rate)
-        # Read the PSDs from the given psd_file_path
-        try:
-            # This should load the PSD as a FrequencySeries object with delta_f assigned
-            psd_data = load_frequencyseries(psd)
-        except:
-            data = pd.read_hdf(psd, 'data')['psd_data'].to_numpy()
-            with h5py.File(psd, "r") as foo:
-                # Read the data (we should only have one field "data")
-                psd_data = FrequencySeries(data, delta_f=foo.attrs['delta_f'])
-        
-        # Whiten
-        whitened_sample = self.whiten(signal, psd_data, data_cfg)
-        
+        # Whitening
+        whitened_sample = self.whiten(signal, psd, data_cfg)
         return whitened_sample
 
 
-class MultirateSampling(TransformWrapperPerChannel):
+class MultirateSampling(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
+    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
         # Call multi-rate sampling module for usage
         # This is kept separate since further experimentation might be required
-        multirate_signal = multirate_sampling(y, data_cfg)
-        return multirate_signal
+        return multirate_sampling(y, data_cfg)

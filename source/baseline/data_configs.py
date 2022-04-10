@@ -29,6 +29,7 @@ Documentation: NULL
 # LOCAL
 from data.make_mlmdc_dataset import make as make_mlmdc_dataset
 from data.make_default_dataset import make as make_default_dataset
+from data.MP_make_default_dataset import make as make_MP_default_dataset
 
 
 # WARNING: Removing any of the parameters present in default will result in errors.
@@ -106,9 +107,9 @@ class Default:
     """ Location (these params used if make_dataset == False, as search loc) """
     # Dataset location directory
     # Data storage drive or /mnt absolute path
-    parent_dir = "/Users/nnarenraju/Desktop"
+    parent_dir = "/home/nnarenraju/Research"
     # Dataset directory within parent_dir
-    data_dir = "dataset_closest_1e4_20s_D1"
+    data_dir = "dataset_closest_1e4_20s_D1_checkMP"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -200,3 +201,5 @@ class Default:
     # Check value where signal freq. reduces by this factor
     # When this happens, that data idx is store in bins as one of the edges for MR-sampling
     fbin_reduction_factor=2.0
+    # Storage bins (DO NOT CHANGE or DELETE)
+    dbins = None
