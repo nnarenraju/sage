@@ -27,6 +27,7 @@ Documentation: NULL
 import gc
 import csv
 import h5py
+import math
 import shutil
 import logging
 import os, os.path
@@ -115,7 +116,7 @@ class GenerateData:
         logging.info(("Generating dataset with %i injections and %i pure "
                     "noise samples") % (self.num_waveforms, self.num_noises))
         
-        self.iterable = range(self.num_waveforms + self.num_noises)
+        self.iterable = np.arange(self.num_waveforms + self.num_noises)
         
     
         """ Generating noise function """
@@ -492,31 +493,45 @@ class GenerateData:
         Dataset is made as close as possible to the testing dataset types
         This code is much faster to execute and easier to read
         """
-        
-        # Must use Manager queue here, or will not work
-        manager = mp.Manager()
-        queue = manager.Queue()
-        pool = mp.Pool(int(0.5*mp.cpu_count()))
-        
-        # Put listener to work first (this will wait for data in Queue)
-        watcher = pool.apply_async(self.listener, (queue,))
 
         # Run workers to generate samples
         jobs = []
-        for i in self.iterable:
-            job = pool.apply_async(self.worker, (i, queue))
-            jobs.append(job)
+        # Split the iterable into several small iterables
+        file_size = 0.7 # MB
+        limit_RAM = 30000. # MB
+        # Number of files in each split
+        num_files = limit_RAM/file_size
+        # Number of splits to iterable
+        num_splits = int(math.ceil(len(self.iterable)/num_files))
+        
+        print("Batching the dataset (if needed) to limit virtual memory usage")
+        iterables = np.array_split(self.iterable, num_splits)
+        
+        for n, iterable in enumerate(iterables):
+            
+            # Must use Manager queue here, or will not work
+            manager = mp.Manager()
+            queue = manager.Queue()
+            pool = mp.Pool(int(0.2*mp.cpu_count()))
+            
+            # Put listener to work first (this will wait for data in Queue)
+            watcher = pool.apply_async(self.listener, (queue,))
+            
+            for i in iterable:
+                job = pool.apply_async(self.worker, (i, queue))
+                jobs.append(job)
+    
+            # Collect results from the workers through the pool result queue
+            pbar = tqdm(jobs)
+            for job in pbar:
+                pbar.set_description("Running GenerateData (Batch {})".format(n))
+                job.get()
 
-        # Collect results from the workers through the pool result queue
-        pbar = tqdm(jobs)
-        for job in pbar:
-            pbar.set_description("Running GenerateData on MP")
-            job.get()
-
-        # Kill the listener when all jobs are complete
-        queue.put({'kill': True})
-        pool.close()
-        pool.join()
+            # Kill the listener when all jobs are complete
+            queue.put({'kill': True})
+            
+            pool.close()
+            pool.join()
         
 
     def _get_recursive_abspath_(self, directory):
