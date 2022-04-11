@@ -308,9 +308,9 @@ class KappaModel(torch.nn.Module):
         # batch_size, channel, signal_length = s.shape
         # Conv Backend
         x = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
-        x = self.avg_pool_2d(x)
+        print(x.shape)
         # Timm Frontend
-        x = self.frontend(x)
+        x = self.frontend(x) # (100, 1000)
         ## Manipulate encoder output to get params
         # Global Pool
         x = self.flatten(self.avg_pool_1d(x))

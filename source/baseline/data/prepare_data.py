@@ -230,12 +230,14 @@ class DataModule:
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
+                signal_only_transforms=cfg.transforms['signal'],
                 training = True, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
                 transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
+                signal_only_transforms=cfg.transforms['signal'],
                 training=True, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
         
@@ -267,8 +269,14 @@ class DataModule:
         # check cfg and set batch_size to 1 if using BatchLoader
         if cfg.dataset.__name__ == "BatchLoader":
             batch_size = 1
+            num_workers = 0
+            pin_memory = False
+            persistent_workers = False
         else:
             batch_size = cfg.batch_size
+            num_workers = cfg.num_workers
+            pin_memory = cfg.pin_memory
+            persistent_workers = cfg.persistent_workers
         
         # Sometimes in MAC systems, setting num_workers > 0 causes a intraop warning to appear
         # This does not seem to produce any incorrect results. However it is worrying.
@@ -277,11 +285,11 @@ class DataModule:
         
         train_loader = D.DataLoader(
             train_data, batch_size=batch_size, shuffle=True,
-            num_workers=cfg.num_workers, pin_memory=cfg.pin_memory, 
-            prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
+            num_workers=num_workers, pin_memory=pin_memory, 
+            prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         valid_loader = D.DataLoader(
             valid_data, batch_size=batch_size, shuffle=True,
-            num_workers=cfg.num_workers, pin_memory=cfg.pin_memory, 
-            prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
+            num_workers=num_workers, pin_memory=pin_memory, 
+            prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
         return (train_loader, valid_loader)

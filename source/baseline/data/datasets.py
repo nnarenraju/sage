@@ -40,6 +40,8 @@ from data.plot_dataloader_unit import plot_unit
 from data.multirate_sampling import get_sampling_rate_bins
 
 # PyCBC
+import pycbc
+from pycbc import distributions
 from pycbc.types import load_frequencyseries, FrequencySeries
 
 # Datatype for storage
@@ -79,19 +81,20 @@ class MLMDC1(Dataset):
     To Check:
         1. What WallClock overhead does each transformation procedure take? (FIN)
         2. How to make these transformation as fast as possible. Use C/C++ based libraries. (FIN)
-        3. Is it possible to use num_workers > 0, if using project_wave as a part of transforms
+        3. Is it possible to use num_workers > 0, if using project_wave as a part of transforms (FIN)
     
     """
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
-                 training=False, testing=False, store_device='cpu', train_device='cpu',
-                 data_cfg=None):
+                 signal_only_transforms=None, training=False, testing=False, 
+                 store_device='cpu', train_device='cpu', data_cfg=None):
         
         super().__init__()
         self.data_paths = data_paths
         self.targets = targets
         self.transforms = transforms
         self.target_transforms = target_transforms
+        self.signal_only_transforms = signal_only_transforms
         self.training = training
         self.testing = testing
         self.store_device = store_device
@@ -116,6 +119,21 @@ class MLMDC1(Dataset):
         # Multi-rate sampling
         # Get the sampling rates and their bins idx
         data_cfg.dbins = get_sampling_rate_bins(data_cfg)
+        
+        # Detector objects (these are lal objects and may present problems when parallelising)
+        # Create the detectors (TODO: generalise this!!!)
+        detectors_abbr = ('H1', 'L1')
+        self.detectors = []
+        for det_abbr in detectors_abbr:
+            self.detectors.append(pycbc.detector.Detector(det_abbr))
+            
+        ## Distribution objects for augmentation
+        # Used for obtaining random polarisation angle
+        self.uniform_angle_distr = distributions.angular.UniformAngle(uniform_angle=(0., 2.0*np.pi))
+        # Used for obtaining random ra and dec
+        self.skylocation_dist = distributions.sky_location.UniformSky()
+        # Distributions object
+        self.distrs = {'pol': self.uniform_angle_distr, 'sky': self.skylocation_dist}
             
         # Saving frequency with idx plotting
         # TODO: Add compatibility for using cfg.splitter with K-folds
@@ -170,6 +188,8 @@ class MLMDC1(Dataset):
             if np.allclose(label_saved, np.array([1., 0.])):
                 m1 = attrs['mass_1']
                 m2 = attrs['mass_2']
+                # Use this to get the h_t from project_wave transformation
+                time_interval = attrs['time_interval']
             
             # Use Normalised 'tc' such that it is always b/w 0 and 1
             # if place_tc = [0.5, 0.7]s in a 1.0 second sample
@@ -180,7 +200,7 @@ class MLMDC1(Dataset):
         
         # Return necessary params
         if np.allclose(label_saved, np.array([1., 0.])): # pure signal
-            return ('signal', signals, label_saved, tc, normalised_tc, m1, m2)
+            return ('signal', signals, label_saved, tc, normalised_tc, m1, m2, time_interval)
         elif np.allclose(label_saved, np.array([0., 1.])): # pure noise
             return ('noise', signals, label_saved, sample_rate, noise_low_freq_cutoff, 
                     psd_1, psd_2, tc, normalised_tc)
@@ -199,12 +219,20 @@ class MLMDC1(Dataset):
         
         # Get sample params
         if data_type == 'signal':
-            _, signals, label_saved, tc, normalised_tc, m1, m2 = data_params
+            _, signals, label_saved, tc, normalised_tc, m1, m2, time_interval = data_params
         elif data_type == 'noise':
             _, noise, label_saved, sample_rate, noise_low_freq_cutoff, \
             psd_1, psd_2, tc, normalised_tc = data_params
             # Concat psds
             psds = [psd_1, psd_2]
+        
+        
+        """ Convert the signal from h_plus and h_cross to h_t """
+        # During this procedure randomise the value of polarisation angle, ra and dec
+        # This should give us the strains required (project_wave might cause issues with MP)
+        if data_type == 'signal' and self.signal_only_transforms:
+            signals = self.signal_only_transforms(signals, self.detectors, time_interval, self.distrs)
+        
         
         """ Finding *ONE* random noise realisation for signals """
         if data_type == 'signal':
@@ -232,8 +260,7 @@ class MLMDC1(Dataset):
             ############################################################################
         
             """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
-            # network_snr = get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, self.data_loc)
-            network_snr = -1
+            network_snr = get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, self.data_loc)
             
             """ Adding noise to signals """
             raw_sample = noise + signals

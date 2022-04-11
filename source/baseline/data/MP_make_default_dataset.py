@@ -44,12 +44,24 @@ from data.mlmdc_noise_generator import NoiseGenerator
 from data.plot_default_priors import plot_priors
 
 
+""" Work-around for using unpicklable function within MP """
+# Using global variables to "remove" un-picklable func from MP processes
+global project_wave
+# lal.Detector objects cannot be pickled (funny little things)
+detectors_abbr = ('H1', 'L1')
+detectors = []
+for det_abbr in detectors_abbr:
+    detectors.append(pycbc.detector.Detector(det_abbr))
+# Faux-project_wave function calling det.project_wave
+project_wave = lambda hp, hc, pol, ra, dec: [det.project_wave(hp, hc, ra, dec, pol) for det in detectors]
+
+
 class GenerateData:
     
     # Slots magic for parameters input from data_configs.py
     __slots__ = ['dataset', 'parent_dir', 'data_dir', 'seed', 'export_dir', 'dirs',
                  'make_dataset', 'make_module',
-                 'detectors', 'psds', 'skylocation_dist', 'np_gen',
+                 'psds', 'skylocation_dist', 'np_gen',
                  'psd_len', 'delta_f', 'noise_low_freq_cutoff',
                  'label_wave', 'label_noise', 'num_waveforms', 'num_noises',
                  'iterable', 'filter_duration', 'sample_rate', 'signal_low_freq_cutoff',
@@ -76,15 +88,12 @@ class GenerateData:
         """ Initialise dataset params """
         # Create the detectors
         self.detectors_abbr = ('H1', 'L1')
-        self.detectors = ['H1', 'L1']
-        # for det_abbr in self.detectors_abbr:
-        #     self.detectors.append(pycbc.detector.Detector(det_abbr))
         
         ### Create the power spectral densities of the respective detectors
         if self.dataset == 1:
             psd_fun = pycbc.psd.analytical.aLIGOZeroDetHighPower
             self.psds = [psd_fun(self.psd_len, self.delta_f, self.noise_low_freq_cutoff) 
-                         for _ in range(len(self.detectors))]
+                         for _ in range(len(self.detectors_abbr))]
         else:
             # Here, we should pick two PSDs randomly and read the files
             raise NotImplementedError("PSDs not implemented for D2-D4")
@@ -95,6 +104,7 @@ class GenerateData:
         
         ### Initialize the random distributions
         self.skylocation_dist = pycbc.distributions.sky_location.UniformSky()
+        # Reseed for each process if using MP or just use pycbc.distributions
         self.np_gen = np.random.default_rng()
     
         ### Create labels
@@ -145,7 +155,7 @@ class GenerateData:
         else:
             raise IOError("make_default_dataset: Dataset dir already exists!")
     
-    def store_ts(self, path, det, ts, force=False):
+    def store_ts(self, path, det, ts, det_num=None, force=False):
         """
         Utility function to save a time series.
         
@@ -165,9 +175,21 @@ class GenerateData:
         if path is None:
             return
         
-        # Saves time series in path with HDF append mode
-        group = '{}/{}'.format(det, int(ts.start_time))
-        ts.save(path, group=group)
+        if not isinstance(ts, np.ndarray):
+            # Saves time series in path with HDF append mode
+            group = '{}/{}'.format(det, int(ts.start_time))
+            ts.save(path, group=group)
+        
+        else:
+            # There are problems if ts is not time series but np.ndarray
+            # HDF5 was measured to have the fastest IO (r->46ms, w->172ms)
+            # NPY read/write was not tested. Github says HDF5 is faster.
+            with h5py.File(path, 'a') as fp:
+                # create a dataset for batch save
+                key = '{}/{}'.format(det, str(det_num))
+                fp.create_dataset(key, data=ts,
+                                  compression='gzip',
+                                  compression_opts=9, shuffle=True)
     
     
     def save_PSD(self):
@@ -219,7 +241,9 @@ class GenerateData:
             
             ## Generate source parameters
             """ Masses """
-            masses = self.np_gen.uniform(self.prior_low_mass, self.prior_high_mass, 2)
+            mass_gen = distributions.Uniform(mass=(self.prior_low_mass, self.prior_high_mass))
+            masses = mass_gen.rvs(size=2)
+            masses = [float(masses[0][0]), float(masses[1][0])]
             m1, m2 = max(masses), min(masses)
             self.waveform_kwargs['mass1'] = m1
             self.waveform_kwargs['mass2'] = m2
@@ -237,7 +261,7 @@ class GenerateData:
             
             """ Coalescence Phase, Inclination, ra, dec and Polarisation Angle """
             uniform_angle_distr = distributions.angular.UniformAngle(uniform_angle=(0., 2.0*np.pi))
-            uniform_angles = uniform_angle_distr.rvs(size=3)
+            uniform_angles = uniform_angle_distr.rvs(size=2)
             sin_angle_distr = distributions.angular.SinAngle(sin_angle=(0., np.pi))
             sin_angles = sin_angle_distr.rvs(size=1)
 
@@ -248,7 +272,8 @@ class GenerateData:
             
             """ Injection """            
             # Take the injection time randomly in the LIGO O3a era
-            injection_time = self.np_gen.uniform(1238166018, 1253977218)
+            inj_gen = distributions.Uniform(injection=(1238166018, 1253977218))
+            injection_time = np.int64(inj_gen.rvs(size=1)[0][0])
             # Generate the full waveform
             waveform = pycbc.waveform.get_td_waveform(**self.waveform_kwargs)
             h_plus, h_cross = waveform
@@ -266,17 +291,12 @@ class GenerateData:
             h_plus.append_zeros(self.sample_length_in_num)
             h_cross.append_zeros(self.sample_length_in_num)
             
-            """
-            strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in self.detectors]
-            
-            ## Computing the frequency evolution of TD waveform
-            # hp, hc = h_plus.trim_zeros(), h_cross.trim_zeros()
-            # Variation of amiplitude and frequency wrt time
-            # amp = pycbc.waveform.utils.amplitude_from_polarizations(hp, hc)
-            # f = pycbc.waveform.utils.frequency_from_polarizations(hp, hc)
+            global project_wave
+            strains = project_wave(h_plus, h_cross, pol_angle, right_ascension, declination)
             
             # Place merger randomly within the window between lower and upper bound
-            place_tc = self.np_gen.uniform(self.tc_inject_lower, self.tc_inject_upper)
+            tc_gen = distributions.Uniform(tc=(self.tc_inject_lower, self.tc_inject_upper))
+            place_tc = np.float64(tc_gen.rvs(size=1)[0][0])
             time_placement = place_tc + (self.whiten_padding/2.0)
             time_interval = injection_time-time_placement
             time_interval = (time_interval, injection_time+(self.signal_length-time_placement) + 
@@ -284,13 +304,11 @@ class GenerateData:
             # Checking whether end time of time interval contains the end of simulated ringdown
             if time_interval[1] - injection_time <= h_plus_end_time:
                 raise ValueError("generate_dataset: end time of slice is less than ringdown end time!")
-                
-            strains = [strain.time_slice(*time_interval) for strain in strains]
+            
             normalised_tc = (place_tc-self.tc_inject_lower)/(self.tc_inject_upper-self.tc_inject_lower)
             
-            # Get sample frequencies from the strains
-            # To do above, convert to frequency series first
-            # fstrains = [strain.to_frequencyseries() for strain in strains]
+            # Get time slices strains
+            strains = [strain.time_slice(*time_interval) for strain in strains]
             
             # Sanity check for sample_length
             for strain in strains:
@@ -299,7 +317,7 @@ class GenerateData:
                     strain.append_zeros(to_append)
                 if len(strain) != self.sample_length_in_num:
                     raise ValueError("Sample length greater than expected!")
-            """
+            
             
             """ Saving the injection parameters """
             if self.save_injection_priors:
@@ -316,14 +334,16 @@ class GenerateData:
                 _save_['mchirp'] = mchirp
                 _save_['polarisation'] = pol_angle
                 _save_['tc'] = injection_time
-                # _save_['normalised_tc'] = normalised_tc
+                _save_['normalised_tc'] = normalised_tc
             
             # Noise + Signal (injection) will *NOT* be performed for the sake of augmentation
             # Combine noise and signal when initialising the data
             # Do this simply by: sample = noise + signal (after converting to numpy)
             # Use the following to convert to numpy:
             # sample = np.stack([strain.numpy() for strain in strains], axis=0)
-            sample = []
+            # Update (Apr 10, 2022): h_plus and h_cross are being stored instead of h_t
+            # This is in favour of augmenting on polarisation angle, ra, dec and distance
+            sample = strains
             
         # if in the second part of the dataset, merely use pure noise as the full sample
         else:
@@ -348,16 +368,17 @@ class GenerateData:
         data['kill'] = False
         
         # Prior attrs
-        if self.save_injection_priors:
-            data['iter'] = i
+        if self.save_injection_priors and is_waveform:
             data['prior_data'] = _save_
         
         # Data specific attrs
         if is_waveform:
             data['m1'] = m1
             data['m2'] = m2
-            data['inject1ion_time'] = injection_time
-            # data['normalised_tc'] = normalised_tc
+            data['distance'] = distance
+            data['time_interval'] = time_interval
+            data['injection_time'] = injection_time
+            data['normalised_tc'] = normalised_tc
         
         # Give all relevant save data to Queue
         queue.put(data)
@@ -371,7 +392,19 @@ class GenerateData:
         """
         Write given sample data to a HDF file
         We also use this to append to priors
+        
+        ** WARNING!!! **: If files are not being written, there should be an error in here.
+        This error will not be raised and has not yet been handled properly.
+        
+        Vague check for this type of error:
+            1. Print the queue.get() within the infinite loop.
+            2. If this prints a singular output, then there is something wrong within listener.
+            3. Then print a bunch of Lorem Ipsum here and there
+            4. Print statements after the error occcurence will not be displayed
+            5. Narrow down the error location and shoot your shot! (Sorry :P)
+            
         """
+        
         # Continuously check for data to the Queue
         while True:
             data = queue.get()
@@ -386,30 +419,35 @@ class GenerateData:
             label = data['label']
             store = data['store_path']
             is_waveform = data['is_waveform']
-            prior_data = data['prior_data']
             
             
             """ Write priors """
-            if self.save_injection_priors:
+            if self.save_injection_priors and is_waveform:
+                prior_data = data['prior_data']
                 # CSV write injections
                 # Read this CSV using pandas (optimal)
                 inj_path = os.path.join(self.dirs['injections'], 'injections.csv')
+                
+                # Write the field names right after creating file
+                # this ensures that it is not written randomly based on MP processes
+                write_field_names = not os.path.exists(inj_path)
+                
                 with open(inj_path, 'a', newline='') as fp:
                     writer = csv.writer(fp)
                     # Writing the fields into injections.csv
-                    if data['iter'] == 0:
+                    if write_field_names:
                         writer.writerow(list(prior_data.keys()))
                     writer.writerow(list(prior_data.values()))
             
+            
             """ Write sample """
             # Save each sample as .hdf with appropriate attrs
-            # Store the time_series using PyCBC method
-            for detector, time_series in zip(self.detectors_abbr, sample):
-                self.store_ts(store, detector, time_series)
+            for n, (detector, time_series) in enumerate(zip(self.detectors_abbr, sample)):
+                self.store_ts(store, detector, time_series, det_num=n)
             
             # Adding all relevant attributes
             with h5py.File(store, 'a') as fp:
-                fp.attrs['unique_dataset_id'] = "unknown"
+                fp.attrs['unique_dataset_id'] = "NotImplementedError"
                 fp.attrs['dataset'] = self.dataset
                 fp.attrs['seed'] = self.seed
                 fp.attrs['sample_rate'] = self.sample_rate
@@ -421,6 +459,8 @@ class GenerateData:
                 if is_waveform:
                     fp.attrs['mass_1'] = data['m1']
                     fp.attrs['mass_2'] = data['m2']
+                    fp.attrs['distance'] = data['distance']
+                    fp.attrs['time_interval'] = data['time_interval']
                     fp.attrs['signal_low_freq_cutoff'] = self.signal_low_freq_cutoff
                     # Training parameters
                     fp.attrs['tc'] = data['injection_time']
@@ -440,10 +480,10 @@ class GenerateData:
                     uniform random negative - model might learn superfluous parameter, but a clear 
                                         boundary can be set between proper 'tc' and invalid 'tc'
                     Nothing - we give the noise case no 'tc' and this will not be used in the loss
-                              at all.
+                              at all. (We use this!)
                     """
                     fp.attrs['tc'] = -1.0
-                    fp.attrs['normalised_tc'] = -1.0    
+                    fp.attrs['normalised_tc'] = -1.0
     
     
     def generate_dataset(self):
@@ -456,7 +496,7 @@ class GenerateData:
         # Must use Manager queue here, or will not work
         manager = mp.Manager()
         queue = manager.Queue()
-        pool = mp.Pool(mp.cpu_count() - 5)
+        pool = mp.Pool(int(0.5*mp.cpu_count()))
         
         # Put listener to work first (this will wait for data in Queue)
         watcher = pool.apply_async(self.listener, (queue,))

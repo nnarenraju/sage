@@ -35,6 +35,8 @@ from scipy.signal import butter, sosfiltfilt
 from data.multirate_sampling import multirate_sampling
 
 # PyCBC
+import pycbc
+from pycbc import distributions
 from pycbc.psd import inverse_spectrum_truncation, interpolate
 from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
 
@@ -51,6 +53,16 @@ class Unify:
     def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
         for transform in self.transforms:
             y = transform(y, psds, data_cfg)
+        return y
+
+
+class UnifySignalOnly:
+    def __init__(self, transforms: list):
+        self.transforms = transforms
+
+    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None):
+        for transform in self.transforms:
+            y = transform(y, dets, time_interval, distrs)
         return y
     
 
@@ -79,6 +91,17 @@ class TransformWrapperPerChannel(TransformWrapper):
             else:
                 pass
         return np.array(augmented, dtype=np.float64)
+
+
+class ProjectionWrapper:
+    def __init__(self, always_apply=True):
+        self.always_apply = always_apply
+    
+    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None):
+        if self.always_apply:
+            return self.apply(y, dets, time_interval, distrs)
+        else:
+            pass
     
 
 #########################################################################################
@@ -216,3 +239,49 @@ class MultirateSampling(TransformWrapper):
         # Call multi-rate sampling module for usage
         # This is kept separate since further experimentation might be required
         return multirate_sampling(y, data_cfg)
+    
+
+class AugmentDistance(TransformWrapper):
+    """ Used to augment the distance parameter of the given signal """
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+
+    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
+        # Augmenting on distance parameter
+        pass
+    
+    
+
+""" Signal only Transformations """
+
+class ProjectWave(ProjectionWrapper):
+    """ Used to augment polarisation angle, ra and dec """
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+
+    def apply(self, y: np.ndarray, dets=None, time_interval=None, distrs=None):
+        
+        # Using PyCBC project_wave to get h_t from h_plus and h_cross
+        # TODO: h_plus and h_cross have to be TimeSeries objects when saved
+        h_plus, h_cross = y[0], y[1]
+        ## Get random value (with a given prior) for polarisation angle, ra, dec
+        # Polarisation angle
+        uniform_angles = distrs['pol'].rvs(size=1)
+        pol_angle = uniform_angles[0][0]
+        # Right ascension, declination
+        declination, right_ascension = distrs['sky'].rvs()[0]
+        # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
+        strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in dets]
+        strains = [strain.time_slice(*time_interval) for strain in strains]
+        
+        # Sanity check for sample_length
+        for strain in strains:
+            to_append = self.sample_length_in_num - len(strain)
+            if to_append>0:
+                strain.append_zeros(to_append)
+            if len(strain) != self.sample_length_in_num:
+                raise ValueError("Sample length greater than expected!")
+        
+        # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
+        # Shape remains the same, so reading in dataset object won't be a problem
+        return strains

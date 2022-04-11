@@ -35,7 +35,7 @@ from data.datasets import MLMDC1, BatchLoader
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel
-from data.transforms import Unify, Normalise, BandPass, Whiten, MultirateSampling
+from data.transforms import Unify, UnifySignalOnly, Normalise, BandPass, Whiten, MultirateSampling, ProjectWave
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 
 
@@ -163,7 +163,7 @@ class KaggleFirst:
     
     """ Data storage """
     name = "Baseline_check_MP"
-    export_dir = Path("/home/nnarenraju/Research") / name
+    export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset Splitting """
     n_splits = 2
@@ -171,7 +171,7 @@ class KaggleFirst:
     splitter = None
     
     """ Dataset """
-    dataset = BatchLoader
+    dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
@@ -187,7 +187,7 @@ class KaggleFirst:
                        'pretrained': True, 
                        'in_chans': 2, 
                        'drop_rate': 0.25},
-        store_device = 'cuda:0',
+        store_device = 'cpu',
     )
     
     pretrained = False
@@ -199,14 +199,14 @@ class KaggleFirst:
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 1000
+    batch_size = 500
     save_freq = 200
     early_stopping = False
     
     """ Dataloader params """
-    num_workers = 5
-    pin_memory = True
-    prefetch_factor = 2
+    num_workers = 0
+    pin_memory = False
+    prefetch_factor = 100
     persistent_workers = False
     
     """ Gradient Clipping """
@@ -231,11 +231,12 @@ class KaggleFirst:
     accuracy_thresh = 0.5
     
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cpu'
+    train_device = 'cpu'
     
     """ Data Transforms """
     transforms = dict(
+        signal=None,
         train=Unify([
             BandPass(lower=16, upper=512, fs=2048., order=6),
             Whiten(trunc_method='hann', remove_corrupted=True),

@@ -126,7 +126,7 @@ class ConvBlock(nn.Module):
             ConcatBlockConv5(filters_start * 2, filters_start * 4, kernel_start // 4 + 1, bias=False),
             ConcatBlockConv5(filters_start * 4, filters_start * 4, kernel_start // 4 + 1, bias=False),
         )
-
+        
     def forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)

@@ -99,17 +99,17 @@ class Default:
     """ Make """
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
-    make_dataset = False
+    make_dataset = True
     # Which module to use to create dataset
     # Here, we create a dataset using explicit pycbc functions
-    make_module = make_default_dataset
+    make_module = make_MP_default_dataset
     
     """ Location (these params used if make_dataset == False, as search loc) """
     # Dataset location directory
     # Data storage drive or /mnt absolute path
-    parent_dir = "/home/nnarenraju/Research"
+    parent_dir = "/Users/nnarenraju/Desktop"
     # Dataset directory within parent_dir
-    data_dir = "dataset_closest_1e4_20s_D1_checkMP"
+    data_dir = "dataset_closest_1e4_20s_D1_checkMPgen_removeme"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -125,14 +125,14 @@ class Default:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 10000
-    num_noises = 10000
+    num_waveforms = 1000
+    num_noises = 1000
     
     """ Save frequency """
     # Save every 'n' number of iterations
     gc_collect_frequency = 1
     ## this param used if make_dataset == False
-    sample_save_frequency = 1000
+    sample_save_frequency = 100
     
     """ Signal Params """
     ## these params may be used if make_dataset == False

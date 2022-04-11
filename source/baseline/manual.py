@@ -129,15 +129,13 @@ def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
         # NPY read/write was not tested. Github says HDF5 is faster.
         with h5py.File(store_path, 'a') as fp:
             # create a dataset for batch save
-            dst = fp.create_dataset("data", shape=samples.shape, dtype=np.float64, 
+            ds = fp.create_dataset("data", shape=samples.shape, dtype=np.float64, 
                                     data=samples,
                                     compression='gzip',
                                     compression_opts=9, 
                                     shuffle=True)
-                
-            # fill the <batch_size> number of slots with sample data
-            for nsample, sample in enumerate(samples):
-                dst[nsample] = sample
+            # Attributes
+            ds.attrs['easter_egg'] = "The needs of the many outweigh the needs of the few."
         
     return targets, all_abspaths, n+1
 
@@ -303,7 +301,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     # Pass Simple dataset into a dataloader with cfg.batch_size
                     batch_train_loader = D.DataLoader(
                         batch_train_dataset, batch_size=cfg.batch_size, shuffle=True,
-                        num_workers=0, pin_memory=False)
+                        num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
+                        prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
                     # Now iterate through this dataset and run training phase for each batch
                     for samples, labels in batch_train_loader:
                         # Run training phase and get loss and accuracy
@@ -363,7 +362,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # Pass Simple dataset into a dataloader with cfg.batch_size
                         batch_valid_loader = D.DataLoader(
                             batch_valid_dataset, batch_size=cfg.batch_size, shuffle=True,
-                            num_workers=0, pin_memory=False)
+                            num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
+                            prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
                         # Now iterate through this dataset and run training phase for each batch
                         for samples, labels in batch_valid_loader:
                             # Run training phase and get loss and accuracy

@@ -65,7 +65,7 @@ def plot_priors(data_dir):
             data = np.array([foo[0] for foo in data])
         
         ax = _figure("{}: {} prior histogram".format(dataset_name, name))
-        _plot(ax, data, label="min={}, max={}, median={}".format(np.around(min(data),3), np.around(max(data),3), np.around(np.median(data),3)), xlabel=name)
+        _plot(ax, data, label="min={}, max={}, median={}".format(np.around(np.min(data),3), np.around(np.max(data),3), np.around(np.median(data),3)), xlabel=name)
         save_path = data_path = os.path.join(data_dir, 'injections/priors_{}.png'.format(name))
         plt.savefig(save_path)
         plt.close()
