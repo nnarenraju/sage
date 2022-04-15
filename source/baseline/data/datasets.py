@@ -425,8 +425,8 @@ class BatchLoader(Dataset):
         ## Target should look like (0., 1., -1.0) for noise
         
         """ Add a random distance realisation """
-        self.signal_only_transforms(batch_signals, **{'distance': self.distance, 'mchirp':self.mchirp},
-                                    distrs=self.distrs)
+        self.signal_only_transforms(batch_signals, distrs=self.distrs, 
+                                    **{'distance': self.distance, 'mchirp':self.mchirp})
         
         
         """ Finding random noise realisation for signals """
