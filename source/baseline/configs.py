@@ -318,8 +318,8 @@ class KF_BatchTrain(KaggleFirst):
         # Kaggle frontend+backend
         # This model is ridiculously slow on cpu, use cuda:0
         model_name = 'kaggle_first', 
-        filter_size = 16,
-        kernel_size = 32,
+        filter_size = 32,
+        kernel_size = 64,
         timm_params = {'model_name': 'resnet34', 
                        'pretrained': True, 
                        'in_chans': 2, 
