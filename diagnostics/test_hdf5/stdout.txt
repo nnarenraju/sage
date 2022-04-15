@@ -1,0 +1,267 @@
+
+================ START ================
+
+Foregound Metadata:
+background-file: background.hdf
+dataset: 3
+detectors: ['H1' 'L1']
+duration: 32000
+f_lower: 20
+filter_duration: 128
+injection-file: injections.hdf
+low_frequency_cutoff: 15
+min_segment_duration: 7200
+padding_end: 30
+padding_start: 30
+real_noise_path: None
+sample_rate: 2048
+seed: 42
+segment_path: None
+slide_buffer: 240
+start_offset: 0
+
+Foregound Data Details
+Detectors: H1 and L1
+Time segments: ['1238205077', '1238400368', '1238546548', '1238561176']
+Segment Attributes: ['delta_t', 'start_time']
+'delta_t' attr = 0.00048828125
+'start_time' attr = 1238205077.0
+Length of dataset = 10061.0 at 2048 Hz sampling rate
+
+================ EOF ================
+
+
+
+================ START ================
+
+Background Metadata:
+dataset: 3
+detectors: ['H1' 'L1']
+duration: 32000
+filter_duration: 128
+low_frequency_cutoff: 15
+min_segment_duration: 7200
+real_noise_path: None
+sample_rate: 2048
+seed: 42
+segment_path: None
+slide_buffer: 240
+start_offset: 0
+
+Background Data Details
+Detectors: H1 and L1
+Time segments: ['1238205077', '1238400368', '1238546548', '1238561176']
+Segment Attributes: ['delta_t', 'start_time']
+'delta_t' attr = 0.00048828125
+'start_time' attr = 1238205077.0
+Length of dataset = 10061.0 at 2048 Hz sampling rate
+
+================ EOF ================
+
+
+
+================ START ================
+
+Injection Metadata:
+approximant: IMRPhenomXPHM
+cmd: /home/nnarenraju/venv/mlmdc/bin/pycbc_create_injections --config-files /home/nnarenraju/MLMDC1/external/ml-mock-data-challenge-1/ds3.ini --gps-start-time 1238205077 --gps-end-time 1253966055 --time-step 24 --time-window 6 --seed 42 --output-file injections.hdf --verbose
+f_lower: 20.0
+f_ref: 20.0
+injtype: cbc
+mode_array: 22 21 33 32 44
+static_args: ['f_ref' 'f_lower' 'approximant' 'taper' 'mode_array']
+taper: start
+
+Groups = ['chirp_distance', 'coa_phase', 'dec', 'distance', 'inclination', 'mass1', 'mass2', 'mchirp', 'polarization', 'q', 'ra', 'spin1_a', 'spin1_azimuthal', 'spin1_polar', 'spin1x', 'spin1y', 'spin1z', 'spin2_a', 'spin2_azimuthal', 'spin2_polar', 'spin2x', 'spin2y', 'spin2z', 'tc']
+
+Injection Data - sample from list of length 583847
+
+chirp_distance = 273.36443732496343
+coa_phase = 5.15955047139219
+dec = -1.350796754698735
+distance = 2876.2055429829866
+inclination = 1.0661256366337952
+mass1 = 40.12206038538158
+mass2 = 14.563540583693097
+mchirp = 20.531256121262857
+polarization = 2.4143525228628406
+q = 2.7549660849853055
+ra = 2.2009090844106423
+spin1_a = 0.858127136797637
+spin1_azimuthal = 1.6845373866060842
+spin1_polar = 1.1176767068422533
+spin1x = -0.08756553906844765
+spin1y = 0.7665446453730743
+spin1z = 0.37566443260712107
+spin2_a = 0.3069851556962309
+spin2_azimuthal = 0.12161834546462204
+spin2_polar = 2.41425316382175
+spin2x = 0.2026021071181622
+spin2y = 0.024762340384484514
+spin2z = -0.2293013268775451
+tc = 1238205078.014255
+
+Total number of injections present = 583847
+
+Differences between times of coalescence in injections (first 5):
+tc diff b/w signal 2 and 1 is 0.00019121170043945312
+tc diff b/w signal 3 and 2 is 0.06271815299987793
+tc diff b/w signal 4 and 3 is 0.06436562538146973
+tc diff b/w signal 5 and 4 is 0.06816840171813965
+tc diff b/w signal 6 and 5 is 0.0834650993347168
+tc diff b/w signal 7 and 6 is 0.2069871425628662
+tc diff b/w signal 8 and 7 is 0.24634552001953125
+tc diff b/w signal 9 and 8 is 0.2500112056732178
+tc diff b/w signal 10 and 9 is 0.34195470809936523
+tc diff b/w signal 11 and 10 is 0.3580596446990967
+tc diff b/w signal 12 and 11 is 0.36385154724121094
+tc diff b/w signal 13 and 12 is 0.41971349716186523
+tc diff b/w signal 14 and 13 is 0.42319345474243164
+tc diff b/w signal 15 and 14 is 0.42644500732421875
+tc diff b/w signal 16 and 15 is 0.5031180381774902
+tc diff b/w signal 17 and 16 is 0.5373070240020752
+tc diff b/w signal 18 and 17 is 0.5447604656219482
+tc diff b/w signal 19 and 18 is 0.5480906963348389
+tc diff b/w signal 20 and 19 is 0.5522451400756836
+tc diff b/w signal 21 and 20 is 0.6973123550415039
+tc diff b/w signal 22 and 21 is 0.7167840003967285
+tc diff b/w signal 23 and 22 is 0.7331910133361816
+tc diff b/w signal 24 and 23 is 0.764592170715332
+tc diff b/w signal 25 and 24 is 0.791485071182251
+tc diff b/w signal 26 and 25 is 0.8249363899230957
+tc diff b/w signal 27 and 26 is 0.8495430946350098
+tc diff b/w signal 28 and 27 is 0.9044804573059082
+tc diff b/w signal 29 and 28 is 0.912043571472168
+tc diff b/w signal 30 and 29 is 0.9440701007843018
+tc diff b/w signal 31 and 30 is 0.9669666290283203
+tc diff b/w signal 32 and 31 is 0.9712140560150146
+tc diff b/w signal 33 and 32 is 1.014892578125
+tc diff b/w signal 34 and 33 is 1.2240755558013916
+tc diff b/w signal 35 and 34 is 1.297440528869629
+tc diff b/w signal 36 and 35 is 1.399521827697754
+tc diff b/w signal 37 and 36 is 1.431534767150879
+tc diff b/w signal 38 and 37 is 1.4506886005401611
+tc diff b/w signal 39 and 38 is 1.5236015319824219
+tc diff b/w signal 40 and 39 is 1.6253821849822998
+tc diff b/w signal 41 and 40 is 1.6458096504211426
+tc diff b/w signal 42 and 41 is 1.6668033599853516
+tc diff b/w signal 43 and 42 is 1.807521104812622
+tc diff b/w signal 44 and 43 is 1.8335089683532715
+tc diff b/w signal 45 and 44 is 1.8414349555969238
+tc diff b/w signal 46 and 45 is 1.866121530532837
+tc diff b/w signal 47 and 46 is 1.888394832611084
+tc diff b/w signal 48 and 47 is 2.0172085762023926
+tc diff b/w signal 49 and 48 is 2.0833580493927
+tc diff b/w signal 50 and 49 is 2.185140609741211
+tc diff b/w signal 51 and 50 is 2.1940505504608154
+tc diff b/w signal 52 and 51 is 2.2473628520965576
+tc diff b/w signal 53 and 52 is 2.250431776046753
+tc diff b/w signal 54 and 53 is 2.2610831260681152
+tc diff b/w signal 55 and 54 is 2.3184752464294434
+tc diff b/w signal 56 and 55 is 2.3673644065856934
+tc diff b/w signal 57 and 56 is 2.3781838417053223
+tc diff b/w signal 58 and 57 is 2.396791696548462
+tc diff b/w signal 59 and 58 is 2.4398622512817383
+tc diff b/w signal 60 and 59 is 2.465468406677246
+tc diff b/w signal 61 and 60 is 2.490487575531006
+tc diff b/w signal 62 and 61 is 2.520378828048706
+tc diff b/w signal 63 and 62 is 2.5352511405944824
+tc diff b/w signal 64 and 63 is 2.619717597961426
+tc diff b/w signal 65 and 64 is 2.624011278152466
+tc diff b/w signal 66 and 65 is 2.6327362060546875
+tc diff b/w signal 67 and 66 is 2.6708030700683594
+tc diff b/w signal 68 and 67 is 2.7197670936584473
+tc diff b/w signal 69 and 68 is 2.744682788848877
+tc diff b/w signal 70 and 69 is 2.8842647075653076
+tc diff b/w signal 71 and 70 is 2.899183988571167
+tc diff b/w signal 72 and 71 is 2.915729284286499
+tc diff b/w signal 73 and 72 is 3.0037143230438232
+tc diff b/w signal 74 and 73 is 3.0214807987213135
+tc diff b/w signal 75 and 74 is 3.0584397315979004
+tc diff b/w signal 76 and 75 is 3.0805823802948
+tc diff b/w signal 77 and 76 is 3.085280418395996
+tc diff b/w signal 78 and 77 is 3.1564953327178955
+tc diff b/w signal 79 and 78 is 3.189049005508423
+tc diff b/w signal 80 and 79 is 3.2073686122894287
+tc diff b/w signal 81 and 80 is 3.2698543071746826
+tc diff b/w signal 82 and 81 is 3.2794344425201416
+tc diff b/w signal 83 and 82 is 3.3043627738952637
+tc diff b/w signal 84 and 83 is 3.319580554962158
+tc diff b/w signal 85 and 84 is 3.409207582473755
+tc diff b/w signal 86 and 85 is 3.474517822265625
+tc diff b/w signal 87 and 86 is 3.5448431968688965
+tc diff b/w signal 88 and 87 is 3.5609896183013916
+tc diff b/w signal 89 and 88 is 3.6047258377075195
+tc diff b/w signal 90 and 89 is 3.654430627822876
+tc diff b/w signal 91 and 90 is 3.67936110496521
+tc diff b/w signal 92 and 91 is 3.68340802192688
+tc diff b/w signal 93 and 92 is 3.698662519454956
+tc diff b/w signal 94 and 93 is 3.71632981300354
+tc diff b/w signal 95 and 94 is 3.761906147003174
+tc diff b/w signal 96 and 95 is 3.7651469707489014
+tc diff b/w signal 97 and 96 is 3.871389865875244
+tc diff b/w signal 98 and 97 is 3.8810670375823975
+tc diff b/w signal 99 and 98 is 3.9559543132781982
+tc diff b/w signal 100 and 99 is 3.964869260787964
+tc diff b/w signal 101 and 100 is 3.974219560623169
+tc diff b/w signal 102 and 101 is 4.02081823348999
+tc diff b/w signal 103 and 102 is 4.0666186809539795
+tc diff b/w signal 104 and 103 is 4.066671848297119
+tc diff b/w signal 105 and 104 is 4.1536705493927
+tc diff b/w signal 106 and 105 is 4.217670202255249
+tc diff b/w signal 107 and 106 is 4.238826751708984
+tc diff b/w signal 108 and 107 is 4.243089199066162
+tc diff b/w signal 109 and 108 is 4.318810701370239
+tc diff b/w signal 110 and 109 is 4.367223501205444
+tc diff b/w signal 111 and 110 is 4.4139814376831055
+tc diff b/w signal 112 and 111 is 4.4310643672943115
+tc diff b/w signal 113 and 112 is 4.579699993133545
+tc diff b/w signal 114 and 113 is 4.633617877960205
+tc diff b/w signal 115 and 114 is 4.635272741317749
+tc diff b/w signal 116 and 115 is 4.652125120162964
+tc diff b/w signal 117 and 116 is 4.718251943588257
+tc diff b/w signal 118 and 117 is 4.735747337341309
+tc diff b/w signal 119 and 118 is 5.012294054031372
+tc diff b/w signal 120 and 119 is 5.014383316040039
+tc diff b/w signal 121 and 120 is 5.018397569656372
+tc diff b/w signal 122 and 121 is 5.045030117034912
+tc diff b/w signal 123 and 122 is 5.052350044250488
+tc diff b/w signal 124 and 123 is 5.095611333847046
+tc diff b/w signal 125 and 124 is 5.157433271408081
+tc diff b/w signal 126 and 125 is 5.167670011520386
+tc diff b/w signal 127 and 126 is 5.200046539306641
+tc diff b/w signal 128 and 127 is 5.2001471519470215
+tc diff b/w signal 129 and 128 is 5.215198993682861
+tc diff b/w signal 130 and 129 is 5.23633599281311
+tc diff b/w signal 131 and 130 is 5.252814769744873
+tc diff b/w signal 132 and 131 is 5.273061990737915
+tc diff b/w signal 133 and 132 is 5.3457863330841064
+tc diff b/w signal 134 and 133 is 5.354651212692261
+tc diff b/w signal 135 and 134 is 5.3617353439331055
+tc diff b/w signal 136 and 135 is 5.473466873168945
+tc diff b/w signal 137 and 136 is 5.48761510848999
+tc diff b/w signal 138 and 137 is 5.560177803039551
+tc diff b/w signal 139 and 138 is 5.617684841156006
+tc diff b/w signal 140 and 139 is 5.663825511932373
+tc diff b/w signal 141 and 140 is 5.786629676818848
+tc diff b/w signal 142 and 141 is 5.867054462432861
+tc diff b/w signal 143 and 142 is 5.8712098598480225
+tc diff b/w signal 144 and 143 is 5.918586730957031
+tc diff b/w signal 145 and 144 is 5.928339958190918
+tc diff b/w signal 146 and 145 is 5.982610702514648
+tc diff b/w signal 147 and 146 is 24.000011920928955
+tc diff b/w signal 148 and 147 is 24.00002384185791
+tc diff b/w signal 149 and 148 is 24.000025033950806
+tc diff b/w signal 150 and 149 is 24.00002694129944
+tc diff b/w signal 151 and 150 is 24.00004506111145
+
+================ EOF ================
+
+
+Analysing segments.csv
+
+Total number of segments = 362
+Maximum duration of segments = 102455 seconds
+Minimum duration of segments = 7314 seconds
+Maximum distance b/w segments = 459428 seconds
+Minimum distance b/w segments = 9 seconds
