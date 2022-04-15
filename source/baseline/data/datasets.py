@@ -455,6 +455,7 @@ class BatchLoader(Dataset):
         import matplotlib.pyplot as plt
         plt.plot(range(len(batch_samples[0])), batch_samples[0])
         plt.savefig("sample.png")
+        print(primary_signals[0])
         plt.plot(range(len(primary_signals[0])), primary_signals[0])
         plt.savefig("signal.png")
         plt.plot(range(len(secondary_noise[0])), secondary_noise[0])
