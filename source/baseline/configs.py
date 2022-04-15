@@ -303,8 +303,8 @@ class KF_BatchTrain(KaggleFirst):
     """ Parameters changed when creating Batched trainable dataset """
     
     """ Data storage """
-    name = "Batch1_train"
-    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    name = "KF_D1_BatchTrain"
+    export_dir = Path("/home/nnarenraju/Research") / name
     
     """ Dataset """
     dataset = BatchLoader
@@ -323,7 +323,7 @@ class KF_BatchTrain(KaggleFirst):
                        'pretrained': True, 
                        'in_chans': 2, 
                        'drop_rate': 0.25},
-        store_device = 'cpu',
+        store_device = 'cuda:0',
     )
     
     pretrained = False
@@ -332,13 +332,13 @@ class KF_BatchTrain(KaggleFirst):
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 10
+    batch_size = 100
     save_freq = 5
     early_stopping = False
     
     """ Storage Devices """
-    store_device = 'cpu'
-    train_device = 'cpu'
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
     
     
     

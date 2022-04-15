@@ -78,7 +78,10 @@ def run_trainer(autopilot=False, autotools=None):
     if autopilot:
         cfg.name = "Batch_{}".format(opts.nbatch)
         data_cfg.data_dir = "dataset_5e4_20s_D1_Batch_{}".format(opts.nbatch)
-        cfg.export_dir = Path(os.path.split(cfg.export_dir)[0])
+    
+    # Clean-up export_dir name
+    # TODO: Fix this procedure so that it is compatible with autopilot and otherwise
+    cfg.export_dir = Path(os.path.split(cfg.export_dir)[0])
     
     # Make export dir
     dat.make_export_dir(cfg)

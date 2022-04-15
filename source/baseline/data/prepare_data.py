@@ -232,10 +232,9 @@ class DataModule:
         # transforms are not required if the cfg.dataset is made for trainable data
         # this is automagically taken care of within the BatchLoader datasets class
         if cfg.dataset.__name__ == "BatchLoader":
-            dataset_params = {}
-            dataset_params['distance'] = train_fold['distance']
-            dataset_params['mchirp'] = train_fold['mchirp']
-            dataset_params['norm_tc'] = train_fold['norm_tc']
+            cfg.dataset_params['distance'] = train_fold['distance']
+            cfg.dataset_params['mchirp'] = train_fold['mchirp']
+            cfg.dataset_params['norm_tc'] = train_fold['norm_tc']
             
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
@@ -246,10 +245,9 @@ class DataModule:
                 train_device=cfg.train_device, **cfg.dataset_params)
         
         if cfg.dataset.__name__ == "BatchLoader":
-            dataset_params = {}
-            dataset_params['distance'] = valid_fold['distance']
-            dataset_params['mchirp'] = valid_fold['mchirp']
-            dataset_params['norm_tc'] = valid_fold['norm_tc']
+            cfg.dataset_params['distance'] = valid_fold['distance']
+            cfg.dataset_params['mchirp'] = valid_fold['mchirp']
+            cfg.dataset_params['norm_tc'] = valid_fold['norm_tc']
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,

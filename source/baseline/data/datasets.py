@@ -360,6 +360,7 @@ class BatchLoader(Dataset):
         # Unpacking kwargs
         for key, value in dataset_params.items():
             setattr(self, key, value)
+        
         # Primary parameters
         self.data_paths = data_paths
         self.targets = targets
