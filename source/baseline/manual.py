@@ -37,6 +37,13 @@ import torch.utils.data as D
 # LOCAL
 from data.datasets import Simple
 
+# Turning off Torch debugging
+torch.autograd.set_detect_anomaly(False)
+torch.autograd.profiler.profile(False)
+torch.autograd.profiler.emit_nvtx(False)
+# Turning on cuDNN autotune
+torch.backends.cudnn.benchmark = True
+
 
 def display_outputs(training_output, training_labels):
     # Printing the training output and labels together
