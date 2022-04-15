@@ -413,6 +413,8 @@ class BatchLoader(Dataset):
         data_path = self.data_paths[idx]
         print(data_path)
         batch_signals = self._read_(data_path)
+        print(batch_signals)
+        raise
             
         """ Target """
         # Target for training or testing phase (obtained from trainable.json)
