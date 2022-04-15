@@ -411,6 +411,7 @@ class BatchLoader(Dataset):
         """ Read the sample """
         # check whether the sample is noise/signal for adding random noise realisation
         data_path = self.data_paths[idx]
+        print(data_path)
         batch_signals = self._read_(data_path)
             
         """ Target """
