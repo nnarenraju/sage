@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import h5py
 import time
+import random
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, sosfiltfilt
@@ -40,8 +41,9 @@ from pycbc import distributions
 from pycbc.psd import inverse_spectrum_truncation, interpolate
 from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
 
-# Addressing HDF5 error with file locking
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+# Addressing HDF5 error with file locking (used to address PSD file read error)
+# PSD file read has been moved to dataset object. (DEPRECATED)
+# os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
 """ WRAPPERS """
@@ -56,13 +58,23 @@ class Unify:
         return y
 
 
-class UnifySignalOnly:
+class UnifySignal:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None):
+    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
         for transform in self.transforms:
-            y = transform(y, dets, time_interval, distrs)
+            y = transform(y, dets, time_interval, distrs, **params)
+        return y
+
+
+class UnifyNoise:
+    def __init__(self, transforms: list):
+        self.transforms = transforms
+
+    def __call__(self, y: np.ndarray):
+        for transform in self.transforms:
+            y = transform(y)
         return y
     
 
@@ -93,13 +105,26 @@ class TransformWrapperPerChannel(TransformWrapper):
         return np.array(augmented, dtype=np.float64)
 
 
-class ProjectionWrapper:
+class SignalWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None):
+    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
+        
+        # mchirp can be removed as well once we move fully to distance and nor require chirp distance
         if self.always_apply:
-            return self.apply(y, dets, time_interval, distrs)
+            return self.apply(y, dets, time_interval, distrs, **params)
+        else:
+            pass
+
+
+class NoiseWrapper:
+    def __init__(self, always_apply=True):
+        self.always_apply = always_apply
+    
+    def __call__(self, y: np.ndarray):
+        if self.always_apply:
+            return self.apply(y)
         else:
             pass
     
@@ -110,6 +135,10 @@ class ProjectionWrapper:
 # [1] Normalise - Normalisation of each sample wrt entire dataset
 # [2] BandPass - Butter bandpass filter. Uses sosfiltfilt function for stability.
 # [3] Whitening - PyCBC whitening function. PSD input required to whiten.
+# [4] Multi-rate sampling -
+# [5] AugmentPolSky - 
+# [6] CyclicShift - 
+# [7] AugmentDistance - 
 #
 #########################################################################################
 
@@ -143,7 +172,30 @@ class BandPass(TransformWrapper):
         nyq = 0.5 * self.fs
         low = self.lower / nyq
         high = self.upper / nyq
-        sos = butter(self.order, [low, high], analog=False, btype='band', output='sos')
+        sos = butter(self.order, [low, high], analog=False, btype='bandpass', output='sos')
+        return sos
+
+    def butter_bandpass_filter(self, data):
+        sos = self.butter_bandpass()
+        filtered_data = sosfiltfilt(sos, data)
+        return filtered_data
+    
+    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
+        # Verified to produce the same results as PerChannel mode
+        return self.butter_bandpass_filter(y)
+
+
+class HighPass(TransformWrapper):
+    def __init__(self, always_apply=True, lower=16, fs=2048, order=5):
+        super().__init__(always_apply)
+        self.lower = lower
+        self.fs = fs
+        self.order = order
+    
+    def butter_bandpass(self):
+        nyq = 0.5 * self.fs
+        low = self.lower / nyq
+        sos = butter(self.order, low, analog=False, btype='highpass', output='sos')
         return sos
 
     def butter_bandpass_filter(self, data):
@@ -240,26 +292,16 @@ class MultirateSampling(TransformWrapper):
         # This is kept separate since further experimentation might be required
         return multirate_sampling(y, data_cfg)
     
-
-class AugmentDistance(TransformWrapper):
-    """ Used to augment the distance parameter of the given signal """
-    def __init__(self, always_apply=True):
-        super().__init__(always_apply)
-
-    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
-        # Augmenting on distance parameter
-        pass
-    
     
 
 """ Signal only Transformations """
 
-class ProjectWave(ProjectionWrapper):
+class AugmentPolSky(SignalWrapper):
     """ Used to augment polarisation angle, ra and dec """
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, dets=None, time_interval=None, distrs=None):
+    def apply(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
         
         # Using PyCBC project_wave to get h_t from h_plus and h_cross
         # TODO: h_plus and h_cross have to be TimeSeries objects when saved
@@ -285,3 +327,47 @@ class ProjectWave(ProjectionWrapper):
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         # Shape remains the same, so reading in dataset object won't be a problem
         return strains
+
+
+class AugmentDistance(SignalWrapper):
+    """ Used to augment the distance parameter of the given signal """
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+
+    def get_augmented_signal(self, signal, distance, mchirp, distrs):
+        distance_old = distance
+        # Getting new distance
+        chirp_distance = distrs['dchirp'].rvs(size=1)
+        chirp_distance = float(chirp_distance[0][0])
+        # Producing the new distance with the required priors
+        distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
+        # Augmenting on the distance
+        return signal * (distance_old/distance_new)
+
+    def apply(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
+        # TODO: Set all distances during data generation to 1Mpc.
+        # Augmenting on distance parameter
+        for key, value in params.items():
+            setattr(self, key, value)
+        
+        # Augmentation should be valid if given a batch of signals
+        # Run through the augmentation procedure with given dist, mchirp
+        augmented_signals = [self.get_augmented_signal(signal, distance, mchirp, distrs)
+                             for signal, distance, mchirp in 
+                             zip(y, self.distance, self.mchirp)]
+        
+        return augmented_signals
+
+
+
+""" Noise only Transformations """
+
+class CyclicShift(NoiseWrapper):
+    """ Used to cyclic shift the noise (can be applied to real noise as well) """
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+
+    def apply(self, y: np.ndarray):
+        # Cyclic shifting noise is possible for fake and real noise
+        num_roll = random.randint(0, len(y))
+        return np.roll(y, num_roll)

@@ -467,7 +467,7 @@ class GenerateData:
                     writer.writerow(list(prior_data.values()))
             
             
-            """ Write sample """
+            """ Write Batched samples """
             # Save each sample as .hdf with appropriate attrs
             for n, (detector, time_series) in enumerate(zip(self.detectors_abbr, sample)):
                 self.store_ts(store, detector, time_series, det_num=n)
@@ -480,6 +480,7 @@ class GenerateData:
                 fp.attrs['sample_rate'] = self.sample_rate
                 fp.attrs['sample_length_in_s'] = self.sample_length_in_s
                 fp.attrs['detectors'] = self.detectors_abbr
+                
                 # Common training parameter
                 fp.attrs['label'] = label
                 
@@ -493,8 +494,6 @@ class GenerateData:
                     fp.attrs['tc'] = data['injection_time']
                     fp.attrs['normalised_tc'] = data['normalised_tc']
                 else:
-                    fp.attrs['psd_file_path_det1'] = self.psd_file_path_det1
-                    fp.attrs['psd_file_path_det2'] = self.psd_file_path_det2
                     fp.attrs['noise_low_freq_cutoff'] = self.noise_low_freq_cutoff
                     # Training parameters
                     # Use a single linear layer trained only on 'tc'

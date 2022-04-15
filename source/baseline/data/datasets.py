@@ -86,8 +86,9 @@ class MLMDC1(Dataset):
     """
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
-                 signal_only_transforms=None, training=False, testing=False, 
-                 store_device='cpu', train_device='cpu', data_cfg=None):
+                 signal_only_transforms=None, noise_only_transforms=None, 
+                 training=False, testing=False, store_device='cpu', train_device='cpu', 
+                 cfg=None, data_cfg=None):
         
         super().__init__()
         self.data_paths = data_paths
@@ -99,6 +100,7 @@ class MLMDC1(Dataset):
         self.testing = testing
         self.store_device = store_device
         self.train_device = train_device
+        self.cfg = cfg
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         
@@ -131,9 +133,20 @@ class MLMDC1(Dataset):
         # Used for obtaining random polarisation angle
         self.uniform_angle_distr = distributions.angular.UniformAngle(uniform_angle=(0., 2.0*np.pi))
         # Used for obtaining random ra and dec
-        self.skylocation_dist = distributions.sky_location.UniformSky()
+        self.skylocation_distr = distributions.sky_location.UniformSky()
+        # Used for obtaining random mass
+        self.mass_distr = distributions.Uniform(mass=(data_cfg.prior_low_mass, data_cfg.prior_high_mass))
+        # Used for obtaining random chirp distance
+        dist_gen = distributions.power_law.UniformRadius
+        self.chirp_distance_distr = dist_gen(distance=(data_cfg.prior_low_chirp_dist, 
+                                                       data_cfg.prior_high_chirp_dist))
         # Distributions object
-        self.distrs = {'pol': self.uniform_angle_distr, 'sky': self.skylocation_dist}
+        self.distrs = {'pol': self.uniform_angle_distr, 'sky': self.skylocation_distr,
+                       'mass': self.mass_distr, 'dchirp': self.chirp_distance_distr}
+        
+        # Adding a random noise realisation
+        noise_dir = os.path.join(self.data_loc, "background")
+        self.noise_files = glob.glob(os.path.join(noise_dir, "*.hdf"))
             
         # Saving frequency with idx plotting
         # TODO: Add compatibility for using cfg.splitter with K-folds
@@ -191,11 +204,11 @@ class MLMDC1(Dataset):
                 # Use this to get the h_t from project_wave transformation
                 time_interval = attrs['time_interval']
             
+            # 'tc' is the GPS time in O3a era when injection is made
+            tc = attrs['tc']
             # Use Normalised 'tc' such that it is always b/w 0 and 1
             # if place_tc = [0.5, 0.7]s in a 1.0 second sample
             # then normalised tc will be (place_tc-0.5)/(0.7-0.5)
-            # tc is the GPS time in O3 era when injection is made
-            tc = attrs['tc']
             normalised_tc = attrs['normalised_tc']
         
         # Return necessary params
@@ -235,11 +248,9 @@ class MLMDC1(Dataset):
         
         
         """ Finding *ONE* random noise realisation for signals """
-        if data_type == 'signal':
-            noise_dir = os.path.join(self.data_loc, "background")
-            noise_files = glob.glob(os.path.join(noise_dir, "*.hdf"))
+        if self.cfg.add_random_noise_realisation and data_type == 'signal':
             # Pick a random noise realisation to add to the signal
-            noise_data_path = random.choice(noise_files)
+            noise_data_path = random.choice(self.noise_files)
             # Read the noise data
             noise_data_params = self._read_(noise_data_path)
             # Sanity check
@@ -265,6 +276,8 @@ class MLMDC1(Dataset):
             """ Adding noise to signals """
             raw_sample = noise + signals
         
+        elif data_type == 'signal':
+            raw_sample = signals
         else:
             raw_sample = noise
             
@@ -317,7 +330,6 @@ class MLMDC1(Dataset):
         
         """ Tensorification and Device Compatibility """
         # Convert signal/target to Tensor objects
-        # Check: Converting to a tensor normalises a sample b/w the range [0., 1.]
         sample = torch.from_numpy(sample)
         target = torch.from_numpy(target)
         # Set the device and dtype
@@ -340,20 +352,32 @@ class BatchLoader(Dataset):
     """
     
     def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
-                 training=False, testing=False, store_device='cpu', train_device='cpu',
-                 data_cfg=None):
+                 signal_only_transforms=None, noise_only_transforms=None,
+                 training=False, testing=False, store_device='cpu', train_device='cpu', 
+                 cfg=None, data_cfg=None, **dataset_params):
         
         super().__init__()
+        # Unpacking kwargs
+        for key, value in dataset_params.items():
+            setattr(self, key, value)
+        # Primary parameters
         self.data_paths = data_paths
         self.targets = targets
-        self.transforms = None
-        self.target_transforms = None
-        self.training = training
-        self.testing = testing
-        self.store_device = store_device
         self.train_device = train_device
+        self.signal_only_transforms = signal_only_transforms
+        self.noise_only_transforms = noise_only_transforms
+        self.cfg = cfg
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
+        
+        # Used for obtaining random mass
+        self.mass_distr = distributions.Uniform(mass=(data_cfg.prior_low_mass, data_cfg.prior_high_mass))
+        # Used for obtaining random chirp distance
+        dist_gen = distributions.power_law.UniformRadius
+        self.chirp_distance_distr = dist_gen(distance=(data_cfg.prior_low_chirp_dist, 
+                                                       data_cfg.prior_high_chirp_dist))
+        # Distributions object
+        self.distrs = {'dchirp': self.chirp_distance_distr}
         
         # Saving frequency with idx plotting
         # TODO: Add compatibility for using cfg.splitter with K-folds
@@ -361,13 +385,6 @@ class BatchLoader(Dataset):
             self.sample_save_frequency = int(len(self.data_paths)/100.0)
         else:
             self.sample_save_frequency = data_cfg.sample_save_frequency
-        
-        if training:
-            assert testing == False
-        if testing:
-            assert training == False
-        if not training and not testing:
-            raise ValueError("Neither training or testing phase chosen for dataset class. Bruh?")
 
 
     def __len__(self):
@@ -378,29 +395,61 @@ class BatchLoader(Dataset):
         # Should contain an entire batch of data samples
         with h5py.File(data_path, "r") as fp:
             # Get and return the batch data
-            # When BatchLoader is True, batch_size is 1, therefore [0]
             return np.array(fp['data'][:])
+    
+    def _demystify_garbage_(self, garbage):
+        # targets looks like absolute shite after coming out of the booty that is trainable.json
+        # TODO: This is very inefficient. Fix me!!! Didn't mean the line, me :(
+        # Hello darkness, my old friend. Evenings spent in the lab again.
+        # These are easter eggs. I'm not actually sad. Or am i? No. Or am i?
+        # Use this to clean up and obtain targets
+        return np.array(list(garbage), dtype=np.float64)
     
     def __getitem__(self, idx):
         
         """ Read the sample """
         # check whether the sample is noise/signal for adding random noise realisation
         data_path = self.data_paths[idx]
-        batch_samples = self._read_(data_path)
-        
-        ## TODO: We should add a random noise realisation to the signal here!!!
-        ## Remove that method from the save trainable dataset method
-        
+        batch_signals = self._read_(data_path)
+            
         """ Target """
         # Target for training or testing phase (obtained from trainable.json)
-        # TODO: This is very inefficient. Fix me!!!
-        batch_targets = np.array(list(self.targets[idx]), dtype=np.float64)
+        batch_targets = self._demystify_garbage_(self.targets[idx])
         
         # Concatenating the normalised_tc within the target variable
         # This can be used when normalised_tc is also stored in trainable.hdf
+        # normalised_tc = self.norm_tc
         # target = np.append(target, normalised_tc)
         ## Target should look like (1., 0., 0.567) for signal
         ## Target should look like (0., 1., -1.0) for noise
+        
+        """ Add a random distance realisation """
+        self.signal_only_transforms(batch_signals, **{'distance': self.distance, 'mchirp':self.mchirp},
+                                    distrs=self.distrs)
+        
+        
+        """ Finding random noise realisation for signals """
+        if self.cfg.add_random_noise_realisation:
+            # Pick a secondary batch to snatch noise data
+            secondary_file_idx = random.choice(range(len(self.data_paths)))
+            # Read secondary file for all data
+            secondary_data = self._read_(self.data_paths[secondary_file_idx])
+            # Find the indices where this file contains pure noise
+            secondary_noise_idx = np.argwhere(self.targets[secondary_file_idx]==np.array([0., 1.]))
+            # Get the secondary noise data
+            secondary_noise = secondary_data[secondary_noise_idx]
+            # Find the signals within the batch, and add secondary noise to it
+            primary_signal_idx = np.argwhere(batch_targets == np.array([1. ,0.]))
+            # Get the primary signal data
+            primary_signals = batch_signals[primary_signal_idx]
+            # Add the secondary noise to the primary signals
+            # This assertion should not trigger if we use StratifiedKFold splitting method
+            assert len(primary_signal_idx) == len(secondary_noise_idx)
+            """ TODO: Here is where we would add augmentation (cyclic_shift) to secondary noise """
+            batch_signals[primary_signal_idx] = secondary_noise + primary_signals
+            # Now all noise should be untouched, and signals should have random noise added
+            batch_samples = batch_signals
+            
         
         """ Tensorification and Device Compatibility """
         # Convert signal/target to Tensor objects
@@ -420,6 +469,7 @@ class Simple(Dataset):
     """
     Simple read-and-load-type dataset object
     Designed to be be used alongside BatchLoader
+    WARNING!!!: This custom dataset *cannot* be used in configs as primary dataset object
     
     """
     

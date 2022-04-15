@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # IN-BUILT
+import math
 import torch.nn as nn
 from pathlib import Path
 import torch.optim as optim
@@ -35,7 +36,7 @@ from data.datasets import MLMDC1, BatchLoader
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel
-from data.transforms import Unify, UnifySignalOnly, Normalise, BandPass, Whiten, MultirateSampling, ProjectWave
+from data.transforms import Unify, Normalise, BandPass, HighPass, Whiten, MultirateSampling
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 
 
@@ -162,7 +163,7 @@ class Baseline:
 class KaggleFirst:
     
     """ Data storage """
-    name = "Baseline_check_MP"
+    name = "KaggleFirst"
     export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset Splitting """
@@ -194,19 +195,19 @@ class KaggleFirst:
     weights_path = 'weights.pt'
     
     """ Save trainable train and valid data """
-    save_trainable_dataset = True
+    save_trainable_dataset = False
     
     """ Epochs and Batches """
     num_steps = 25000
     num_epochs = 25
-    batch_size = 500
-    save_freq = 200
+    batch_size = 100
+    save_freq = 5
     early_stopping = False
     
     """ Dataloader params """
     num_workers = 0
     pin_memory = False
-    prefetch_factor = 100
+    prefetch_factor = 2
     persistent_workers = False
     
     """ Gradient Clipping """
@@ -235,15 +236,20 @@ class KaggleFirst:
     train_device = 'cpu'
     
     """ Data Transforms """
+    # Adding a random noise realisation during the data loading process
+    # Procedure should be available within dataset object
+    add_random_noise_realisation = False
+    
     transforms = dict(
         signal=None,
+        noise=None,
         train=Unify([
-            BandPass(lower=16, upper=512, fs=2048., order=6),
+            HighPass(lower=16, fs=2048., order=6),
             Whiten(trunc_method='hann', remove_corrupted=True),
             MultirateSampling(),
         ]),
         test=Unify([
-            BandPass(lower=16, upper=512, fs=2048., order=6),
+            HighPass(lower=16, fs=2048., order=6),
             Whiten(trunc_method='hann', remove_corrupted=True),
             MultirateSampling(),
         ]),
@@ -252,3 +258,90 @@ class KaggleFirst:
     
     debug = False
     verbose = False
+
+
+class KF_Trainable(KaggleFirst):
+    
+    """ Parameters changed when creating Batched trainable dataset """
+    
+    """ Data storage """
+    name = "Batch_2"
+    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    
+    """ Dataset Splitting """
+    # Split the iterable into several small iterables
+    est_file_size = 0.7 # MB
+    # Assumed to load entire batch into memory (if needed)
+    limit_RAM = 8000. # MB
+    # Number of files in each split
+    fold_size = limit_RAM/est_file_size
+    # Total number of input files/ number of samples
+    num_samples = 100
+    # Number of splits used to create Stratified folds
+    # Number of folds (must be at least 2, default = 5)
+    n_splits = int(math.ceil(num_samples/fold_size))
+    
+    # Seed for K-Fold shuffling
+    seed = 42
+    # Folds are made by preserving the percentage of samples for each class (StratifiedKFold)
+    # Each of these folds are stored as a batch of data
+    # Uses the splitter.split method with samples and target as input
+    # splitter = StratifiedKFold(n_splits=n_splits)
+    
+    # If splitter is set to None, we store the entire data into one HDF
+    splitter = None
+    
+    # Saves trainable transformed dataset
+    # Pipeline does not use the dataset object within datasets.py
+    # It has a custom version within save_trainable.py
+    # TODO: this can eventually be moved to datasets.py as well
+    save_trainable_dataset = True
+    
+    
+class KF_BatchTrain(KaggleFirst):
+    
+    """ Parameters changed when creating Batched trainable dataset """
+    
+    """ Data storage """
+    name = "Batch1_train"
+    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    
+    """ Dataset """
+    dataset = BatchLoader
+    dataset_params = dict()
+    
+    """ Architecture """
+    model = KappaModel
+    
+    model_params = dict(
+        # Kaggle frontend+backend
+        # This model is ridiculously slow on cpu, use cuda:0
+        model_name = 'kaggle_first', 
+        filter_size = 16,
+        kernel_size = 32,
+        timm_params = {'model_name': 'resnet34', 
+                       'pretrained': True, 
+                       'in_chans': 2, 
+                       'drop_rate': 0.25},
+        store_device = 'cpu',
+    )
+    
+    pretrained = False
+    weights_path = 'weights.pt'
+    
+    """ Epochs and Batches """
+    num_steps = 25000
+    num_epochs = 25
+    batch_size = 10
+    save_freq = 5
+    early_stopping = False
+    
+    """ Storage Devices """
+    store_device = 'cpu'
+    train_device = 'cpu'
+    
+    
+    
+    
+    
+    

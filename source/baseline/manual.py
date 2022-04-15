@@ -103,73 +103,6 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
     # Input is noise (pred_prob_tn)
     if vlabels[1] == 1:
         save_data([[data]], save_tn)
-
-
-def save_batch_to_hdf(dataloader, store_dir, id_offset=0):
-    # Iterate through the DataLoader and save all samples in HDF5 format
-    # We also have to save target for creating trainable.hdf
-    targets = []
-    all_abspaths = []
-    """ Store Trainable Training/Validation Data """
-    pbar = tqdm(dataloader)
-    for n, (samples, labels) in enumerate(pbar):
-        # We need to detach from cuda and use .cpu() to access host memory
-        # example: if batch_size if 100, samples will have have dims (100, dimA, dimB)
-        # if slice is provided it splits the batch or gets element of batch
-        samples = samples.cpu().detach().numpy()
-        labels = labels.cpu().detach().numpy()
-        # Saving target and path (this will be a list of np arrays of labels from each batch)
-        targets.append(labels.tolist())
-        # Iterate throught the trainDL and store all trainable training data in HDF5 format
-        store_path = os.path.join(store_dir, "trainable_{}.hdf".format(n+id_offset))
-        pbar.set_description("Processing nsample {} into {}".format(n, "trainable_{}.hdf".format(n+id_offset)))
-        # Store path (one path for each batch)
-        all_abspaths.append(os.path.abspath(store_path))
-        # HDF5 was measured to have the fastest IO (r->46ms, w->172ms)
-        # NPY read/write was not tested. Github says HDF5 is faster.
-        with h5py.File(store_path, 'a') as fp:
-            # create a dataset for batch save
-            ds = fp.create_dataset("data", shape=samples.shape, dtype=np.float64, 
-                                    data=samples,
-                                    compression='gzip',
-                                    compression_opts=9, 
-                                    shuffle=True)
-            # Attributes
-            ds.attrs['easter_egg'] = "The needs of the many outweigh the needs of the few."
-        
-    return targets, all_abspaths, n+1
-
-
-def save_trainable_dataset(cfg, data_cfg, trainDL, validDL):
-    # Saving trainable dataset after transforms
-    # Path to store trainable dataset
-    parent_dir = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
-    store_dir = os.path.join(parent_dir, "trainable_batched_dataset")
-    
-    if not os.path.exists(store_dir):
-        os.makedirs(store_dir, exist_ok=False)
-    
-    """ Store trainable data for training and validation """
-    print("Running pipeline using trainable option. Saving transformed trainable dataset.")
-    # Training and validation will the saved in the same place and split (no need to distinguish)
-    targets_train, train_abspaths, offset = save_batch_to_hdf(trainDL, store_dir)
-    targets_valid, valid_abspaths, _ = save_batch_to_hdf(validDL, store_dir, offset)
-    
-    """ Save trainable.json for lookup """
-    targets = targets_train + targets_valid
-    all_abspaths = train_abspaths + valid_abspaths
-    ## Creating trainable.json similar to training.hdf
-    ids = np.arange(len(targets)).tolist() # un-JSONified version (np array is not JSON serializable)
-    # Shuffling is not required as the DataLoader should have already shuffled it
-    # Save the lookup table as a json file (this works better for batch saving)
-    lookup = {'ids': ids, 'path': all_abspaths, 'target': targets, 'batch_size': cfg.batch_size}
-    # Save the dataset paths alongside the target and ids as .JSON
-    lookup_trainable = os.path.join(cfg.export_dir, "trainable.json")
-    with open(lookup_trainable, 'w') as fp:
-        json.dump(lookup, fp)
-    # Create a copy of trainable.json to the dataset directory
-    shutil.copy(lookup_trainable, parent_dir)
-    print("manual.py: Trainable dataset has been created and stored!")
     
 
 def training_phase(cfg, Network, optimizer, loss_function, training_samples, training_labels):
@@ -213,8 +146,7 @@ def validation_phase(cfg, nep, Network, optimizer, loss_function, validation_sam
     return (validation_loss, accuracy, pred_prob)
     
 
-def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, 
-          verbose=False, trainable_dataset_save_mode=False):
+def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
     
     """
     Train a network on given data.
@@ -244,15 +176,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
     """
     
-    """ Trainable data storage snippet """
-    # Create the necessary directories
-    if trainable_dataset_save_mode:
-        save_trainable_dataset(cfg, data_cfg, trainDL, validDL)
-        # Return and leave if trainable data storage is complete
-        print("manual.py: Trainable data storage complete. Train with simple DataLoader.")
-        # Training and validation is not done when this option is on.
-        return
-        
     
     """ Training and Validation """
     with open(os.path.join(cfg.export_dir, cfg.output_loss_file), 'w') as outfile:

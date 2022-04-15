@@ -34,7 +34,6 @@ import torch.utils.data as D
 # LOCAL
 from configs import *
 from data_configs import *
-from data.fast_tensor_dataloader import FastTensorDataLoader
 
 
 class DataModule:
@@ -71,9 +70,8 @@ class DataModule:
         """
         
         # cfg contains the model class (see config.py)
+        # This creates a new instance, handle this in run.py
         cfg = eval(opts.config)
-        # Results directory (preferred: /mnt/nnarenraju)
-        cfg.export_dir.mkdir(parents=True, exist_ok=False)
         return cfg
     
     def configure_dataset(opts):
@@ -95,6 +93,11 @@ class DataModule:
         # cfg contains the model class (see config.py)
         cfg = eval(opts.data_config)
         return cfg
+    
+    def make_export_dir(cfg):
+        # Results directory (preferred: /mnt/nnarenraju)
+        cfg.export_dir = cfg.export_dir / cfg.name
+        cfg.export_dir.mkdir(parents=True, exist_ok=False)
     
     def get_summary(cfg, data_cfg, export_dir):
         """
@@ -170,11 +173,13 @@ class DataModule:
             lookup_table = os.path.join(cfg.export_dir, "trainable.json")
             with open(lookup_table, 'r') as fp:
                 # train should have (ids, path, target)
+                # Please clean this. I can even. This is too much.
                 data = json.load(fp)
-                train = np.array([data['ids'], data['path'], data['target']], dtype=object)
+                train = np.array([data['ids'], data['path'], data['target'],
+                                  data['norm_tc'], data['distance'], data['mchirp']], dtype=object)
                 train = np.column_stack(train)
                 train = pd.DataFrame(train)
-                train.columns = ['ids', 'path', 'target']
+                train.columns = ['ids', 'path', 'target', 'norm_tc', 'distance', 'mchirp']
         else:
             lookup_table = "training.hdf"
             # Using a dask Dataframe for larger CSV files (if using)
@@ -226,19 +231,32 @@ class DataModule:
         
         # transforms are not required if the cfg.dataset is made for trainable data
         # this is automagically taken care of within the BatchLoader datasets class
-        
+        if cfg.dataset.__name__ == "BatchLoader":
+            dataset_params = {}
+            dataset_params['distance'] = train_fold['distance']
+            dataset_params['mchirp'] = train_fold['mchirp']
+            dataset_params['norm_tc'] = train_fold['norm_tc']
+            
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
-                signal_only_transforms=cfg.transforms['signal'],
-                training = True, data_cfg=data_cfg, store_device=cfg.store_device,
+                signal_only_transforms=cfg.transforms['signal'], 
+                noise_only_transforms=cfg.transforms['noise'],
+                training = True, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
+        
+        if cfg.dataset.__name__ == "BatchLoader":
+            dataset_params = {}
+            dataset_params['distance'] = valid_fold['distance']
+            dataset_params['mchirp'] = valid_fold['mchirp']
+            dataset_params['norm_tc'] = valid_fold['norm_tc']
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
                 transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
                 signal_only_transforms=cfg.transforms['signal'],
-                training=True, data_cfg=data_cfg, store_device=cfg.store_device,
+                noise_only_transforms=cfg.transforms['noise'],
+                training=True, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
         
         return (train_dataset, valid_dataset)

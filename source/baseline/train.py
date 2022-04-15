@@ -28,6 +28,8 @@ import os
 import gc
 import torch
 import argparse
+import numpy as np
+from pathlib import Path
 import pytorch_lightning as pl
 from torchsummary import summary
 
@@ -39,34 +41,47 @@ warnings.filterwarnings("ignore")
 from lightning import simple
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
+from data.save_trainable import Trainable
+from data.MP_save_trainable import MP_Trainable
 
 
-if __name__ == "__main__":
+def run_trainer(autopilot=False, autotools=None):
     
-    parser = argparse.ArgumentParser()
-    
-    parser.add_argument("--config", type=str, default='Baseline',
-                        help="Uses the pipeline architecture as described in configs.py")
-    parser.add_argument("--data-config", type=str, default='Default',
-                        help="Creates or uses a particular dataset as provided in data_configs.py")
-    parser.add_argument("--inference", action='store_true',
-                        help="Running the inference module using trained model")
-    parser.add_argument("--lightning", action='store_true',
-                        help="Running the pipeline using PyTorch Lightning")
-    parser.add_argument("--manual", action='store_true',
-                        help="Running the pipeline using manual PyTorch")
-    parser.add_argument("--summary", action='store_true',
-                        help="Store model summary using pytorch_summary")
-    parser.add_argument("--debug", action='store_true')
-    parser.add_argument("--silent", action='store_true')
-    
-    opts = parser.parse_args()
+    if not autopilot:
+        parser = argparse.ArgumentParser()
+        
+        parser.add_argument("--config", type=str, default='Baseline',
+                            help="Uses the pipeline architecture as described in configs.py")
+        parser.add_argument("--data-config", type=str, default='Default',
+                            help="Creates or uses a particular dataset as provided in data_configs.py")
+        parser.add_argument("--inference", action='store_true',
+                            help="Running the inference module using trained model")
+        parser.add_argument("--lightning", action='store_true',
+                            help="Running the pipeline using PyTorch Lightning")
+        parser.add_argument("--manual", action='store_true',
+                            help="Running the pipeline using manual PyTorch")
+        parser.add_argument("--summary", action='store_true',
+                            help="Store model summary using pytorch_summary")
+        parser.add_argument("--debug", action='store_true')
+        parser.add_argument("--silent", action='store_true')
+        
+        opts = parser.parse_args()
+    else:
+        opts = autotools
     
     """ Prepare Data """
     # Get model configuration
     cfg = dat.configure_pipeline(opts)
     # Get data creation/usage configuration
     data_cfg = dat.configure_dataset(opts)
+    
+    if autopilot:
+        cfg.name = "Batch_{}".format(opts.nbatch)
+        data_cfg.data_dir = "dataset_5e4_20s_D1_Batch_{}".format(opts.nbatch)
+        cfg.export_dir = Path(os.path.split(cfg.export_dir)[0])
+    
+    # Make export dir
+    dat.make_export_dir(cfg)
     
     # Prepare input data for training and testing
     # TODO: Currently get_summary() does not handle testing dataset
@@ -80,18 +95,38 @@ if __name__ == "__main__":
 
     """ Training """
     # Folds are obtained only by splitting the training dataset
+    # Saving trainable dataset for each fold (if option enabled)
+    if cfg.save_trainable_dataset:
+        save_obj = MP_Trainable(cfg, data_cfg, len(folds)-1, opts.nbatch)
+        
     # Use folds for cross-validation
-    for fold, (train_idx, val_idx) in enumerate(folds):
+    for nfold, (train_idx, val_idx) in enumerate(folds):
         
         # TODO: Implement inference section
         if opts.inference:
             continue
         
         if cfg.splitter != None:
-            print(f'\n========================= TRAINING FOLD {fold} =========================\n')
+            print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
 
         train_fold = train.iloc[train_idx]
         val_fold = train.iloc[val_idx]
+        
+        # Saving a trainable dataset
+        """ Trainable data storage snippet """
+        # If we have cfg.splitter set to None, entire data is split in 80-20 partitions
+        # nfold will immediately be the last one, so we should store trainable.hdf for that one
+        if cfg.save_trainable_dataset:
+            # We do not discriminate between training and validation dataset
+            save_obj.data_paths = np.append(train_fold['path'].values, val_fold['path'].values)
+            save_obj.targets = np.append(train_fold['target'].values, val_fold['target'].values)
+            save_obj.nfold = nfold
+            # Run the trainable dataset iterator
+            save_obj.save_trainable_dataset()
+            # Return and leave if trainable data storage is complete
+            print("manual.py: Trainable data storage complete. Train with simple DataLoader.")
+            # Training and validation is not done when this option is on.
+            continue
         
         # Get the dataset objects for training and validation
         train_data, val_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
@@ -135,13 +170,14 @@ if __name__ == "__main__":
         
         
         """ Training and Validation Methods """
+        ## MANUAL
         if opts.manual:
             # Running the manual pipeline version using pure PyTorch
             # Initialise the trainer
             manual_train(cfg, data_cfg, ModelClass, optimizer, scheduler, loss_function, 
-                         train_loader, val_loader, verbose=cfg.verbose, 
-                         trainable_dataset_save_mode=cfg.save_trainable_dataset)
+                         train_loader, val_loader, verbose=cfg.verbose)
         
+        ## LIGHTNING
         if opts.lightning:
             # Get Lightning Classifier from lightning.py
             model = simple(ModelClass, optimizer, scheduler, loss_function)
@@ -155,3 +191,9 @@ if __name__ == "__main__":
         # Loading the network with the best weights path
         # This step is mandatory before the inference/testing module
         # Network.load_state_dict(torch.load(cfg.weights_path))
+    
+    return os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+
+if __name__ == "__main__":
+    
+    run_trainer()

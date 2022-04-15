@@ -36,12 +36,12 @@ from data.MP_make_default_dataset import make as make_MP_default_dataset
 
 """ DEFAULT """
 
-class Default_MLMDC1:
+class Testing_MLMDC1:
     
     """ Make """
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
-    make_dataset = False
+    make_dataset = True
     # Which module to use to create dataset
     # Here, we use the wrapper for the MLMDC1 generate_data.py code
     make_module = make_mlmdc_dataset
@@ -109,7 +109,7 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/Users/nnarenraju/Desktop"
     # Dataset directory within parent_dir
-    data_dir = "dataset_closest_1e4_20s_D1_checkMPgen_removeme"
+    data_dir = "dataset_5e4_20s_D1_Batch_2"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -125,14 +125,16 @@ class Default:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 1000
-    num_noises = 1000
+    num_waveforms = 25000
+    num_noises = 25000
     
     """ Save frequency """
     # Save every 'n' number of iterations
-    gc_collect_frequency = 1
+    # Set to -1 to never use gc.collect()
+    # WARNING!!! - Do NOT use gc.collect when using multiprocessing.
+    gc_collect_frequency = -1
     ## this param used if make_dataset == False
-    sample_save_frequency = 100
+    sample_save_frequency = 10
     
     """ Signal Params """
     ## these params may be used if make_dataset == False
