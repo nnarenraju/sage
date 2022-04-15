@@ -343,7 +343,7 @@ class AugmentDistance(SignalWrapper):
         # Producing the new distance with the required priors
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
         # Augmenting on the distance
-        return signal * (distance_old/distance_new)
+        return (distance_old/distance_new)[:, None, None] * signal
 
     def apply(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
         # TODO: Set all distances during data generation to 1Mpc.

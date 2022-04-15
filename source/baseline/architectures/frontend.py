@@ -309,6 +309,7 @@ class KappaModel(torch.nn.Module):
         # Conv Backend
         x = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
         print(x.shape)
+        raise
         # Timm Frontend
         x = self.frontend(x) # (100, 1000)
         ## Manipulate encoder output to get params
