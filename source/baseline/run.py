@@ -62,7 +62,7 @@ nsamples = 2.0e6
 batch_size = 50000
 nbatches = int(nsamples/batch_size) + 1
 
-for nbatch in range(40, 61):
+for nbatch in range(44, 61):
     
     start = time.time()
     # Create an autopilot object and set batch params

@@ -125,8 +125,8 @@ class Default:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 25000
-    num_noises = 25000
+    num_waveforms = 10
+    num_noises = 10
     
     """ Save frequency """
     # Save every 'n' number of iterations

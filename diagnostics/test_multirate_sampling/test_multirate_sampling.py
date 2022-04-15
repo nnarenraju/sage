@@ -382,7 +382,7 @@ def multirate_sampling(path, tc_inject_lower, tc_inject_upper):
 
 
 def run():
-    path = "./foreground_1.hdf"
+    path = "/Users/nnarenraju/Desktop/dataset_5e4_20s_D1_Batch_44/foreground/foreground_1.hdf"
     # Get the normal and multirate version of the input signals
     signals, multirate_signals, chunks, srs = multirate_sampling(path, tc_inject_lower=18.0, tc_inject_upper=18.2)
     
