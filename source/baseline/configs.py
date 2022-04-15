@@ -36,7 +36,8 @@ from data.datasets import MLMDC1, BatchLoader
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel
-from data.transforms import Unify, Normalise, BandPass, HighPass, Whiten, MultirateSampling
+from data.transforms import Unify, UnifySignal
+from data.transforms import Normalise, BandPass, HighPass, Whiten, MultirateSampling, AugmentDistance
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 
 
@@ -335,6 +336,29 @@ class KF_BatchTrain(KaggleFirst):
     batch_size = 100
     save_freq = 5
     early_stopping = False
+    
+    """ Data Transforms """
+    # Adding a random noise realisation during the data loading process
+    # Procedure should be available within dataset object
+    add_random_noise_realisation = True
+    
+    transforms = dict(
+        signal=UnifySignal([
+            AugmentDistance()
+        ]),
+        noise=None,
+        train=Unify([
+            HighPass(lower=16, fs=2048., order=6),
+            Whiten(trunc_method='hann', remove_corrupted=True),
+            MultirateSampling(),
+        ]),
+        test=Unify([
+            HighPass(lower=16, fs=2048., order=6),
+            Whiten(trunc_method='hann', remove_corrupted=True),
+            MultirateSampling(),
+        ]),
+        target=None
+    )
     
     """ Storage Devices """
     store_device = 'cuda:0'
