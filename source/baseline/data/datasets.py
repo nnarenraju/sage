@@ -450,6 +450,18 @@ class BatchLoader(Dataset):
             batch_signals[primary_signal_idx] = secondary_noise + primary_signals
             # Now all noise should be untouched, and signals should have random noise added
             batch_samples = batch_signals
+        
+        print(batch_samples[0])
+        import matplotlib.pyplot as plt
+        plt.plot(range(len(batch_samples[0])), batch_samples[0])
+        plt.savefig("sample.png")
+        plt.plot(range(len(primary_signals[0])), primary_signals[0])
+        plt.savefig("signal.png")
+        plt.plot(range(len(secondary_noise[0])), secondary_noise[0])
+        plt.savefig("noise.png")
+        plt.plot(range(len(batch_signals[primary_signal_idx][0])), batch_signals[primary_signal_idx][0])
+        plt.savefig("noisy_signal.png")
+        raise
             
         
         """ Tensorification and Device Compatibility """
