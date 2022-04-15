@@ -353,10 +353,7 @@ class AugmentDistance(SignalWrapper):
         
         # Augmentation should be valid if given a batch of signals
         # Run through the augmentation procedure with given dist, mchirp
-        augmented_signals = [self.get_augmented_signal(signal, distance, mchirp, distrs)
-                             for signal, distance, mchirp in 
-                             zip(y, self.distance, self.mchirp)]
-        
+        augmented_signals = self.get_augmented_signal(y, self.distance, self.mchirp, distrs)
         return augmented_signals
 
 
