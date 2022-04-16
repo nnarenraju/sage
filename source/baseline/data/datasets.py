@@ -443,8 +443,8 @@ class BatchLoader(Dataset):
             primary_signals = batch_signals[primary_signal_idx]
             """ Distance Augmentation to the signals in our batch """
             # Get the required params alone for distance and mchirp
-            self.distance = self.distance[primary_signal_idx]
-            self.mchirp = self.mchirp[primary_signal_idx]
+            self.distance = np.array(self.distance[0])[primary_signal_idx]
+            self.mchirp = np.array(self.mchirp[0])[primary_signal_idx]
             # We do this before adding any noise to it
             primary_signals = self.signal_only_transforms(primary_signals, distrs=self.distrs, 
                                             **{'distance': self.distance, 'mchirp':self.mchirp})

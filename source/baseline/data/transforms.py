@@ -335,8 +335,7 @@ class AugmentDistance(SignalWrapper):
         super().__init__(always_apply)
 
     def get_augmented_signal(self, signal, distance, mchirp, distrs):
-        distance_old = np.array(distance[0])
-        mchirp = np.array(mchirp[0])
+        distance_old = distance
         # Getting new distance
         chirp_distance = distrs['dchirp'].rvs(size=len(distance_old))
         chirp_distance = np.array([float(cd[0]) for cd in chirp_distance])
