@@ -424,10 +424,6 @@ class BatchLoader(Dataset):
         ## Target should look like (1., 0., 0.567) for signal
         ## Target should look like (0., 1., -1.0) for noise
         
-        """ Add a random distance realisation """
-        self.signal_only_transforms(batch_signals, distrs=self.distrs, 
-                                    **{'distance': self.distance, 'mchirp':self.mchirp})
-        
         
         """ Finding random noise realisation for signals """
         if self.cfg.add_random_noise_realisation:
@@ -437,16 +433,33 @@ class BatchLoader(Dataset):
             secondary_data = self._read_(self.data_paths[secondary_file_idx])
             # Find the indices where this file contains pure noise
             secondary_noise_idx = np.argwhere(self.targets[secondary_file_idx]==np.array([0., 1.]))
+            # Shuffle the secondary idx to add an extra layer of randomness
+            secondary_noise_idx = np.random.shuffle(secondary_noise_idx)
             # Get the secondary noise data
             secondary_noise = secondary_data[secondary_noise_idx]
             # Find the signals within the batch, and add secondary noise to it
             primary_signal_idx = np.argwhere(batch_targets == np.array([1. ,0.]))
             # Get the primary signal data
             primary_signals = batch_signals[primary_signal_idx]
+            """ Distance Augmentation to the signals in our batch """
+            # Get the required params alone for distance and mchirp
+            self.distance = self.distance[primary_signal_idx]
+            self.mchirp = self.mchirp[primary_signal_idx]
+            # We do this before adding any noise to it
+            primary_signals = self.signal_only_transforms(primary_signals, distrs=self.distrs, 
+                                            **{'distance': self.distance, 'mchirp':self.mchirp})
+            
+            print(primary_signals)
+            
+            # Get only necessary length of noise signals
+            secondary_noise = secondary_noise[:len(primary_signals)]
+            
+            print(secondary_noise)
             # Add the secondary noise to the primary signals
             # This assertion should not trigger if we use StratifiedKFold splitting method
             assert len(primary_signal_idx) == len(secondary_noise_idx)
-            """ TODO: Here is where we would add augmentation (cyclic_shift) to secondary noise """
+            """ Augmentation (cyclic_shift) to secondary noise """
+            
             batch_signals[primary_signal_idx] = secondary_noise + primary_signals
             # Now all noise should be untouched, and signals should have random noise added
             batch_samples = batch_signals
@@ -455,7 +468,7 @@ class BatchLoader(Dataset):
         import matplotlib.pyplot as plt
         plt.plot(range(len(batch_samples[0])), batch_samples[0])
         plt.savefig("sample.png")
-        print(primary_signals[0])
+        print(primary_signals)
         plt.plot(range(len(primary_signals[0])), primary_signals[0])
         plt.savefig("signal.png")
         plt.plot(range(len(secondary_noise[0])), secondary_noise[0])
