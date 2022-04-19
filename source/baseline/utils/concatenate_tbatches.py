@@ -27,9 +27,7 @@ Documentation: NULL
 import os
 import glob
 import json
-import shutil
 import argparse
-import numpy as np
 from collections import defaultdict
 # Using defaultdict to concatenate dicts with same key (loaded json)
 # Make dd with list as anything else might now be JSON hashable
@@ -77,6 +75,10 @@ if __name__ == "__main__":
             if key in ["target", "norm_tc", "distance", "mchirp"]:
                 if len(value) == 1:
                     value = value[0]
+                if len(value) != 50000:
+                    dd['ids'].pop(-1)
+                    dd['path'].pop(-1)
+                    break
             
             dd[key].append(value)
     

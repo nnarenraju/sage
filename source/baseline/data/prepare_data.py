@@ -189,7 +189,7 @@ class DataModule:
         # Under construction!
         # if debug, use a data subset
         if cfg.debug:
-            train = train.iloc[:1000]
+            train = train.iloc[:3]
         ## Splitting
         if cfg.splitter is not None:
             # Function ensures equal ratio of all classes in each fold

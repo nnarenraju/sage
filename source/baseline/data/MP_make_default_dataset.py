@@ -107,7 +107,9 @@ class GenerateData:
                          for _ in range(len(self.detectors_abbr))]
         else:
             # Here, we should pick two PSDs randomly and read the files
-            raise NotImplementedError("PSDs not implemented for D2-D4")
+            # raise NotImplementedError("PSDs not implemented for D2-D3")
+            # PSDs are obtained from the noise generator
+            pass
         
         ### Saving the PSDs
         self.psd_file_path_det1 = ""
@@ -134,10 +136,10 @@ class GenerateData:
         if self.dataset == 1:
             self.noise_generator = pycbc.noise.gaussian.frequency_noise_from_psd
         else:
-            raise NotImplementedError("PSD function for datasets 2 and 3 have not been implemented")
+            # raise NotImplementedError("PSD function for datasets 2 and 3 have not been implemented")
             self.noise_generator = NoiseGenerator(self.dataset,
                                                   seed=self.seed,
-                                                  filter_duration=self.filter_duration,
+                                                  delta_f=self.delta_f,
                                                   sample_rate=self.sample_rate,
                                                   low_frequency_cutoff=self.noise_low_freq_cutoff,
                                                   detectors=self.detectors_abbr)
@@ -225,7 +227,7 @@ class GenerateData:
                 fp.attrs['delta_f'] = self.delta_f
         
         
-    def worker(self, i, queue):
+    def worker(self, i, queue=None):
         
         """ Set the random seed for this iteration here """
         # Check whether all the processes use the same random seed
@@ -248,7 +250,9 @@ class GenerateData:
                 """
                 
             else:
-                raise NotImplementedError("make_default_dataset: noise gen not implemented for D2,D3")
+                # raise NotImplementedError("make_default_dataset: noise gen not implemented for D2,D3")
+                noise, self.psds = self.noise_generator(0.0, self.sample_length_in_s, None)
+                noise = [noise[det].numpy() for det in self.detectors_abbr]
                 
 
         """ Generate signal """

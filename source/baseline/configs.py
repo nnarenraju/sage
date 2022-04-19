@@ -266,7 +266,7 @@ class KF_Trainable(KaggleFirst):
     """ Parameters changed when creating Batched trainable dataset """
     
     """ Data storage """
-    name = "Batch_2"
+    name = "Batch_1_D2"
     export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset Splitting """
@@ -363,6 +363,8 @@ class KF_BatchTrain(KaggleFirst):
     """ Storage Devices """
     store_device = 'cuda:0'
     train_device = 'cuda:0'
+    
+    debug = True
     
     
     

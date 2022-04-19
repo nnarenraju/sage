@@ -347,7 +347,7 @@ class BatchLoader(Dataset):
     """
     Batch read-and-load-type dataset object
     Designed to be be used alongside save_trainable_dataset
-    Each file should contain cfg.batch_size number of data samples
+    Each file should contain large batch (not cfg.batch_size, bigger) number of data samples
     
     """
     
@@ -359,7 +359,7 @@ class BatchLoader(Dataset):
         super().__init__()
         # Unpacking kwargs
         for key, value in dataset_params.items():
-            setattr(self, key, value)
+            setattr(self, key, value.to_numpy())
         
         # Primary parameters
         self.data_paths = data_paths
@@ -427,56 +427,57 @@ class BatchLoader(Dataset):
         
         """ Finding random noise realisation for signals """
         if self.cfg.add_random_noise_realisation:
+            # Find the signals within the batch, and add secondary noise to it
+            primary_signal_idx = np.argwhere(batch_targets[:,0] == 1.).flatten()
             # Pick a secondary batch to snatch noise data
             secondary_file_idx = random.choice(range(len(self.data_paths)))
             # Read secondary file for all data
             secondary_data = self._read_(self.data_paths[secondary_file_idx])
             # Find the indices where this file contains pure noise
-            secondary_noise_idx = np.argwhere(self.targets[secondary_file_idx]==np.array([0., 1.]))
+            secondary_noise_idx = np.argwhere(np.array(self.targets[secondary_file_idx])[:,1] == 1.).flatten()
+            # Sometimes batch may have lower number of samples due to non-unique seed error
+            # NOTE: This procedure is not necessary with the new data generation code
+            if len(secondary_noise_idx) < len(primary_signal_idx):
+                primary_signal_idx = primary_signal_idx[:len(secondary_noise_idx)]
+            elif len(secondary_noise_idx) > len(primary_signal_idx):
+                secondary_noise_idx = secondary_noise_idx[:len(primary_signal_idx)]
             # Shuffle the secondary idx to add an extra layer of randomness
-            secondary_noise_idx = np.random.shuffle(secondary_noise_idx)
+            np.random.shuffle(secondary_noise_idx)
+            
             # Get the secondary noise data
             secondary_noise = secondary_data[secondary_noise_idx]
-            # Find the signals within the batch, and add secondary noise to it
-            primary_signal_idx = np.argwhere(batch_targets == np.array([1. ,0.]))
             # Get the primary signal data
             primary_signals = batch_signals[primary_signal_idx]
-            """ Distance Augmentation to the signals in our batch """
-            # Get the required params alone for distance and mchirp
-            self.distance = np.array(self.distance[0])[primary_signal_idx]
-            self.mchirp = np.array(self.mchirp[0])[primary_signal_idx]
-            # We do this before adding any noise to it
-            primary_signals = self.signal_only_transforms(primary_signals, distrs=self.distrs, 
-                                            **{'distance': self.distance, 'mchirp':self.mchirp})
-            
-            print(primary_signals)
-            
-            # Get only necessary length of noise signals
-            secondary_noise = secondary_noise[:len(primary_signals)]
-            
-            print(secondary_noise)
-            # Add the secondary noise to the primary signals
             # This assertion should not trigger if we use StratifiedKFold splitting method
             assert len(primary_signal_idx) == len(secondary_noise_idx)
-            """ Augmentation (cyclic_shift) to secondary noise """
             
+            """ Distance Augmentation to the signals in our batch """
+            # Get the required params alone for distance and mchirp
+            distance = np.array(self.distance[idx])[primary_signal_idx]
+            mchirp = np.array(self.mchirp[idx])[primary_signal_idx]
+            # We do this before adding any noise to it
+            primary_signals = self.signal_only_transforms(primary_signals, distrs=self.distrs, 
+                                            **{'distance': distance, 'mchirp':mchirp})
+            
+            # Add the secondary noise to the primary signals
+            """ Augmentation (cyclic_shift) to secondary noise """
+            # Cyclic shift may not be possible if we use transformed signal as input
             batch_signals[primary_signal_idx] = secondary_noise + primary_signals
             # Now all noise should be untouched, and signals should have random noise added
             batch_samples = batch_signals
         
-        print(batch_samples[0])
+        """
         import matplotlib.pyplot as plt
-        plt.plot(range(len(batch_samples[0])), batch_samples[0])
+        plt.plot(range(len(batch_samples[0][0])), batch_samples[0][0])
         plt.savefig("sample.png")
         print(primary_signals)
-        plt.plot(range(len(primary_signals[0])), primary_signals[0])
+        plt.plot(range(len(primary_signals[0][0])), primary_signals[0][0])
         plt.savefig("signal.png")
-        plt.plot(range(len(secondary_noise[0])), secondary_noise[0])
+        plt.plot(range(len(secondary_noise[0][0])), secondary_noise[0][0])
         plt.savefig("noise.png")
-        plt.plot(range(len(batch_signals[primary_signal_idx][0])), batch_signals[primary_signal_idx][0])
+        plt.plot(range(len(batch_signals[primary_signal_idx][0][0])), batch_signals[primary_signal_idx][0][0])
         plt.savefig("noisy_signal.png")
-        raise
-            
+        """
         
         """ Tensorification and Device Compatibility """
         # Convert signal/target to Tensor objects

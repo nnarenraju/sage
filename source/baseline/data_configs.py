@@ -109,13 +109,13 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/Users/nnarenraju/Desktop"
     # Dataset directory within parent_dir
-    data_dir = "dataset_5e4_20s_D1_Batch_2"
+    data_dir = "dataset_5e4_20s_D2_Batch_1"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
     # Type of dataset (1, 2, 3 or 4)
     # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
-    dataset = 1
+    dataset = 2
     # Random seed provided to generate_data script
     # This will be unique and secret for the testing set
     seed = 42
@@ -125,8 +125,8 @@ class Default:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 10
-    num_noises = 10
+    num_waveforms = 100
+    num_noises = 100
     
     """ Save frequency """
     # Save every 'n' number of iterations

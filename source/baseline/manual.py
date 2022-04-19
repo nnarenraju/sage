@@ -26,10 +26,7 @@ Documentation: NULL
 # BUILT-IN
 import os
 import csv
-import h5py
-import json
 import torch
-import shutil
 import numpy as np
 from tqdm import tqdm
 import torch.utils.data as D
@@ -43,7 +40,8 @@ torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
 # Turning on cuDNN autotune
 torch.backends.cudnn.benchmark = True
-
+# Clear PyTorch Cache before init
+torch.cuda.empty_cache()
 
 def display_outputs(training_output, training_labels):
     # Printing the training output and labels together
@@ -223,28 +221,29 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Get all mini-folds and run training phase for each batch
                 # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
                 if cfg.dataset.__name__ == "BatchLoader":
-                    # Convert the training_sample into a Simple dataset object
-                    # We take the first element since we give 1 batch to the BatchLoader
-                    batch_train_dataset = Simple(training_samples[0], training_labels[0], 
-                                           store_device=cfg.store_device, 
-                                           train_device=cfg.train_device)
-                    # Pass Simple dataset into a dataloader with cfg.batch_size
-                    batch_train_loader = D.DataLoader(
-                        batch_train_dataset, batch_size=cfg.batch_size, shuffle=True,
-                        num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
-                        prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
-                    # Now iterate through this dataset and run training phase for each batch
-                    for samples, labels in batch_train_loader:
-                        # Run training phase and get loss and accuracy
-                        tloss, accuracy = training_phase(cfg, Network, optimizer, loss_function, 
-                                                         samples, labels)
-                        
-                        # Display stuff
-                        pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, tloss, accuracy))
-                        # Updating things (Do not judge this comment. It was a Friday evening.)
-                        batch_training_loss += tloss.clone().cpu().item()
-                        accuracies.append(accuracy)
-                        training_batches += 1
+                    for batch_samples, batch_labels in zip(training_samples, training_labels):
+                        # Convert the training_sample into a Simple dataset object
+                        # We take the first element since we give 1 batch to the BatchLoader
+                        batch_train_dataset = Simple(batch_samples, batch_labels, 
+                                               store_device=cfg.store_device, 
+                                               train_device=cfg.train_device)
+                        # Pass Simple dataset into a dataloader with cfg.batch_size
+                        batch_train_loader = D.DataLoader(
+                            batch_train_dataset, batch_size=cfg.batch_size, shuffle=True,
+                            num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
+                            prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
+                        # Now iterate through this dataset and run training phase for each batch
+                        for samples, labels in batch_train_loader:
+                            # Run training phase and get loss and accuracy
+                            tloss, accuracy = training_phase(cfg, Network, optimizer, loss_function, 
+                                                             samples, labels)
+                            
+                            # Display stuff
+                            pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, tloss, accuracy))
+                            # Updating things (Do not judge this comment. It was a Friday evening.)
+                            batch_training_loss += tloss.clone().cpu().item()
+                            accuracies.append(accuracy)
+                            training_batches += 1
                         
                 else:
                     # Run training phase and get loss and accuracy
@@ -285,28 +284,29 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     # Get all mini-folds and run training phase for each batch
                     # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
                     if cfg.dataset.__name__ == "BatchLoader":
-                        # Convert the training_sample into a Simple dataset object
-                        batch_valid_dataset = Simple(validation_samples[0], validation_labels[0], 
-                                               store_device=cfg.store_device, 
-                                               train_device=cfg.train_device)
-                        # Pass Simple dataset into a dataloader with cfg.batch_size
-                        batch_valid_loader = D.DataLoader(
-                            batch_valid_dataset, batch_size=cfg.batch_size, shuffle=True,
-                            num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
-                            prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
-                        # Now iterate through this dataset and run training phase for each batch
-                        for samples, labels in batch_valid_loader:
-                            # Run training phase and get loss and accuracy
-                            vloss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
-                                                                      samples, labels)
-                            
-                            # Display stuff
-                            pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
-                            batch_validation_loss += vloss.clone().cpu().item()
-                            # Updating things but now its validation
-                            accuracies.append(accuracy)
-                            pred_prob.append(preds.cpu().detach().numpy())
-                            validation_batches += 1
+                        for batch_samples, batch_labels in zip(validation_samples, validation_labels):
+                            # Convert the training_sample into a Simple dataset object
+                            batch_valid_dataset = Simple(batch_samples, batch_labels, 
+                                                   store_device=cfg.store_device, 
+                                                   train_device=cfg.train_device)
+                            # Pass Simple dataset into a dataloader with cfg.batch_size
+                            batch_valid_loader = D.DataLoader(
+                                batch_valid_dataset, batch_size=cfg.batch_size, shuffle=False,
+                                num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
+                                prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
+                            # Now iterate through this dataset and run training phase for each batch
+                            for samples, labels in batch_valid_loader:
+                                # Run training phase and get loss and accuracy
+                                vloss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
+                                                                          samples, labels)
+                                
+                                # Display stuff
+                                pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
+                                batch_validation_loss += vloss.clone().cpu().item()
+                                # Updating things but now its validation
+                                accuracies.append(accuracy)
+                                pred_prob.append(preds.cpu().detach().numpy())
+                                validation_batches += 1
                             
                     else:
                         # Run training phase and get loss and accuracy
