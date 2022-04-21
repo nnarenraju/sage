@@ -133,6 +133,37 @@ class ConvBlock(nn.Module):
         x = self.conv3(x).unsqueeze(1)
         return x
 
+
+class ConvBlock_Apr21(nn.Module):
+    """
+    If we have a sample length of 3072, we can factorise it using (4., 3., 2.) to get 128
+    Here, we use this as the stride lengths in MaxPool1d to get a (128, 128) image
+    
+    """
+    def __init__(self, filters_start=32, kernel_start=64):
+        super().__init__()
+        in_chans = 1
+        self.conv1 = nn.Sequential(
+            ConcatBlockConv5(in_chans, filters_start, kernel_start, bias=False),
+            MaxPool1d(kernel_size=4, stride=4)
+        )
+        self.conv2 = nn.Sequential(
+            ConcatBlockConv5(filters_start, filters_start * 2, kernel_start // 2 + 1,
+                             bias=False),
+            MaxPool1d(kernel_size=3, stride=3)
+        )
+        self.conv3 = nn.Sequential(
+            ConcatBlockConv5(filters_start * 2, filters_start * 4, kernel_start // 4 + 1, bias=False),
+            MaxPool1d(kernel_size=2, stride=2)
+        )
+        
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x).unsqueeze(1)
+        return x
+
+
 def _initialize_weights(self):
     # Initialising weights to all layers
     for m in self.modules():
