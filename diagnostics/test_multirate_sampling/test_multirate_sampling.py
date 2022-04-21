@@ -163,7 +163,7 @@ Multi-rate Sampling Theory and Description:
 
 def get_sampling_rate_bins(low_mass=10.0, max_signal_length=20.0, signal_low_freq_cutoff=20.0,
                            sample_rate=2048., tc_inject_lower=18.0, tc_inject_upper=18.2,
-                           ringdown_leeway=0.4, merger_leeway=0.05, start_freq_factor=2.5,
+                           ringdown_leeway=0.063, merger_leeway=0.066, start_freq_factor=2.5,
                            fs_reduction_factor=1.9, fbin_reduction_factor=2.0):
     # Signal low freq cutoff is taken to happen at max_signal_length for worst case
     ## Approximate value for f_ISCO with BBH system both with lowest mass in priors
@@ -382,7 +382,7 @@ def multirate_sampling(path, tc_inject_lower, tc_inject_upper):
 
 
 def run():
-    path = "/Users/nnarenraju/Desktop/dataset_5e4_20s_D1_Batch_44/foreground/foreground_1.hdf"
+    path = "/Users/nnarenraju/Desktop/tmp/foreground_1.hdf"
     # Get the normal and multirate version of the input signals
     signals, multirate_signals, chunks, srs = multirate_sampling(path, tc_inject_lower=18.0, tc_inject_upper=18.2)
     
