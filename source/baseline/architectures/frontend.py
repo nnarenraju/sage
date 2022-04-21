@@ -19,7 +19,11 @@ __status__      = ['inProgress', 'Archived', 'inUsage', 'Debugging']
 
 Github Repository: NULL
 
-Documentation: NULL
+Documentatio
+
+1, 128 filters, size 64, maxpool 16 (128, 8000/16)
+Or use a fixed t-f representation
+
 
 """
 
@@ -31,7 +35,7 @@ from torch import nn
 import pytorch_lightning as pl
 
 # Importing architecture snippets from zoo
-from architectures.zoo.kaggle import ConvBlock, _initialize_weights
+from architectures.zoo.kaggle import ConvBlock, _initialize_weights, ConvBlock_Apr21
 
 # Datatype for storage
 data_type=torch.float32
@@ -286,7 +290,7 @@ class KappaModel(torch.nn.Module):
         self.signal_or_noise = nn.Linear(self.frontend.num_features, 2)
         self.coalescence_time = nn.Linear(self.frontend.num_features, 1)
         # Manipulation layers
-        self.avg_pool_2d = nn.AdaptiveAvgPool2d((128, 128))
+        self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
         self.flatten = nn.Flatten(start_dim=1)
         self.dropout = nn.Dropout(0.25)
@@ -320,3 +324,71 @@ class KappaModel(torch.nn.Module):
         tc = self.softmax(self.coalescence_time(x))
         # Return ouptut params (pred_prob, tc)
         return {'pred_prob': pred_prob, 'tc': tc}
+
+
+class KappaModel_Mach2(torch.nn.Module):
+    """
+    Kappa-type Model Mach 2 Architecture
+    
+    Description - Same as Kappa Model but uses a simpler ConvBlock with modified 
+                  stride values that takes advatage of the MR sampling output size.
+                  This model outputs only prediction probabilities with a direct
+                  output from resnet-34 using reset_classifier(2)
+        
+    """
+
+    def __init__(self, 
+                 model_name='trainable_backend_and_frontend', 
+                 filter_size: int = 32,
+                 kernel_size: int = 64,
+                 timm_params: dict = {'model_name': 'resnet34', 'pretrained': True, 'in_chans': 2, 'drop_rate': 0.25},
+                 store_device: str = 'cpu',
+                 **kwargs):
+        
+        super().__init__()
+        
+        self.model_name = model_name
+        self.store_device = store_device
+        self.timm_params = timm_params
+        self.filter_size = filter_size
+        self.kernel_size = kernel_size
+        
+        """ Backend """
+        # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
+        # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
+        self._det1 = ConvBlock_Apr21(self.filter_size, self.kernel_size)
+        self._det2 = ConvBlock_Apr21(self.filter_size, self.kernel_size)
+        _initialize_weights(self)
+        
+        """ Frontend """
+        # resnet34 --> 21 Mil. trainable params trainable frontend
+        self.frontend = timm.create_model(**timm_params)
+        
+        # reset_classifier edits the number of outputs that Timm produces
+        # The following is set if we need a two-class output from Timm
+        # This can be set to a larger value and connected to a linear layer
+        self.frontend.reset_classifier(2)
+        
+        """ Mods """
+        ## Penultimate and output layers
+        # Manipulation layers
+        self.softmax = torch.nn.Softmax(dim=1)
+        
+        ## Convert network into given dtype and store in proper device
+        # Main layers
+        self._det1.to(dtype=data_type, device=self.store_device)
+        self._det2.to(dtype=data_type, device=self.store_device)
+        self.backend = {'det1': self._det1, 'det2': self._det2}
+        self.frontend.to(dtype=data_type, device=self.store_device)
+    
+    # x.shape: (batch size, wave channel, length of wave)
+    def forward(self, x):
+        # batch_size, channel, signal_length = s.shape
+        # Conv Backend
+        x = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
+        # Timm Frontend
+        x = self.frontend(x)
+        ## Output necessary params
+        pred_prob = self.softmax(x)
+        # Return ouptut params pred_prob
+        return {'pred_prob': pred_prob}
