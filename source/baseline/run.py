@@ -59,10 +59,10 @@ class AutoPilot:
 # Delete raw_samples out of memory
 
 nsamples = 2.0e6
-batch_size = 50000
+batch_size = 1000
 nbatches = int(nsamples/batch_size) + 1
 
-for nbatch in range(44, 61):
+for nbatch in range(nbatches):
     
     start = time.time()
     # Create an autopilot object and set batch params
@@ -72,8 +72,9 @@ for nbatch in range(44, 61):
     # Call train.py using the run function
     data_dir = run_trainer(autopilot=True, autotools=AP)
     # Delete all raw files once trainable dataset has been created
-    shutil.rmtree(os.path.join(data_dir, 'foreground'))
-    shutil.rmtree(os.path.join(data_dir, 'background'))
+    # shutil.rmtree(os.path.join(data_dir, 'foreground'))
+    # shutil.rmtree(os.path.join(data_dir, 'background'))
+    # shutil.rmtree(os.path.join(data_dir, 'dataset'))
     # Delete the Batch_n export dir, this is no longer needed
     export_dir = os.path.join(os.path.split(data_dir)[0], "Batch_{}".format(nbatch))
     shutil.rmtree(export_dir)

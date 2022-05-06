@@ -30,6 +30,7 @@ Documentation: NULL
 from data.make_mlmdc_dataset import make as make_mlmdc_dataset
 from data.make_default_dataset import make as make_default_dataset
 from data.MP_make_default_dataset import make as make_MP_default_dataset
+from data.MPB_make_default_dataset import make as make_MPB_default_dataset
 
 
 # WARNING: Removing any of the parameters present in default will result in errors.
@@ -102,20 +103,20 @@ class Default:
     make_dataset = True
     # Which module to use to create dataset
     # Here, we create a dataset using explicit pycbc functions
-    make_module = make_MP_default_dataset
+    make_module = make_MPB_default_dataset
     
     """ Location (these params used if make_dataset == False, as search loc) """
     # Dataset location directory
     # Data storage drive or /mnt absolute path
     parent_dir = "/Users/nnarenraju/Desktop"
     # Dataset directory within parent_dir
-    data_dir = "dataset_5e4_20s_D2_Batch_1"
+    data_dir = "dataset_5e4_20s_D1_Batch_1"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
     # Type of dataset (1, 2, 3 or 4)
     # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
-    dataset = 2
+    dataset = 1
     # Random seed provided to generate_data script
     # This will be unique and secret for the testing set
     seed = 42
@@ -125,8 +126,8 @@ class Default:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 100
-    num_noises = 100
+    num_waveforms = 1000
+    num_noises = 1000
     
     """ Save frequency """
     # Save every 'n' number of iterations

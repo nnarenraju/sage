@@ -91,6 +91,8 @@ def run_trainer(autopilot=False, autotools=None):
     # This should create/use a dataset and save a copy of the lookup table
     dat.get_summary(cfg, data_cfg, cfg.export_dir)
     
+    return os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+    
     # Prepare dataset (read, split and return fold idx)
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
     # TODO: Test data is not split (Under Construction!)
