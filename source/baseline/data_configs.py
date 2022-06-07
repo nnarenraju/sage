@@ -100,7 +100,7 @@ class Default:
     """ Make """
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
-    make_dataset = True
+    make_dataset = False
     # Which module to use to create dataset
     # Here, we create a dataset using explicit pycbc functions
     make_module = make_MPB_default_dataset
@@ -110,7 +110,7 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/Users/nnarenraju/Desktop"
     # Dataset directory within parent_dir
-    data_dir = "dataset_5e4_20s_D1_Batch_1"
+    data_dir = "dataset_test_large"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -118,7 +118,7 @@ class Default:
     # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
     dataset = 1
     # Random seed provided to generate_data script
-    # This will be unique and secret for the testing set
+    # This seed is used to generate the priors
     seed = 42
 
     """ Save Toggle """
@@ -126,8 +126,18 @@ class Default:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 1000
-    num_noises = 1000
+    num_waveforms = 5000
+    num_noises = 5000
+    # For efficient RAM usage in data generation
+    # Here too, keep both nums equal
+    # chunk_size = [num_waveforms_chunk, num_noises_chunk]
+    chunk_size = [1000, 1000]
+    
+    """ Handling number of cores for task """
+    # Used in MP and MPB dataset generation methods
+    # chunk_size[0] and chunk_size[1] must be divisible exactly by num_queues_datasave
+    num_queues_datasave = 1
+    num_cores_datagen = 9
     
     """ Save frequency """
     # Save every 'n' number of iterations
@@ -135,17 +145,23 @@ class Default:
     # WARNING!!! - Do NOT use gc.collect when using multiprocessing.
     gc_collect_frequency = -1
     ## this param used if make_dataset == False
-    sample_save_frequency = 10
+    num_sample_save = 10
     
     """ Signal Params """
     ## these params may be used if make_dataset == False
     # Create a new class for a different problem instead of changing this config
     sample_rate = 2048. # Hz
+    # (20.0 seconds max + 2.0 seconds of noise padding) would be better
     signal_length = 20.0  # seconds
     # whiten_padding is also known as max_filter_duration in some modules
     whiten_padding = 5.0 # seconds (padding/2.0 on each side of signal_length)
     sample_length_in_s = signal_length + whiten_padding # seconds
     sample_length_in_num = round(sample_length_in_s * sample_rate)
+    
+    # Error padding (too late/too early errors in time_slice after project_wave)
+    # Setting this to 0.1 causes a (PSD, signal) delta_f mismatch error. Annoying.
+    error_padding_in_s = 0.5
+    error_padding_in_num = round(error_padding_in_s * sample_rate)
     
     signal_low_freq_cutoff = 20.0 # Hz
     signal_approximant = 'IMRPhenomXPHM'
