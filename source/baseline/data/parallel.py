@@ -142,7 +142,7 @@ class Parallelise:
             out = [manager.list() for _ in range(len(queues))]
         else:
             queues = None
-            out = manager.List()
+            out = manager.list()
         # Empty jobs every iteration
         jobs = []
         # Initialise pool
