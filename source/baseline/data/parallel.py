@@ -95,7 +95,7 @@ class Parallelise:
         # Set process params
         self.name = "Transform"
         self.num_workers = 6
-        self.num_queues = 4
+        self.num_queues = 0
         self.verbose = True
         self.args = ()
         ## Memory Tracer limits
@@ -156,7 +156,8 @@ class Parallelise:
         iterable = range(len(cfg.foobar))
         
         for idx in iterable:
-            job = pool.apply_async(self.worker, (cfg.foobar[idx], out, queues))
+            # TODO: if num_queues>0, out needs to be passed properly (not None)
+            job = pool.apply_async(self.worker, (cfg.foobar[idx], None, queues))
             jobs.append(job)
         
         # Collect results from the workers through the pool result queue
