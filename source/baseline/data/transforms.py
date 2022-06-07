@@ -24,16 +24,14 @@ Documentation: NULL
 """
 
 # BUILT-IN
-import os
-import h5py
 import time
 import random
 import numpy as np
-import pandas as pd
 from scipy.signal import butter, sosfiltfilt
 
 # LOCAL
 from data.multirate_sampling import multirate_sampling
+# from data.parallel_transforms import Parallelise
 
 # PyCBC
 import pycbc
@@ -41,9 +39,13 @@ from pycbc import distributions
 from pycbc.psd import inverse_spectrum_truncation, interpolate
 from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
 
+# Parallelisation of transforms
+import data.parallel as parallel
+
 # Addressing HDF5 error with file locking (used to address PSD file read error)
 # PSD file read has been moved to dataset object. (DEPRECATED)
 # os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 
 
 """ WRAPPERS """
@@ -53,19 +55,25 @@ class Unify:
         self.transforms = transforms
 
     def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
+        times = {}
         for transform in self.transforms:
+            start = time.time()
             y = transform(y, psds, data_cfg)
-        return y
+            times[transform.__class__.__name__] = time.time() - start
+        return y, times
 
 
 class UnifySignal:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
+    def __call__(self, y: np.ndarray, dets=None, distrs=None, **params):
+        times = {}
         for transform in self.transforms:
-            y = transform(y, dets, time_interval, distrs, **params)
-        return y
+            start = time.time()
+            y = transform(y, dets, distrs, **params)
+            times[transform.__class__.__name__] = time.time() - start
+        return y, times
 
 
 class UnifyNoise:
@@ -73,10 +81,13 @@ class UnifyNoise:
         self.transforms = transforms
 
     def __call__(self, y: np.ndarray):
+        times = {}
         for transform in self.transforms:
+            start = time.time()
             y = transform(y)
-        return y
-    
+            times[transform.__class__.__name__] = time.time() - start
+        return y, times
+
 
 class TransformWrapper:
     def __init__(self, always_apply=True):
@@ -99,21 +110,20 @@ class TransformWrapperPerChannel(TransformWrapper):
         augmented = []
         for channel in range(channels):
             if self.always_apply:
-                augmented.append(self.apply(y[channel], channel, psds[channel], data_cfg))
+                data = y[channel]
+                augmented.append(self.apply(data, channel, psds[channel], data_cfg))
             else:
                 pass
-        return np.array(augmented, dtype=np.float64)
+        return np.stack(augmented, axis=0)
 
 
 class SignalWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
-        
-        # mchirp can be removed as well once we move fully to distance and nor require chirp distance
+    def __call__(self, y: np.ndarray, dets=None, distrs=None, **params):
         if self.always_apply:
-            return self.apply(y, dets, time_interval, distrs, **params)
+            return self.apply(y, dets, distrs, **params)
         else:
             pass
 
@@ -132,14 +142,14 @@ class NoiseWrapper:
 #########################################################################################
 #                             Transforms & their Functionality
 # [0] Buffer - Absolutely nothing, say it again y'all
-# [1] Normalise - Normalisation of each sample wrt entire dataset
-# [2] BandPass - Butter bandpass filter. Uses sosfiltfilt function for stability.
-# [3] Whitening - PyCBC whitening function. PSD input required to whiten.
-# [4] Multi-rate sampling -
-# [5] AugmentPolSky - 
-# [6] CyclicShift - 
-# [7] AugmentDistance - 
-#
+# [1] Normalise - Normalisation of each sample wrt entire dataset (0.0008s)
+# [2] BandPass - Butter bandpass filter. Uses sosfiltfilt function for stability. (0.0035s) 
+# [3] Whitening - PyCBC whitening function. PSD input required to whiten. (0.09s)
+# [4] Multi-rate sampling - Sampling with multiple rates based on GW freq. (0.1s -> 0.02s or less)
+# [5] AugmentPolSky - Augmenting on polarisation and sky position. (0.0325s)
+# [6] CyclicShift - Time shift noise samples. (5e-5s or less)
+# [7] AugmentDistance - Augmenting on GW distance. (0.01s or less)
+# 
 #########################################################################################
 
 class Buffer(TransformWrapper):
@@ -181,31 +191,34 @@ class BandPass(TransformWrapper):
         return filtered_data
     
     def apply(self, y: np.ndarray, psds=None, data_cfg=None):
-        # Verified to produce the same results as PerChannel mode
         return self.butter_bandpass_filter(y)
 
 
-class HighPass(TransformWrapper):
+class HighPass(TransformWrapperPerChannel):
     def __init__(self, always_apply=True, lower=16, fs=2048, order=5):
         super().__init__(always_apply)
         self.lower = lower
         self.fs = fs
         self.order = order
     
-    def butter_bandpass(self):
+    def butter_highpass(self):
         nyq = 0.5 * self.fs
         low = self.lower / nyq
         sos = butter(self.order, low, analog=False, btype='highpass', output='sos')
         return sos
 
-    def butter_bandpass_filter(self, data):
-        sos = self.butter_bandpass()
+    def butter_highpass_filter(self, data):
+        sos = self.butter_highpass()
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
-        # Verified to produce the same results as PerChannel mode
-        return self.butter_bandpass_filter(y)
+    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
+        # Parallelise HighPass filter
+        pglobal = parallel.SetGlobals(y)
+        foo = parallel.Parallelise(pglobal.set_data, self.butter_highpass_filter)
+        foo.name = 'HighPass'
+        pout = foo.initiate()
+        return pout
 
 
 class Whiten(TransformWrapperPerChannel):
@@ -215,7 +228,7 @@ class Whiten(TransformWrapperPerChannel):
         self.trunc_method = trunc_method
         self.remove_corrupted = remove_corrupted
         
-    def whiten(self, signal, psd, data_cfg):
+    def whiten(self, signals, psd, data_cfg):
         """
         Return a whitened time series
 
@@ -258,7 +271,7 @@ class Whiten(TransformWrapperPerChannel):
         # Calculating delta_f of signal and providing that to the PSD interpolation method
         delta_f = data_cfg.delta_f
         # Interpolate the PSD to the required delta_f
-        # psd1 = interpolate(psd, delta_f)
+        # psd = interpolate(psd, delta_f)
         
         # Interpolate and smooth to the desired corruption length
         psd = inverse_spectrum_truncation(psd,
@@ -268,30 +281,39 @@ class Whiten(TransformWrapperPerChannel):
         
         """ Whitening """
         # Whiten the data by the asd
-        white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
-
-        if self.remove_corrupted:
-            white = white[int(max_filter_len/2):int(len(signal)-max_filter_len/2)]
+        pglobal = parallel.SetGlobals(signals)
+        foo = parallel.Parallelise(pglobal.set_data, self.process)
+        foo.args = (delta_f, psd, max_filter_len)
+        foo.name = 'Whitening'
+        white = foo.initiate()
+        
+        # Sequential mode for whitening
+        # white = [(signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries() for signal in signals]
+        # if self.remove_corrupted:
+        #     white = [_white[int(max_filter_len/2):int(len(_white)-max_filter_len/2)] for _white in white]
             
         return white
-        
+    
+    def process(self, signal, delta_f, psd, max_filter_len):
+        white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
+        return white[int(max_filter_len/2):int(len(white)-max_filter_len/2)]
+    
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Convert signal to TimeSeries object
-        signal = TimeSeries(y, delta_t=1./data_cfg.sample_rate)
+        signals = [TimeSeries(signal, delta_t=1./data_cfg.sample_rate) for signal in y]
         # Whitening
-        whitened_sample = self.whiten(signal, psd, data_cfg)
+        whitened_sample = self.whiten(signals, psd, data_cfg)
         return whitened_sample
 
 
-class MultirateSampling(TransformWrapper):
+class MultirateSampling(TransformWrapperPerChannel):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
+    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Call multi-rate sampling module for usage
         # This is kept separate since further experimentation might be required
         return multirate_sampling(y, data_cfg)
-    
     
 
 """ Signal only Transformations """
@@ -301,21 +323,41 @@ class AugmentPolSky(SignalWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
+    def apply(self, y: np.ndarray, dets=None, distrs=None, **params):
+        # Get Augmentation params
+        for key, value in params.items():
+            setattr(self, key, value)
         
-        # Using PyCBC project_wave to get h_t from h_plus and h_cross
-        # TODO: h_plus and h_cross have to be TimeSeries objects when saved
-        h_plus, h_cross = y[0], y[1]
         ## Get random value (with a given prior) for polarisation angle, ra, dec
         # Polarisation angle
-        uniform_angles = distrs['pol'].rvs(size=1)
-        pol_angle = uniform_angles[0][0]
+        maxlen = len(y[0])
+        pol_angles = distrs['pol'].rvs(size=maxlen)
         # Right ascension, declination
-        declination, right_ascension = distrs['sky'].rvs()[0]
-        # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
-        strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in dets]
-        strains = [strain.time_slice(*time_interval) for strain in strains]
+        sky_positions = distrs['sky'].rvs(size=maxlen)
+        # Store all strains
+        all_strains_1 = []
+        all_strains_2 = []
         
+        for h_plus, h_cross, pol_angle, sky_pos, il, iu, st in zip(y[0], y[1], pol_angles, sky_positions, self.interval_lower, self.interval_upper, self.start_time):
+            pol_angle = pol_angle[0]
+            declination, right_ascension = sky_pos
+            # Using PyCBC project_wave to get h_t from h_plus and h_cross
+            # TODO: set the start times for h_plus and h_cross
+            # Setting the start_time is important! (too late, too early errors are because of this)
+            h_plus = TimeSeries(h_plus, delta_t=1./self.sample_rate)
+            h_cross = TimeSeries(h_cross, delta_t=1./self.sample_rate)
+            # Set start times
+            h_plus.start_time = st
+            h_cross.start_time = st
+            
+            # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
+            strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in dets]
+            time_interval = (il, iu)
+            all_strains_1.append(strains[0].time_slice(*time_interval, mode='nearest'))
+            all_strains_2.append(strains[1].time_slice(*time_interval, mode='nearest'))
+            
+        
+        """
         # Sanity check for sample_length
         for strain in strains:
             to_append = self.sample_length_in_num - len(strain)
@@ -323,10 +365,13 @@ class AugmentPolSky(SignalWrapper):
                 strain.append_zeros(to_append)
             if len(strain) != self.sample_length_in_num:
                 raise ValueError("Sample length greater than expected!")
+        """
         
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         # Shape remains the same, so reading in dataset object won't be a problem
-        return strains
+        all_strains = np.stack([all_strains_1, all_strains_2], axis=0)
+        
+        return all_strains
 
 
 class AugmentDistance(SignalWrapper):
@@ -337,15 +382,15 @@ class AugmentDistance(SignalWrapper):
     def get_augmented_signal(self, signal, distance, mchirp, distrs):
         distance_old = distance
         # Getting new distance
-        chirp_distance = distrs['dchirp'].rvs(size=len(distance_old))
-        chirp_distance = np.array([float(cd[0]) for cd in chirp_distance])
-        # Producing the new distance with the required priors 
-        assert -1 not in mchirp and -1 not in distance
+        chirp_distance = distrs['dchirp'].rvs(size=len(signal[0]))
+        raise
+        chirp_distance = float(chirp_distance[0][0])
+        # Producing the new distance with the required priors
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
         # Augmenting on the distance
-        return (distance_old/distance_new)[:, None, None] * signal
+        return (distance_old/distance_new) * signal
 
-    def apply(self, y: np.ndarray, dets=None, time_interval=None, distrs=None, **params):
+    def apply(self, y: np.ndarray, dets=None, distrs=None, **params):
         # TODO: Set all distances during data generation to 1Mpc.
         # Augmenting on distance parameter
         for key, value in params.items():
