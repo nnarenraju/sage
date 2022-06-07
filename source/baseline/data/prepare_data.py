@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import os
+import h5py
 import json
 import shutil
 import numpy as np
@@ -96,7 +97,6 @@ class DataModule:
     
     def make_export_dir(cfg):
         # Results directory (preferred: /mnt/nnarenraju)
-        cfg.export_dir = cfg.export_dir / cfg.name
         cfg.export_dir.mkdir(parents=True, exist_ok=False)
     
     def get_summary(cfg, data_cfg, export_dir):
@@ -129,20 +129,21 @@ class DataModule:
         # Training data
         if dc_attrs['make_dataset']:
             make_module(dc_attrs, export_dir)
-        else:
-            # Check if dataset already exists
-            # If it does, check if training.hdf exists within it and save in export dir
-            check_dir = os.path.join(dc_attrs['parent_dir'], dc_attrs['data_dir'])
-            if os.path.isdir(check_dir):
-                if cfg.dataset.__name__ == "BatchLoader":
-                    check_file = os.path.join(check_dir, "trainable.json")
-                else:
-                    check_file = os.path.join(check_dir, "training.hdf")
-                if os.path.isfile(check_file):
-                    # Move the training.hdf to export_dir for pipeline
-                    shutil.copy(check_file, export_dir)
+        
+        # Check if dataset already exists
+        # If it does, check if training.hdf exists within it and save in export dir
+        check_dir = os.path.join(dc_attrs['parent_dir'], dc_attrs['data_dir'])
+        if os.path.isdir(check_dir):
+            if cfg.dataset.__name__ == "BatchLoader":
+                check_file = os.path.join(check_dir, "trainable.json")
             else:
-                raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
+                check_file = os.path.join(check_dir, "training.hdf")
+            if os.path.isfile(check_file):
+                # Move the training.hdf to export_dir for pipeline
+                move_location = os.path.join(export_dir, 'training.hdf')
+                shutil.copy(check_file, move_location)
+        else:
+            raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
         
         # Testing data
         # TODO: A testing dataset should also be created in a similar format
@@ -180,16 +181,41 @@ class DataModule:
                 train = np.column_stack(train)
                 train = pd.DataFrame(train)
                 train.columns = ['ids', 'path', 'target', 'norm_tc', 'distance', 'mchirp']
+                raise ValueError('BatchLoader has been deprecated as of May 18th, 2022')
         else:
-            lookup_table = "training.hdf"
-            # Using a dask Dataframe for larger CSV files (if using)
-            train = pd.read_hdf(os.path.join(cfg.export_dir, lookup_table), 'lookup')
+            lookup_table = os.path.join(cfg.export_dir, "training.hdf")
+            # Deprecated: Usage of self.get_metadata with make_default_dataset (non-MP)
+            with h5py.File(lookup_table, 'a') as fp:
+                ids = np.array(fp['id'][:])
+                paths = np.array([foo.decode('utf-8') for foo in fp['path']])
+                targets = np.array(fp['target'][:])
             
+            # Chunk the entire lookup table for BatchLoader method used within MLMDC1 dataset object
+            # The independant BatchLoader Method has been deprecated as of May 24th, 2022
+            # mega_batch_size method deprecated on May 31st, 2022
+            
+            """ 
+            Deprecated MegaBatch method
+            ---------------------------
+                
+                if cfg.mega_batch_size != -1 and cfg.mega_batch_size != None:
+                    paths = np.array_split(paths, int(len(paths)/cfg.mega_batch_size))
+                    targets = np.array_split(targets, int(len(targets)/cfg.mega_batch_size))
+                    # ids are not split, they are converted to regular single int ids
+                    ids = np.arange(len(targets))
+                    
+            """
+            
+            # Create a consolidated lookup date as a Pandas Dataframe
+            lookup = list(zip(ids, paths, targets))
+            train = pd.DataFrame(lookup, columns=['id', 'path', 'target'])
+            
+        
         # TODO: Do the same prodecure for testing dataset. Does not require splitting.
         # Under construction!
         # if debug, use a data subset
         if cfg.debug:
-            train = train.iloc[:3]
+            train = train.iloc[:cfg.debug_size]
         ## Splitting
         if cfg.splitter is not None:
             # Function ensures equal ratio of all classes in each fold
@@ -283,11 +309,11 @@ class DataModule:
         """
         
         # check cfg and set batch_size to 1 if using BatchLoader
-        if cfg.dataset.__name__ == "BatchLoader":
+        if cfg.dataset.__name__ == "BatchLoader" or cfg.megabatch:
             batch_size = 1
-            num_workers = 0
-            pin_memory = False
-            persistent_workers = False
+            num_workers = cfg.num_workers
+            pin_memory = cfg.pin_memory
+            persistent_workers = cfg.persistent_workers
         else:
             batch_size = cfg.batch_size
             num_workers = cfg.num_workers
@@ -304,7 +330,7 @@ class DataModule:
             num_workers=num_workers, pin_memory=pin_memory, 
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         valid_loader = D.DataLoader(
-            valid_data, batch_size=batch_size, shuffle=True,
+            valid_data, batch_size=batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=pin_memory, 
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
