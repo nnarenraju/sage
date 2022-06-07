@@ -157,7 +157,7 @@ class Parallelise:
         
         for idx in iterable:
             # TODO: if num_queues>0, out needs to be passed properly (not None)
-            job = pool.apply_async(self.worker, (cfg.foobar[idx], None, queues))
+            job = pool.apply_async(self.worker, (cfg.foobar[idx], out, queues))
             jobs.append(job)
         
         # Collect results from the workers through the pool result queue
