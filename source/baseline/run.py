@@ -59,7 +59,7 @@ class AutoPilot:
 # Delete raw_samples out of memory
 
 nsamples = 2.0e6
-batch_size = 1000
+batch_size = 20000
 nbatches = int(nsamples/batch_size) + 1
 
 for nbatch in range(nbatches):

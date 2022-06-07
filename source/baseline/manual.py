@@ -26,6 +26,7 @@ Documentation: NULL
 # BUILT-IN
 import os
 import csv
+import time
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -33,6 +34,7 @@ import torch.utils.data as D
 
 # LOCAL
 from data.datasets import Simple
+from utils.record_times import record
 
 # Turning off Torch debugging
 torch.autograd.set_detect_anomaly(False)
@@ -55,9 +57,9 @@ def calculate_accuracy(output, labels, threshold = 0.5):
     correct = 0
     apply_thresh = lambda x: round(x - threshold + 0.5)
     for toutput, tlabel in zip(output, labels):
-        output_check = [apply_thresh(float(toutput[0])), apply_thresh(float(toutput[1]))]
-        labels_check = [apply_thresh(float(tlabel[0])), apply_thresh(float(tlabel[1]))]
-        if output_check[0] == labels_check[0] and output_check[1] == labels_check[1]:
+        output_check = apply_thresh(float(toutput[0]))
+        labels_check = apply_thresh(float(tlabel[0]))
+        if output_check == labels_check:
             correct+=1
 
     accuracy = correct/len(output)
@@ -149,7 +151,7 @@ def validation_phase(cfg, nep, Network, optimizer, loss_function, validation_sam
     accuracy = calculate_accuracy(pred_prob, validation_labels, cfg.accuracy_thresh)
     # Returning pred_prob if saving data
     return (validation_loss, accuracy, pred_prob)
-    
+
 
 def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
     
@@ -214,13 +216,43 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             """
             print("\nTraining Phase Initiated")
             pbar = tqdm(trainDL)
-            for training_samples, training_labels in pbar:
+            
+            # Recording the time taken for training
+            start = time.time()
+            load_times = [start]
+            train_times = []
+            # Store loading time split
+            section_times = []
+            signal_aug_times = []
+            noise_aug_times = []
+            transfrom_times = []
+            
+            
+            for training_samples, training_labels, all_times in pbar:
+                
+                # Record time taken to load data (calculate avg time later)
+                load_times.append(time.time())
+                section_times.append(all_times['sections'])
+                transfrom_times.append(all_times['transforms'])
+                signal_aug_times.append(all_times['signal_aug'])
+                noise_aug_times.append(all_times['noise_aug'])
+                # Record time taken for training
+                start_train = time.time()
+                
+                
+                """ Tensorification and Device Compatibility """
+                ## Performing this here rather than in the Dataset object
+                ## will reduce the overhead of having to move each sample to CUDA 
+                ## rather than moving a batch of data.
+                # Set the device and dtype
+                training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
+                training_labels = training_labels.to(dtype=torch.float32, device=cfg.train_device)
                 
                 batch_training_loss = 0.
                 accuracies = []
                 # Get all mini-folds and run training phase for each batch
                 # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
-                if cfg.dataset.__name__ == "BatchLoader":
+                if cfg.dataset.__name__ == "BatchLoader" or cfg.megabatch:
                     for batch_samples, batch_labels in zip(training_samples, training_labels):
                         # Convert the training_sample into a Simple dataset object
                         # We take the first element since we give 1 batch to the BatchLoader
@@ -260,8 +292,27 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Update losses and accuracy
                 training_running_loss += batch_training_loss
                 acc_train.extend(accuracies)
-
+                
+                # Record time taken to load data (calculate avg time later)
+                train_times.append(time.time() - start_train)
             
+            ## Time taken to train data
+            # Total time taken for training phase
+            total_time = time.time() - start
+            # Plotting
+            plot_times = {}
+            plot_times['section'] = section_times
+            plot_times['signal_aug'] = signal_aug_times
+            plot_times['noise_aug'] = noise_aug_times
+            plot_times['transforms'] = transfrom_times
+            plot_times['train'] = train_times
+            plot_times['load'] = load_times
+            
+            print(np.average(train_times))
+            print(plot_times)
+            record(plot_times, total_time, cfg)
+            raise
+
             """
             PHASE 2 - Validation
                 [1] Save confusion matrix elements and prediction probabilties
@@ -276,14 +327,14 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 validation_batches = 0
                 
                 pbar = tqdm(validDL)
-                for validation_samples, validation_labels in pbar:
+                for validation_samples, validation_labels, _ in pbar:
                     
                     batch_validation_loss = 0.
                     accuracies = []
                     pred_prob = []
                     # Get all mini-folds and run training phase for each batch
                     # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
-                    if cfg.dataset.__name__ == "BatchLoader":
+                    if cfg.dataset.__name__ == "BatchLoader" or cfg.megabatch:
                         for batch_samples, batch_labels in zip(validation_samples, validation_labels):
                             # Convert the training_sample into a Simple dataset object
                             batch_valid_dataset = Simple(batch_samples, batch_labels, 
@@ -311,7 +362,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     else:
                         # Run training phase and get loss and accuracy
                         validation_loss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
-                                                                     validation_samples, validation_labels[0])
+                                                                     validation_samples, validation_labels)
                         
                         # Display stuff
                         pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
@@ -328,15 +379,15 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
 
                     """ ROC Curve save data """
                     if nep % cfg.save_freq == 0 and nep!=0:
-                        roc_save_data(nep, pred_prob, validation_labels[0], cfg.export_dir)
+                        roc_save_data(nep, pred_prob, validation_labels, cfg.export_dir)
 
                     """ Calculating confusion matrix and Pred Probs """
                     apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    for voutput, vlabel in zip(pred_prob, validation_labels[0]):
+                    for voutput, vlabel in zip(pred_prob, validation_labels):
                         # Get labels based on threshold
                         vlabel = vlabel.cpu().detach().numpy()
-                        coutput = [apply_thresh(float(voutput[0])), apply_thresh(float(voutput[1]))]
-                        clabel = [apply_thresh(float(vlabel[0])), apply_thresh(float(vlabel[1]))]
+                        coutput = apply_thresh(float(voutput[0]))
+                        clabel = apply_thresh(float(vlabel[0]))
                         
                         """ Prediction Probabilties """
                         # Storing predicted probabilities
@@ -347,18 +398,18 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # True
                         if coutput == clabel:
                             # Positive
-                            if coutput[0] == 1:
+                            if coutput == 1:
                                 tp += 1
                             # Negative
-                            elif coutput[0] == 0:
+                            elif coutput == 0:
                                 tn += 1
                         # False
-                        elif coutput != clabel and coutput[0] != coutput[1]:
+                        elif coutput != clabel:
                             # Positive
-                            if coutput[0] == 1:
+                            if coutput == 1:
                                 fp += 1
                             # Negative
-                            elif coutput[0] == 0:
+                            elif coutput == 0:
                                 fn += 1
 
 

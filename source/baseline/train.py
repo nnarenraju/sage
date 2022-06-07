@@ -44,44 +44,36 @@ from data.prepare_data import DataModule as dat
 from data.save_trainable import Trainable
 from data.MP_save_trainable import MP_Trainable
 
+# Tensorboard
+from torch.utils.tensorboard import SummaryWriter
 
-def run_trainer(autopilot=False, autotools=None):
+
+def run_trainer():
     
-    if not autopilot:
-        parser = argparse.ArgumentParser()
-        
-        parser.add_argument("--config", type=str, default='Baseline',
-                            help="Uses the pipeline architecture as described in configs.py")
-        parser.add_argument("--data-config", type=str, default='Default',
-                            help="Creates or uses a particular dataset as provided in data_configs.py")
-        parser.add_argument("--inference", action='store_true',
-                            help="Running the inference module using trained model")
-        parser.add_argument("--lightning", action='store_true',
-                            help="Running the pipeline using PyTorch Lightning")
-        parser.add_argument("--manual", action='store_true',
-                            help="Running the pipeline using manual PyTorch")
-        parser.add_argument("--summary", action='store_true',
-                            help="Store model summary using pytorch_summary")
-        parser.add_argument("--debug", action='store_true')
-        parser.add_argument("--silent", action='store_true')
-        
-        opts = parser.parse_args()
-    else:
-        opts = autotools
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument("--config", type=str, default='Baseline',
+                        help="Uses the pipeline architecture as described in configs.py")
+    parser.add_argument("--data-config", type=str, default='Default',
+                        help="Creates or uses a particular dataset as provided in data_configs.py")
+    parser.add_argument("--inference", action='store_true',
+                        help="Running the inference module using trained model")
+    parser.add_argument("--lightning", action='store_true',
+                        help="Running the pipeline using PyTorch Lightning")
+    parser.add_argument("--manual", action='store_true',
+                        help="Running the pipeline using manual PyTorch")
+    parser.add_argument("--summary", action='store_true',
+                        help="Store model summary using pytorch_summary")
+    parser.add_argument("--debug", action='store_true')
+    parser.add_argument("--silent", action='store_true')
+    
+    opts = parser.parse_args()
     
     """ Prepare Data """
     # Get model configuration
     cfg = dat.configure_pipeline(opts)
     # Get data creation/usage configuration
     data_cfg = dat.configure_dataset(opts)
-    
-    if autopilot:
-        cfg.name = "Batch_{}".format(opts.nbatch)
-        data_cfg.data_dir = "dataset_5e4_20s_D1_Batch_{}".format(opts.nbatch)
-    
-    # Clean-up export_dir name
-    # TODO: Fix this procedure so that it is compatible with autopilot and otherwise
-    cfg.export_dir = Path(os.path.split(cfg.export_dir)[0])
     
     # Make export dir
     dat.make_export_dir(cfg)
@@ -90,8 +82,6 @@ def run_trainer(autopilot=False, autotools=None):
     # TODO: Currently get_summary() does not handle testing dataset
     # This should create/use a dataset and save a copy of the lookup table
     dat.get_summary(cfg, data_cfg, cfg.export_dir)
-    
-    return os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
     
     # Prepare dataset (read, split and return fold idx)
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
@@ -156,8 +146,14 @@ def run_trainer(autopilot=False, autotools=None):
         
         # Model Summary (frontend + backend)
         if opts.summary:
-            summary(ModelClass, (2, 3715), batch_size=cfg.batch_size)
+            # Using TorchSummary to get # trainable params and general overview
+            summary(ModelClass, (2, 3072), batch_size=cfg.batch_size)
             print("")
+            # Using TensorBoard summary writer to create detailed graph of ModelClass
+            tb = SummaryWriter()
+            samples, labels = next(iter(train_loader))
+            tb.add_graph(ModelClass, samples)
+            tb.close()
         
         # Optimizer and Scheduler (Set to None if unused)
         if cfg.optimizer is not None:
