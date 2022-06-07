@@ -409,7 +409,7 @@ class GenerateData:
         # DO NOT DO THIS WITH MP Dataset Generation (slows down rates by a LOT)
         if self.gc_collect_frequency != -1:
             if i % self.gc_collect_frequency == 0 or i == 2.0*self.num_waveforms-1:
-                gc.collect()
+                raise NotImplementedError('gc.collect() reduces efficiency with MP methods.')
     
     
     def listener(self, queue):
