@@ -114,7 +114,7 @@ class Parallelise:
         # Run function through iterable idx
         iargs = (input_data,) + self.args
         datum = cfg.function(*iargs)
-        if queues == None:
+        if queues != None:
             # Give all relevant save data to Queue
             data = {'datum': datum, 'kill': False}
             qidx = np.random.randint(low=0, high=len(queues))
