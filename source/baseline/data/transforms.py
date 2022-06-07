@@ -313,7 +313,12 @@ class MultirateSampling(TransformWrapperPerChannel):
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Call multi-rate sampling module for usage
         # This is kept separate since further experimentation might be required
-        return multirate_sampling(y, data_cfg)
+        pglobal = parallel.SetGlobals(y)
+        foo = parallel.Parallelise(pglobal.set_data, multirate_sampling)
+        foo.args = (data_cfg,)
+        foo.name = 'MR Sampling'
+        pout = foo.initiate()
+        return pout
     
 
 """ Signal only Transformations """
