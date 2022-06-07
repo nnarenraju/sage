@@ -309,10 +309,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             plot_times['train'] = train_times
             plot_times['load'] = load_times
             
-            print(np.average(train_times))
-            print(plot_times)
             record(plot_times, total_time, cfg)
-            raise
+            
 
             """
             PHASE 2 - Validation

@@ -454,10 +454,15 @@ class MLMDC1(Dataset):
             exit(1)
         
         
+        """ Shuffling """
+        zipped = list(zip(sample, target))
+        random.shuffle(zipped)
+        sample, target = zip(*zipped)
+        
         """ Reducing memory footprint """
         # This can only be performed after transforms and augmentation
-        sample = sample.astype(np.float32)
-        target = target.astype(np.float32)
+        sample = np.array(sample, dtype=np.float32)
+        target = np.array(target, dtype=np.float32)
         
         """ Tensorification """
         # Convert signal/target to Tensor objects
