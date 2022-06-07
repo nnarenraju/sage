@@ -110,14 +110,17 @@ class Parallelise:
         msg += '\nMaximum limit on MP RAM = {} MB'.format(self.max_mem_limit_in_MB)
         return msg
     
-    def worker(self, input_data, queues=None):
+    def worker(self, input_data, out=None, queues=None):
         # Run function through iterable idx
         iargs = (input_data,) + self.args
         datum = cfg.function(*iargs)
-        data = {'datum': datum, 'kill': False}
-        # Give all relevant save data to Queue
-        qidx = np.random.randint(low=0, high=len(queues))
-        queues[qidx].put(data)
+        if queues == None:
+            # Give all relevant save data to Queue
+            data = {'datum': datum, 'kill': False}
+            qidx = np.random.randint(low=0, high=len(queues))
+            queues[qidx].put(data)
+        else:
+            out.append(datum)
     
     def listener(self, queue, qout=None):
         # Queue listener function (writing to out ListProxy)
@@ -134,22 +137,26 @@ class Parallelise:
         # Must use Manager queue here, or will not work
         manager = mp.Manager()
         # Initiate queues
-        queues = [manager.Queue() for _ in range(self.num_queues)]
+        if self.num_queues > 0:
+            queues = [manager.Queue() for _ in range(self.num_queues)]
+            out = [manager.list() for _ in range(len(queues))]
+        else:
+            queues = None
+            out = manager.List()
         # Empty jobs every iteration
         jobs = []
         # Initialise pool
         pool = mp.Pool(int(self.num_workers + self.num_queues))
-        # Output array
-        out = [manager.list() for _ in range(len(queues))]
         # Put listener to work first (this will wait for data in MP and write to Queue)
         # NOTE: Cannot pass open files to listener
-        watchers = [pool.apply_async(self.listener, (queue, qout)) for queue, qout in zip(queues, out)]
+        if self.num_queues > 0:
+            watchers = [pool.apply_async(self.listener, (queue, qout)) for queue, qout in zip(queues, out)]
         
         # Set iterable
         iterable = range(len(cfg.foobar))
         
         for idx in iterable:
-            job = pool.apply_async(self.worker, (cfg.foobar[idx], queues))
+            job = pool.apply_async(self.worker, (cfg.foobar[idx], out, queues))
             jobs.append(job)
         
         # Collect results from the workers through the pool result queue
@@ -172,10 +179,14 @@ class Parallelise:
         # Kill memory tracers
         tracemalloc.stop()
         # Kill the listener when all jobs are complete
-        _ = [queue.put({'kill': True}) for queue in queues]
+        if self.num_queues > 0:
+            _ = [queue.put({'kill': True}) for queue in queues]
+            output = np.concatenate(tuple([np.array(foo) for foo in out]))
+        else:
+            output = np.array(out)
         # End the pool processes
         pool.close()
         pool.join()
         
         # Concatenate all qout together and return to caller
-        return np.concatenate(tuple([np.array(foo) for foo in out]))
+        return output
