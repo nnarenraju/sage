@@ -31,6 +31,7 @@ from scipy.signal import decimate
 from operator import itemgetter
 
 # Plotting
+import matplotlib
 import matplotlib.pyplot as plt
 # Font and plot parameters
 plt.rcParams.update({'font.size': 22})
@@ -161,7 +162,7 @@ Multi-rate Sampling Theory and Description:
 
 """
 
-def get_sampling_rate_bins(low_mass=10.0, max_signal_length=20.0, signal_low_freq_cutoff=20.0,
+def get_sampling_rate_bins(low_mass=10.0, max_signal_length=22.0, signal_low_freq_cutoff=20.0,
                            sample_rate=2048., tc_inject_lower=18.0, tc_inject_upper=18.2,
                            ringdown_leeway=0.063, merger_leeway=0.066, start_freq_factor=2.5,
                            fs_reduction_factor=1.9, fbin_reduction_factor=2.0):
@@ -278,15 +279,35 @@ def get_sampling_rate_bins(low_mass=10.0, max_signal_length=20.0, signal_low_fre
         plot_fs.extend([[plot_t[sbin], fs], [plot_t[ebin], fs]])
     
     plot_fs = np.array(plot_fs)
-    plt.figure(figsize=(18.0, 12.0))
-    plt.plot(max_signal_length-(plot_fs[:,0]+offset), plot_fs[:,1], linewidth=3.0, linestyle="dashed", label="Sampling frequency")
-    plt.plot(plot_t+offset, save_f[::-1], linewidth=3.0, label="Nyquist Frequency")
-    # plt.xscale('log')
+    fig, ax = plt.subplots(1, 1, figsize=(18.0, 12.0))
+    
+    plt.plot(max_signal_length-(plot_fs[:,0]+offset), plot_fs[:,1], linewidth=4.0, linestyle="dashed", label="Sampling frequency")
+    
+    rects = []
+    c = ['yellow', 'green', 'magenta', 'blue', 'red', 'gray']
+    search = list(zip(max_signal_length-(plot_fs[:,0]+offset), plot_fs[:,1]))
+    for i, n in enumerate(range(0, len(search), 2)):
+        height = search[n][1]
+        if n > 0:
+            width = search[n+1][0] - search[n-1][0]
+        else:
+            width = search[n+1][0]
+        
+        anchor_x = search[n][0]
+        anchor_y = 0.0
+        rects.append(matplotlib.patches.Rectangle((anchor_x, anchor_y), width, height, color=c[i], alpha=0.4))
+    
+    _ = [ax.add_patch(rect) for rect in rects]
+    
+    plt.plot(plot_t+offset, save_f[::-1], linewidth=4.0, label="GW Frequency * 2.0", c='k')
     plt.yscale('log')
-    # plt.xlim(9.25, 9.45)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Frequency (Hz)')
     plt.grid(True)
     plt.legend()
+    plt.savefig('sampling.png')
     plt.show()
+    plt.close()
     
     # Return contains (bin_start_idx, bin_end_idx, sample_rate_required)
     return np.array(detailed_bins)
@@ -386,7 +407,8 @@ def run():
     # Get the normal and multirate version of the input signals
     signals, multirate_signals, chunks, srs = multirate_sampling(path, tc_inject_lower=18.0, tc_inject_upper=18.2)
     
-    ax = figure(title="Comparing fixed sample rate signals & their multirate counterparts")
+    # ax = figure(title="Comparing fixed sample rate signals & their multirate counterparts")
+    ax = figure()
     
     """ Pure Signals and Multi-rate Pure Signals """
     assert len(list(set([len(signal) for signal in signals]))) == 1
@@ -410,7 +432,7 @@ def run():
         _plot(ax[1][0], time_axis_chunks[n], chunk[0], c=colors[n], xlabel="Sample num", ylabel="Strain", label=np.around(srs[n],3))
         _plot(ax[1][1], time_axis_chunks[n], chunk[1], c=colors[n], xlabel="Sample num", ylabel="Strain", label=np.around(srs[n],3))
     
-    # plt.savefig("check_multirate_sampling.png")
+    plt.savefig("check_multirate_sampling.png")
     plt.show()
     plt.close()
 
