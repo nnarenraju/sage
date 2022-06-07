@@ -44,36 +44,24 @@ def calculate_network_snr(strains, psds, noise_low_freq_cutoff):
     return np.sqrt(sum([sigmasq(strain, psd=psd, low_frequency_cutoff=noise_low_freq_cutoff)
                         for strain, psd in zip(strains, psds)]))
 
-def get_network_snr(signals, psds, sample_rate, noise_low_freq_cutoff, data_dir):
+def get_network_snr(signals, psds_data, params, data_dir):
+    # pure_sample, params, data_loc
     
     """ TimeSeries Signals """
     # Convert signals to TimeSeries object
-    signals = [TimeSeries(signal, delta_t=1./sample_rate) for signal in signals]
-    
-    """ Read PSD """
-    # Read the PSDs from the given psd_file_path
-    try:
-        # This should load the PSD as a FrequencySeries object with delta_f assigned
-        psd_data = [load_frequencyseries(psd) for psd in psds]
-    except:
-        psd_data = []
-        for psd in psds:
-            data = pd.read_hdf(psd, 'data')['psd_data'].to_numpy()
-            with h5py.File(psd, "r") as foo:
-                # Read the data (we should only have one field "data")
-                psd_data.append(FrequencySeries(data, delta_f=foo.attrs['delta_f']))
+    signals = [TimeSeries(signal, delta_t=1./params['sample_rate']) for signal in signals]
     
     """ Change delta_f of PSD to align with signals """
     # Calculating delta_f of signal and providing that to the PSD interpolation method
     # if delta_f is not equal between PSD and signal, it raises an exception
     assert len(list(set([len(signal) for signal in signals]))) == 1
-    sample_length_in_s = len(signals[0])/sample_rate
+    sample_length_in_s = len(signals[0])/params['sample_rate']
     delta_f = 1./sample_length_in_s
     # Interpolate the PSD to the required delta_f
-    psd_data = [interpolate(psd, delta_f) for psd in psd_data]
+    psd_data = [interpolate(psd, delta_f) for psd in psds_data]
     
     """ Calculation of SNR """
-    network_snr = calculate_network_snr(signals, psd_data, noise_low_freq_cutoff)
+    network_snr = calculate_network_snr(signals, psd_data, params['noise_low_freq_cutoff'])
     
     """ Save the SNRs for plotting prior distribution """
     # NOTE: Using newline='' is backward incompatible between python2 and python3
