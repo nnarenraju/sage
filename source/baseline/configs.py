@@ -35,9 +35,10 @@ from sklearn.model_selection import StratifiedKFold
 from data.datasets import MLMDC1, BatchLoader
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
-from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel
-from data.transforms import Unify, UnifySignal
-from data.transforms import Normalise, BandPass, HighPass, Whiten, MultirateSampling, AugmentDistance
+from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel, KappaModelSimplified, KappaModelPE
+from data.transforms import Unify, UnifySignal, UnifyNoise
+from data.transforms import Normalise, BandPass, HighPass, Whiten, MultirateSampling
+from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 
 
@@ -98,6 +99,8 @@ class Baseline:
     batch_size = 100
     # every 'n' epochs
     save_freq = 5
+    # MegaBatch Method (Datasets are produced in large chunk files)
+    megabatch = False
     # Overfitting check and Early Stopping
     early_stopping = True
     
@@ -154,6 +157,7 @@ class Baseline:
     
     # Debugging (size: train_data = 1e4, val_data = 1e3)
     debug = False
+    debug_size = 10000
     # Verbosity (Not properly implemented yet. Use logger.)
     verbose = False
     
@@ -177,7 +181,7 @@ class KaggleFirst:
     dataset_params = dict()
     
     """ Architecture """
-    model = KappaModel
+    model = KappaModelSimplified
     
     model_params = dict(
         # Kaggle frontend+backend
@@ -186,9 +190,9 @@ class KaggleFirst:
         filter_size = 16,
         kernel_size = 32,
         timm_params = {'model_name': 'resnet34', 
-                       'pretrained': True, 
-                       'in_chans': 2, 
-                       'drop_rate': 0.25},
+                        'pretrained': True, 
+                        'in_chans': 2, 
+                        'drop_rate': 0.25},
         store_device = 'cpu',
     )
     
@@ -203,6 +207,7 @@ class KaggleFirst:
     num_epochs = 25
     batch_size = 100
     save_freq = 5
+    megabatch = True
     early_stopping = False
     
     """ Dataloader params """
@@ -239,18 +244,18 @@ class KaggleFirst:
     """ Data Transforms """
     # Adding a random noise realisation during the data loading process
     # Procedure should be available within dataset object
-    add_random_noise_realisation = False
+    add_random_noise_realisation = True
     
     transforms = dict(
         signal=None,
         noise=None,
         train=Unify([
-            HighPass(lower=16, fs=2048., order=6),
+            BandPass(lower=16, upper=512, fs=2048., order=6),
             Whiten(trunc_method='hann', remove_corrupted=True),
             MultirateSampling(),
         ]),
         test=Unify([
-            HighPass(lower=16, fs=2048., order=6),
+            BandPass(lower=16, upper=512, fs=2048., order=6),
             Whiten(trunc_method='hann', remove_corrupted=True),
             MultirateSampling(),
         ]),
@@ -258,6 +263,8 @@ class KaggleFirst:
     )
     
     debug = False
+    debug_size = 10000
+    
     verbose = False
 
 
@@ -266,7 +273,7 @@ class KF_Trainable(KaggleFirst):
     """ Parameters changed when creating Batched trainable dataset """
     
     """ Data storage """
-    name = "Batch_1_D2"
+    name = "Batch_1"
     export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset Splitting """
@@ -305,7 +312,7 @@ class KF_BatchTrain(KaggleFirst):
     
     """ Data storage """
     name = "KF_D1_BatchTrain"
-    export_dir = Path("/home/nnarenraju/Research") / name
+    export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset """
     dataset = BatchLoader
@@ -318,13 +325,13 @@ class KF_BatchTrain(KaggleFirst):
         # Kaggle frontend+backend
         # This model is ridiculously slow on cpu, use cuda:0
         model_name = 'kaggle_first', 
-        filter_size = 32,
-        kernel_size = 64,
+        filter_size = 16,
+        kernel_size = 32,
         timm_params = {'model_name': 'resnet34', 
-                       'pretrained': True, 
-                       'in_chans': 2, 
-                       'drop_rate': 0.25},
-        store_device = 'cuda:0',
+                        'pretrained': True, 
+                        'in_chans': 2, 
+                        'drop_rate': 0.25},
+        store_device = 'cpu',
     )
     
     pretrained = False
@@ -342,11 +349,17 @@ class KF_BatchTrain(KaggleFirst):
     # Procedure should be available within dataset object
     add_random_noise_realisation = True
     
+    """ Loss Function """
+    loss_function = BCEgw_MSEtc()
+    output_loss_file = "losses.txt"
+    
     transforms = dict(
         signal=UnifySignal([
-            AugmentDistance()
+            AugmentPolSky(),
         ]),
-        noise=None,
+        noise=UnifyNoise([
+            CyclicShift(),
+        ]),
         train=Unify([
             HighPass(lower=16, fs=2048., order=6),
             Whiten(trunc_method='hann', remove_corrupted=True),
@@ -361,10 +374,44 @@ class KF_BatchTrain(KaggleFirst):
     )
     
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cpu'
+    train_device = 'cpu'
     
-    debug = True
+    debug = False
+
+
+class Baseline_May18(KF_BatchTrain):
+    
+    """ Data storage """
+    name = "Baseline_May18"
+    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    
+    """ Dataset """
+    dataset = MLMDC1
+    dataset_params = dict()
+    
+    """ Architecture """
+    model = GammaModel
+    
+    model_params = dict(
+        # Simple NN Model
+        model_name = 'mlmdc_example',
+        in_channels = 2,
+        out_channels = 1,
+        store_device = 'cpu',
+    )
+    
+    """ Dataloader params """
+    num_workers = 0
+    pin_memory = False
+    prefetch_factor = 2
+    persistent_workers = False
+    
+    """ Loss Function """
+    loss_function = regularised_BCELoss(dim=1)
+    
+    
+    
     
     
     
