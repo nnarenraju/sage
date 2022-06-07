@@ -29,6 +29,9 @@ import numpy as np
 from scipy.signal import decimate
 from operator import itemgetter
 
+# Parallelisation of transforms
+import data.parallel as parallel
+
 
 def prime_factors(n):
     # Return the prime factors, to be used in decimation
@@ -152,6 +155,7 @@ def get_sampling_rate_bins(data_cfg):
         if f_edge < signal_low_freq_cutoff:
             break
         # Adding a tc_upper and ringdown leeway
+        # TODO: Add 2s to end_time to account for ringdown and light-travel delay
         leeway = tc_inject_upper - tc_inject_lower + ringdown_leeway
         if (t_ < 0.0 and t_ >= -1*leeway) or (t_ > 0.0 and t_ < merger_leeway):
             f = f_hqual
@@ -239,6 +243,7 @@ def multirate_sampling(signals, data_cfg):
     
     multirate_chunks = []
     new_sample_rates = []
+    
     # Now downsample the signals from both detectors based on dbins
     for start_idx, end_idx, new_sample_rate in dbins:
         new_sample_rates.append(new_sample_rate)
@@ -274,12 +279,28 @@ def multirate_sampling(signals, data_cfg):
                     
                 # Decimate the signal 'nfactor' times using the prime factors
                 for factor in factors:
-                    tmp_signals = [decimate(tmp_signal, factor) for tmp_signal in tmp_signals]
+                    # Init parallelisation for decimation process
+                    pglobal = parallel.SetGlobals(tmp_signals)
+                    foo = parallel.Parallelise(pglobal.set_data, decimate)
+                    foo.args = (factor,)
+                    foo.name = 'MR-Sampling'
+                    tmp_signals = foo.initiate()
+                    
+                    # Sequential decimation
+                    # tmp_signals = [decimate(tmp_signal, factor) for tmp_signal in tmp_signals]
                 # Store the final decimated signal
                 decimated_signals = tmp_signals
             
             else:
-                decimated_signals = [decimate(signal, decimation_factor) for signal in signals]
+                # Init parallelisation for decimation process
+                pglobal = parallel.SetGlobals(signals)
+                foo = parallel.Parallelise(pglobal.set_data, decimate)
+                foo.args = (decimation_factor,)
+                foo.name = 'MR-Sampling'
+                decimated_signals = foo.initiate()
+                
+                # Sequential decimation
+                # decimated_signals = [decimate(signal, decimation_factor) for signal in signals]
             
             # Now slice the appropriate parts of the decimated signals using bin idx
             # Note than the bin idx was made using the original sampling rate
