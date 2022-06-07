@@ -235,7 +235,7 @@ def get_sampling_rate_bins(data_cfg):
     return np.array(detailed_bins)
     
     
-def multirate_sampling(signals, data_cfg):
+def multirate_sampling(signal, data_cfg):
     # Downsample the data into required sampling rates and slice intervals
     # These intervals are stitched together to for a sample with MRsampling
     # Get data bins (pre-calculated for given problem in dataset object)
@@ -264,7 +264,9 @@ def multirate_sampling(signals, data_cfg):
             
             # Sanity check
             if decimation_factor > 13:
-                tmp_signals = signals[:]
+                # tmp_signals = signals[:] # --> many signals
+                tmp_signal = signal[:]
+                
                 # The decimation factor should always be of type 2**n
                 # So factorisation should be quite straight-forward (depricated on April 1st, 2022)
                 # Is the above deprication an April's Fools joke? Absolutely not.
@@ -279,32 +281,23 @@ def multirate_sampling(signals, data_cfg):
                     
                 # Decimate the signal 'nfactor' times using the prime factors
                 for factor in factors:
-                    # Init parallelisation for decimation process
-                    pglobal = parallel.SetGlobals(tmp_signals)
-                    foo = parallel.Parallelise(pglobal.set_data, decimate)
-                    foo.args = (factor,)
-                    foo.name = 'MR-Sampling'
-                    tmp_signals = foo.initiate()
-                    
                     # Sequential decimation
+                    # --> many signals
                     # tmp_signals = [decimate(tmp_signal, factor) for tmp_signal in tmp_signals]
+                    tmp_signal = decimate(tmp_signal, factor)
+                    
                 # Store the final decimated signal
-                decimated_signals = tmp_signals
+                decimated_signal = tmp_signal
             
             else:
-                # Init parallelisation for decimation process
-                pglobal = parallel.SetGlobals(signals)
-                foo = parallel.Parallelise(pglobal.set_data, decimate)
-                foo.args = (decimation_factor,)
-                foo.name = 'MR-Sampling'
-                decimated_signals = foo.initiate()
-                
                 # Sequential decimation
+                # --> many signals
                 # decimated_signals = [decimate(signal, decimation_factor) for signal in signals]
+                decimated_signal = decimate(signal, decimation_factor)
             
             # Now slice the appropriate parts of the decimated signals using bin idx
             # Note than the bin idx was made using the original sampling rate
-            num_samples_original = len(signals[0])
+            num_samples_original = len(signal)
             num_samples_decimated = int(num_samples_original/decimation_factor)
             
             ## Convert the bin idxs to decimated idxs
@@ -316,15 +309,19 @@ def multirate_sampling(signals, data_cfg):
             eidx_dec = int(end_idx_norm * num_samples_decimated)
             
             # Slice the decimated signals using the start and end decimated idx
-            chunk = [decimated_signal[sidx_dec:eidx_dec] for decimated_signal in decimated_signals]
+            chunk = decimated_signal[sidx_dec:eidx_dec]
         else:
             # No decimation done, original sample rate is used
-            chunk = [signal[int(start_idx):int(end_idx)] for signal in signals]
+            chunk = signal[int(start_idx):int(end_idx)]
         
         # Append the decimated chunk together
-        multirate_chunks.append(np.stack(chunk, axis=0))
+        # --> many signals
+        # multirate_chunks.append(np.stack(chunk, axis=0))
+        multirate_chunks.append(chunk)
     
     # Now properly concatenate all the decimated chunks together using numpy
-    multirate_signals = np.column_stack(tuple(multirate_chunks))
+    # --> many signals
+    # multirate_signals = np.column_stack(tuple(multirate_chunks))
+    multirate_signal = np.concatenate(tuple(multirate_chunks))
     
-    return multirate_signals
+    return multirate_signal
