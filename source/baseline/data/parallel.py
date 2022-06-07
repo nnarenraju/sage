@@ -24,7 +24,6 @@ Documentation: NULL
 """
 
 # IN-BUILT
-import gc
 import logging
 import numpy as np
 import tracemalloc
@@ -96,6 +95,7 @@ class Parallelise:
         # Set process params
         self.name = "Transform"
         self.num_workers = 6
+        self.num_queues = 4
         self.verbose = True
         self.args = ()
         ## Memory Tracer limits
@@ -110,28 +110,46 @@ class Parallelise:
         msg += '\nMaximum limit on MP RAM = {} MB'.format(self.max_mem_limit_in_MB)
         return msg
     
-    def worker(self, input_data, out=None):
+    def worker(self, input_data, queues=None):
         # Run function through iterable idx
         iargs = (input_data,) + self.args
-        data = cfg.function(*iargs)
-        out.append(data)
+        datum = cfg.function(*iargs)
+        data = {'datum': datum, 'kill': False}
+        # Give all relevant save data to Queue
+        qidx = np.random.randint(low=0, high=len(queues))
+        queues[qidx].put(data)
+    
+    def listener(self, queue, qout=None):
+        # Queue listener function (writing to out ListProxy)
+        while True:
+            data = queue.get()
+            # if processes have ended, kill
+            if data['kill']:
+                break
+            # Appending to out ListProxy
+            qout.append(data['datum'])
             
     def initiate(self):
         # Save tmp hdf5
         # Must use Manager queue here, or will not work
         manager = mp.Manager()
+        # Initiate queues
+        queues = [manager.Queue() for _ in range(self.num_queues)]
         # Empty jobs every iteration
         jobs = []
         # Initialise pool
-        pool = mp.Pool(int(self.num_workers))
+        pool = mp.Pool(int(self.num_workers + self.num_queues))
         # Output array
-        out = manager.list()
+        out = [manager.list() for _ in range(len(queues))]
+        # Put listener to work first (this will wait for data in MP and write to Queue)
+        # NOTE: Cannot pass open files to listener
+        watchers = [pool.apply_async(self.listener, (queue, qout)) for queue, qout in zip(queues, out)]
         
         # Set iterable
         iterable = range(len(cfg.foobar))
         
         for idx in iterable:
-            job = pool.apply_async(self.worker, (cfg.foobar[idx], out))
+            job = pool.apply_async(self.worker, (cfg.foobar[idx], out, queues))
             jobs.append(job)
         
         # Collect results from the workers through the pool result queue
@@ -153,10 +171,11 @@ class Parallelise:
         
         # Kill memory tracers
         tracemalloc.stop()
+        # Kill the listener when all jobs are complete
+        _ = [queue.put({'kill': True}) for queue in queues]
         # End the pool processes
         pool.close()
         pool.join()
         
         # Concatenate all qout together and return to caller
-        gc.collect()
-        return np.array(out)
+        return np.concatenate(tuple([np.array(foo) for foo in out]))
