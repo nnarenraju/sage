@@ -294,7 +294,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 acc_train.extend(accuracies)
                 
                 # Record time taken to load data (calculate avg time later)
-                train_times.append(time.time() - start_train)
+                end_train = time.time() - start_train
+                train_times.append(end_train)
             
             ## Time taken to train data
             # Total time taken for training phase

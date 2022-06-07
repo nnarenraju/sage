@@ -34,10 +34,8 @@ from data.multirate_sampling import multirate_sampling
 # from data.parallel_transforms import Parallelise
 
 # PyCBC
-import pycbc
-from pycbc import distributions
-from pycbc.psd import inverse_spectrum_truncation, interpolate
-from pycbc.types import load_frequencyseries, TimeSeries, FrequencySeries
+from pycbc.psd import inverse_spectrum_truncation
+from pycbc.types import TimeSeries
 
 # Parallelisation of transforms
 import data.parallel as parallel
@@ -321,6 +319,7 @@ class MultirateSampling(TransformWrapperPerChannel):
         return pout
     
 
+
 """ Signal only Transformations """
 
 class AugmentPolSky(SignalWrapper):
@@ -328,10 +327,32 @@ class AugmentPolSky(SignalWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
+    def augment(self, datum):
+        h_plus, h_cross, pol_angle, sky_pos, il, iu, st = datum
+        pol_angle = pol_angle[0]
+        declination, right_ascension = sky_pos
+        # Using PyCBC project_wave to get h_t from h_plus and h_cross
+        # Setting the start_time is important! (too late, too early errors are because of this)
+        h_plus = TimeSeries(h_plus, delta_t=1./self.sample_rate)
+        h_cross = TimeSeries(h_cross, delta_t=1./self.sample_rate)
+        # Set start times
+        h_plus.start_time = st
+        h_cross.start_time = st
+        
+        # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
+        strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle, method='vary_polarization') for det in self.dets]
+        time_interval = (il, iu)
+        # Put both strains together
+        return np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
+    
+
     def apply(self, y: np.ndarray, dets=None, distrs=None, **params):
         # Get Augmentation params
         for key, value in params.items():
             setattr(self, key, value)
+        
+        # Set lal.Detector object as global as workaround for MP methods
+        setattr(self, 'dets', dets)
         
         ## Get random value (with a given prior) for polarisation angle, ra, dec
         # Polarisation angle
@@ -339,28 +360,12 @@ class AugmentPolSky(SignalWrapper):
         pol_angles = distrs['pol'].rvs(size=maxlen)
         # Right ascension, declination
         sky_positions = distrs['sky'].rvs(size=maxlen)
-        # Store all strains
-        all_strains_1 = []
-        all_strains_2 = []
         
-        for h_plus, h_cross, pol_angle, sky_pos, il, iu, st in zip(y[0], y[1], pol_angles, sky_positions, self.interval_lower, self.interval_upper, self.start_time):
-            pol_angle = pol_angle[0]
-            declination, right_ascension = sky_pos
-            # Using PyCBC project_wave to get h_t from h_plus and h_cross
-            # TODO: set the start times for h_plus and h_cross
-            # Setting the start_time is important! (too late, too early errors are because of this)
-            h_plus = TimeSeries(h_plus, delta_t=1./self.sample_rate)
-            h_cross = TimeSeries(h_cross, delta_t=1./self.sample_rate)
-            # Set start times
-            h_plus.start_time = st
-            h_cross.start_time = st
-            
-            # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
-            strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in dets]
-            time_interval = (il, iu)
-            all_strains_1.append(strains[0].time_slice(*time_interval, mode='nearest'))
-            all_strains_2.append(strains[1].time_slice(*time_interval, mode='nearest'))
-            
+        data = list(zip(y[0], y[1], pol_angles, sky_positions, self.interval_lower, self.interval_upper, self.start_time))
+        pglobal = parallel.SetGlobals(data, self.augment)
+        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
+        foo.name = 'AugmentPolSky'
+        pout = foo.initiate()
         
         """
         # Sanity check for sample_length
@@ -374,8 +379,7 @@ class AugmentPolSky(SignalWrapper):
         
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         # Shape remains the same, so reading in dataset object won't be a problem
-        all_strains = np.stack([all_strains_1, all_strains_2], axis=0)
-        
+        all_strains = np.stack([pout[:,0], pout[:,1]], axis=0)
         return all_strains
 
 

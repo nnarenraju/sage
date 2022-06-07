@@ -56,11 +56,15 @@ class SetGlobals:
     
     """
     
-    def __init__(self, data):
+    def __init__(self, data, function):
         self.data = data
+        self.function = function
     
     def set_data(self):
-        cfg.all_data = self.data
+        cfg.foobar = self.data
+    
+    def set_func(self):
+        cfg.function = self.function
 
 
 class Parallelise:
@@ -85,17 +89,19 @@ class Parallelise:
     
     """
     
-    def __init__(self, func, process):
-        setattr(self, 'func', func())
+    def __init__(self, set_gdata, set_gfunc):
+        # Set global attrs
+        setattr(self, 'foo', set_gdata())
+        setattr(self, 'bar', set_gfunc())
+        # Set process params
         self.name = "Transform"
-        self.process = process
         self.num_workers = 6
         self.verbose = True
         self.args = ()
         ## Memory Tracer limits
         # Keep this value low for optimal performace
         # If performace is slower than sequential mode, this may a probable cause
-        self.max_mem_limit_in_MB = 10.0
+        self.max_mem_limit_in_MB = 30.0
     
     def __str__(self):
         msg = 'Transform: MP {}'.format(self.name)
@@ -107,7 +113,7 @@ class Parallelise:
     def worker(self, input_data, out=None):
         # Run function through iterable idx
         iargs = (input_data,) + self.args
-        data = self.process(*iargs)
+        data = cfg.function(*iargs)
         out.append(data)
             
     def initiate(self):
@@ -122,10 +128,10 @@ class Parallelise:
         out = manager.list()
         
         # Set iterable
-        iterable = range(len(cfg.all_data))
+        iterable = range(len(cfg.foobar))
         
         for idx in iterable:
-            job = pool.apply_async(self.worker, (cfg.all_data[idx], out))
+            job = pool.apply_async(self.worker, (cfg.foobar[idx], out))
             jobs.append(job)
         
         # Collect results from the workers through the pool result queue
@@ -139,9 +145,7 @@ class Parallelise:
             if max_mem > self.max_mem_limit_in_MB:
                 print('\n\n')
                 logging.critical('Large pickled memory {} MB!'.format(max_mem))
-                logging.debug('MP performing at subpar levels due to memory error.')
-                logging.debug('Try to pass large data as global var to avoid this.')
-                return 0
+                raise ValueError('MP performing at subpar levels due to memory error.')
             
             if self.verbose:
                 pbar.set_description('MP {}: RAM curr={} MB, peak={} MB'.format(self.name, curr_mem, max_mem))

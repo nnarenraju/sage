@@ -303,18 +303,20 @@ class MLMDC1(Dataset):
         start = time.time()
         
         if self.signal_only_transforms:
+            sstart = time.time()
             pure_signal, times = self.signal_only_transforms(pure_signal, self.detectors, self.distrs, **params)
             self.signal_aug_times = self.signal_aug_times | times
-            self.signal_aug_times['Total Time'] = time.time() - start
+            self.signal_aug_times['Total Time'] = time.time() - sstart
         else:
             add = {foo.__class__.__name__:0.0 for foo in self.signal_only_transforms.transforms}
             self.signal_aug_times.update(add)
             self.signal_aug_times['Total Time'] = 0.0
-            
+        
         if self.noise_only_transforms:
+            nstart = time.time()
             pure_noise, times = self.noise_only_transforms(pure_noise)
             self.noise_aug_times = self.noise_aug_times | times
-            self.noise_aug_times['Total Time'] = time.time() - start
+            self.noise_aug_times['Total Time'] = time.time() - nstart
         else:
             add = {foo.__class__.__name__:0.0 for foo in self.noise_only_transforms.transforms}
             self.noise_aug_times.update(add)

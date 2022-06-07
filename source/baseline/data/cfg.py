@@ -16,3 +16,6 @@ __status__      = ['inProgress', 'Archived', 'inUsage', 'Debugging']
 
 # tmp MP global variable
 foobar = None
+
+# tmp MP global function
+function = None
