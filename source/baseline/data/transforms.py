@@ -212,8 +212,8 @@ class HighPass(TransformWrapperPerChannel):
     
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Parallelise HighPass filter
-        pglobal = parallel.SetGlobals(y)
-        foo = parallel.Parallelise(pglobal.set_data, self.butter_highpass_filter)
+        pglobal = parallel.SetGlobals(y, self.butter_highpass_filter)
+        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
         foo.name = 'HighPass'
         pout = foo.initiate()
         return pout
@@ -279,8 +279,8 @@ class Whiten(TransformWrapperPerChannel):
         
         """ Whitening """
         # Whiten the data by the asd
-        pglobal = parallel.SetGlobals(signals)
-        foo = parallel.Parallelise(pglobal.set_data, self.process)
+        pglobal = parallel.SetGlobals(signals, self.process)
+        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
         foo.args = (delta_f, psd, max_filter_len)
         foo.name = 'Whitening'
         white = foo.initiate()
@@ -311,8 +311,8 @@ class MultirateSampling(TransformWrapperPerChannel):
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Call multi-rate sampling module for usage
         # This is kept separate since further experimentation might be required
-        pglobal = parallel.SetGlobals(y)
-        foo = parallel.Parallelise(pglobal.set_data, multirate_sampling)
+        pglobal = parallel.SetGlobals(y, multirate_sampling)
+        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
         foo.args = (data_cfg,)
         foo.name = 'MR Sampling'
         pout = foo.initiate()
