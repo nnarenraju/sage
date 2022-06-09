@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import os
+import re
 import h5py
 import time
 import glob
@@ -50,7 +51,7 @@ tensor_dtype=torch.float32
 
 """ Dataset Objects """
 
-class MLMDC1(Dataset):
+class MLMDC1_IterBatch(Dataset):
     """
     Procedure for data storage:
         1. Output h_plus and h_cross for each signal, output noise
@@ -479,6 +480,332 @@ class MLMDC1(Dataset):
         
         return (sample, target, all_times)
 
+
+
+class MLMDC1_IterSample(Dataset):
+    
+    def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
+                 signal_only_transforms=None, noise_only_transforms=None, 
+                 training=False, testing=False, store_device='cpu', train_device='cpu', 
+                 cfg=None, data_cfg=None):
+        
+        super().__init__()
+        self.data_paths = data_paths
+        self.targets = targets
+        self.transforms = transforms
+        self.target_transforms = target_transforms
+        self.signal_only_transforms = signal_only_transforms
+        self.noise_only_transforms = noise_only_transforms
+        self.store_device = store_device
+        self.train_device = train_device
+        self.cfg = cfg
+        self.data_cfg = data_cfg
+        self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
+        
+        
+        """ PSD Handling (used in whitening) """
+        # Store the PSD files here in RAM. This reduces the overhead when whitening.
+        # Read all psds in the data_dir and store then as FrequencySeries
+        self.PSDs = {}
+        psd_files = glob.glob(os.path.join(self.data_loc, "psds/*"))
+        for psd_file in psd_files:
+            with h5py.File(psd_file, 'r') as fp:
+                data = np.array(fp['data'])
+                delta_f = fp.attrs['delta_f']
+                name = fp.attrs['name']
+                
+            psd_data = FrequencySeries(data, delta_f=delta_f)
+            # Store PSD data into lookup dict
+            self.PSDs[name] = psd_data
+        
+        if self.data_cfg.dataset == 1:
+            self.psds_data = [self.PSDs['aLIGOZeroDetHighPower']]*2
+            
+        
+        """ Multi-rate Sampling """
+        # Get the sampling rates and their bins idx
+        data_cfg.dbins = get_sampling_rate_bins(data_cfg)
+        
+        
+        """ LAL Detector Objects (used in project_wave - AugPolSky) """
+        # Detector objects (these are lal objects and may present problems when parallelising)
+        # Create the detectors (TODO: generalise this!!!)
+        detectors_abbr = ('H1', 'L1')
+        self.detectors = []
+        for det_abbr in detectors_abbr:
+            self.detectors.append(pycbc.detector.Detector(det_abbr))
+        
+        
+        """ PyCBC Distributions (used in AugPolSky and AugDistance) """
+        ## Distribution objects for augmentation
+        # Used for obtaining random polarisation angle
+        self.uniform_angle_distr = distributions.angular.UniformAngle(uniform_angle=(0., 2.0*np.pi))
+        # Used for obtaining random ra and dec
+        self.skylocation_distr = distributions.sky_location.UniformSky()
+        # Used for obtaining random mass
+        self.mass_distr = distributions.Uniform(mass=(data_cfg.prior_low_mass, data_cfg.prior_high_mass))
+        # Used for obtaining random chirp distance
+        dist_gen = distributions.power_law.UniformRadius
+        self.chirp_distance_distr = dist_gen(distance=(data_cfg.prior_low_chirp_dist, 
+                                                       data_cfg.prior_high_chirp_dist))
+        # Distributions object
+        self.distrs = {'pol': self.uniform_angle_distr, 'sky': self.skylocation_distr,
+                       'mass': self.mass_distr, 'dchirp': self.chirp_distance_distr}
+        
+        
+        """ Data Save Params (for plotting sample just before training) """
+        # Saving frequency with idx plotting
+        # TODO: Add compatibility for using cfg.splitter with K-folds
+        if self.data_cfg.num_sample_save == None:
+            self.num_sample_save = int(len(self.data_paths)/100.0)
+        else:
+            self.num_sample_save = data_cfg.num_sample_save
+        # Initialise save counter
+        self.save_counter = 0
+        
+        
+        """ Random noise realisation """
+        self.noise_idx = np.argwhere(self.targets == 0).flatten()
+        self.noise_paths = self.data_paths[self.noise_idx]
+        
+        
+        """ Keep ExternalLink Lookup table open till end of run """
+        lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
+        self.extmain = h5py.File(lookup, 'r', libver='latest')
+        self.sample_rate = self.extmain.attrs['sample_rate']
+        
+        
+        """ Save Times """
+        self.record_times = {}
+        self.signal_aug_times = {}
+        self.noise_aug_times = {}
+        self.transform_times = {}
+        
+
+    def __len__(self):
+        return len(self.data_paths)
+
+    
+    def _read_(self, data_path):
+        
+        start = time.time()
+        
+        # Store all params within chunk file
+        params = {}
+        
+        # Get data from ExternalLink'ed lookup file
+        HDF5_Dataset, didx = os.path.split(data_path)
+        # Dataset Index should be an integer
+        didx = int(didx)
+        # Check whether data is signal or noise with target
+        target = 1 if bool(re.search('signal', HDF5_Dataset)) else 0
+        # Access group
+        group = self.extmain[HDF5_Dataset]
+        
+        if not target:
+            ## Read noise data
+            noise_1 = np.array(group['noise_1'][didx])
+            noise_2 = np.array(group['noise_2'][didx])
+            sample = np.stack([noise_1, noise_2], axis=0)
+        else:
+            ## Read signal data
+            h_plus = np.array(group['h_plus'][didx])
+            h_cross = np.array(group['h_cross'][didx])
+            sample = np.stack([h_plus, h_cross], axis=0)
+            # Signal params
+            params['start_time'] = group['start_time'][didx]
+            params['interval_lower'] = group['interval_lower'][didx]
+            params['interval_upper'] = group['interval_upper'][didx]
+            params['mass1'] = group['mass1'][didx]
+            params['mass2'] = group['mass2'][didx]
+            params['distance'] = group['distance'][didx]
+            params['mchirp'] = group['mchirp'][didx]
+            params['norm_dchirp'] = group['norm_dchirp'][didx]
+            params['norm_dist'] = group['norm_dist'][didx]
+            params['norm_mchirp'] = group['norm_mchirp'][didx]
+            params['norm_q'] = group['norm_q'][didx]
+            params['norm_tc'] = group['norm_tc'][didx]
+        
+        # Generic params
+        params['sample_rate'] = self.sample_rate
+        # Record read times
+        self.record_times['Load Sample'] = time.time() - start
+        
+        return (sample, target, params)
+    
+    
+    def _augmentation_(self, sample, target, params):
+        """ Signal and Noise only Augmentation """
+        ## Convert the signal from h_plus and h_cross to h_t
+        # During this procedure randomise the value of polarisation angle, ra and dec
+        # This should give us the strains required (project_wave might cause issues with MP)
+        start = time.time()
+        
+        if target:
+            if self.signal_only_transforms:
+                sstart = time.time()
+                sample, times = self.signal_only_transforms(sample, self.detectors, self.distrs, **params)
+                self.signal_aug_times = self.signal_aug_times | times
+                self.signal_aug_times['Total Time'] = time.time() - sstart
+            else:
+                add = {foo.__class__.__name__:0.0 for foo in self.signal_only_transforms.transforms}
+                self.signal_aug_times.update(add)
+                self.signal_aug_times['Total Time'] = 0.0
+        else:
+            if self.noise_only_transforms:
+                nstart = time.time()
+                sample, times = self.noise_only_transforms(sample)
+                self.noise_aug_times = self.noise_aug_times | times
+                self.noise_aug_times['Total Time'] = time.time() - nstart
+            else:
+                add = {foo.__class__.__name__:0.0 for foo in self.noise_only_transforms.transforms}
+                self.noise_aug_times.update(add)
+                self.noise_aug_times['Total Time'] = 0.0
+            
+        self.record_times['Augmentation'] = time.time() - start
+        
+        return sample
+    
+    
+    def _noise_realisation_(self, sample, target, params):
+        """ Finding random noise realisation for signal """
+        # Random noise realisation is the only procedure available
+        # Fixed noise realisation was deprecated
+        start = time.time()
+        
+        if self.cfg.add_random_noise_realisation and target:
+            # Pick a random noise realisation to add to the signal
+            random_noise_data_path = random.choice(self.noise_paths)
+            # Read the noise data
+            pure_noise, _, _ = self._read_(random_noise_data_path)
+            
+            """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
+            # network_snr = get_network_snr(pure_sample, self.psds_data, params, self.data_loc)
+            
+            """ Adding noise to signals """
+            if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):
+                noisy_signal = sample + pure_noise
+            else:
+                raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
+            self.record_times['Noise Realisation'] = time.time() - start
+            
+        elif not self.cfg.add_random_noise_realisation and target:
+            # Fixed noise realisation to add to the signal
+            raise DeprecationWarning('Fixed noise realisation feature deprecated on June 8th, 2022')
+        
+        else:
+            # If the sample is pure noise
+            noisy_signal = sample
+            self.record_times['Noise Realisation'] = time.time() - start
+        
+        return noisy_signal
+    
+    
+    def _transforms_(self, noisy_sample, target):
+        """ Transforms """
+        start = time.time()
+    
+        # Apply transforms to signal and target (if any)
+        if self.transforms:
+            sample, times = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
+            self.transform_times = self.transform_times | times
+            self.transform_times['Total Time'] = time.time() - start
+        else:
+            sample = noisy_sample
+            
+        if self.target_transforms:
+            target = self.target_transforms(target)
+        
+        self.record_times['Transforms'] = time.time() - start
+        return (sample, target)
+    
+    
+    def _plotting_(self, pure_sample, _noise, noisy_sample, sample, network_snr, idx, params):
+        """ Plotting idx data (if flag is set to True) """
+        start = time.time()
+        
+        if params['label'] and self.save_counter <= self.num_sample_save:
+            # Input parameters
+            pure_signal = pure_sample
+            pure_noise = _noise
+            noisy_signal = noisy_sample
+            if self.transforms:
+                trans_pure_signal, times = self.transforms(pure_signal, self.psds_data, self.data_cfg)
+            else:
+                trans_pure_signal = None
+                
+            trans_noisy_signal = sample
+            save_path = self.data_loc
+            data_dir = os.path.normpath(save_path).split(os.path.sep)[-1]
+            # Plotting unit data
+            plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_noisy_signal, 
+                      params['mass1'], params['mass2'], network_snr, params['sample_rate'],
+                      save_path, data_dir, idx)
+            # Update save counter
+            self.save_counter += 1
+        
+        self.record_times['Plotting'] = time.time() - start
+    
+    
+    def __getitem__(self, idx):
+        
+        main_start = time.time()
+        # Record time taken for all sections of __getitem__
+        self.record_times = {}
+        self.signal_aug_times = {}
+        self.noise_aug_times = {}
+        self.transform_times = {}
+        
+        data_path = self.data_paths[idx]
+        
+        ## Read the sample(s)
+        sample, target, params = self._read_(data_path)
+        
+        
+        # try:
+        ## Signal and Noise Augmentation
+        pure_sample = self._augmentation_(sample, target, params)
+        ## Add noise realisation to the signals
+        noisy_sample = self._noise_realisation_(pure_sample, target, params)
+        
+        ## Target handling
+        target = np.array([self.targets[idx]])
+        # Concatenating the normalised_tc within the target variable
+        # target = np.append(target, normalised_tc)
+        ## Target should look like (1., 0., 0.567) for signal
+        ## Target should look like (0., 1., -1.0) for noise
+        
+        ## Transforms
+        sample, target = self._transforms_(noisy_sample, target)
+        
+        ## Plotting
+        # self._plotting_(pure_sample, _noise, noisy_sample, sample, network_snr, idx, params)
+        
+        # except Exception as e:
+        #     print('\n\n{}: {}'.format(e.__class__, e))
+        #     shutil.rmtree(self.cfg.export_dir)
+        #     print('datasets.py: Terminated due to raised exception.')
+        #     exit(1)
+        
+        """ Reducing memory footprint """
+        # This can only be performed after transforms and augmentation
+        sample = np.array(sample, dtype=np.float32)
+        target = np.array(target, dtype=np.float32)
+        
+        """ Tensorification """
+        # Convert signal/target to Tensor objects
+        sample = torch.from_numpy(sample)
+        target = torch.from_numpy(target)        
+        
+        self.record_times['Other'] = (time.time() - main_start) - sum(self.record_times.values())
+        
+        # Return as tuple for immutability
+        all_times = {'sections': self.record_times, 
+                     'signal_aug': self.signal_aug_times, 
+                     'noise_aug': self.noise_aug_times, 
+                     'transforms': self.transform_times}
+        
+        return (sample, target)
 
 
 

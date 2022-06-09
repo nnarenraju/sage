@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import os
+import re
 import gc
 import h5py
 import glob
@@ -124,12 +125,8 @@ class GenerateData:
         if self.dataset == 1:
             psd_fun = pycbc.psd.analytical.aLIGOZeroDetHighPower
             self.psd_names = ['aLIGOZeroDetHighPower', 'aLIGOZeroDetHighPower']
-            padded_psd_len = int(int(self.sample_length_in_num+(self.error_padding_in_num*2.0)+0.5) / 2 + 1)
-            self.psds = [psd_fun(padded_psd_len, self.delta_f, self.noise_low_freq_cutoff)
+            self.psds = [psd_fun(self.psd_len, self.delta_f, self.noise_low_freq_cutoff)
                          for _ in range(len(self.detectors_abbr))]
-            # Save PSDs
-            self.save_psds = [psd_fun(self.psd_len, self.delta_f, self.noise_low_freq_cutoff)
-                              for _ in range(len(self.detectors_abbr))]
         else:
             # Here, we should pick two PSDs randomly and read the files
             # PSDs are obtained from the noise generator
@@ -218,7 +215,7 @@ class GenerateData:
                 os.remove(psd_file_path)
             # Write PSD in HDF5 format
             with h5py.File(psd_file_path, 'a') as fp:
-                data = self.save_psds[0].numpy()
+                data = self.psds[0].numpy()
                 key = 'data'
                 fp.create_dataset(key, data=data, compression='gzip', 
                                   compression_opts=9, shuffle=True)
@@ -342,7 +339,7 @@ class GenerateData:
         if not is_waveform:
             ## Generate noise
             if self.dataset == 1:
-                maxlen = round(self.sample_length_in_num + self.error_padding_in_num*2.0)
+                maxlen = round(self.sample_length_in_num)
                 noise = [self.noise_generator(psd).to_timeseries()[:maxlen]
                           for psd in self.psds]
                 
@@ -433,7 +430,7 @@ class GenerateData:
             # Setting the start_time, sets epoch and end_time as well within the TS
             # Set the start time of h_plus and h_plus after accounting for prepended zeros
             h_plus.start_time = start_interval - self.error_padding_in_s
-            h_cross.start_time = start_interval - self.error_padding_in_s 
+            h_cross.start_time = start_interval - self.error_padding_in_s
             
             
             # h_plus and h_cross is stored for augmentation purposes
@@ -511,14 +508,17 @@ class GenerateData:
     
     def _req_fields(self, names, max_nsamp, _group, _type):
         # Writing all datasets for signals
-        sample_names = ['noise_1', 'noise_2', 'h_plus', 'h_cross']
-        nonsample_names = [foo for foo in names if foo not in sample_names]
+        signal_names = ['h_plus', 'h_cross']
+        noise_names = ['noise_1', 'noise_2']
+        nonsample_names = [foo for foo in names if foo not in signal_names and foo not in noise_names]
         dtype = np.float64
         sgroup = _group.create_group(_type)
         
         for name in names:
-            if name in sample_names:
+            if name in signal_names:
                 maxshape = (max_nsamp, self.sample_length_in_num + self.error_padding_in_num*2.0)
+            elif name in noise_names:
+                maxshape = (max_nsamp, self.sample_length_in_num)
             elif name in nonsample_names:
                 maxshape = (max_nsamp,)
                 if name in ['psd1', 'psd2']:
@@ -607,6 +607,7 @@ class GenerateData:
         
         ## Add all necessary one time attributes (hdf5 file still open)
         # Dataset params
+        
         chunk_file.attrs['dataset'] = self.dataset
         chunk_file.attrs['seed'] = self.seed
         # Sample params
@@ -857,20 +858,63 @@ class GenerateData:
         paths = []
         ids = []
         targets = []
-        # Check targets
-        is_waveform = lambda idx: idx < self.num_waveforms
         # Save the dataset paths alongside the target and ids as hdf5
-        self.dirs['lookup'] = os.path.join(self.dirs['parent'], "training.hdf")
+        self.dirs['lookup'] = os.path.join(self.dirs['parent'], "extlinks.hdf")
         # Save this data in the hdf5 format as training.hdf
         main = h5py.File(self.dirs['lookup'], 'a', libver='latest')
-        attrs_main = dict(main.attrs)
+        add_attrs = True
+        idx = 0
+        
         # All other params for parameter estimation are stored within the sample files
         chunks = os.path.join(self.dirs['dataset'], "*.hdf")
-        for chunk_file in glob.glob(chunks):
+        for nfile, chunk_file in enumerate(glob.glob(chunks)):
             ## Each of these chunk files has an equal number of signals and noise
             ## Read the file, get all data and add data as ExternalLink to new training.hdf file
             # Read HDF5 tree and add tree to ExternalLink
             with h5py.File(chunk_file, 'r') as h5f:
+                # fp.keys() --> different sample rate groups
+                # fp[sample_rate_grp].keys() --> signal and noise groups
+                sr_grps = list(h5f.keys())
+                sn_grps = list(h5f[sr_grps[0]].keys())
+                # Get all group tree
+                gtree = [i+'/'+j for i,j in itertools.product(sr_grps, sn_grps)]
+                
+                for grp in gtree:
+                    # Get sample length of each dataset
+                    _branch = f"{nfile:03}" + '/' + grp
+                    if bool(re.search('signal', grp)):
+                        mode = 1
+                    elif bool(re.search('noise', grp)):
+                        mode = 0
+                    
+                    for obj in h5f[grp].keys():
+                        # Add dataset as External Link
+                        # Branch Format: 007 / 2048 / signal / h_plus
+                        curr_branch = grp + '/' + obj
+                        extl_branch = _branch + '/' + obj
+                        main[extl_branch] = h5py.ExternalLink(chunk_file, curr_branch)
+                    
+                    # Maxshape of given np.ndarray
+                    shape = np.array(h5f[grp][list(h5f[grp].keys())[0]]).shape[0]
+                    # Update idxs
+                    branch_ids = np.arange(idx, idx+shape)
+                    ids.extend(branch_ids)
+                    idx = idx+shape
+                    # Update paths to dataset objects
+                    branch_paths = itertools.product([_branch], np.arange(shape))
+                    paths.extend([foo + '/' + str(bar) for foo, bar in branch_paths])
+                    # Update target variable for each sample
+                    targets.extend(np.full(shape, mode))
+                        
+                # Add attributes from chunk files once to main ExternalLink File
+                if add_attrs:
+                    attrs_save = dict(h5f.attrs)
+                    for key, value in attrs_save.items():
+                        main.attrs[key] = value
+                    add_attrs = False
+                    
+                """
+                ## Adding ExternalLink using visititems() method
                 # Clean self.hdf5_tree
                 self.hdf5_tree = []
                 # Get all sampling rate datasets within file
@@ -889,37 +933,26 @@ class GenerateData:
                 if not len(attrs_save.keys() & attrs_main.keys()):
                     for key, value in attrs_save.items():
                         main.attrs[key] = value
-                
-                # Append to ids using generation id
-                ids.extend(sample_idxs)
-                # Paths here are simply rm_sample_dirs
-                # Attach {'h_plus', 'h_cross', 'noise'} to get the signal/noise data
-                # Other datasets and attributes can be accessed in a similar way
-                paths.extend(rm_sample_dirs)
-                # Add targets by checking the sample_idx with num_waveforms (create is_waveform)
-                # target=1 represents signal, target=0 represents noise
-                targets.extend([int(is_waveform(int(idx))) for idx in sample_idxs])
-                # Add all keys self.hdf5_tree to add
-                for branch in self.hdf5_tree:
-                    main[branch] = h5py.ExternalLink(chunk_file, branch)
-                
-                # Add group attributes for each sample (signal/noise)
-                # WARNING: Only works for one sample_rate group. Generalise this!
-                # These linked attributes can only be added after ExternalLink is created
-                sample_attrs = [dict(h5f[group].attrs) for group in rm_sample_dirs]
-                for attrs_dict, sample in zip(sample_attrs, rm_sample_dirs):
-                    for key, value in attrs_dict.items():
-                        main[sample].attrs[key] = value
+                """
         
         # Close file explicitly, or use with instead
         main.close()
         
+        # Sanity check
+        """ 
+        with h5py.File(self.dirs['lookup'], 'a', libver='latest') as fp:
+            start = time.time()
+            print(np.array(fp['004/2048/signal/h_plus'][2]))
+            fin = time.time() - start
+            print(fin)
+        raise
         """
+        
         # visititems does not show h_plus, h_cross or noise datasets for some reason
         # If we add an extra /lorem to the linked dataset name, this shows up
         # However, this is not a phantom name. It will actually exist. 
         # Probably an issue with visititems method.
-        
+        """
         with h5py.File(self.dirs['lookup'], 'r') as h5f:
             self.hdf5_tree = []
             h5f.visititems(self.get_keys)
@@ -936,7 +969,6 @@ class GenerateData:
         assert len(paths) == len(targets)
         lookup = list(zip(ids, paths, targets))
         # Shuffle the column stack (signal and noise are not shuffled)
-        # NumPy: "Multi-dimensional arrays are only shuffled along the first axis"
         random.shuffle(lookup)
         # Separate out the tuples for ids, paths and targets
         ids, paths, targets = zip(*lookup)
@@ -954,7 +986,7 @@ class GenerateData:
             ds.create_dataset('path', data=paths, compression='gzip', compression_opts=9, shuffle=True)
             ds.create_dataset('target', data=targets, compression='gzip', compression_opts=9, shuffle=True)
         
-        print("make_training_lookup: Lookup table created successfully!")
+        print("make_elink_lookup: ExternalLink lookup table created successfully!")
 
 
 def make(slots_magic_params, export_dir):
@@ -1023,8 +1055,9 @@ def make(slots_magic_params, export_dir):
         finish = time.time() - start
         print("Time taken for chunk data generation = {} minutes".format(finish/60.))
     
-    
     # Make dataset lookup table
     gd.make_training_lookup()
+    # Make elink dataset lookup table
+    gd.make_elink_lookup()
     # Making the prior distribution plots
     gd.plot_priors(gd.dirs['parent'])

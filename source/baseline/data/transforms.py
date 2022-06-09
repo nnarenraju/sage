@@ -192,7 +192,7 @@ class BandPass(TransformWrapper):
         return self.butter_bandpass_filter(y)
 
 
-class HighPass(TransformWrapperPerChannel):
+class HighPass(TransformWrapper):
     def __init__(self, always_apply=True, lower=16, fs=2048, order=5):
         super().__init__(always_apply)
         self.lower = lower
@@ -210,13 +210,9 @@ class HighPass(TransformWrapperPerChannel):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
+    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
         # Parallelise HighPass filter
-        pglobal = parallel.SetGlobals(y, self.butter_highpass_filter)
-        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
-        foo.name = 'HighPass'
-        pout = foo.initiate()
-        return pout
+        return self.butter_highpass_filter(y)
 
 
 class Whiten(TransformWrapperPerChannel):
@@ -226,7 +222,7 @@ class Whiten(TransformWrapperPerChannel):
         self.trunc_method = trunc_method
         self.remove_corrupted = remove_corrupted
         
-    def whiten(self, signals, psd, data_cfg):
+    def whiten(self, signal, psd, data_cfg):
         """
         Return a whitened time series
 
@@ -279,16 +275,19 @@ class Whiten(TransformWrapperPerChannel):
         
         """ Whitening """
         # Whiten the data by the asd
-        pglobal = parallel.SetGlobals(signals, self.process)
-        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
-        foo.args = (delta_f, psd, max_filter_len)
-        foo.name = 'Whitening'
-        white = foo.initiate()
+        
+        # MP mode for whitening
+        # pglobal = parallel.SetGlobals(signals, self.process)
+        # foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
+        # foo.args = (delta_f, psd, max_filter_len)
+        # foo.name = 'Whitening'
+        # white = foo.initiate()
         
         # Sequential mode for whitening
-        # white = [(signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries() for signal in signals]
-        # if self.remove_corrupted:
-        #     white = [_white[int(max_filter_len/2):int(len(_white)-max_filter_len/2)] for _white in white]
+        white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
+        
+        if self.remove_corrupted:
+            white = white[int(max_filter_len/2):int(len(white)-max_filter_len/2)]
             
         return white
     
@@ -298,9 +297,11 @@ class Whiten(TransformWrapperPerChannel):
     
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Convert signal to TimeSeries object
-        signals = [TimeSeries(signal, delta_t=1./data_cfg.sample_rate) for signal in y]
+        # --> many signals
+        # signals = [TimeSeries(signal, delta_t=1./data_cfg.sample_rate) for signal in y]
+        signal = TimeSeries(y, delta_t=1./data_cfg.sample_rate)
         # Whitening
-        whitened_sample = self.whiten(signals, psd, data_cfg)
+        whitened_sample = self.whiten(signal, psd, data_cfg)
         return whitened_sample
 
 
@@ -311,12 +312,7 @@ class MultirateSampling(TransformWrapperPerChannel):
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Call multi-rate sampling module for usage
         # This is kept separate since further experimentation might be required
-        pglobal = parallel.SetGlobals(y, multirate_sampling)
-        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
-        foo.args = (data_cfg,)
-        foo.name = 'MR Sampling'
-        pout = foo.initiate()
-        return pout
+        return multirate_sampling(y, data_cfg)
     
 
 
@@ -327,9 +323,7 @@ class AugmentPolSky(SignalWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def augment(self, datum):
-        h_plus, h_cross, pol_angle, sky_pos, il, iu, st = datum
-        pol_angle = pol_angle[0]
+    def augment(self, h_plus, h_cross, pol_angle, sky_pos, il, iu, st):
         declination, right_ascension = sky_pos
         # Using PyCBC project_wave to get h_t from h_plus and h_cross
         # Setting the start_time is important! (too late, too early errors are because of this)
@@ -340,7 +334,7 @@ class AugmentPolSky(SignalWrapper):
         h_cross.start_time = st
         
         # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
-        strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle, method='vary_polarization') for det in self.dets]
+        strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle, method='constant') for det in self.dets]
         time_interval = (il, iu)
         # Put both strains together
         return np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
@@ -356,16 +350,14 @@ class AugmentPolSky(SignalWrapper):
         
         ## Get random value (with a given prior) for polarisation angle, ra, dec
         # Polarisation angle
-        maxlen = len(y[0])
-        pol_angles = distrs['pol'].rvs(size=maxlen)
+        # maxlen = len(y[0]) --> many signals
+        pol_angles = distrs['pol'].rvs()[0][0]
         # Right ascension, declination
-        sky_positions = distrs['sky'].rvs(size=maxlen)
+        sky_positions = distrs['sky'].rvs()[0]
         
-        data = list(zip(y[0], y[1], pol_angles, sky_positions, self.interval_lower, self.interval_upper, self.start_time))
-        pglobal = parallel.SetGlobals(data, self.augment)
-        foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
-        foo.name = 'AugmentPolSky'
-        pout = foo.initiate()
+        times = (self.interval_lower, self.interval_upper, self.start_time, )
+        args = (y[0], y[1], pol_angles, sky_positions, ) + times
+        out = self.augment(*args)
         
         """
         # Sanity check for sample_length
@@ -379,8 +371,7 @@ class AugmentPolSky(SignalWrapper):
         
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         # Shape remains the same, so reading in dataset object won't be a problem
-        all_strains = np.stack([pout[:,0], pout[:,1]], axis=0)
-        return all_strains
+        return out
 
 
 class AugmentDistance(SignalWrapper):

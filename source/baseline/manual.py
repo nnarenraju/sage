@@ -228,14 +228,14 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             transfrom_times = []
             
             
-            for training_samples, training_labels, all_times in pbar:
+            for training_samples, training_labels in pbar:
                 
                 # Record time taken to load data (calculate avg time later)
                 load_times.append(time.time())
-                section_times.append(all_times['sections'])
-                transfrom_times.append(all_times['transforms'])
-                signal_aug_times.append(all_times['signal_aug'])
-                noise_aug_times.append(all_times['noise_aug'])
+                # section_times.append(all_times['sections'])
+                # transfrom_times.append(all_times['transforms'])
+                # signal_aug_times.append(all_times['signal_aug'])
+                # noise_aug_times.append(all_times['noise_aug'])
                 # Record time taken for training
                 start_train = time.time()
                 
@@ -252,7 +252,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 accuracies = []
                 # Get all mini-folds and run training phase for each batch
                 # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
-                if cfg.dataset.__name__ == "BatchLoader" or cfg.megabatch:
+                if cfg.megabatch:
                     for batch_samples, batch_labels in zip(training_samples, training_labels):
                         # Convert the training_sample into a Simple dataset object
                         # We take the first element since we give 1 batch to the BatchLoader
@@ -309,6 +309,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             plot_times['train'] = train_times
             plot_times['load'] = load_times
             
+            print(total_time)
+            raise
+            
             record(plot_times, total_time, cfg)
             
 
@@ -333,7 +336,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     pred_prob = []
                     # Get all mini-folds and run training phase for each batch
                     # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
-                    if cfg.dataset.__name__ == "BatchLoader" or cfg.megabatch:
+                    if cfg.megabatch:
                         for batch_samples, batch_labels in zip(validation_samples, validation_labels):
                             # Convert the training_sample into a Simple dataset object
                             batch_valid_dataset = Simple(batch_samples, batch_labels, 
@@ -438,7 +441,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 best_loss = epoch_validation_loss
             
             """ Epoch Display """
-            print("Best Validation Loss = {}".format(best_loss))
+            print("\nBest Validation Loss (so far) = {}".format(best_loss))
             print("\nEpoch Validation Loss = {}".format(epoch_validation_loss))
             print("Epoch Training Loss = {}".format(epoch_training_loss))
             print("Average Validation Accuracy = {}".format(avg_acc_valid))

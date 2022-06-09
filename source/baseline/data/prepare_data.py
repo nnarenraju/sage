@@ -26,7 +26,6 @@ Documentation: NULL
 # IN-BUILT
 import os
 import h5py
-import json
 import shutil
 import numpy as np
 import pandas as pd
@@ -75,6 +74,7 @@ class DataModule:
         cfg = eval(opts.config)
         return cfg
     
+    
     def configure_dataset(opts):
         """ 
         Read dataset configuration
@@ -95,9 +95,11 @@ class DataModule:
         cfg = eval(opts.data_config)
         return cfg
     
+    
     def make_export_dir(cfg):
         # Results directory (preferred: /mnt/nnarenraju)
         cfg.export_dir.mkdir(parents=True, exist_ok=False)
+    
     
     def get_summary(cfg, data_cfg, export_dir):
         """
@@ -134,21 +136,26 @@ class DataModule:
         # If it does, check if training.hdf exists within it and save in export dir
         check_dir = os.path.join(dc_attrs['parent_dir'], dc_attrs['data_dir'])
         if os.path.isdir(check_dir):
-            if cfg.dataset.__name__ == "BatchLoader":
-                check_file = os.path.join(check_dir, "trainable.json")
-            else:
-                check_file = os.path.join(check_dir, "training.hdf")
+            # Lookup table formats
+            check_file = os.path.join(check_dir, "training.hdf")
+            elink_file = os.path.join(check_dir, "extlinks.hdf")
+            # Copy lookup tables to export_dir
             if os.path.isfile(check_file):
                 # Move the training.hdf to export_dir for pipeline
                 move_location = os.path.join(export_dir, 'training.hdf')
                 shutil.copy(check_file, move_location)
+            if os.path.isfile(elink_file):
+                # Move the extlinks.hdf to export_dir for pipeline
+                move_location = os.path.join(export_dir, 'extlinks.hdf')
+                shutil.copy(elink_file, move_location)
         else:
             raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
         
         # Testing data
         # TODO: A testing dataset should also be created in a similar format
         # Under construction!
-            
+    
+    
     def get_metadata(cfg):
         """
         Retrieve dataset metadata
@@ -169,47 +176,38 @@ class DataModule:
             
         """
         
-        # set lookup table
-        if cfg.dataset.__name__ == "BatchLoader":
-            lookup_table = os.path.join(cfg.export_dir, "trainable.json")
-            with open(lookup_table, 'r') as fp:
-                # train should have (ids, path, target)
-                # Please clean this. I can even. This is too much.
-                data = json.load(fp)
-                train = np.array([data['ids'], data['path'], data['target'],
-                                  data['norm_tc'], data['distance'], data['mchirp']], dtype=object)
-                train = np.column_stack(train)
-                train = pd.DataFrame(train)
-                train.columns = ['ids', 'path', 'target', 'norm_tc', 'distance', 'mchirp']
-                raise ValueError('BatchLoader has been deprecated as of May 18th, 2022')
+        # Set lookup table
+        if cfg.megabatch:
+            lookup_file = 'training.hdf'
         else:
-            lookup_table = os.path.join(cfg.export_dir, "training.hdf")
-            # Deprecated: Usage of self.get_metadata with make_default_dataset (non-MP)
-            with h5py.File(lookup_table, 'a') as fp:
-                ids = np.array(fp['id'][:])
-                paths = np.array([foo.decode('utf-8') for foo in fp['path']])
-                targets = np.array(fp['target'][:])
+            lookup_file = 'extlinks.hdf'
+        
+        lookup_table = os.path.join(cfg.export_dir, lookup_file)
+        # Deprecated: Usage of self.get_metadata with make_default_dataset (non-MP)
+        with h5py.File(lookup_table, 'a') as fp:
+            ids = np.array(fp['id'][:])
+            paths = np.array([foo.decode('utf-8') for foo in fp['path']])
+            targets = np.array(fp['target'][:])
+        
+        # Chunk the entire lookup table for BatchLoader method used within MLMDC1 dataset object
+        # The independant BatchLoader Method has been deprecated as of May 24th, 2022
+        # mega_batch_size method deprecated on May 31st, 2022
+        
+        """
+        Deprecated MegaBatch method
+        ---------------------------
             
-            # Chunk the entire lookup table for BatchLoader method used within MLMDC1 dataset object
-            # The independant BatchLoader Method has been deprecated as of May 24th, 2022
-            # mega_batch_size method deprecated on May 31st, 2022
-            
-            """ 
-            Deprecated MegaBatch method
-            ---------------------------
+            if cfg.mega_batch_size != -1 and cfg.mega_batch_size != None:
+                paths = np.array_split(paths, int(len(paths)/cfg.mega_batch_size))
+                targets = np.array_split(targets, int(len(targets)/cfg.mega_batch_size))
+                # ids are not split, they are converted to regular single int ids
+                ids = np.arange(len(targets))
                 
-                if cfg.mega_batch_size != -1 and cfg.mega_batch_size != None:
-                    paths = np.array_split(paths, int(len(paths)/cfg.mega_batch_size))
-                    targets = np.array_split(targets, int(len(targets)/cfg.mega_batch_size))
-                    # ids are not split, they are converted to regular single int ids
-                    ids = np.arange(len(targets))
-                    
-            """
-            
-            # Create a consolidated lookup date as a Pandas Dataframe
-            lookup = list(zip(ids, paths, targets))
-            train = pd.DataFrame(lookup, columns=['id', 'path', 'target'])
-            
+        """
+        
+        # Create a consolidated lookup date as a Pandas Dataframe
+        lookup = list(zip(ids, paths, targets))
+        train = pd.DataFrame(lookup, columns=['id', 'path', 'target'])
         
         # TODO: Do the same prodecure for testing dataset. Does not require splitting.
         # Under construction!
@@ -228,6 +226,7 @@ class DataModule:
             folds = [(idxs[:int(0.8*N)], idxs[int(0.8*N):])]
         
         return (train, folds)
+    
     
     def get_dataset_objects(cfg, data_cfg, train_fold, valid_fold):
         """
@@ -257,11 +256,6 @@ class DataModule:
         
         # transforms are not required if the cfg.dataset is made for trainable data
         # this is automagically taken care of within the BatchLoader datasets class
-        if cfg.dataset.__name__ == "BatchLoader":
-            cfg.dataset_params['distance'] = train_fold['distance']
-            cfg.dataset_params['mchirp'] = train_fold['mchirp']
-            cfg.dataset_params['norm_tc'] = train_fold['norm_tc']
-            
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
@@ -269,11 +263,6 @@ class DataModule:
                 noise_only_transforms=cfg.transforms['noise'],
                 training = True, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
-        
-        if cfg.dataset.__name__ == "BatchLoader":
-            cfg.dataset_params['distance'] = valid_fold['distance']
-            cfg.dataset_params['mchirp'] = valid_fold['mchirp']
-            cfg.dataset_params['norm_tc'] = valid_fold['norm_tc']
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
@@ -285,6 +274,7 @@ class DataModule:
         
         return (train_dataset, valid_dataset)
     
+    
     def get_dataloader(cfg, train_data, valid_data):
         """
         Create Pytorch DataLoader objects
@@ -295,7 +285,7 @@ class DataModule:
                    pin_memory=False, drop_last=False, timeout=0,
                    worker_init_fn=None, *, prefetch_factor=2,
                    persistent_workers=False)
-    
+        
         Parameters
         ----------
         train_data : map-style dataset object
@@ -308,12 +298,12 @@ class DataModule:
         
         """
         
-        # check cfg and set batch_size to 1 if using BatchLoader
-        if cfg.dataset.__name__ == "BatchLoader" or cfg.megabatch:
+        # Check cfg and set batch_size to 1 if using MegaBatch
+        if cfg.megabatch:
             batch_size = 1
-            num_workers = cfg.num_workers
-            pin_memory = cfg.pin_memory
-            persistent_workers = cfg.persistent_workers
+            num_workers = 0
+            pin_memory = False
+            persistent_workers = False
         else:
             batch_size = cfg.batch_size
             num_workers = cfg.num_workers
@@ -329,6 +319,7 @@ class DataModule:
             train_data, batch_size=batch_size, shuffle=True,
             num_workers=num_workers, pin_memory=pin_memory, 
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
+        
         valid_loader = D.DataLoader(
             valid_data, batch_size=batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=pin_memory, 

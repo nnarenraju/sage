@@ -32,7 +32,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from sklearn.model_selection import StratifiedKFold
 
 # LOCAL
-from data.datasets import MLMDC1, BatchLoader
+from data.datasets import MLMDC1_IterBatch, MLMDC1_IterSample, BatchLoader
 from metrics.custom_metrics import AUC
 from architectures.backend import CNN_1D
 from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel, KappaModelSimplified, KappaModelPE
@@ -63,7 +63,7 @@ class Baseline:
     """ Dataset """
     # Dataset object (opts, quick access, read only)
     # if dataset object is set to 'simple', trainable.hdf should exist
-    dataset = MLMDC1
+    dataset = MLMDC1_IterSample
     dataset_params = dict()
     
     """ Architecture """
@@ -177,7 +177,7 @@ class KaggleFirst:
     splitter = None
     
     """ Dataset """
-    dataset = MLMDC1
+    dataset = MLMDC1_IterSample
     dataset_params = dict()
     
     """ Architecture """
@@ -387,7 +387,7 @@ class Baseline_May18(KF_BatchTrain):
     export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset """
-    dataset = MLMDC1
+    dataset = MLMDC1_IterSample
     dataset_params = dict()
     
     """ Architecture """
@@ -402,10 +402,13 @@ class Baseline_May18(KF_BatchTrain):
     )
     
     """ Dataloader params """
-    num_workers = 0
-    pin_memory = False
-    prefetch_factor = 2
-    persistent_workers = False
+    num_workers = 8
+    pin_memory = True
+    prefetch_factor = 10
+    persistent_workers = True
+    
+    """  DataLoader mode """
+    megabatch = False
     
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)

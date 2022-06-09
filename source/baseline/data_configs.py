@@ -110,7 +110,7 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/Users/nnarenraju/Desktop"
     # Dataset directory within parent_dir
-    data_dir = "dataset_test_large"
+    data_dir = "dataset_test"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -126,12 +126,12 @@ class Default:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 5000
-    num_noises = 5000
+    num_waveforms = 25000
+    num_noises = 25000
     # For efficient RAM usage in data generation
     # Here too, keep both nums equal
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
-    chunk_size = [1000, 1000]
+    chunk_size = [5000, 5000]
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
