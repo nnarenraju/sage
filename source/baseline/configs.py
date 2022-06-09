@@ -412,6 +412,45 @@ class Baseline_May18(KF_BatchTrain):
     
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)
+
+
+class KaggleFirst_Jun9(KF_BatchTrain):
+    
+    """ Data storage """
+    name = "KaggleFirst_Jun9"
+    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    
+    """ Dataset """
+    dataset = MLMDC1_IterSample
+    dataset_params = dict()
+    
+    """ Architecture """
+    model = KappaModel
+    
+    model_params = dict(
+        # Kaggle frontend+backend
+        # This model is ridiculously slow on cpu, use cuda:0
+        model_name = 'kaggle_first', 
+        filter_size = 32,
+        kernel_size = 64,
+        timm_params = {'model_name': 'resnet34', 
+                        'pretrained': True, 
+                        'in_chans': 2, 
+                        'drop_rate': 0.25},
+        store_device = 'cpu',
+    )
+    
+    """ Dataloader params """
+    num_workers = 8
+    pin_memory = True
+    prefetch_factor = 10
+    persistent_workers = True
+    
+    """  DataLoader mode """
+    megabatch = False
+    
+    """ Loss Function """
+    loss_function = regularised_BCELoss(dim=1)
     
     
     
