@@ -133,7 +133,7 @@ def training_phase(cfg, Network, optimizer, loss_function, training_samples, tra
         # Obtain training output from network
         training_output = Network(training_samples)
         # Get necessary output params from dict output
-        pred_prob = training_output['pred_prob']
+        pred_prob = torch.sigmoid(training_output['pred_prob'])
         if 'tc' in list(training_output.keys()):
             tc = training_output['tc']
         
@@ -161,7 +161,7 @@ def validation_phase(cfg, nep, Network, optimizer, loss_function, validation_sam
         with torch.no_grad():
             validation_output = Network(validation_samples)
             # Get necessary output params from dict output
-            pred_prob = validation_output['pred_prob']
+            pred_prob = torch.sigmoid(validation_output['pred_prob'])
             if 'tc' in list(validation_output.keys()):
                 tc = validation_output['tc']
             
