@@ -751,7 +751,7 @@ class MLMDC1_IterSample(Dataset):
         sample = torch.from_numpy(sample)
         target = torch.from_numpy(target)
         
-        return (sample, target, None)
+        return (sample, target, [])
 
 
 
