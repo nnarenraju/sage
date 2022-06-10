@@ -116,11 +116,13 @@ def consolidated_display(train_time, total_time, accuracies):
     # Display wall clock time statistics
     print('\n--------------------------------------------------')
     print('Best accuracy seen in training phase = {}%'.format(max(accuracies)*100.0))
-    print('Total time taken to train epoch = {}'.format(np.sum(train_time)))
-    print('Average time taken to train per batch = {}'.format(np.mean(train_time)))
-    print('Total time taken to load (read & preprocess) epoch = {}'.format(total_time-np.sum(train_time)))
+    print('Total time taken to train epoch = {}'.format(np.around(np.sum(train_time), 3)))
+    print('Average time taken to train per batch = {}'.format(np.around(np.mean(train_time), 3)))
+    # Calculate MP load time
+    load_time = total_time-np.sum(train_time)
+    print('Total time taken to load (read & preprocess) epoch = {}'.format(np.around(load_time, 3)))
     print('Total time taken = {}'.format(total_time))
-    print('--------------------------------------------------\n')
+    print('--------------------------------------------------')
 
 def training_phase(cfg, Network, optimizer, loss_function, training_samples, training_labels):
     # Optimizer step on a single batch of training data
@@ -354,6 +356,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 pbar = tqdm(validDL)
                 for validation_samples, validation_labels, _ in pbar:
                     
+                    # Set the device and dtype
+                    validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
+                    validation_labels = validation_labels.to(dtype=torch.float32, device=cfg.train_device)
+                    
                     batch_validation_loss = 0.
                     accuracies = []
                     pred_prob = []
@@ -406,36 +412,17 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     if nep % cfg.save_freq == 0 and nep!=0:
                         roc_save_data(nep, pred_prob, validation_labels, cfg.export_dir)
 
-                    """ Calculating confusion matrix and Pred Probs """
-                    apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
+                    """ Calculating Pred Probs """
+                    # Confusion matrix has been deprecated as of June 10, 2022
+                    # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
                     for voutput, vlabel in zip(pred_prob, validation_labels):
                         # Get labels based on threshold
                         vlabel = vlabel.cpu().detach().numpy()
-                        coutput = apply_thresh(float(voutput[0]))
-                        clabel = apply_thresh(float(vlabel[0]))
                         
                         """ Prediction Probabilties """
                         # Storing predicted probabilities
                         if nep % cfg.save_freq == 0 and nep!=0:
                             prediction_probability_save_data(nep, vlabel, voutput[0], cfg.export_dir)
-                            
-                        """ Confusion Matrix """
-                        # True
-                        if coutput == clabel:
-                            # Positive
-                            if coutput == 1:
-                                tp += 1
-                            # Negative
-                            elif coutput == 0:
-                                tn += 1
-                        # False
-                        elif coutput != clabel:
-                            # Positive
-                            if coutput == 1:
-                                fp += 1
-                            # Negative
-                            elif coutput == 0:
-                                fn += 1
 
 
             """
