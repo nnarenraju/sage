@@ -122,28 +122,29 @@ class regularised_BCELoss(torch.nn.BCELoss):
         self.regularization_B = 1. - epsilon*self.regularization_dim
     
     def __call__(self, outputs, targets):
-        return self.forward(outputs, targets)
+        return self.forward(outputs['pred_prob'], targets)
     
     def forward(self, outputs, targets, *args, **kwargs):
         assert outputs.shape[-1] == self.regularization_dim
         transformed_input = self.regularization_A + self.regularization_B*outputs
         return torch.nn.BCELoss.forward(self, transformed_input, targets, *args, **kwargs)
 
-        
 
-
-""" FOR DIRECT USE ONLY, DO *NOT* USE WITH PYTORCH LIGHTNING """
-
-class reg_BCELoss(torch.nn.BCELoss):
+class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
     
     def __init__(self, *args, epsilon=1e-6, dim=None, **kwargs):
-        torch.nn.BCELoss.__init__(self, *args, **kwargs)
+        torch.nn.BCEWithLogitsLoss.__init__(self, *args, **kwargs)
         assert isinstance(dim, int)
         self.regularization_dim = dim
         self.regularization_A = epsilon
         self.regularization_B = 1. - epsilon*self.regularization_dim
-        
-    def forward(self, output, target, *args, **kwargs):
-        assert output.shape[-1]==self.regularization_dim
-        transformed_input = self.regularization_A + self.regularization_B*output
-        return torch.nn.BCELoss.forward(self, transformed_input, target, *args, **kwargs)
+    
+    def __call__(self, outputs, targets):
+        # We use raw values here as BCEWithLogitsLoss has a Sigmoid wrapper
+        return self.forward(outputs['raw'], targets)
+    
+    def forward(self, outputs, targets, *args, **kwargs):
+        assert outputs.shape[-1] == self.regularization_dim
+        transformed_input = self.regularization_A + self.regularization_B*outputs
+        return torch.nn.BCEWithLogitsLoss.forward(self, transformed_input, targets, *args, **kwargs)
+    

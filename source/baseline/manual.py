@@ -105,10 +105,10 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
     data = voutput_0
 
     # Input is a signal (pred_prob_tp)
-    if vlabels[0] == 1:
+    if vlabels == 1:
         save_data([[data]], save_tp)
     # Input is noise (pred_prob_tn)
-    if vlabels[1] == 1:
+    if vlabels == 0:
         save_data([[data]], save_tn)
 
 
@@ -133,18 +133,18 @@ def training_phase(cfg, Network, optimizer, loss_function, training_samples, tra
         # Obtain training output from network
         training_output = Network(training_samples)
         # Get necessary output params from dict output
-        pred_prob = torch.sigmoid(training_output['pred_prob'])
+        pred_prob = training_output['pred_prob']
         if 'tc' in list(training_output.keys()):
             tc = training_output['tc']
         
         ## TODO: Loss and accuracy need to be redefined to include 'tc'
         # Loss calculation
-        training_loss = loss_function(pred_prob, training_labels)
-        # Accuracy calculation
-        accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
+        training_loss = loss_function(training_output, training_labels)
         # Backward propogation using loss_function
         training_loss.backward()
-        
+    
+    # Accuracy calculation
+    accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
     # Clip gradients to make convergence somewhat easier
     torch.nn.utils.clip_grad_norm_(Network.parameters(), max_norm=cfg.clip_norm)
     # Make the actual optimizer step and save the batch loss
@@ -161,12 +161,12 @@ def validation_phase(cfg, nep, Network, optimizer, loss_function, validation_sam
         with torch.no_grad():
             validation_output = Network(validation_samples)
             # Get necessary output params from dict output
-            pred_prob = torch.sigmoid(validation_output['pred_prob'])
+            pred_prob = validation_output['pred_prob']
             if 'tc' in list(validation_output.keys()):
                 tc = validation_output['tc']
             
             ## TODO: loss and accuracy must be redefined to include 'tc'
-            validation_loss = loss_function(pred_prob, validation_labels)
+            validation_loss = loss_function(validation_output, validation_labels)
     
     # Accuracy calculation
     accuracy = calculate_accuracy(pred_prob, validation_labels, cfg.accuracy_thresh)
@@ -415,14 +415,14 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     """ Calculating Pred Probs """
                     # Confusion matrix has been deprecated as of June 10, 2022
                     # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    for voutput, vlabel in zip(pred_prob, validation_labels):
-                        # Get labels based on threshold
-                        vlabel = vlabel.cpu().detach().numpy()
+                    if nep % cfg.save_freq == 0 and nep!=0:
+                        for voutput, vlabel in zip(pred_prob, validation_labels):
+                            # Get labels based on threshold
+                            vlabel = vlabel.cpu().detach().numpy()
                         
                         """ Prediction Probabilties """
                         # Storing predicted probabilities
-                        if nep % cfg.save_freq == 0 and nep!=0:
-                            prediction_probability_save_data(nep, vlabel, voutput[0], cfg.export_dir)
+                        prediction_probability_save_data(nep, vlabel, voutput[0], cfg.export_dir)
 
 
             """

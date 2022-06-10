@@ -405,9 +405,9 @@ class KappaModel(torch.nn.Module):
         # I see no reason to include at this stage. But we can experiment.
         ## Output necessary params
         # Use sigmoid here if not using BCEWithLogitsLoss
-        pred_prob = x
+        pred_prob = self.sigmoid(x)
         # Return ouptut params (pred_prob)
-        return {'pred_prob': pred_prob}
+        return {'raw': x, 'pred_prob': pred_prob}
 
 
 class KappaModelPE(torch.nn.Module):
