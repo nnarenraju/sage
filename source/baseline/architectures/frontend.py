@@ -404,7 +404,8 @@ class KappaModel(torch.nn.Module):
         # In the Kaggle architecture a dropout is added at this point
         # I see no reason to include at this stage. But we can experiment.
         ## Output necessary params
-        pred_prob = self.sigmoid(x)
+        # Use sigmoid here if not using BCEWithLogitsLoss
+        pred_prob = x
         # Return ouptut params (pred_prob)
         return {'pred_prob': pred_prob}
 

@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import math
+import torch
 from pathlib import Path
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
@@ -455,7 +456,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     megabatch = False
     
     """ Loss Function """
-    loss_function = regularised_BCELoss(dim=1)
+    loss_function = torch.nn.BCEWithLogitsLoss()
     
     """ Optimizer """
     optimizer = optim.SGD
