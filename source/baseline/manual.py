@@ -116,12 +116,12 @@ def consolidated_display(train_time, total_time, accuracies):
     # Display wall clock time statistics
     print('\n----------------------------------------------------------------------')
     print('Best accuracy seen in training phase = {}%'.format(max(accuracies)*100.0))
-    print('Total time taken to train epoch = {} s'.format(np.around(np.sum(train_time), 3)))
-    print('Average time taken to train per batch = {} s'.format(np.around(np.mean(train_time), 3)))
+    print('Total time taken to train epoch = {}s'.format(np.around(np.sum(train_time), 3)))
+    print('Average time taken to train per batch = {}s'.format(np.around(np.mean(train_time), 3)))
     # Calculate MP load time
     load_time = total_time-np.sum(train_time)
-    print('Total time taken to load (read & preprocess) epoch = {} s'.format(np.around(load_time, 3)))
-    print('Total time taken = {} s'.format(np.around(total_time, 3)))
+    print('Total time taken to load (read & preprocess) epoch = {}s'.format(np.around(load_time, 3)))
+    print('Total time taken = {}s'.format(np.around(total_time, 3)))
     print('----------------------------------------------------------------------')
 
 def training_phase(cfg, Network, optimizer, loss_function, training_samples, training_labels):
