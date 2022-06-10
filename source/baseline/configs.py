@@ -25,19 +25,15 @@ Documentation: NULL
 
 # IN-BUILT
 import math
-import torch.nn as nn
 from pathlib import Path
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from sklearn.model_selection import StratifiedKFold
 
 # LOCAL
-from data.datasets import MLMDC1_IterBatch, MLMDC1_IterSample, BatchLoader
-from metrics.custom_metrics import AUC
-from architectures.backend import CNN_1D
-from architectures.frontend import AlphaModel, BetaModel, GammaModel, KappaModel, KappaModelSimplified, KappaModelPE
+from data.datasets import MLMDC1_IterSample, BatchLoader
+from architectures.frontend import GammaModel, KappaModel
 from data.transforms import Unify, UnifySignal, UnifyNoise
-from data.transforms import Normalise, BandPass, HighPass, Whiten, MultirateSampling
+from data.transforms import BandPass, HighPass, Whiten, MultirateSampling
 from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
 
@@ -181,7 +177,7 @@ class KaggleFirst:
     dataset_params = dict()
     
     """ Architecture """
-    model = KappaModelSimplified
+    model = KappaModel
     
     model_params = dict(
         # Kaggle frontend+backend
@@ -207,7 +203,7 @@ class KaggleFirst:
     num_epochs = 25
     batch_size = 100
     save_freq = 5
-    megabatch = True
+    megabatch = False
     early_stopping = False
     
     """ Dataloader params """
@@ -356,6 +352,7 @@ class KF_BatchTrain(KaggleFirst):
     transforms = dict(
         signal=UnifySignal([
             AugmentPolSky(),
+            AugmentDistance(),
         ]),
         noise=UnifyNoise([
             CyclicShift(),
@@ -437,20 +434,32 @@ class KaggleFirst_Jun9(KF_BatchTrain):
                         'pretrained': True, 
                         'in_chans': 2, 
                         'drop_rate': 0.25},
-        store_device = 'cpu',
+        store_device = 'cuda:1',
     )
     
+    """ Scheduler """
+    scheduler = CosineAnnealingWarmRestarts
+    scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
+    
     """ Dataloader params """
-    num_workers = 8
+    num_workers = 16
     pin_memory = True
-    prefetch_factor = 10
+    prefetch_factor = 100
     persistent_workers = True
+    
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
     
     """  DataLoader mode """
     megabatch = False
     
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)
+    
+    """ Optimizer """
+    optimizer = optim.SGD
+    optimizer_params = dict(lr=2e-4, momentum=0.9)
     
     
     

@@ -110,25 +110,39 @@ def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
     # Input is noise (pred_prob_tn)
     if vlabels[1] == 1:
         save_data([[data]], save_tn)
-    
+
+
+def consolidated_display(train_time, total_time, accuracies):
+    # Display wall clock time statistics
+    print('\n--------------------------------------------------')
+    print('Best accuracy seen in training phase = {}%'.format(max(accuracies)*100.0))
+    print('Total time taken to train epoch = {}'.format(np.sum(train_time)))
+    print('Average time taken to train per batch = {}'.format(np.mean(train_time)))
+    print('Total time taken to load (read & preprocess) epoch = {}'.format(total_time-np.sum(train_time)))
+    print('Total time taken = {}'.format(total_time))
+    print('--------------------------------------------------\n')
 
 def training_phase(cfg, Network, optimizer, loss_function, training_samples, training_labels):
     # Optimizer step on a single batch of training data
-    optimizer.zero_grad()
-    # Obtain training output from network
-    training_output = Network(training_samples)
-    # Get necessary output params from dict output
-    pred_prob = training_output['pred_prob']
-    if 'tc' in list(training_output.keys()):
-        tc = training_output['tc']
+    # Set zero_grad to apply None values instead of zeroes
+    optimizer.zero_grad(set_to_none = True)
     
-    ## TODO: Loss and accuracy need to be redefined to include 'tc'
-    # Loss calculation
-    training_loss = loss_function(pred_prob, training_labels)
-    # Accuracy calculation
-    accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
-    # Backward propogation using loss_function
-    training_loss.backward()
+    with torch.cuda.amp.autocast():
+        # Obtain training output from network
+        training_output = Network(training_samples)
+        # Get necessary output params from dict output
+        pred_prob = training_output['pred_prob']
+        if 'tc' in list(training_output.keys()):
+            tc = training_output['tc']
+        
+        ## TODO: Loss and accuracy need to be redefined to include 'tc'
+        # Loss calculation
+        training_loss = loss_function(pred_prob, training_labels)
+        # Accuracy calculation
+        accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
+        # Backward propogation using loss_function
+        training_loss.backward()
+        
     # Clip gradients to make convergence somewhat easier
     torch.nn.utils.clip_grad_norm_(Network.parameters(), max_norm=cfg.clip_norm)
     # Make the actual optimizer step and save the batch loss
@@ -139,14 +153,19 @@ def training_phase(cfg, Network, optimizer, loss_function, training_samples, tra
 
 def validation_phase(cfg, nep, Network, optimizer, loss_function, validation_samples, validation_labels):
     # Evaluation of a single validation batch
-    validation_output = Network(validation_samples)
-    # Get necessary output params from dict output
-    pred_prob = validation_output['pred_prob']
-    if 'tc' in list(validation_output.keys()):
-        tc = validation_output['tc']
+    with torch.cuda.amp.autocast():
+        # Gradient evaluation is not required for validation and testing
+        # Make sure that we don't do a .backward() function anywhere inside this scope
+        with torch.no_grad():
+            validation_output = Network(validation_samples)
+            # Get necessary output params from dict output
+            pred_prob = validation_output['pred_prob']
+            if 'tc' in list(validation_output.keys()):
+                tc = validation_output['tc']
+            
+            ## TODO: loss and accuracy must be redefined to include 'tc'
+            validation_loss = loss_function(pred_prob, validation_labels)
     
-    ## TODO: loss and accuracy must be redefined to include 'tc'
-    validation_loss = loss_function(pred_prob, validation_labels)
     # Accuracy calculation
     accuracy = calculate_accuracy(pred_prob, validation_labels, cfg.accuracy_thresh)
     # Returning pred_prob if saving data
@@ -189,6 +208,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
 
         ### Initialise global (over all epochs) params
         best_loss = 1.e10 # impossibly bad value
+        best_accuracy = 0.0 # bad value
         overfitting_check = 0
         
         for nep, epoch in enumerate(range(cfg.num_epochs)):
@@ -219,23 +239,24 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             # Recording the time taken for training
             start = time.time()
-            load_times = [start]
             train_times = []
-            # Store loading time split
-            section_times = []
-            signal_aug_times = []
-            noise_aug_times = []
-            transfrom_times = []
+            
+            if cfg.num_workers == 0:
+                # Store loading time split
+                section_times = []
+                signal_aug_times = []
+                noise_aug_times = []
+                transfrom_times = []
             
             
-            for training_samples, training_labels in pbar:
+            for training_samples, training_labels, all_times in pbar:
                 
-                # Record time taken to load data (calculate avg time later)
-                load_times.append(time.time())
-                # section_times.append(all_times['sections'])
-                # transfrom_times.append(all_times['transforms'])
-                # signal_aug_times.append(all_times['signal_aug'])
-                # noise_aug_times.append(all_times['noise_aug'])
+                if cfg.num_workers == 0:
+                    section_times.append(all_times['sections'])
+                    transfrom_times.append(all_times['transforms'])
+                    signal_aug_times.append(all_times['signal_aug'])
+                    noise_aug_times.append(all_times['noise_aug'])
+                
                 # Record time taken for training
                 start_train = time.time()
                 
@@ -247,6 +268,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Set the device and dtype
                 training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
                 training_labels = training_labels.to(dtype=torch.float32, device=cfg.train_device)
+                
                 
                 batch_training_loss = 0.
                 accuracies = []
@@ -294,25 +316,26 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 acc_train.extend(accuracies)
                 
                 # Record time taken to load data (calculate avg time later)
-                end_train = time.time() - start_train
-                train_times.append(end_train)
+                train_times.append(time.time() - start_train)
             
             ## Time taken to train data
             # Total time taken for training phase
             total_time = time.time() - start
-            # Plotting
-            plot_times = {}
-            plot_times['section'] = section_times
-            plot_times['signal_aug'] = signal_aug_times
-            plot_times['noise_aug'] = noise_aug_times
-            plot_times['transforms'] = transfrom_times
-            plot_times['train'] = train_times
-            plot_times['load'] = load_times
             
-            print(total_time)
-            raise
+            if cfg.num_workers == 0:
+                # Plotting
+                plot_times = {}
+                plot_times['section'] = section_times
+                plot_times['signal_aug'] = signal_aug_times
+                plot_times['noise_aug'] = noise_aug_times
+                plot_times['transforms'] = transfrom_times
+                plot_times['train'] = train_times
+                plot_times['load'] = None
             
-            record(plot_times, total_time, cfg)
+                record(plot_times, total_time, cfg)
+            
+            consolidated_display(train_times, total_time, acc_train)
+            
             
 
             """
@@ -440,8 +463,12 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 torch.save(Network.state_dict(), weights_save_path)
                 best_loss = epoch_validation_loss
             
+            if avg_acc_valid > best_accuracy:
+                best_accuracy = avg_acc_valid
+            
+            
             """ Epoch Display """
-            print("\nBest Validation Loss (so far) = {}".format(best_loss))
+            print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
             print("\nEpoch Validation Loss = {}".format(epoch_validation_loss))
             print("Epoch Training Loss = {}".format(epoch_training_loss))
             print("Average Validation Accuracy = {}".format(avg_acc_valid))
@@ -452,5 +479,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     print("\nThe current model may be overfitting! Terminating.")
                     break
         
-        print("\n================================================================")
-        print("Training complete with best validation loss = {}".format(best_loss))
+        print("\n================================================================\n")
+        print("Training Complete!")
+        print("Best validation loss = {}".format(best_loss))
+        print("Best validation accuracy = {}".format(best_accuracy))
+        print('\n\n')

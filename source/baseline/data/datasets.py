@@ -502,6 +502,10 @@ class MLMDC1_IterSample(Dataset):
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         
+        # Set CUDA device for pin_memory if needed
+        if bool(re.search('cuda', self.cfg.store_device)):
+            setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
+        
         
         """ PSD Handling (used in whitening) """
         # Store the PSD files here in RAM. This reduces the overhead when whitening.
@@ -574,21 +578,12 @@ class MLMDC1_IterSample(Dataset):
         self.extmain = h5py.File(lookup, 'r', libver='latest')
         self.sample_rate = self.extmain.attrs['sample_rate']
         
-        
-        """ Save Times """
-        self.record_times = {}
-        self.signal_aug_times = {}
-        self.noise_aug_times = {}
-        self.transform_times = {}
-        
 
     def __len__(self):
         return len(self.data_paths)
 
     
     def _read_(self, data_path):
-        
-        start = time.time()
         
         # Store all params within chunk file
         params = {}
@@ -628,8 +623,6 @@ class MLMDC1_IterSample(Dataset):
         
         # Generic params
         params['sample_rate'] = self.sample_rate
-        # Record read times
-        self.record_times['Load Sample'] = time.time() - start
         
         return (sample, target, params)
     
@@ -639,30 +632,10 @@ class MLMDC1_IterSample(Dataset):
         ## Convert the signal from h_plus and h_cross to h_t
         # During this procedure randomise the value of polarisation angle, ra and dec
         # This should give us the strains required (project_wave might cause issues with MP)
-        start = time.time()
-        
-        if target:
-            if self.signal_only_transforms:
-                sstart = time.time()
-                sample, times = self.signal_only_transforms(sample, self.detectors, self.distrs, **params)
-                self.signal_aug_times = self.signal_aug_times | times
-                self.signal_aug_times['Total Time'] = time.time() - sstart
-            else:
-                add = {foo.__class__.__name__:0.0 for foo in self.signal_only_transforms.transforms}
-                self.signal_aug_times.update(add)
-                self.signal_aug_times['Total Time'] = 0.0
-        else:
-            if self.noise_only_transforms:
-                nstart = time.time()
-                sample, times = self.noise_only_transforms(sample)
-                self.noise_aug_times = self.noise_aug_times | times
-                self.noise_aug_times['Total Time'] = time.time() - nstart
-            else:
-                add = {foo.__class__.__name__:0.0 for foo in self.noise_only_transforms.transforms}
-                self.noise_aug_times.update(add)
-                self.noise_aug_times['Total Time'] = 0.0
-            
-        self.record_times['Augmentation'] = time.time() - start
+        if target and self.signal_only_transforms:
+            sample, times = self.signal_only_transforms(sample, self.detectors, self.distrs, **params)
+        elif not target and self.noise_only_transforms:
+            sample, times = self.noise_only_transforms(sample)
         
         return sample
     
@@ -671,7 +644,6 @@ class MLMDC1_IterSample(Dataset):
         """ Finding random noise realisation for signal """
         # Random noise realisation is the only procedure available
         # Fixed noise realisation was deprecated
-        start = time.time()
         
         if self.cfg.add_random_noise_realisation and target:
             # Pick a random noise realisation to add to the signal
@@ -687,7 +659,6 @@ class MLMDC1_IterSample(Dataset):
                 noisy_signal = sample + pure_noise
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
-            self.record_times['Noise Realisation'] = time.time() - start
             
         elif not self.cfg.add_random_noise_realisation and target:
             # Fixed noise realisation to add to the signal
@@ -696,34 +667,26 @@ class MLMDC1_IterSample(Dataset):
         else:
             # If the sample is pure noise
             noisy_signal = sample
-            self.record_times['Noise Realisation'] = time.time() - start
         
         return noisy_signal
     
     
     def _transforms_(self, noisy_sample, target):
         """ Transforms """
-        start = time.time()
-    
         # Apply transforms to signal and target (if any)
         if self.transforms:
-            sample, times = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
-            self.transform_times = self.transform_times | times
-            self.transform_times['Total Time'] = time.time() - start
+            sample, _ = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
         else:
             sample = noisy_sample
             
         if self.target_transforms:
             target = self.target_transforms(target)
         
-        self.record_times['Transforms'] = time.time() - start
         return (sample, target)
     
     
     def _plotting_(self, pure_sample, _noise, noisy_sample, sample, network_snr, idx, params):
         """ Plotting idx data (if flag is set to True) """
-        start = time.time()
-        
         if params['label'] and self.save_counter <= self.num_sample_save:
             # Input parameters
             pure_signal = pure_sample
@@ -743,18 +706,9 @@ class MLMDC1_IterSample(Dataset):
                       save_path, data_dir, idx)
             # Update save counter
             self.save_counter += 1
-        
-        self.record_times['Plotting'] = time.time() - start
     
     
     def __getitem__(self, idx):
-        
-        main_start = time.time()
-        # Record time taken for all sections of __getitem__
-        self.record_times = {}
-        self.signal_aug_times = {}
-        self.noise_aug_times = {}
-        self.transform_times = {}
         
         data_path = self.data_paths[idx]
         
@@ -762,30 +716,30 @@ class MLMDC1_IterSample(Dataset):
         sample, target, params = self._read_(data_path)
         
         
-        # try:
-        ## Signal and Noise Augmentation
-        pure_sample = self._augmentation_(sample, target, params)
-        ## Add noise realisation to the signals
-        noisy_sample = self._noise_realisation_(pure_sample, target, params)
+        try:
+            ## Signal and Noise Augmentation
+            pure_sample = self._augmentation_(sample, target, params)
+            ## Add noise realisation to the signals
+            noisy_sample = self._noise_realisation_(pure_sample, target, params)
+            
+            ## Target handling
+            target = np.array([self.targets[idx]])
+            # Concatenating the normalised_tc within the target variable
+            # target = np.append(target, normalised_tc)
+            ## Target should look like (1., 0., 0.567) for signal
+            ## Target should look like (0., 1., -1.0) for noise
+            
+            ## Transforms
+            sample, target = self._transforms_(noisy_sample, target)
+            
+            ## Plotting
+            # self._plotting_(pure_sample, _noise, noisy_sample, sample, network_snr, idx, params)
         
-        ## Target handling
-        target = np.array([self.targets[idx]])
-        # Concatenating the normalised_tc within the target variable
-        # target = np.append(target, normalised_tc)
-        ## Target should look like (1., 0., 0.567) for signal
-        ## Target should look like (0., 1., -1.0) for noise
-        
-        ## Transforms
-        sample, target = self._transforms_(noisy_sample, target)
-        
-        ## Plotting
-        # self._plotting_(pure_sample, _noise, noisy_sample, sample, network_snr, idx, params)
-        
-        # except Exception as e:
-        #     print('\n\n{}: {}'.format(e.__class__, e))
-        #     shutil.rmtree(self.cfg.export_dir)
-        #     print('datasets.py: Terminated due to raised exception.')
-        #     exit(1)
+        except Exception as e:
+            print('\n\n{}: {}'.format(e.__class__, e))
+            shutil.rmtree(self.cfg.export_dir)
+            print('datasets.py: Terminated due to raised exception.')
+            exit(1)
         
         """ Reducing memory footprint """
         # This can only be performed after transforms and augmentation
@@ -795,17 +749,9 @@ class MLMDC1_IterSample(Dataset):
         """ Tensorification """
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
-        target = torch.from_numpy(target)        
+        target = torch.from_numpy(target)
         
-        self.record_times['Other'] = (time.time() - main_start) - sum(self.record_times.values())
-        
-        # Return as tuple for immutability
-        all_times = {'sections': self.record_times, 
-                     'signal_aug': self.signal_aug_times, 
-                     'noise_aug': self.noise_aug_times, 
-                     'transforms': self.transform_times}
-        
-        return (sample, target)
+        return (sample, target, None)
 
 
 

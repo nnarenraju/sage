@@ -382,9 +382,7 @@ class AugmentDistance(SignalWrapper):
     def get_augmented_signal(self, signal, distance, mchirp, distrs):
         distance_old = distance
         # Getting new distance
-        chirp_distance = distrs['dchirp'].rvs(size=len(signal[0]))
-        raise
-        chirp_distance = float(chirp_distance[0][0])
+        chirp_distance = distrs['dchirp'].rvs()[0][0]
         # Producing the new distance with the required priors
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
         # Augmenting on the distance
