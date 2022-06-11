@@ -386,6 +386,8 @@ class KappaModel(torch.nn.Module):
         self.ReLU = nn.ReLU()
         
         ## Convert network into given dtype and store in proper device
+        # Manipulation layers
+        self.batchnorm.to(dtype=data_type, device=self.store_device)
         # Main layers
         self._det1.to(dtype=data_type, device=self.store_device)
         self._det2.to(dtype=data_type, device=self.store_device)
