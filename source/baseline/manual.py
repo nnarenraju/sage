@@ -124,7 +124,7 @@ def consolidated_display(train_time, total_time, accuracies):
     print('Total time taken = {}s'.format(np.around(total_time, 3)))
     print('----------------------------------------------------------------------')
 
-def training_phase(cfg, Network, optimizer, loss_function, training_samples, training_labels):
+def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_samples, training_labels, params):
     # Optimizer step on a single batch of training data
     # Set zero_grad to apply None values instead of zeroes
     optimizer.zero_grad(set_to_none = True)
@@ -149,11 +149,13 @@ def training_phase(cfg, Network, optimizer, loss_function, training_samples, tra
     torch.nn.utils.clip_grad_norm_(Network.parameters(), max_norm=cfg.clip_norm)
     # Make the actual optimizer step and save the batch loss
     optimizer.step()
+    # Scheduler step
+    scheduler.step(params['scheduler_step'])
     
     return (training_loss, accuracy)
 
 
-def validation_phase(cfg, nep, Network, optimizer, loss_function, validation_samples, validation_labels):
+def validation_phase(cfg, Network, loss_function, validation_samples, validation_labels):
     # Evaluation of a single validation batch
     with torch.cuda.amp.autocast():
         # Gradient evaluation is not required for validation and testing
@@ -239,6 +241,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             print("\nTraining Phase Initiated")
             pbar = tqdm(trainDL)
             
+            # Total Number of batches
+            num_train_batches = len(trainDL)
             # Recording the time taken for training
             start = time.time()
             train_times = []
@@ -251,7 +255,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 transfrom_times = []
             
             
-            for training_samples, training_labels, all_times in pbar:
+            for nstep, (training_samples, training_labels, all_times) in enumerate(pbar):
+                
+                # Update params
+                params = {}
+                params['scheduler_step'] = nep + nstep / num_train_batches
                 
                 if cfg.num_workers == 0:
                     section_times.append(all_times['sections'])
@@ -291,8 +299,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # Now iterate through this dataset and run training phase for each batch
                         for samples, labels in batch_train_loader:
                             # Run training phase and get loss and accuracy
-                            tloss, accuracy = training_phase(cfg, Network, optimizer, loss_function, 
-                                                             samples, labels)
+                            tloss, accuracy = training_phase(cfg, Network, optimizer, scheduler,
+                                                             loss_function, samples, labels,
+                                                             params)
                             
                             # Display stuff
                             pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, tloss, accuracy))
@@ -303,8 +312,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         
                 else:
                     # Run training phase and get loss and accuracy
-                    training_loss, accuracy = training_phase(cfg, Network, optimizer, loss_function, 
-                                                             training_samples, training_labels)
+                    training_loss, accuracy = training_phase(cfg, Network, optimizer, scheduler,
+                                                             loss_function, 
+                                                             training_samples, training_labels,
+                                                             params)
                     
                     # Display stuff
                     pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, training_loss, accuracy))
@@ -379,8 +390,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             # Now iterate through this dataset and run training phase for each batch
                             for samples, labels in batch_valid_loader:
                                 # Run training phase and get loss and accuracy
-                                vloss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
-                                                                          samples, labels)
+                                vloss, accuracy, preds = validation_phase(cfg, Network, 
+                                                                          loss_function, 
+                                                                          validation_samples, validation_labels)
                                 
                                 # Display stuff
                                 pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
@@ -392,8 +404,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             
                     else:
                         # Run training phase and get loss and accuracy
-                        validation_loss, accuracy, preds = validation_phase(cfg, nep, Network, optimizer, loss_function, 
-                                                                     validation_samples, validation_labels)
+                        validation_loss, accuracy, preds = validation_phase(cfg, Network, 
+                                                                            loss_function, 
+                                                                            validation_samples, validation_labels)
                         
                         # Display stuff
                         pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
