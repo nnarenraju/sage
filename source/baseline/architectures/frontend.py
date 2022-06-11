@@ -378,6 +378,7 @@ class KappaModel(torch.nn.Module):
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
+        self.batchnorm = nn.BatchNorm1d(2)
         self.flatten = nn.Flatten(start_dim=1)
         self.dropout = nn.Dropout(0.25)
         self.softmax = torch.nn.Softmax(dim=1)
@@ -394,6 +395,8 @@ class KappaModel(torch.nn.Module):
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
+        # Batch Normalisation
+        x = self.batchnorm(x)
         # Conv Backend
         x = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
         # Timm Frontend
