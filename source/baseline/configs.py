@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # IN-BUILT
+import json
 import math
 import torch
 from pathlib import Path
@@ -167,6 +168,7 @@ class KaggleFirst:
     """ Data storage """
     name = "KaggleFirst"
     export_dir = Path("/Users/nnarenraju/Desktop") / name
+    online_workspace = "/data/www.astro/nnarenraju"
     
     """ Dataset Splitting """
     n_splits = 2
@@ -415,8 +417,8 @@ class Baseline_May18(KF_BatchTrain):
 class KaggleFirst_Jun9(KF_BatchTrain):
     
     """ Data storage """
-    name = "KaggleFirst_Jun9"
-    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    name = "KaggleFirst_Jul8"
+    export_dir = Path("/home/nnarenraju/Research") / name
     
     """ Dataset """
     dataset = MLMDC1_IterSample
@@ -459,8 +461,58 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     loss_function = torch.nn.BCEWithLogitsLoss()
     
     """ Optimizer """
-    optimizer = optim.SGD
-    optimizer_params = dict(lr=2e-4, momentum=0.9)
+    # optimizer = optim.SGD
+    # optimizer_params = dict(lr=2e-4, momentum=0.9)
+    
+    debug = True
+    debug_size = 1000
+    
+    
+
+
+
+""" Load config file into class """
+
+class Imported:
+    
+    def __init__(self, imported_config):
+        with open(imported_config) as fp:
+            cfg = json.load(fp)
+        
+        """ Data storage """
+        self.name = cfg['name']
+        self.export_dir = Path(cfg['export_dir'])
+        
+        """ Dataset Splitting """
+        self.n_splits = 2
+        self.seed = 42
+        self.splitter = None
+        
+        """ Dataset """
+        self.dataset = MLMDC1_IterSample
+        self.dataset_params = dict()
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     
     
