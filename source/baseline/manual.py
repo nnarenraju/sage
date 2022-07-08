@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import time
 import torch
+import shutil
 import numpy as np
 from tqdm import tqdm
 import torch.utils.data as D
@@ -154,6 +155,40 @@ def prediction_probability(nep, output, labels, export_dir):
     plt.close()    
 
 
+def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
+    # Read diagnostic file
+    data = np.loadtxt(filepath)
+    # All data fields
+    epochs = data[:,0] = 1.0
+    training_loss = data[:,1]
+    validation_loss = data[:,2]
+    training_accuracy = data[:,3]
+    validation_accuracy = data[:,4]
+    
+    ## Loss Curves
+    ax = figure(title="Loss Curves")
+    _plot(ax, epochs, training_loss, label="Training Loss", c='red')
+    _plot(ax, epochs, validation_loss, label="Validation Loss", c='red', ls='dashed')
+    if best_epoch != -1:
+        ax.scatter(epochs[best_epoch], training_loss, marker='*', s=20.0, c='k')
+        ax.scatter(epochs[best_epoch], validation_loss, marker='*', s=20.0, c='k')
+    save_path = os.path.join(export_dir, "loss_curves.png")
+    plt.savefig(save_path)
+    plt.close()
+    
+    ## Accuracy Curves
+    # Figure define
+    ax = figure(title="Accuracy Curves")
+    _plot(ax, epochs, training_accuracy, label="Avg Training Accuracy", c='red', ylabel="Avg Accuracy")
+    _plot(ax, epochs, validation_accuracy, label="Avg Validation Accuracy", c='blue', ylabel="Avg Accuracy")
+    if best_epoch != -1:
+        ax.scatter(epochs[best_epoch], training_accuracy, marker='*', s=20.0, c='k')
+        ax.scatter(epochs[best_epoch], validation_accuracy, marker='*', s=20.0, c='k')
+    save_path = os.path.join(export_dir, "accuracy_curves.png")
+    plt.savefig(save_path)
+    plt.close()
+
+
 def consolidated_display(train_time, total_time):
     # Display wall clock time statistics
     print('\n----------------------------------------------------------------------')
@@ -249,272 +284,297 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
     
     """ Training and Validation """
-    with open(os.path.join(cfg.export_dir, cfg.output_loss_file), 'w') as outfile:
-
-        ### Initialise global (over all epochs) params
-        best_loss = 1.e10 # impossibly bad value
-        best_accuracy = 0.0 # bad value
-        overfitting_check = 0
+    ### Initialise global (over all epochs) params
+    best_loss = 1.e10 # impossibly bad value
+    best_accuracy = 0.0 # bad value
+    best_epoch = 0
+    overfitting_check = 0
+    
+    loss_filepath = os.path.join(cfg.export_dir, cfg.output_loss_file)
+    
+    for nep in range(cfg.num_epochs):
         
-        for nep, epoch in enumerate(range(cfg.num_epochs)):
+        print("\n=========== Epoch {} ===========".format(nep))
+        
+        # Training epoch
+        Network.train()
+        
+        # Necessary save and update params
+        training_running_loss = 0.
+        training_batches = 0
+        # Store accuracy params
+        acc_train = []
+        acc_valid = []
+        
+        
+        """
+        PHASE 1 - Training
+            [1] Do gradient clipping. Set value in cfg.
+        """
+        print("\nTraining Phase Initiated")
+        pbar = tqdm(trainDL)
+        
+        # Total Number of batches
+        num_train_batches = len(trainDL)
+        # Recording the time taken for training
+        start = time.time()
+        train_times = []
+        
+        if cfg.num_workers == 0:
+            # Store loading time split
+            section_times = []
+            signal_aug_times = []
+            noise_aug_times = []
+            transfrom_times = []
+        
+        
+        for nstep, (training_samples, training_labels, all_times) in enumerate(pbar):
             
-            print("\n=========== Epoch {} ===========".format(nep))
-            
-            # Training epoch
-            Network.train()
-            
-            # Necessary save and update params
-            training_running_loss = 0.
-            training_batches = 0
-            # Store accuracy params
-            acc_train = []
-            acc_valid = []
-            
-            
-            """
-            PHASE 1 - Training
-                [1] Do gradient clipping. Set value in cfg.
-            """
-            print("\nTraining Phase Initiated")
-            pbar = tqdm(trainDL)
-            
-            # Total Number of batches
-            num_train_batches = len(trainDL)
-            # Recording the time taken for training
-            start = time.time()
-            train_times = []
+            # Update params
+            params = {}
+            params['scheduler_step'] = nep + nstep / num_train_batches
             
             if cfg.num_workers == 0:
-                # Store loading time split
-                section_times = []
-                signal_aug_times = []
-                noise_aug_times = []
-                transfrom_times = []
+                section_times.append(all_times['sections'])
+                transfrom_times.append(all_times['transforms'])
+                signal_aug_times.append(all_times['signal_aug'])
+                noise_aug_times.append(all_times['noise_aug'])
+            
+            # Record time taken for training
+            start_train = time.time()
             
             
-            for nstep, (training_samples, training_labels, all_times) in enumerate(pbar):
+            """ Tensorification and Device Compatibility """
+            ## Performing this here rather than in the Dataset object
+            ## will reduce the overhead of having to move each sample to CUDA 
+            ## rather than moving a batch of data.
+            # Set the device and dtype
+            training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
+            training_labels = training_labels.to(dtype=torch.float32, device=cfg.train_device)
+            
+            
+            batch_training_loss = 0.
+            accuracies = []
+            # Get all mini-folds and run training phase for each batch
+            # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
+            if cfg.megabatch:
+                for batch_samples, batch_labels in zip(training_samples, training_labels):
+                    # Convert the training_sample into a Simple dataset object
+                    # We take the first element since we give 1 batch to the BatchLoader
+                    batch_train_dataset = Simple(batch_samples, batch_labels, 
+                                           store_device=cfg.store_device, 
+                                           train_device=cfg.train_device)
+                    # Pass Simple dataset into a dataloader with cfg.batch_size
+                    batch_train_loader = D.DataLoader(
+                        batch_train_dataset, batch_size=cfg.batch_size, shuffle=True,
+                        num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
+                        prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
+                    # Now iterate through this dataset and run training phase for each batch
+                    for samples, labels in batch_train_loader:
+                        # Run training phase and get loss and accuracy
+                        tloss, accuracy = training_phase(cfg, Network, optimizer, scheduler,
+                                                         loss_function, samples, labels,
+                                                         params)
+                        
+                        # Display stuff
+                        pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, tloss, accuracy))
+                        # Updating things (Do not judge this comment. It was a Friday evening.)
+                        batch_training_loss += tloss.clone().cpu().item()
+                        accuracies.append(accuracy)
+                        training_batches += 1
+                    
+            else:
+                # Run training phase and get loss and accuracy
+                training_loss, accuracy = training_phase(cfg, Network, optimizer, scheduler,
+                                                         loss_function, 
+                                                         training_samples, training_labels,
+                                                         params)
                 
-                # Update params
-                params = {}
-                params['scheduler_step'] = nep + nstep / num_train_batches
+                # Display stuff
+                pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, training_loss, accuracy))
+                # Updating similar things (same same but different, but still same)
+                batch_training_loss += training_loss.clone().cpu().item()
+                accuracies.append(accuracy)
+                training_batches += 1
+            
+            # Update losses and accuracy
+            training_running_loss += batch_training_loss
+            acc_train.extend(accuracies)
+            
+            # Record time taken to load data (calculate avg time later)
+            train_times.append(time.time() - start_train)
+        
+        ## Time taken to train data
+        # Total time taken for training phase
+        total_time = time.time() - start
+        
+        if cfg.num_workers == 0:
+            # Plotting
+            plot_times = {}
+            plot_times['section'] = section_times
+            plot_times['signal_aug'] = signal_aug_times
+            plot_times['noise_aug'] = noise_aug_times
+            plot_times['transforms'] = transfrom_times
+            plot_times['train'] = train_times
+            plot_times['load'] = None
+        
+            record(plot_times, total_time, cfg)
+        
+        consolidated_display(train_times, total_time)
+        
+        
+
+        """
+        PHASE 2 - Validation
+            [1] Save confusion matrix elements and prediction probabilties
+            [2] Save the ROC save data
+        """            
+        print("\nValidation Phase Initiated")
+        # Evaluation on the validation dataset
+        Network.eval()
+        with torch.no_grad():
+            
+            validation_running_loss = 0.
+            validation_batches = 0
+            
+            pbar = tqdm(validDL)
+            for validation_samples, validation_labels, _ in pbar:
                 
-                if cfg.num_workers == 0:
-                    section_times.append(all_times['sections'])
-                    transfrom_times.append(all_times['transforms'])
-                    signal_aug_times.append(all_times['signal_aug'])
-                    noise_aug_times.append(all_times['noise_aug'])
-                
-                # Record time taken for training
-                start_train = time.time()
-                
-                
-                """ Tensorification and Device Compatibility """
-                ## Performing this here rather than in the Dataset object
-                ## will reduce the overhead of having to move each sample to CUDA 
-                ## rather than moving a batch of data.
                 # Set the device and dtype
-                training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
-                training_labels = training_labels.to(dtype=torch.float32, device=cfg.train_device)
+                validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
+                validation_labels = validation_labels.to(dtype=torch.float32, device=cfg.train_device)
                 
-                
-                batch_training_loss = 0.
+                batch_validation_loss = 0.
                 accuracies = []
+                pred_prob = []
                 # Get all mini-folds and run training phase for each batch
                 # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
                 if cfg.megabatch:
-                    for batch_samples, batch_labels in zip(training_samples, training_labels):
+                    for batch_samples, batch_labels in zip(validation_samples, validation_labels):
                         # Convert the training_sample into a Simple dataset object
-                        # We take the first element since we give 1 batch to the BatchLoader
-                        batch_train_dataset = Simple(batch_samples, batch_labels, 
+                        batch_valid_dataset = Simple(batch_samples, batch_labels, 
                                                store_device=cfg.store_device, 
                                                train_device=cfg.train_device)
                         # Pass Simple dataset into a dataloader with cfg.batch_size
-                        batch_train_loader = D.DataLoader(
-                            batch_train_dataset, batch_size=cfg.batch_size, shuffle=True,
+                        batch_valid_loader = D.DataLoader(
+                            batch_valid_dataset, batch_size=cfg.batch_size, shuffle=False,
                             num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
                             prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
                         # Now iterate through this dataset and run training phase for each batch
-                        for samples, labels in batch_train_loader:
+                        for samples, labels in batch_valid_loader:
                             # Run training phase and get loss and accuracy
-                            tloss, accuracy = training_phase(cfg, Network, optimizer, scheduler,
-                                                             loss_function, samples, labels,
-                                                             params)
+                            vloss, accuracy, preds = validation_phase(cfg, Network, 
+                                                                      loss_function, 
+                                                                      validation_samples, validation_labels)
                             
                             # Display stuff
-                            pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, tloss, accuracy))
-                            # Updating things (Do not judge this comment. It was a Friday evening.)
-                            batch_training_loss += tloss.clone().cpu().item()
+                            pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
+                            batch_validation_loss += vloss.clone().cpu().item()
+                            # Updating things but now its validation
                             accuracies.append(accuracy)
-                            training_batches += 1
+                            pred_prob.append(preds.cpu().detach().numpy())
+                            validation_batches += 1
                         
                 else:
                     # Run training phase and get loss and accuracy
-                    training_loss, accuracy = training_phase(cfg, Network, optimizer, scheduler,
-                                                             loss_function, 
-                                                             training_samples, training_labels,
-                                                             params)
+                    validation_loss, accuracy, preds = validation_phase(cfg, Network, 
+                                                                        loss_function, 
+                                                                        validation_samples, validation_labels)
                     
                     # Display stuff
-                    pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, training_loss, accuracy))
-                    # Updating similar things (same same but different, but still same)
-                    batch_training_loss += training_loss.clone().cpu().item()
+                    pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
+                    # Updating
+                    batch_validation_loss += validation_loss.clone().cpu().item()
                     accuracies.append(accuracy)
-                    training_batches += 1
+                    pred_prob.append(preds.cpu().detach().numpy())
+                    validation_batches += 1
                 
+                pred_prob = np.row_stack(pred_prob)
                 # Update losses and accuracy
-                training_running_loss += batch_training_loss
-                acc_train.extend(accuracies)
-                
-                # Record time taken to load data (calculate avg time later)
-                train_times.append(time.time() - start_train)
-            
-            ## Time taken to train data
-            # Total time taken for training phase
-            total_time = time.time() - start
-            
-            if cfg.num_workers == 0:
-                # Plotting
-                plot_times = {}
-                plot_times['section'] = section_times
-                plot_times['signal_aug'] = signal_aug_times
-                plot_times['noise_aug'] = noise_aug_times
-                plot_times['transforms'] = transfrom_times
-                plot_times['train'] = train_times
-                plot_times['load'] = None
-            
-                record(plot_times, total_time, cfg)
-            
-            consolidated_display(train_times, total_time)
-            
-            
+                validation_running_loss += batch_validation_loss
+                acc_valid.extend(accuracies)
 
-            """
-            PHASE 2 - Validation
-                [1] Save confusion matrix elements and prediction probabilties
-                [2] Save the ROC save data
-            """            
-            print("\nValidation Phase Initiated")
-            # Evaluation on the validation dataset
-            Network.eval()
-            with torch.no_grad():
-                
-                validation_running_loss = 0.
-                validation_batches = 0
-                
-                pbar = tqdm(validDL)
-                for validation_samples, validation_labels, _ in pbar:
+                if nep % cfg.save_freq == 0:
+                    # Move labels from cuda to cpu
+                    labels = validation_labels.cpu()[:,0]
+                    outputs = pred_prob[:,0]
                     
-                    # Set the device and dtype
-                    validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
-                    validation_labels = validation_labels.to(dtype=torch.float32, device=cfg.train_device)
-                    
-                    batch_validation_loss = 0.
-                    accuracies = []
-                    pred_prob = []
-                    # Get all mini-folds and run training phase for each batch
-                    # Here each batch is cfg.batch_size. Each mini-fold contains multiple batches
-                    if cfg.megabatch:
-                        for batch_samples, batch_labels in zip(validation_samples, validation_labels):
-                            # Convert the training_sample into a Simple dataset object
-                            batch_valid_dataset = Simple(batch_samples, batch_labels, 
-                                                   store_device=cfg.store_device, 
-                                                   train_device=cfg.train_device)
-                            # Pass Simple dataset into a dataloader with cfg.batch_size
-                            batch_valid_loader = D.DataLoader(
-                                batch_valid_dataset, batch_size=cfg.batch_size, shuffle=False,
-                                num_workers=cfg.num_workers, pin_memory=cfg.pin_memory,
-                                prefetch_factor=cfg.prefetch_factor, persistent_workers=cfg.persistent_workers)
-                            # Now iterate through this dataset and run training phase for each batch
-                            for samples, labels in batch_valid_loader:
-                                # Run training phase and get loss and accuracy
-                                vloss, accuracy, preds = validation_phase(cfg, Network, 
-                                                                          loss_function, 
-                                                                          validation_samples, validation_labels)
-                                
-                                # Display stuff
-                                pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, vloss, accuracy))
-                                batch_validation_loss += vloss.clone().cpu().item()
-                                # Updating things but now its validation
-                                accuracies.append(accuracy)
-                                pred_prob.append(preds.cpu().detach().numpy())
-                                validation_batches += 1
-                            
-                    else:
-                        # Run training phase and get loss and accuracy
-                        validation_loss, accuracy, preds = validation_phase(cfg, Network, 
-                                                                            loss_function, 
-                                                                            validation_samples, validation_labels)
-                        
-                        # Display stuff
-                        pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
-                        # Updating
-                        batch_validation_loss += validation_loss.clone().cpu().item()
-                        accuracies.append(accuracy)
-                        pred_prob.append(preds.cpu().detach().numpy())
-                        validation_batches += 1
-                    
-                    pred_prob = np.row_stack(pred_prob)
-                    # Update losses and accuracy
-                    validation_running_loss += batch_validation_loss
-                    acc_valid.extend(accuracies)
+                    """ ROC Curve save data """
+                    roc_auc = roc_curve(nep, outputs, labels, cfg.export_dir)
 
-                    if nep % cfg.save_freq == 0:
-                        # Move labels from cuda to cpu
-                        labels = validation_labels.cpu()[:,0]
-                        outputs = pred_prob[:,0]
-                        
-                        """ ROC Curve save data """
-                        roc_auc = roc_curve(nep, outputs, labels, cfg.export_dir)
-
-                        """ Calculating Pred Probs """
-                        # Confusion matrix has been deprecated as of June 10, 2022
-                        # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                        prediction_probability(nep, outputs, labels, cfg.export_dir)
+                    """ Calculating Pred Probs """
+                    # Confusion matrix has been deprecated as of June 10, 2022
+                    # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
+                    prediction_probability(nep, outputs, labels, cfg.export_dir)
 
 
-            """
-            PHASE 3 - Save
-                [1] Save losses, accuracy and confusion matrix elements
-                [2] Save the best model weights path if global loss is reduced
-                [3] Reload the new weights once all phases are complete
-            """
-            # Print information on the training and validation loss in the current epoch and save current network state
-            epoch_validation_loss = validation_running_loss/validation_batches
-            epoch_training_loss = training_running_loss/training_batches
-            avg_acc_valid = sum(acc_valid)/len(acc_valid)
-            avg_acc_train = sum(acc_train)/len(acc_train)
-            
+        """
+        PHASE 3 - Save
+            [1] Save losses, accuracy and confusion matrix elements
+            [2] Save the best model weights path if global loss is reduced
+            [3] Reload the new weights once all phases are complete
+        """
+        # Print information on the training and validation loss in the current epoch and save current network state
+        epoch_validation_loss = validation_running_loss/validation_batches
+        epoch_training_loss = training_running_loss/training_batches
+        avg_acc_valid = sum(acc_valid)/len(acc_valid)
+        avg_acc_train = sum(acc_train)/len(acc_train)
+        
+        with open(loss_filepath, 'a') as outfile:
             # Save output string in losses.txt
             output_string = '%04i    %f    %f    %f    %f    %f' % \
-                            (epoch, epoch_training_loss, epoch_validation_loss,
+                            (nep, epoch_training_loss, epoch_validation_loss,
                              avg_acc_train, avg_acc_valid, roc_auc)
                             
             outfile.write(output_string + '\n')
-            
-            """ Save the best weights (if global loss reduces) """
-            if epoch_validation_loss < best_loss:
-                weights_save_path = os.path.join(cfg.export_dir, cfg.weights_path)
-                torch.save(Network.state_dict(), weights_save_path)
-                best_loss = epoch_validation_loss
-            
-            if avg_acc_valid > best_accuracy:
-                best_accuracy = avg_acc_valid
-            
-            
-            """ Epoch Display """
-            print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
-            print("\nEpoch Validation Loss = {}".format(epoch_validation_loss))
-            print("Epoch Training Loss = {}".format(epoch_training_loss))
-            print("Average Validation Accuracy = {}".format(avg_acc_valid))
-            print("Average Training Accuracy = {}".format(avg_acc_train))
-            if epoch_validation_loss > 1.1*epoch_training_loss and cfg.early_stopping:
-                overfitting_check += 1
-                if overfitting_check > 3:
-                    print("\nThe current model may be overfitting! Terminating.")
-                    break
         
-        print("\n================================================================\n")
-        print("Training Complete!")
-        print("Best validation loss = {}".format(best_loss))
-        print("Best validation accuracy = {}".format(best_accuracy))
-        print('\n\n')
+        loss_and_accuracy_curves(loss_filepath, cfg.export_dir)
+        
+        """ Save the best weights (if global loss reduces) """
+        if epoch_validation_loss < best_loss:
+            weights_save_path = os.path.join(cfg.export_dir, cfg.weights_path)
+            torch.save(Network.state_dict(), weights_save_path)
+            best_loss = epoch_validation_loss
+            best_epoch = nep
+        
+        if avg_acc_valid > best_accuracy:
+            best_accuracy = avg_acc_valid
+        
+        
+        """ Epoch Display """
+        print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
+        print("\nEpoch Validation Loss = {}".format(epoch_validation_loss))
+        print("Epoch Training Loss = {}".format(epoch_training_loss))
+        print("Average Validation Accuracy = {}".format(avg_acc_valid))
+        print("Average Training Accuracy = {}".format(avg_acc_train))
+        if epoch_validation_loss > 1.1*epoch_training_loss and cfg.early_stopping:
+            overfitting_check += 1
+            if overfitting_check > 3:
+                print("\nThe current model may be overfitting! Terminating.")
+                break
+    
+    print("\n================================================================\n")
+    print("Training Complete!")
+    print("Best validation loss = {}".format(best_loss))
+    print("Best validation accuracy = {}".format(best_accuracy))
+    print('\n\n')
+
+
+    # Saving best epoch results
+    best_dir = os.path.join(cfg.export_dir, 'BEST')
+    if not os.path.isdir(best_dir):
+        os.makedirs(best_dir, exist_ok=False)
+    
+    # Move premade plots
+    roc_file = "ROC/roc_curve_{}.png".format(best_epoch)
+    roc_path = os.path.join(cfg.export_dir, roc_file)
+    shutil.copy(roc_path, os.path.join(best_dir, roc_file))
+    
+    pred_file = "PRED_PROB/log_pred_prob_{}.png".format(best_epoch)
+    pred_path = os.path.join(cfg.export_dir, pred_file)
+    shutil.copy(pred_path, os.path.join(best_dir, roc_file))
+    
+    shutil.copy(weights_save_path, os.path.join(best_dir, cfg.weights_path))
+    
+    # Remake loss curve and accuracy curve with best epoch marked
+    loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
