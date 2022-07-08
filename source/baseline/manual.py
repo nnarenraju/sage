@@ -33,6 +33,9 @@ from tqdm import tqdm
 import torch.utils.data as D
 import sklearn.metrics as metrics
 
+from datetime import datetime
+from distutils.dir_util import copy_tree
+
 # LOCAL
 from data.datasets import Simple
 from utils.record_times import record
@@ -581,3 +584,14 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
     # Remake loss curve and accuracy curve with best epoch marked
     loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
+    
+    # Move export dir for current run to online workspace
+    rm_chars = ':. '
+    file_time = str(datetime.now())
+    for char in rm_chars:
+        file_time = file_time.replace(char, '-')
+    www_dir = 'RUN-{}-dataset{}-model-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'])
+    copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
+    
+    
+    
