@@ -176,8 +176,8 @@ def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
     _plot(ax, epochs, training_loss, label="Training Loss", c='red')
     _plot(ax, epochs, validation_loss, label="Validation Loss", c='red', ls='dashed')
     if best_epoch != -1:
-        ax.scatter(epochs[best_epoch], training_loss[best_epoch], marker='*', s=20.0, c='k')
-        ax.scatter(epochs[best_epoch], validation_loss[best_epoch], marker='*', s=20.0, c='k')
+        ax.scatter(epochs[best_epoch], training_loss[best_epoch], marker='*', s=200.0, c='k')
+        ax.scatter(epochs[best_epoch], validation_loss[best_epoch], marker='*', s=200.0, c='k')
     save_path = os.path.join(export_dir, "loss_curves.png")
     plt.savefig(save_path)
     plt.close()
@@ -188,8 +188,8 @@ def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
     _plot(ax, epochs, training_accuracy, label="Avg Training Accuracy", c='red', ylabel="Avg Accuracy")
     _plot(ax, epochs, validation_accuracy, label="Avg Validation Accuracy", c='blue', ylabel="Avg Accuracy")
     if best_epoch != -1:
-        ax.scatter(epochs[best_epoch], training_accuracy[best_epoch], marker='*', s=20.0, c='k')
-        ax.scatter(epochs[best_epoch], validation_accuracy[best_epoch], marker='*', s=20.0, c='k')
+        ax.scatter(epochs[best_epoch], training_accuracy[best_epoch], marker='*', s=200.0, c='k')
+        ax.scatter(epochs[best_epoch], validation_accuracy[best_epoch], marker='*', s=200.0, c='k')
     save_path = os.path.join(export_dir, "accuracy_curves.png")
     plt.savefig(save_path)
     plt.close()
