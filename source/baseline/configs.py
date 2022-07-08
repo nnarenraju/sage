@@ -37,7 +37,7 @@ from architectures.frontend import GammaModel, KappaModel
 from data.transforms import Unify, UnifySignal, UnifyNoise
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling
 from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift
-from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss
+from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
 
 
 """ DEFAULT (Lightning Baseline)"""
@@ -458,7 +458,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     megabatch = False
     
     """ Loss Function """
-    loss_function = regularised_BCELoss(dim=1)
+    loss_function = regularised_BCEWithLogitsLoss(dim=1)
     
     """ Optimizer """
     # optimizer = optim.SGD
