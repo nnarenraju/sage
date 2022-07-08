@@ -563,7 +563,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     print("Training Complete!")
     print("Best validation loss = {}".format(best_loss))
     print("Best validation accuracy = {}".format(best_accuracy))
-    print('\n\n')
+    print('\n')
 
 
     # Saving best epoch results
@@ -580,7 +580,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     pred_dir = 'PRED_PROB'
     pred_file = "log_pred_prob_{}.png".format(best_epoch)
     pred_path = os.path.join(cfg.export_dir, os.path.join(pred_dir, pred_file))
-    shutil.copy(pred_path, os.path.join(best_dir, roc_file))
+    shutil.copy(pred_path, os.path.join(best_dir, pred_file))
     
     shutil.copy(weights_save_path, os.path.join(best_dir, cfg.weights_path))
     
@@ -594,6 +594,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         file_time = file_time.replace(char, '-')
     www_dir = 'RUN-{}-dataset{}-model-{}-remark-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
     copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
+    
+    print('FIN')
     
     
     
