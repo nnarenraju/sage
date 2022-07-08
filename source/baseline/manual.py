@@ -25,12 +25,12 @@ Documentation: NULL
 
 # BUILT-IN
 import os
-import csv
 import time
 import torch
 import numpy as np
 from tqdm import tqdm
 import torch.utils.data as D
+import sklearn.metrics as metrics
 
 # LOCAL
 from data.datasets import Simple
@@ -44,6 +44,38 @@ torch.autograd.profiler.emit_nvtx(False)
 torch.backends.cudnn.benchmark = True
 # Clear PyTorch Cache before init
 torch.cuda.empty_cache()
+
+import matplotlib.pyplot as plt
+# Font and plot parameters
+plt.rcParams.update({'font.size': 22})
+
+
+def figure(title=""):
+    plt.rc('font', family='serif')
+    plt.rc('xtick', labelsize='medium')
+    plt.rc('ytick', labelsize='medium')
+    fig, axs = plt.subplots(1, figsize=(16.0, 14.0))
+    fig.suptitle(title, fontsize=28, y=0.92)
+    return axs
+
+
+def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid', 
+          label="", c=None, yscale='linear', histogram=False):
+    
+    # Plotting type
+    if histogram:
+        ax.hist(y, bins=100, label=label, alpha=0.8)
+    else:
+        ax.plot(x, y, ls=ls, c=c, linewidth=3.0, label=label)
+    
+    # Plotting params
+    ax.set_xscale(yscale)
+    ax.set_yscale(yscale)
+    ax.grid(True, which='both')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.legend()
+
 
 def display_outputs(training_output, training_labels):
     # Printing the training output and labels together
@@ -66,56 +98,65 @@ def calculate_accuracy(output, labels, threshold = 0.5):
     return accuracy
 
 
-def save_data(rowsdata, file_path):
-    # Append row data to the given CSV file path
-    with open(file_path, 'a', newline='') as fp:
-        writer = csv.writer(fp)
-        for rowdata in rowsdata:
-            writer.writerow(rowdata)
+def roc_curve(nep, output, labels, export_dir):
+    # ROC Curve save plot
+    save_dir = os.path.join(export_dir, 'ROC')
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir, exist_ok=False)
+    
+    # Calculating ROC
+    fpr, tpr, threshold = metrics.roc_curve(labels, output)
+    roc_auc = metrics.auc(fpr, tpr)
+    
+    # Plotting routine
+    ax = figure(title="ROC Curve at Epoch = {}".format(nep))
+    
+    # Log ROC Curve
+    _plot(ax, fpr, tpr, label='AUC = %0.2f' % roc_auc, c='red', 
+          ylabel="True Positive Rate", xlabel="False Positive Rate", 
+          yscale='log')
+    _plot(ax, [0, 1], [0, 1], label="Random Classifier", c='blue', 
+          ylabel="True Positive Rate", xlabel="False Positive Rate", 
+          ls="dashed", yscale='log')
+    
+    save_path = os.path.join(save_dir, "roc_curve_{}.png".format(nep))
+    plt.savefig(save_path)
+    plt.close()
+    
+    return roc_auc
+    
 
-
-def roc_save_data(nep, output, labels, export_dir):
-    # ROC Curve save data
-    # Convert output to saveable format
-    voutput = [list(foo) for foo in output]
-    vlabels = [list(foo) for foo in labels]
+def prediction_probability(nep, output, labels, export_dir):
     # Save (append) the above list of lists to CSV file
-    save_dir = os.path.join(export_dir, "data_roc_curve")
+    save_dir = os.path.join(export_dir, "PRED_PROB")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=False)
     
-    # Save file paths
-    save_vout = os.path.join(save_dir, "output_save_epoch_{}.csv".format(nep))
-    save_vlab = os.path.join(save_dir, "labels_save_epoch_{}.csv".format(nep))
-    # Save voutputs and vlabels in the above CSV files
-    save_data(voutput, save_vout)
-    save_data(vlabels, save_vlab)
+    # Get pred probs from output
+    mx = np.ma.masked_array(output, mask=labels)
+    # For labels == signal, true positive
+    pred_prob_tp = mx[mx.mask == True].data
+    # For labels == noise, true negative
+    pred_prob_tn = mx[mx.mask == False].data
     
-
-def prediction_probability_save_data(nep, vlabels, voutput_0, export_dir):
-    # Save (append) the above list of lists to CSV file
-    save_dir = os.path.join(export_dir, "data_pred_prob")
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir, exist_ok=False)
+    # Plotting routine
+    ax = figure(title="Prediction Probabilities at Epoch = {}".format(nep))
+    # Log pred probs
+    _plot(ax, y=pred_prob_tp, label="Signals", c='red', 
+          ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
+          hist=True, yscale='log', histogram=True)
+    _plot(ax, y=pred_prob_tn, label="Noise", c='blue', 
+          ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
+          hist=True, yscale='log', histogram=True)
     
-    # Save file paths
-    save_tp = os.path.join(save_dir, "pred_prob_tp_epoch_{}.csv".format(nep))
-    save_tn = os.path.join(save_dir, "pred_prob_tn_epoch_{}.csv".format(nep))
-    
-    data = voutput_0
-
-    # Input is a signal (pred_prob_tp)
-    if vlabels == 1:
-        save_data([[data]], save_tp)
-    # Input is noise (pred_prob_tn)
-    if vlabels == 0:
-        save_data([[data]], save_tn)
+    save_path = os.path.join(save_dir, "log_pred_prob_{}.png".format(nep))
+    plt.savefig(save_path)
+    plt.close()    
 
 
-def consolidated_display(train_time, total_time, accuracies):
+def consolidated_display(train_time, total_time):
     # Display wall clock time statistics
     print('\n----------------------------------------------------------------------')
-    print('Best accuracy seen in training phase = {}%'.format(max(accuracies)*100.0))
     print('Total time taken to train epoch = {}s'.format(np.around(np.sum(train_time), 3)))
     print('Average time taken to train per batch = {}s'.format(np.around(np.mean(train_time), 3)))
     # Calculate MP load time
@@ -225,14 +266,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             # Necessary save and update params
             training_running_loss = 0.
             training_batches = 0
-            # Confusion matrix elements
-            tp = 0
-            tn = 0
-            fp = 0
-            fn = 0
             # Store accuracy params
             acc_train = []
             acc_valid = []
+            
             
             """
             PHASE 1 - Training
@@ -347,7 +384,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
                 record(plot_times, total_time, cfg)
             
-            consolidated_display(train_times, total_time, acc_train)
+            consolidated_display(train_times, total_time)
             
             
 
@@ -421,21 +458,18 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     validation_running_loss += batch_validation_loss
                     acc_valid.extend(accuracies)
 
-                    """ ROC Curve save data """
-                    if nep % cfg.save_freq == 0 and nep!=0:
-                        roc_save_data(nep, pred_prob, validation_labels, cfg.export_dir)
-
-                    """ Calculating Pred Probs """
-                    # Confusion matrix has been deprecated as of June 10, 2022
-                    # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    if nep % cfg.save_freq == 0 and nep!=0:
-                        for voutput, vlabel in zip(pred_prob, validation_labels):
-                            # Get labels based on threshold
-                            vlabel = vlabel.cpu().detach().numpy()
+                    if nep % cfg.save_freq == 0:
+                        # Move labels from cuda to cpu
+                        labels = validation_labels.cpu()[:,0]
+                        outputs = pred_prob[:,0]
                         
-                        """ Prediction Probabilties """
-                        # Storing predicted probabilities
-                        prediction_probability_save_data(nep, vlabel, voutput[0], cfg.export_dir)
+                        """ ROC Curve save data """
+                        roc_auc = roc_curve(nep, outputs, labels, cfg.export_dir)
+
+                        """ Calculating Pred Probs """
+                        # Confusion matrix has been deprecated as of June 10, 2022
+                        # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
+                        prediction_probability(nep, outputs, labels, cfg.export_dir)
 
 
             """
@@ -451,9 +485,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             avg_acc_train = sum(acc_train)/len(acc_train)
             
             # Save output string in losses.txt
-            output_string = '%04i    %f    %f    %f    %f    %f    %f    %f    %f' % \
+            output_string = '%04i    %f    %f    %f    %f    %f' % \
                             (epoch, epoch_training_loss, epoch_validation_loss,
-                             avg_acc_train, avg_acc_valid, tp, tn, fp, fn)
+                             avg_acc_train, avg_acc_valid, roc_auc)
                             
             outfile.write(output_string + '\n')
             
