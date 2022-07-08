@@ -494,7 +494,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 validation_running_loss += batch_validation_loss
                 acc_valid.extend(accuracies)
 
-                if nep % cfg.save_freq == 0:
+                if nep % cfg.save_freq == 0 and nep!=0:
                     # Move labels from cuda to cpu
                     labels = validation_labels.cpu()[:,0]
                     outputs = pred_prob[:,0]
