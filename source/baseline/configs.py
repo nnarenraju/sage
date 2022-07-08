@@ -169,6 +169,7 @@ class KaggleFirst:
     name = "KaggleFirst"
     export_dir = Path("/Users/nnarenraju/Desktop") / name
     online_workspace = "/data/www.astro/nnarenraju"
+    save_remarks = ''
     
     """ Dataset Splitting """
     n_splits = 2
@@ -419,6 +420,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     """ Data storage """
     name = "KaggleFirst_Jul8"
     export_dir = Path("/home/nnarenraju/Research") / name
+    save_remarks = ''
     
     """ Dataset """
     dataset = MLMDC1_IterSample
