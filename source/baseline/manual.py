@@ -158,6 +158,9 @@ def prediction_probability(nep, output, labels, export_dir):
 def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
     # Read diagnostic file
     data = np.loadtxt(filepath)
+    if len(data.shape) == 1:
+        return 
+    
     # All data fields
     epochs = data[:,0] + 1.0
     training_loss = data[:,1]
@@ -494,7 +497,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 validation_running_loss += batch_validation_loss
                 acc_valid.extend(accuracies)
 
-                if nep % cfg.save_freq == 0 and nep!=0:
+                if nep % cfg.save_freq == 0:
                     # Move labels from cuda to cpu
                     labels = validation_labels.cpu()[:,0]
                     outputs = pred_prob[:,0]
