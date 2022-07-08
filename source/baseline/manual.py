@@ -590,7 +590,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     file_time = str(datetime.now())
     for char in rm_chars:
         file_time = file_time.replace(char, '-')
-    www_dir = 'RUN-{}-dataset{}-model-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'])
+    www_dir = 'RUN-{}-dataset{}-model-{}-remark-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
     copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
     
     
