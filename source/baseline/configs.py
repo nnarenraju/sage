@@ -458,7 +458,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     megabatch = False
     
     """ Loss Function """
-    loss_function = torch.nn.BCEWithLogitsLoss()
+    loss_function = torch.nn.BCELoss()
     
     """ Optimizer """
     # optimizer = optim.SGD
