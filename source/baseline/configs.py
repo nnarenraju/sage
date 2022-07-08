@@ -458,7 +458,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     megabatch = False
     
     """ Loss Function """
-    loss_function = regularised_BCELoss(dim=2)
+    loss_function = regularised_BCELoss(dim=1)
     
     """ Optimizer """
     # optimizer = optim.SGD
