@@ -572,12 +572,14 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         os.makedirs(best_dir, exist_ok=False)
     
     # Move premade plots
-    roc_file = "ROC/roc_curve_{}.png".format(best_epoch)
-    roc_path = os.path.join(cfg.export_dir, roc_file)
+    roc_dir = 'ROC'
+    roc_file = "roc_curve_{}.png".format(best_epoch)
+    roc_path = os.path.join(cfg.export_dir, os.path.join(roc_dir, roc_file))
     shutil.copy(roc_path, os.path.join(best_dir, roc_file))
     
-    pred_file = "PRED_PROB/log_pred_prob_{}.png".format(best_epoch)
-    pred_path = os.path.join(cfg.export_dir, pred_file)
+    pred_dir = 'PRED_PROB'
+    pred_file = "log_pred_prob_{}.png".format(best_epoch)
+    pred_path = os.path.join(cfg.export_dir, os.path.join(pred_dir, pred_file))
     shutil.copy(pred_path, os.path.join(best_dir, roc_file))
     
     shutil.copy(weights_save_path, os.path.join(best_dir, cfg.weights_path))
