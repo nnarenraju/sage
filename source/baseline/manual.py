@@ -60,7 +60,7 @@ def figure(title=""):
 
 
 def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid', 
-          label="", c=None, yscale='linear', histogram=False):
+          label="", c=None, yscale='linear', xscale='linear', histogram=False):
     
     # Plotting type
     if histogram:
@@ -69,7 +69,7 @@ def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid',
         ax.plot(x, y, ls=ls, c=c, linewidth=3.0, label=label)
     
     # Plotting params
-    ax.set_xscale(yscale)
+    ax.set_xscale(xscale)
     ax.set_yscale(yscale)
     ax.grid(True, which='both')
     ax.set_xlabel(xlabel)
@@ -114,10 +114,10 @@ def roc_curve(nep, output, labels, export_dir):
     # Log ROC Curve
     _plot(ax, fpr, tpr, label='AUC = %0.2f' % roc_auc, c='red', 
           ylabel="True Positive Rate", xlabel="False Positive Rate", 
-          yscale='log')
+          yscale='log', xscale='log')
     _plot(ax, [0, 1], [0, 1], label="Random Classifier", c='blue', 
           ylabel="True Positive Rate", xlabel="False Positive Rate", 
-          ls="dashed", yscale='log')
+          ls="dashed", yscale='log', xscale='log')
     
     save_path = os.path.join(save_dir, "roc_curve_{}.png".format(nep))
     plt.savefig(save_path)
@@ -144,10 +144,10 @@ def prediction_probability(nep, output, labels, export_dir):
     # Log pred probs
     _plot(ax, y=pred_prob_tp, label="Signals", c='red', 
           ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
-          hist=True, yscale='log', histogram=True)
+          yscale='log', histogram=True)
     _plot(ax, y=pred_prob_tn, label="Noise", c='blue', 
           ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
-          hist=True, yscale='log', histogram=True)
+          yscale='log', histogram=True)
     
     save_path = os.path.join(save_dir, "log_pred_prob_{}.png".format(nep))
     plt.savefig(save_path)
