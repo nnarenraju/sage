@@ -587,10 +587,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
     
     # Move export dir for current run to online workspace
-    rm_chars = ':. '
-    file_time = str(datetime.now())
-    for char in rm_chars:
-        file_time = file_time.replace(char, '-')
+    file_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     www_dir = 'RUN-{}-dataset{}-model-{}-remark-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
     copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
     
