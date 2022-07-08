@@ -443,6 +443,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             validation_running_loss = 0.
             validation_batches = 0
             
+            epoch_labels = []
+            epoch_outputs = []
+            
             pbar = tqdm(validDL)
             for validation_samples, validation_labels, _ in pbar:
                 
@@ -502,16 +505,22 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
 
                 if nep % cfg.save_freq == 0:
                     # Move labels from cuda to cpu
-                    labels = validation_labels.cpu()[:,0]
-                    outputs = pred_prob[:,0]
+                    epoch_labels.append(validation_labels.cpu()[:,0])
+                    epoch_outputs.append(pred_prob[:,0])
                     
-                    """ ROC Curve save data """
-                    roc_auc = roc_curve(nep, outputs, labels, cfg.export_dir)
-
-                    """ Calculating Pred Probs """
-                    # Confusion matrix has been deprecated as of June 10, 2022
-                    # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    prediction_probability(nep, outputs, labels, cfg.export_dir)
+            
+            if nep % cfg.save_freq == 0:
+                # Concatenate all np arrays together
+                labels = np.concatenate(tuple(*epoch_labels))
+                outputs = np.concatenate(tuple(*epoch_outputs))
+                
+                """ ROC Curve save data """
+                roc_auc = roc_curve(nep, outputs, labels, cfg.export_dir)
+    
+                """ Calculating Pred Probs """
+                # Confusion matrix has been deprecated as of June 10, 2022
+                # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
+                prediction_probability(nep, outputs, labels, cfg.export_dir)
 
 
         """
