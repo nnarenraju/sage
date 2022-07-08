@@ -511,8 +511,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             if nep % cfg.save_freq == 0:
                 # Concatenate all np arrays together
-                labels = np.concatenate(tuple(*epoch_labels))
-                outputs = np.concatenate(tuple(*epoch_outputs))
+                labels = np.concatenate(tuple(epoch_labels))
+                outputs = np.concatenate(tuple(epoch_outputs))
                 
                 """ ROC Curve save data """
                 roc_auc = roc_curve(nep, outputs, labels, cfg.export_dir)
