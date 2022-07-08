@@ -159,7 +159,7 @@ def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
     # Read diagnostic file
     data = np.loadtxt(filepath)
     # All data fields
-    epochs = data[:,0] = 1.0
+    epochs = data[:,0] + 1.0
     training_loss = data[:,1]
     validation_loss = data[:,2]
     training_accuracy = data[:,3]
