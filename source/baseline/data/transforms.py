@@ -355,6 +355,9 @@ class AugmentPolSky(SignalWrapper):
         # Right ascension, declination
         sky_positions = distrs['sky'].rvs()[0]
         
+        with open('save_augment_polsky.txt', 'a') as fp:
+            fp.write("{}    {}    {}".format(pol_angles, sky_positions[0], sky_positions[1]))
+        
         times = (self.interval_lower, self.interval_upper, self.start_time, )
         args = (y[0], y[1], pol_angles, sky_positions, ) + times
         out = self.augment(*args)
@@ -385,6 +388,10 @@ class AugmentDistance(SignalWrapper):
         chirp_distance = distrs['dchirp'].rvs()[0][0]
         # Producing the new distance with the required priors
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
+        
+        with open('save_augment_distance.txt', 'a') as fp:
+            fp.write("{}    {}    {}".format(distance_old, distance_new, chirp_distance))
+        
         # Augmenting on the distance
         return (distance_old/distance_new) * signal
 
@@ -411,4 +418,8 @@ class CyclicShift(NoiseWrapper):
     def apply(self, y: np.ndarray):
         # Cyclic shifting noise is possible for fake and real noise
         num_roll = random.randint(0, len(y))
+        
+        with open('save_augment_noise.txt', 'a') as fp:
+            fp.write("{}".format(num_roll))
+        
         return np.roll(y, num_roll)

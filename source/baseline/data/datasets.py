@@ -663,7 +663,7 @@ class MLMDC1_IterSample(Dataset):
         elif not self.cfg.add_random_noise_realisation and target:
             # Fixed noise realisation to add to the signal
             raise DeprecationWarning('Fixed noise realisation feature deprecated on June 8th, 2022')
-        
+            
         else:
             # If the sample is pure noise
             noisy_signal = sample
