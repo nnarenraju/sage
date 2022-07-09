@@ -356,7 +356,7 @@ class AugmentPolSky(SignalWrapper):
         sky_positions = distrs['sky'].rvs()[0]
         
         with open('save_augment_polsky.txt', 'a') as fp:
-            fp.write("{}    {}    {}".format(pol_angles, sky_positions[0], sky_positions[1]))
+            fp.write("{}    {}    {}\n".format(pol_angles, sky_positions[0], sky_positions[1]))
         
         times = (self.interval_lower, self.interval_upper, self.start_time, )
         args = (y[0], y[1], pol_angles, sky_positions, ) + times
@@ -390,7 +390,7 @@ class AugmentDistance(SignalWrapper):
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
         
         with open('save_augment_distance.txt', 'a') as fp:
-            fp.write("{}    {}    {}".format(distance_old, distance_new, chirp_distance))
+            fp.write("{}    {}    {}\n".format(distance_old, distance_new, chirp_distance))
         
         # Augmenting on the distance
         return (distance_old/distance_new) * signal
@@ -420,6 +420,6 @@ class CyclicShift(NoiseWrapper):
         num_roll = [random.randint(0, y.shape[1]), random.randint(0, y.shape[1])]
         
         with open('save_augment_noise.txt', 'a') as fp:
-            fp.write("{}    {}".format(num_roll[0], num_roll[1]))
+            fp.write("{}    {}\n".format(num_roll[0], num_roll[1]))
         
         return np.array([np.roll(foo, num_roll[n]) for n, foo in enumerate(y)])
