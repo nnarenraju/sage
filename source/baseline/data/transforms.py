@@ -417,9 +417,9 @@ class CyclicShift(NoiseWrapper):
 
     def apply(self, y: np.ndarray):
         # Cyclic shifting noise is possible for fake and real noise
-        num_roll = random.randint(0, len(y))
+        num_roll = [random.randint(0, y.shape[1]), random.randint(0, y.shape[2])]
         
         with open('save_augment_noise.txt', 'a') as fp:
-            fp.write("{}".format(num_roll))
+            fp.write("{}    {}".format(num_roll[0], num_roll[1]))
         
-        return np.roll(y, num_roll)
+        return np.array([np.roll(foo, num_roll[n]) for n, foo in enumerate(y)])
