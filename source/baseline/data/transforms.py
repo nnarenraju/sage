@@ -355,8 +355,13 @@ class AugmentPolSky(SignalWrapper):
         # Right ascension, declination
         sky_positions = distrs['sky'].rvs()[0]
         
-        with open('save_augment_polsky.txt', 'a') as fp:
-            fp.write("{}    {}    {}\n".format(pol_angles, sky_positions[0], sky_positions[1]))
+        with open('save_augment_pol.txt', 'a') as fp:
+            fp.write("{} ".format(pol_angles))
+        with open('save_augment_sky_1.txt', 'a') as fp:
+            fp.write("{} ".format(sky_positions[0]))
+        with open('save_augment_sky_2.txt', 'a') as fp:
+            fp.write("{} ".format(sky_positions[1]))
+            
         
         times = (self.interval_lower, self.interval_upper, self.start_time, )
         args = (y[0], y[1], pol_angles, sky_positions, ) + times
@@ -389,8 +394,13 @@ class AugmentDistance(SignalWrapper):
         # Producing the new distance with the required priors
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
         
-        with open('save_augment_distance.txt', 'a') as fp:
-            fp.write("{}    {}    {}\n".format(distance_old, distance_new, chirp_distance))
+        with open('save_augment_distance_old.txt', 'a') as fp:
+            fp.write("{} ".format(distance_old))
+        with open('save_augment_distance_new.txt', 'a') as fp:
+            fp.write("{} ".format(distance_new))
+        with open('save_augment_dchirp.txt', 'a') as fp:
+            fp.write("{} ".format(chirp_distance))
+        
         
         # Augmenting on the distance
         return (distance_old/distance_new) * signal
@@ -419,7 +429,12 @@ class CyclicShift(NoiseWrapper):
         # Cyclic shifting noise is possible for fake and real noise
         num_roll = [random.randint(0, y.shape[1]), random.randint(0, y.shape[1])]
         
-        with open('save_augment_noise.txt', 'a') as fp:
-            fp.write("{}    {}\n".format(num_roll[0], num_roll[1]))
+        with open('save_augment_noise_1.txt', 'a') as fp:
+            string = "{} ".format(num_roll[0])
+            fp.write(string)
+        with open('save_augment_noise_2.txt', 'a') as fp:
+            string = "{} ".format(num_roll[1])
+            fp.write(string)
+        
         
         return np.array([np.roll(foo, num_roll[n]) for n, foo in enumerate(y)])
