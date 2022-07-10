@@ -419,9 +419,9 @@ class Baseline_May18(KF_BatchTrain):
 class KaggleFirst_Jun9(KF_BatchTrain):
     
     """ Data storage """
-    name = "KaggleFirst_Jul8"
+    name = "KaggleFirst_Jul11"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = ''
+    save_remarks = 'OverFitFix-10epoch-'
     
     """ Dataset """
     dataset = MLMDC1_IterSample
@@ -433,7 +433,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     model_params = dict(
         # Kaggle frontend+backend
         # This model is ridiculously slow on cpu, use cuda:0
-        model_name = 'kaggle_first', 
+        model_name = 'KaggleFirstJun9', 
         filter_size = 32,
         kernel_size = 64,
         timm_params = {'model_name': 'resnet34', 
@@ -452,6 +452,11 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     pin_memory = True
     prefetch_factor = 100
     persistent_workers = True
+    
+    """ Epochs and Batches """
+    num_epochs = 10
+    batch_size = 100
+    save_freq = 1
     
     """ Save samples """
     num_sample_save = 100
