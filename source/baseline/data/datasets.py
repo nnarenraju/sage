@@ -575,6 +575,7 @@ class MLMDC1_IterSample(Dataset):
         lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
         self.extmain = h5py.File(lookup, 'r', libver='latest')
         self.sample_rate = self.extmain.attrs['sample_rate']
+        self.noise_low_freq_cutoff = self.extmain.attrs['noise_low_freq_cutoff']
         
         self.debug = cfg.debug
         if self.debug:
@@ -629,6 +630,7 @@ class MLMDC1_IterSample(Dataset):
         
         # Generic params
         params['sample_rate'] = self.sample_rate
+        params['noise_low_freq_cutoff'] = self.noise_low_freq_cutoff
         
         return (sample, target, params)
     
@@ -659,7 +661,7 @@ class MLMDC1_IterSample(Dataset):
             
             """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
             if self.debug:
-                network_snr = get_network_snr(sample, self.psds_data, params)
+                network_snr = get_network_snr(sample, self.psds_data, params, self.cfg.export_dir)
             else:
                 network_snr = -1
             
