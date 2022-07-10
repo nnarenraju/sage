@@ -171,11 +171,11 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr):
     for n, (output, label, feature, snr) in enumerate(zip(outputs, training_labels, features, network_snr)):
         save_path = os.path.join(save_dir, 'debug_cnn_feature_{}.png'.format(n))
         # Plotting CNN frontend output feature
-        plt.figure(figsize=tuple((np.array(feature.shape)[:-2]/max(feature.shape))*9.0))
+        plt.figure(figsize=tuple((np.array(feature.shape)[1:]/max(feature.shape))*9.0))
         plt.title('DEBUG CNN feature: output={}, label={}, network_snr={}'.format(output, label, snr))
         plt.xlabel('x-axis')
         plt.ylabel('y-axis')
-        plt.imshow(feature)
+        plt.imshow(feature.cpu())
         plt.savefig(save_path)
         plt.close()
     
