@@ -423,7 +423,7 @@ class AugmentDistance(SignalWrapper):
 
 class CyclicShift(NoiseWrapper):
     """ Used to cyclic shift the noise (can be applied to real noise as well) """
-    def __init__(self, always_apply=True):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
+    def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
     def apply(self, y: np.ndarray, debug):
