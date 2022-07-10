@@ -706,8 +706,8 @@ class MLMDC1_IterSample(Dataset):
         else:
             trans_pure_signal = None
         
-        save_path = self.data_loc
-        data_dir = os.path.normpath(save_path).split(os.path.sep)[-1]
+        save_path = self.cfg.export_dir
+        data_dir = os.path.normpath(self.data_loc).split(os.path.sep)[-1]
         # Plotting unit data
         plot_unit(pure_sample, pure_noise, noisy_sample, trans_pure_signal, trans_noisy_sample, 
                   params['mass1'], params['mass2'], network_snr, params['sample_rate'],
