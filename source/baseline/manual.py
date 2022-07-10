@@ -158,6 +158,28 @@ def prediction_probability(nep, output, labels, export_dir):
     plt.close()    
 
 
+def plot_cnn_output(cfg, training_output, training_labels, network_snr):
+    # Plotting the frontend CNN features
+    save_dir = os.path.join(cfg.export_dir, 'CNN_OUTPUT')
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir, exist_ok=False)
+    else:
+        return
+    
+    outputs = training_output['pred_prob']
+    features = training_output['cnn_output']
+    for n, (output, label, feature, snr) in enumerate(zip(outputs, training_labels, features, network_snr)):
+        save_path = os.path.join(save_dir, 'debug_cnn_feature_{}.png'.format(n))
+        # Plotting CNN frontend output feature
+        plt.figure(figsize=(feature.shape/max(feature.shape))*9.0)
+        plt.title('DEBUG CNN feature: output={}, label={}, network_snr={}'.format(output, label, snr))
+        plt.xlabel('x-axis')
+        plt.ylabel('y-axis')
+        plt.imshow(feature)
+        plt.savefig(save_path)
+        plt.close()
+    
+
 def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
     # Read diagnostic file
     data = np.loadtxt(filepath)
@@ -218,6 +240,10 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
         pred_prob = training_output['pred_prob']
         if 'tc' in list(training_output.keys()):
             tc = training_output['tc']
+        
+        # Plotting cnn_output in debug mode
+        if cfg.debug:
+            plot_cnn_output(cfg, training_output, training_labels, params['network_snr'])
         
         ## TODO: Loss and accuracy need to be redefined to include 'tc'
         # Loss calculation
@@ -334,11 +360,12 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             transfrom_times = []
         
         
-        for nstep, (training_samples, training_labels, all_times) in enumerate(pbar):
+        for nstep, (training_samples, training_labels, all_times, network_snr) in enumerate(pbar):
             
             # Update params
             params = {}
             params['scheduler_step'] = nep + nstep / num_train_batches
+            params['network_snr'] = network_snr
             
             if cfg.num_workers == 0:
                 section_times.append(all_times['sections'])

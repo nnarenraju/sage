@@ -400,9 +400,9 @@ class KappaModel(torch.nn.Module):
         # Batch Normalisation
         x = self.batchnorm(x)
         # Conv Backend
-        x = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
+        cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
         # Timm Frontend
-        x = self.frontend(x)
+        x = self.frontend(cnn_output)
         ## Manipulate encoder output to get params
         # Global Pool
         # x = self.flatten(self.avg_pool_1d(x))
@@ -412,7 +412,7 @@ class KappaModel(torch.nn.Module):
         # Use sigmoid here if not using BCEWithLogitsLoss
         pred_prob = self.sigmoid(x)
         # Return ouptut params (pred_prob)
-        return {'raw': x, 'pred_prob': pred_prob}
+        return {'raw': x, 'pred_prob': pred_prob, 'cnn_output': cnn_output}
 
 
 class KappaModelPE(torch.nn.Module):

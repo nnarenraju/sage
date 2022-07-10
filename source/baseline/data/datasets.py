@@ -739,8 +739,14 @@ class MLMDC1_IterSample(Dataset):
             sample, target = self._transforms_(noisy_sample, target)
             
             ## Plotting
-            if self.debug and target[0]:
-                self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
+            if self.debug:
+                check_dir = os.path.join(self.cfg.export_dir, 'SAMPLES')
+                if os.path.isdir(check_dir):
+                    check_path = os.path.join(check_dir, '*.png')
+                    num_created = len(glob.glob(check_path))
+                    
+                if target[0] and num_created < self.cfg.num_sample_save:
+                    self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
         
         except Exception as e:
             print('\n\n{}: {}'.format(e.__class__, e))
@@ -758,7 +764,7 @@ class MLMDC1_IterSample(Dataset):
         sample = torch.from_numpy(sample)
         target = torch.from_numpy(target)
         
-        return (sample, target, [])
+        return (sample, target, [], network_snr)
 
 
 

@@ -207,6 +207,7 @@ class KaggleFirst:
     num_epochs = 25
     batch_size = 100
     save_freq = 5
+    num_samle_save = 100
     megabatch = False
     early_stopping = False
     
@@ -451,6 +452,9 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     pin_memory = True
     prefetch_factor = 100
     persistent_workers = True
+    
+    """ Save samples """
+    num_samle_save = 100
     
     """ Storage Devices """
     store_device = 'cuda:1'
