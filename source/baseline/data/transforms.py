@@ -341,7 +341,7 @@ class AugmentPolSky(SignalWrapper):
         return np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
     
 
-    def apply(self, y: np.ndarray, dets=None, distrs=None, debug=False, **params):
+    def apply(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
         # Get Augmentation params
         for key, value in params.items():
             setattr(self, key, value)
@@ -406,7 +406,7 @@ class AugmentDistance(SignalWrapper):
         # Augmenting on the distance
         return (distance_old/distance_new) * signal
 
-    def apply(self, y: np.ndarray, dets=None, distrs=None, debug=False, **params):
+    def apply(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
         # TODO: Set all distances during data generation to 1Mpc.
         # Augmenting on distance parameter
         for key, value in params.items():
@@ -414,7 +414,7 @@ class AugmentDistance(SignalWrapper):
         
         # Augmentation should be valid if given a batch of signals
         # Run through the augmentation procedure with given dist, mchirp
-        augmented_signals = self.get_augmented_signal(y, self.distance, self.mchirp, distrs)
+        augmented_signals = self.get_augmented_signal(y, self.distance, self.mchirp, distrs, debug)
         return augmented_signals
 
 
@@ -426,7 +426,7 @@ class CyclicShift(NoiseWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, debug):
+    def apply(self, y: np.ndarray, debug=''):
         # Cyclic shifting noise is possible for fake and real noise
         num_roll = [random.randint(0, y.shape[1]), random.randint(0, y.shape[1])]
         
