@@ -66,11 +66,11 @@ class UnifySignal:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, dets=None, distrs=None, **params):
+    def __call__(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
         times = {}
         for transform in self.transforms:
             start = time.time()
-            y = transform(y, dets, distrs, **params)
+            y = transform(y, dets, distrs, debug, **params)
             times[transform.__class__.__name__] = time.time() - start
         return y, times
 
@@ -79,11 +79,11 @@ class UnifyNoise:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray):
+    def __call__(self, y: np.ndarray, debug=''):
         times = {}
         for transform in self.transforms:
             start = time.time()
-            y = transform(y)
+            y = transform(y, debug)
             times[transform.__class__.__name__] = time.time() - start
         return y, times
 
