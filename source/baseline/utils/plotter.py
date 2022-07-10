@@ -51,50 +51,50 @@ def snr_plotter(snr_dir, nepochs):
 
 def debug_plotter(debug_dir):
 
-    distance_new = np.loadtxt(debug_dir + '/distance_new.txt')
-    distance_old = np.loadtxt(debug_dir + '/distance_old.txt')
+    distance_new = np.loadtxt(debug_dir + '/save_augment_distance_new.txt')
+    distance_old = np.loadtxt(debug_dir + '/save_augment_distance_old.txt')
     title = 'Comparing the old and new distance priors'
     xlabel = 'Distance'
     ylabel = 'Number of Occurences'
     save_path = os.path.join(debug_dir, 'AUG_compare_distance.png')
     _plotter(title, xlabel, ylabel, [distance_old, distance_new], ['Original', 'Augmented'], save_path)
     
-    pol = np.loadtxt(debug_dir + '/pol.txt')
+    pol = np.loadtxt(debug_dir + '/save_augment_pol.txt')
     title = 'Polarisation for 20 epochs of approx 1e4 signals each'
     xlabel = 'Polarisation Angle'
     ylabel = 'Number of Occurences'
     save_path = os.path.join(debug_dir, 'AUG_pol_angle.png')
     _plotter(title, xlabel, ylabel, [pol], ['Pol Angle'], save_path)
     
-    ra = np.loadtxt(debug_dir + '/ra.txt')
+    ra = np.loadtxt(debug_dir + '/save_augment_ra.txt')
     title = 'RA for 20 epochs of approx 1e4 signals each'
     xlabel = 'RA'
     ylabel = 'Number of Occurences'
     save_path = os.path.join(debug_dir, 'AUG_ra.png')
     _plotter(title, xlabel, ylabel, [ra], ['ra'], save_path)
     
-    dec = np.loadtxt(debug_dir + '/dec.txt')
+    dec = np.loadtxt(debug_dir + '/save_augment_dec.txt')
     title = 'DEC for 20 epochs of approx 1e4 signals each'
     xlabel = 'DEC'
     ylabel = 'Number of Occurences'
     save_path = os.path.join(debug_dir, 'AUG_dec.png')
     _plotter(title, xlabel, ylabel, [dec], ['dec'], save_path)
     
-    noise_slide_1 = np.loadtxt(debug_dir + '/noise_slide_1.txt')
+    noise_slide_1 = np.loadtxt(debug_dir + '/save_augment_noise_shift_1.txt')
     title = 'Noise Slide 1 for 20 epochs of approx 1e4 signals each'
     xlabel = 'Noise Slide 1'
     ylabel = 'Number of Occurences'
     save_path = os.path.join(debug_dir, 'AUG_noise_slide_1.png')
     _plotter(title, xlabel, ylabel, [noise_slide_1], ['noise_slide_1'], save_path)
     
-    noise_slide_2 = np.loadtxt(debug_dir + '/noise_slide_2.txt')
+    noise_slide_2 = np.loadtxt(debug_dir + '/save_augment_noise_shift_2.txt')
     title = 'Noise Slide 2 for 20 epochs of approx 1e4 signals each'
     xlabel = 'Noise Slide 2'
     ylabel = 'Number of Occurences'
     save_path = os.path.join(debug_dir, 'AUG_noise_slide_2.png')
     _plotter(title, xlabel, ylabel, [noise_slide_2], ['noise_slide_2'], save_path)
     
-    dchirp = np.loadtxt(debug_dir + '/dchirp.txt')
+    dchirp = np.loadtxt(debug_dir + '/save_augment_dchirp.txt')
     title = 'Chirp Distance 2 for 20 epochs of approx 1e4 signals each'
     xlabel = 'Chirp Distance'
     ylabel = 'Number of Occurences'
