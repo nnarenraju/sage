@@ -33,9 +33,6 @@ from tqdm import tqdm
 import torch.utils.data as D
 import sklearn.metrics as metrics
 
-from datetime import datetime
-from distutils.dir_util import copy_tree
-
 # LOCAL
 from data.datasets import Simple
 from utils.record_times import record
@@ -476,7 +473,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             epoch_outputs = []
             
             pbar = tqdm(validDL)
-            for validation_samples, validation_labels, _ in pbar:
+            for validation_samples, validation_labels, _, _ in pbar:
                 
                 # Set the device and dtype
                 validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
@@ -601,8 +598,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     print("Training Complete!")
     print("Best validation loss = {}".format(best_loss))
     print("Best validation accuracy = {}".format(best_accuracy))
-
-
+    
     # Saving best epoch results
     best_dir = os.path.join(cfg.export_dir, 'BEST')
     if not os.path.isdir(best_dir):
@@ -623,11 +619,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
     # Remake loss curve and accuracy curve with best epoch marked
     loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
-    
-    # Move export dir for current run to online workspace
-    file_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
-    www_dir = 'RUN-{}-dataset{}-model-{}-remark-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
-    copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
     
     print('\nFIN')
     

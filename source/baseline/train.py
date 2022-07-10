@@ -30,7 +30,10 @@ import torch
 import argparse
 import numpy as np
 import pytorch_lightning as pl
+
 from torchsummary import summary
+from datetime import datetime
+from distutils.dir_util import copy_tree
 
 # Warnings
 import warnings
@@ -38,10 +41,10 @@ warnings.filterwarnings("ignore")
 
 # LOCAL
 from lightning import simple
-from utils.plot_debug import debug_plotter
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
 from data.MP_save_trainable import MP_Trainable
+from utils.plotter import debug_plotter, snr_plotter
 
 # Tensorboard
 from torch.utils.tensorboard import SummaryWriter
@@ -195,6 +198,15 @@ def run_trainer():
         # Debug method plotting
         debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
         debug_plotter(debug_dir)
+        
+        # Plotting the SNR histogram
+        snr_dir = os.path.join(cfg.export_dir, 'SNR')
+        snr_plotter(snr_dir, cfg.num_epochs)
+        
+        # Move export dir for current run to online workspace
+        file_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
+        www_dir = 'RUN-{}-dataset{}-model-{}-remark-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
+        copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
         
 
 if __name__ == "__main__":
