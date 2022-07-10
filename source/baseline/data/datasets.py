@@ -744,6 +744,8 @@ class MLMDC1_IterSample(Dataset):
                 if os.path.isdir(check_dir):
                     check_path = os.path.join(check_dir, '*.png')
                     num_created = len(glob.glob(check_path))
+                else:
+                    num_created = 0
                     
                 if target[0] and num_created < self.cfg.num_sample_save:
                     self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
