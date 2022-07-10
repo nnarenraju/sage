@@ -454,7 +454,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     persistent_workers = True
     
     """ Save samples """
-    num_samle_save = 100
+    num_sample_save = 100
     
     """ Storage Devices """
     store_device = 'cuda:1'
