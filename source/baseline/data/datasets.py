@@ -579,7 +579,8 @@ class MLMDC1_IterSample(Dataset):
         self.debug = cfg.debug
         if self.debug:
             self.debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
-            os.makedirs(self.debug_dir, exist_ok=False)
+            if not os.path.exists(self.debug_dir):
+                os.makedirs(self.debug_dir, exist_ok=False)
         else:
             self.debug_dir = ''
         
