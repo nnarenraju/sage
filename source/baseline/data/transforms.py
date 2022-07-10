@@ -120,9 +120,9 @@ class SignalWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, dets=None, distrs=None, debug=False, **params):
+    def __call__(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
         if self.always_apply:
-            return self.apply(y, dets, distrs, **params)
+            return self.apply(y, dets, distrs, debug, **params)
         else:
             pass
 
@@ -131,9 +131,9 @@ class NoiseWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, debug=False):
+    def __call__(self, y: np.ndarray, debug=''):
         if self.always_apply:
-            return self.apply(y)
+            return self.apply(y, debug)
         else:
             pass
     
@@ -423,7 +423,7 @@ class AugmentDistance(SignalWrapper):
 
 class CyclicShift(NoiseWrapper):
     """ Used to cyclic shift the noise (can be applied to real noise as well) """
-    def __init__(self, always_apply=True):
+    def __init__(self, always_apply=True):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
         super().__init__(always_apply)
 
     def apply(self, y: np.ndarray, debug):
