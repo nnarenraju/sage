@@ -103,10 +103,10 @@ def plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_no
 
     
     # Saving plots
-    save_dir = os.path.join(save_path, "plot_samples")
+    save_dir = os.path.join(save_path, "SAMPLES")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=False)
-        
+    
     save_path = os.path.join(save_dir, "sample_idx_{}.png".format(idx))
     plt.savefig(save_path)
     plt.close()

@@ -44,7 +44,7 @@ from data.multirate_sampling import get_sampling_rate_bins
 # PyCBC
 import pycbc
 from pycbc import distributions
-from pycbc.types import load_frequencyseries, FrequencySeries
+from pycbc.types import FrequencySeries
 
 # Datatype for storage
 tensor_dtype=torch.float32
@@ -564,8 +564,6 @@ class MLMDC1_IterSample(Dataset):
             self.num_sample_save = int(len(self.data_paths)/100.0)
         else:
             self.num_sample_save = data_cfg.num_sample_save
-        # Initialise save counter
-        self.save_counter = 0
         
         
         """ Random noise realisation """
@@ -577,6 +575,13 @@ class MLMDC1_IterSample(Dataset):
         lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
         self.extmain = h5py.File(lookup, 'r', libver='latest')
         self.sample_rate = self.extmain.attrs['sample_rate']
+        
+        self.debug = cfg.debug
+        if self.debug:
+            self.debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
+            os.makedirs(self.debug_dir, exist_ok=False)
+        else:
+            self.debug_dir = ''
         
 
     def __len__(self):
@@ -627,15 +632,15 @@ class MLMDC1_IterSample(Dataset):
         return (sample, target, params)
     
     
-    def _augmentation_(self, sample, target, params):
+    def _augmentation_(self, sample, target, params, debug):
         """ Signal and Noise only Augmentation """
         ## Convert the signal from h_plus and h_cross to h_t
         # During this procedure randomise the value of polarisation angle, ra and dec
         # This should give us the strains required (project_wave might cause issues with MP)
         if target and self.signal_only_transforms:
-            sample, times = self.signal_only_transforms(sample, self.detectors, self.distrs, **params)
+            sample, times = self.signal_only_transforms(sample, self.detectors, self.distrs, self.debug_dir, **params)
         elif not target and self.noise_only_transforms:
-            sample, times = self.noise_only_transforms(sample)
+            sample, times = self.noise_only_transforms(sample, self.debug_dir)
         
         return sample
     
@@ -652,7 +657,10 @@ class MLMDC1_IterSample(Dataset):
             pure_noise, _, _ = self._read_(random_noise_data_path)
             
             """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
-            # network_snr = get_network_snr(pure_sample, self.psds_data, params, self.data_loc)
+            if self.debug:
+                network_snr = get_network_snr(sample, self.psds_data, params)
+            else:
+                network_snr = -1
             
             """ Adding noise to signals """
             if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):
@@ -667,8 +675,10 @@ class MLMDC1_IterSample(Dataset):
         else:
             # If the sample is pure noise
             noisy_signal = sample
+            pure_noise = None
+            network_snr = -1
         
-        return noisy_signal
+        return (noisy_signal, pure_noise, network_snr)
     
     
     def _transforms_(self, noisy_sample, target):
@@ -685,27 +695,20 @@ class MLMDC1_IterSample(Dataset):
         return (sample, target)
     
     
-    def _plotting_(self, pure_sample, _noise, noisy_sample, sample, network_snr, idx, params):
+    def _plotting_(self, pure_sample, pure_noise, noisy_sample, trans_noisy_sample, network_snr, idx, params):
         """ Plotting idx data (if flag is set to True) """
-        if params['label'] and self.save_counter <= self.num_sample_save:
-            # Input parameters
-            pure_signal = pure_sample
-            pure_noise = _noise
-            noisy_signal = noisy_sample
-            if self.transforms:
-                trans_pure_signal, times = self.transforms(pure_signal, self.psds_data, self.data_cfg)
-            else:
-                trans_pure_signal = None
-                
-            trans_noisy_signal = sample
-            save_path = self.data_loc
-            data_dir = os.path.normpath(save_path).split(os.path.sep)[-1]
-            # Plotting unit data
-            plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_noisy_signal, 
-                      params['mass1'], params['mass2'], network_snr, params['sample_rate'],
-                      save_path, data_dir, idx)
-            # Update save counter
-            self.save_counter += 1
+        # Input parameters
+        if self.transforms:
+            trans_pure_signal, _ = self.transforms(pure_sample, self.psds_data, self.data_cfg)
+        else:
+            trans_pure_signal = None
+        
+        save_path = self.data_loc
+        data_dir = os.path.normpath(save_path).split(os.path.sep)[-1]
+        # Plotting unit data
+        plot_unit(pure_sample, pure_noise, noisy_sample, trans_pure_signal, trans_noisy_sample, 
+                  params['mass1'], params['mass2'], network_snr, params['sample_rate'],
+                  save_path, data_dir, idx)
     
     
     def __getitem__(self, idx):
@@ -718,9 +721,9 @@ class MLMDC1_IterSample(Dataset):
         
         try:
             ## Signal and Noise Augmentation
-            pure_sample = self._augmentation_(sample, target, params)
+            pure_sample = self._augmentation_(sample, target, params, self.debug)
             ## Add noise realisation to the signals
-            noisy_sample = self._noise_realisation_(pure_sample, target, params)
+            noisy_sample, pure_noise, network_snr = self._noise_realisation_(pure_sample, target, params)
             
             ## Target handling
             target = np.array([self.targets[idx]])
@@ -733,7 +736,8 @@ class MLMDC1_IterSample(Dataset):
             sample, target = self._transforms_(noisy_sample, target)
             
             ## Plotting
-            # self._plotting_(pure_sample, _noise, noisy_sample, sample, network_snr, idx, params)
+            if self.debug and target[0]:
+                self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
         
         except Exception as e:
             print('\n\n{}: {}'.format(e.__class__, e))

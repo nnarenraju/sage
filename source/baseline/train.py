@@ -29,7 +29,6 @@ import gc
 import torch
 import argparse
 import numpy as np
-from pathlib import Path
 import pytorch_lightning as pl
 from torchsummary import summary
 
@@ -39,9 +38,9 @@ warnings.filterwarnings("ignore")
 
 # LOCAL
 from lightning import simple
+from utils.plot_debug import debug_plotter
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
-from data.save_trainable import Trainable
 from data.MP_save_trainable import MP_Trainable
 
 # Tensorboard
@@ -192,9 +191,14 @@ def run_trainer():
         # Loading the network with the best weights path
         # This step is mandatory before the inference/testing module
         # Network.load_state_dict(torch.load(cfg.weights_path))
-    
-    return os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+        
+        # Debug method plotting
+        debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
+        debug_plotter(debug_dir)
+        
 
 if __name__ == "__main__":
     
     run_trainer()
+    
+    

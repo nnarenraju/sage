@@ -602,6 +602,7 @@ class GenerateData:
                 for name in names:
                     data = sample[name]
                     # Add an extra dimension the sample for appendable storage
+                    # Check whether save_idx receives the same value 
                     _group[name][save_idx] = data
         
         
@@ -664,17 +665,19 @@ class GenerateData:
         watchers = [pool.apply_async(self.listener, (queue, n)) for n, queue in enumerate(queues)]
         
         # Create save qidx for each idx based on number of queues
-        noi_offset = min(self.iterable[1])
-        sig_offset = min(self.iterable[0])
         united_iterable = np.concatenate(self.iterable)
-        idx_iterable = np.concatenate((self.iterable[0]-sig_offset, self.iterable[1]-noi_offset))
         
+        ## Deprecated on Jun 15th, 2022, using random assignment of qidx instead
         assert sum(self.chunk_size) % self.num_queues_datasave == 0
+        # Creating a list of repeating qidx (like [0,1,2,3,0,1,2,3, ...])
         save_qidxs = list(range(len(queues))) * int(sum(self.chunk_size)/self.num_queues_datasave)
+        assert len(united_iterable) == len(save_qidxs)
+        
+        # Save idx (like [0,0,0,0,1,1,1,1,2,2,2,2, ..., 0,0,0,0,1,1,1,1,2,2,2,2, ...]) for signal and noise
+        # TODO: Fix this method for multiple queues
         sidxs1 = np.array([[n]*len(queues) for n in range(int(self.chunk_size[0]/self.num_queues_datasave))]).flatten()
         sidxs2 = np.array([[n]*len(queues) for n in range(int(self.chunk_size[1]/self.num_queues_datasave))]).flatten()
         save_idxs = np.concatenate((sidxs1, sidxs2))
-        assert len(united_iterable) == len(save_qidxs)
         assert len(united_iterable) == len(save_idxs)
         
         for idx, save_qidx, save_idx in zip(united_iterable, save_qidxs, save_idxs):
@@ -1027,6 +1030,7 @@ def make(slots_magic_params, export_dir):
     waveform_iterables = np.array_split(waveform_iterable, nchunks_waveform)
     noise_iterables = np.array_split(noise_iterable, nchunks_noise)
     # WARNING: following code made for equal number of noise and waveforms only
+    assert len(waveform_iterables) == len(noise_iterables)
     global_iterables = list(zip(waveform_iterables, noise_iterables))
     
     for nchunk, chunk in enumerate(global_iterables):
@@ -1036,7 +1040,7 @@ def make(slots_magic_params, export_dir):
         gd.iterable = chunk
         # Get prior values of chosen waveform idxs
         with h5py.File(gd.inj_path, "r") as fp:
-            # Get and return the batch data
+            # Get and return the batch data for signals alone
             gd.idx_offset = np.min(chunk[0])
             gd.priors = np.array(fp['data'][chunk[0]])
         

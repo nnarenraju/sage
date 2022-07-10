@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # BUILT-IN
+import os
 import time
 import random
 import numpy as np
@@ -119,7 +120,7 @@ class SignalWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, dets=None, distrs=None, **params):
+    def __call__(self, y: np.ndarray, dets=None, distrs=None, debug=False, **params):
         if self.always_apply:
             return self.apply(y, dets, distrs, **params)
         else:
@@ -130,7 +131,7 @@ class NoiseWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray):
+    def __call__(self, y: np.ndarray, debug=False):
         if self.always_apply:
             return self.apply(y)
         else:
@@ -340,7 +341,7 @@ class AugmentPolSky(SignalWrapper):
         return np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
     
 
-    def apply(self, y: np.ndarray, dets=None, distrs=None, **params):
+    def apply(self, y: np.ndarray, dets=None, distrs=None, debug=False, **params):
         # Get Augmentation params
         for key, value in params.items():
             setattr(self, key, value)
@@ -355,13 +356,13 @@ class AugmentPolSky(SignalWrapper):
         # Right ascension, declination
         sky_positions = distrs['sky'].rvs()[0]
         
-        with open('save_augment_pol.txt', 'a') as fp:
-            fp.write("{} ".format(pol_angles))
-        with open('save_augment_sky_1.txt', 'a') as fp:
-            fp.write("{} ".format(sky_positions[0]))
-        with open('save_augment_sky_2.txt', 'a') as fp:
-            fp.write("{} ".format(sky_positions[1]))
-            
+        if debug != '':
+            with open(os.path.join(debug, 'save_augment_pol.txt'), 'a') as fp:
+                fp.write("{} ".format(pol_angles))
+            with open(os.path.join(debug, 'save_augment_ra.txt'), 'a') as fp:
+                fp.write("{} ".format(sky_positions[0]))
+            with open(os.path.join(debug, 'save_augment_dec.txt'), 'a') as fp:
+                fp.write("{} ".format(sky_positions[1]))
         
         times = (self.interval_lower, self.interval_upper, self.start_time, )
         args = (y[0], y[1], pol_angles, sky_positions, ) + times
@@ -387,25 +388,25 @@ class AugmentDistance(SignalWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def get_augmented_signal(self, signal, distance, mchirp, distrs):
+    def get_augmented_signal(self, signal, distance, mchirp, distrs, debug):
         distance_old = distance
         # Getting new distance
         chirp_distance = distrs['dchirp'].rvs()[0][0]
         # Producing the new distance with the required priors
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
         
-        with open('save_augment_distance_old.txt', 'a') as fp:
-            fp.write("{} ".format(distance_old))
-        with open('save_augment_distance_new.txt', 'a') as fp:
-            fp.write("{} ".format(distance_new))
-        with open('save_augment_dchirp.txt', 'a') as fp:
-            fp.write("{} ".format(chirp_distance))
-        
+        if debug != '':
+            with open(os.path.join(debug, 'save_augment_distance_old.txt'), 'a') as fp:
+                fp.write("{} ".format(distance_old))
+            with open(os.path.join(debug, 'save_augment_distance_new.txt'), 'a') as fp:
+                fp.write("{} ".format(distance_new))
+            with open(os.path.join(debug, 'save_augment_dchirp.txt'), 'a') as fp:
+                fp.write("{} ".format(chirp_distance))
         
         # Augmenting on the distance
         return (distance_old/distance_new) * signal
 
-    def apply(self, y: np.ndarray, dets=None, distrs=None, **params):
+    def apply(self, y: np.ndarray, dets=None, distrs=None, debug=False, **params):
         # TODO: Set all distances during data generation to 1Mpc.
         # Augmenting on distance parameter
         for key, value in params.items():
@@ -425,16 +426,16 @@ class CyclicShift(NoiseWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray):
+    def apply(self, y: np.ndarray, debug):
         # Cyclic shifting noise is possible for fake and real noise
         num_roll = [random.randint(0, y.shape[1]), random.randint(0, y.shape[1])]
         
-        with open('save_augment_noise_1.txt', 'a') as fp:
-            string = "{} ".format(num_roll[0])
-            fp.write(string)
-        with open('save_augment_noise_2.txt', 'a') as fp:
-            string = "{} ".format(num_roll[1])
-            fp.write(string)
-        
+        if debug != '':
+            with open(os.path.join(debug, 'save_augment_noise_shift_1.txt'), 'a') as fp:
+                string = "{} ".format(num_roll[0])
+                fp.write(string)
+            with open(os.path.join(debug, 'save_augment_noise_shift_2.txt'), 'a') as fp:
+                string = "{} ".format(num_roll[1])
+                fp.write(string)
         
         return np.array([np.roll(foo, num_roll[n]) for n, foo in enumerate(y)])
