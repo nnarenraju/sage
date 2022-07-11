@@ -33,7 +33,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 # LOCAL
 from data.datasets import MLMDC1_IterSample, BatchLoader
-from architectures.frontend import GammaModel, KappaModel
+from architectures.frontend import GammaModel, KappaModel, KappaModelPE
 from data.transforms import Unify, UnifySignal, UnifyNoise
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling
 from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift
@@ -478,7 +478,51 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     debug = True
     debug_size = 1000
     
+
+class KaggleFirstPE_Jun9(KF_BatchTrain):
     
+    """ Data storage """
+    name = "KaggleFirst_Jul11"
+    export_dir = Path("/home/nnarenraju/Research") / name
+    save_remarks = 'OverFitFix'
+    
+    """ Architecture """
+    model = KappaModelPE
+    
+    model_params = dict(
+        # Kaggle frontend+backend
+        # This model is ridiculously slow on cpu, use cuda:0
+        model_name = 'KaggleFirstPEJun9', 
+        filter_size = 32,
+        kernel_size = 64,
+        timm_params = {'model_name': 'resnet34', 
+                        'pretrained': True, 
+                        'in_chans': 2, 
+                        'drop_rate': 0.25},
+        store_device = 'cuda:1',
+    )
+    
+    """ Epochs and Batches """
+    num_epochs = 10
+    batch_size = 100
+    save_freq = 1
+    
+    """ Save samples """
+    num_sample_save = 100
+    
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+    
+    """ Loss Function """
+    loss_function = BCEgw_MSEtc()
+    
+    """ Optimizer """
+    # optimizer = optim.SGD
+    # optimizer_params = dict(lr=2e-4, momentum=0.9)
+    
+    debug = True
+    debug_size = 1000
 
 
 

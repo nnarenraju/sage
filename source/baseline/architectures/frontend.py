@@ -476,17 +476,21 @@ class KappaModelPE(torch.nn.Module):
         """ Mods """
         ## Penultimate and output layers
         # Primary outputs
-        self.signal_or_noise = nn.Linear(self.frontend.num_features, 2)
+        self.signal_or_noise = nn.Linear(self.frontend.num_features, 1)
         self.coalescence_time = nn.Linear(self.frontend.num_features, 1)
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
+        self.batchnorm = nn.BatchNorm1d(2)
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
         self.flatten = nn.Flatten(start_dim=1)
         self.dropout = nn.Dropout(0.25)
+        self.sigmoid = torch.nn.Sigmoid()
         self.softmax = torch.nn.Softmax(dim=1)
         self.ReLU = nn.ReLU()
         
         ## Convert network into given dtype and store in proper device
+        # Manipulation layers
+        self.batchnorm.to(dtype=data_type, device=self.store_device)
         # Mod layers
         self.signal_or_noise.to(dtype=data_type, device=self.store_device)
         self.coalescence_time.to(dtype=data_type, device=self.store_device)
@@ -499,20 +503,23 @@ class KappaModelPE(torch.nn.Module):
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
+        # Batch Normalisation
+        x = self.batchnorm(x)
         # Conv Backend
-        x = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
+        cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
         # Timm Frontend
-        x = self.frontend(x) # (100, 1000)
+        x = self.frontend(cnn_output) # (100, 1000)
         ## Manipulate encoder output to get params
         # Global Pool
         x = self.flatten(self.avg_pool_1d(x))
         # In the Kaggle architecture a dropout is added at this point
         # I see no reason to include at this stage. But we can experiment.
         ## Output necessary params
-        pred_prob = self.softmax(self.signal_or_noise(x))
+        raw = self.signal_or_noise(x)
+        pred_prob = self.sigmoid(raw)
         tc = self.softmax(self.coalescence_time(x))
         # Return ouptut params (pred_prob, tc)
-        return {'pred_prob': pred_prob, 'tc': tc}
+        return {'raw': raw, 'pred_prob': pred_prob, 'tc': tc, 'cnn_output': cnn_output}
 
 
 class KappaModelSimplified(torch.nn.Module):
