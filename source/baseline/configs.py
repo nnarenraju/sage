@@ -421,7 +421,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     """ Data storage """
     name = "KaggleFirst_Jul11"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'OverFitFix-10epoch-'
+    save_remarks = 'OverFitFix'
     
     """ Dataset """
     dataset = MLMDC1_IterSample

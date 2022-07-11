@@ -211,7 +211,7 @@ def run_trainer():
             run_type = 'RUN'
         else:
             run_type = 'RUN'
-        www_dir = '{}-{}-dataset{}-model-{}-remark-{}'.format(run_type, file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
+        www_dir = '{}-{}-D{}-{}-{}'.format(run_type, file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
         copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
         
         ## Making an overlay plot of all runs in the online workspace

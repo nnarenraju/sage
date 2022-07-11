@@ -107,7 +107,7 @@ def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names
         # Log ROC Curve
         _overplot(ax_roc, fpr, tpr, c=cmap(n), 
               ylabel="True Positive Rate", xlabel="False Positive Rate", 
-              yscale='log', xscale='log', label=run_names[n]+'-AUC_{}'.format(auc))
+              yscale='log', xscale='log', label=run_names[n]+'-AUC_{}'.format(np.around(auc, 3)))
     
     _overplot(ax_roc, [0, 1], [0, 1], label="Random Classifier", c='k', 
               ylabel="True Positive Rate", xlabel="False Positive Rate", 
