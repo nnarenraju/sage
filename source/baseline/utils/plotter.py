@@ -46,7 +46,7 @@ def figure(title=""):
     plt.rc('ytick', labelsize='medium')
     fig, axs = plt.subplots(1, figsize=(16.0, 14.0))
     fig.suptitle(title, fontsize=28, y=0.92)
-    return axs
+    return fig, axs
 
 
 def _overplot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid', 
@@ -67,9 +67,9 @@ def _overplot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid',
 
 def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
     # Read diagnostic file
-    ax_loss = figure(title="Loss Curves")
-    ax_accr = figure(title="Accuracy Curves")
-    ax_roc  = figure(title="ROC Curves")
+    fig_loss, ax_loss = figure(title="Loss Curves")
+    fig_accr, ax_accr = figure(title="Accuracy Curves")
+    fig_roc, ax_roc  = figure(title="ROC Curves")
     # colour map
     cmap = plt.cm.get_cmap('hsv', len(overview_filepaths))
     
@@ -91,10 +91,10 @@ def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
         _overplot(ax_accr, epochs, training_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap(n))
         _overplot(ax_accr, epochs, validation_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap(n))
     
-    ax_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
-    ax_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))
-    ax_loss.close()
-    ax_accr.close()
+    fig_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
+    fig_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))
+    fig_loss.close()
+    fig_accr.close()
     
     # Plotting the ROC overlay plot
     # colour map
@@ -108,8 +108,8 @@ def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
               ylabel="True Positive Rate", xlabel="False Positive Rate", 
               yscale='log', xscale='log', label=run_names[n])
     
-    ax_roc.savefig(os.path.join(save_dir, 'overlay_roc.png'))
-    ax_roc.close()
+    fig_roc.savefig(os.path.join(save_dir, 'overlay_roc.png'))
+    fig_roc.close()
     
 
 def snr_plotter(snr_dir, nepochs):
