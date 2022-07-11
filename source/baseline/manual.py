@@ -591,7 +591,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 torch.save(Network.state_dict(), weights_save_path)
                 best_loss = epoch_validation_loss
                 best_epoch = nep
-                best_roc_data = (fpr, tpr)
+                best_roc_data = [fpr, tpr, roc_auc]
             
             if avg_acc_valid > best_accuracy:
                 best_accuracy = avg_acc_valid
@@ -631,7 +631,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     roc_path = os.path.join(cfg.export_dir, os.path.join(roc_dir, roc_file))
     shutil.copy(roc_path, os.path.join(best_dir, roc_file))
     # Save best ROC curve raw data
-    np.save(os.path.join(best_dir, 'roc_best.npy'), np.stack(best_roc_data, axis=0))
+    np.save(os.path.join(best_dir, 'roc_best.npy'), np.stack(best_roc_data[:2], axis=0))
+    np.save(os.path.join(best_dir, 'roc_auc_best.npy'), np.array(best_roc_data[2]))
     
     # Best prediction probabilities
     pred_dir = 'PRED_PROB'
