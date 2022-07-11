@@ -660,7 +660,7 @@ class MLMDC1_IterSample(Dataset):
             if self.debug:
                 debug_idx = np.argwhere(self.noise_idx == random_noise_idx).flatten()
                 with open(os.path.join(self.debug_dir, 'save_augment_random_noise_idx.txt'), 'a') as fp:
-                    string = "{} ".format(self.noise_norm_idx[debug_idx])
+                    string = "{} ".format(self.noise_norm_idx[debug_idx][0])
                     fp.write(string)
                     
             random_noise_data_path = self.data_paths[random_noise_idx]
