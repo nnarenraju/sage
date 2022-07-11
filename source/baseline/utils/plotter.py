@@ -74,6 +74,7 @@ def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
     cmap = plt.cm.get_cmap('hsv', len(overview_filepaths))
     
     for n, overview_filepath in enumerate(overview_filepaths):
+        print(overview_filepath)
         data = np.loadtxt(overview_filepath)
         
         # All data fields
