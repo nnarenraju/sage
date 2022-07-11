@@ -208,7 +208,7 @@ def run_trainer():
         # Move export dir for current run to online workspace
         file_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
         if cfg.debug:
-            run_type = 'DEBUG'
+            run_type = 'RUN'
         else:
             run_type = 'RUN'
         www_dir = '{}-{}-dataset{}-model-{}-remark-{}'.format(run_type, file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
