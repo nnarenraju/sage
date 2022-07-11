@@ -177,7 +177,7 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
         ax[0].grid()
         ax[1].imshow(det_features[1])
         ax[1].grid()
-        if network_snr != -1:
+        if snr != -1:
             save_path = os.path.join(save_dir, 'debug_cnn_feature_SNR-{}_{}.png'.format(snr, n))
         else:
             save_path = os.path.join(save_dir, 'debug_cnn_feature_noise_{}.png'.format(n))
