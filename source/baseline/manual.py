@@ -127,7 +127,7 @@ def roc_curve(nep, output, labels, export_dir):
     plt.savefig(save_path)
     plt.close()
     
-    return roc_auc
+    return (roc_auc, fpr, tpr)
     
 
 def prediction_probability(nep, output, labels, export_dir):
@@ -328,6 +328,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         best_loss = 1.e10 # impossibly bad value
         best_accuracy = 0.0 # bad value
         best_epoch = 0
+        best_roc_data = None
         overfitting_check = 0
         params = {}
         
@@ -554,8 +555,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     outputs = np.concatenate(tuple(epoch_outputs))
                     
                     """ ROC Curve save data """
-                    roc_auc = roc_curve(nep, outputs, labels, cfg.export_dir)
-        
+                    roc_auc, fpr, tpr = roc_curve(nep, outputs, labels, cfg.export_dir)
+                    
                     """ Calculating Pred Probs """
                     # Confusion matrix has been deprecated as of June 10, 2022
                     # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
@@ -590,6 +591,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 torch.save(Network.state_dict(), weights_save_path)
                 best_loss = epoch_validation_loss
                 best_epoch = nep
+                best_roc_data = (fpr, tpr)
             
             if avg_acc_valid > best_accuracy:
                 best_accuracy = avg_acc_valid
@@ -608,48 +610,44 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     break
     
     
-    except Exception as e:
+    except KeyboardInterrupt:
         print(traceback.format_exc())
-        print('\n{}: {}'.format(e.__class__, e))
-        if e.__class__.__name__ == 'KeyboardInterrupt':
-            print('manual.py: Terminated due to user controlled KeyboardInterrupt.')
-            try_to_continue = True
-        else:
-            try_to_continue = False
+        print('manual.py: Terminated due to user controlled KeyboardInterrupt.')
     
+        
+    print("\n================================================================\n")
+    print("Training Complete!")
+    print("Best validation loss = {}".format(best_loss))
+    print("Best validation accuracy = {}".format(best_accuracy))
     
-    if try_to_continue:
-        
-        print("\n================================================================\n")
-        print("Training Complete!")
-        print("Best validation loss = {}".format(best_loss))
-        print("Best validation accuracy = {}".format(best_accuracy))
-        
-        # Saving best epoch results
-        best_dir = os.path.join(cfg.export_dir, 'BEST')
-        if not os.path.isdir(best_dir):
-            os.makedirs(best_dir, exist_ok=False)
-        
-        # Move premade plots
-        roc_dir = 'ROC'
-        roc_file = "roc_curve_{}.png".format(best_epoch)
-        roc_path = os.path.join(cfg.export_dir, os.path.join(roc_dir, roc_file))
-        shutil.copy(roc_path, os.path.join(best_dir, roc_file))
-        
-        pred_dir = 'PRED_PROB'
-        pred_file = "log_pred_prob_{}.png".format(best_epoch)
-        pred_path = os.path.join(cfg.export_dir, os.path.join(pred_dir, pred_file))
-        shutil.copy(pred_path, os.path.join(best_dir, pred_file))
-        
-        # Move best weights
-        shutil.move(weights_save_path, os.path.join(best_dir, cfg.weights_path))
-        # Move best CNN features
-        src_best_features = os.path.join(cfg.export_dir, 'CNN_OUTPUT/epoch_{}'.format(best_epoch))
-        dst_best_features = os.path.join(best_dir, 'CNN_features_epoch_{}'.format(best_epoch))
-        copy_tree(src_best_features, dst_best_features)
-        
-        # Remake loss curve and accuracy curve with best epoch marked
-        loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
+    # Saving best epoch results
+    best_dir = os.path.join(cfg.export_dir, 'BEST')
+    if not os.path.isdir(best_dir):
+        os.makedirs(best_dir, exist_ok=False)
+    
+    # Move premade plots
+    roc_dir = 'ROC'
+    roc_file = "roc_curve_{}.png".format(best_epoch)
+    roc_path = os.path.join(cfg.export_dir, os.path.join(roc_dir, roc_file))
+    shutil.copy(roc_path, os.path.join(best_dir, roc_file))
+    # Save best ROC curve raw data
+    np.save(os.path.join(best_dir, 'roc_best.npy'), np.stack(best_roc_data, axis=0))
+    
+    # Best prediction probabilities
+    pred_dir = 'PRED_PROB'
+    pred_file = "log_pred_prob_{}.png".format(best_epoch)
+    pred_path = os.path.join(cfg.export_dir, os.path.join(pred_dir, pred_file))
+    shutil.copy(pred_path, os.path.join(best_dir, pred_file))
+    
+    # Move best weights
+    shutil.move(weights_save_path, os.path.join(best_dir, cfg.weights_path))
+    # Move best CNN features
+    src_best_features = os.path.join(cfg.export_dir, 'CNN_OUTPUT/epoch_{}'.format(best_epoch))
+    dst_best_features = os.path.join(best_dir, 'CNN_features_epoch_{}'.format(best_epoch))
+    copy_tree(src_best_features, dst_best_features)
+    
+    # Remake loss curve and accuracy curve with best epoch marked
+    loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
     
     print('\nFIN')
     

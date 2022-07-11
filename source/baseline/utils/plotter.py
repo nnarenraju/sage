@@ -40,6 +40,78 @@ def _plotter(title, xlabel, ylabel, hists, labels, save_path):
     plt.close()
 
 
+def figure(title=""):
+    plt.rc('font', family='serif')
+    plt.rc('xtick', labelsize='medium')
+    plt.rc('ytick', labelsize='medium')
+    fig, axs = plt.subplots(1, figsize=(16.0, 14.0))
+    fig.suptitle(title, fontsize=28, y=0.92)
+    return axs
+
+
+def _overplot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid', 
+          label="", c=None, yscale='linear', xscale='linear'):
+    # Plotting type
+    if label != "":
+        ax.plot(x, y, ls=ls, c=c, linewidth=3.0, label=label)
+    else:
+        ax.plot(x, y, ls=ls, c=c, linewidth=3.0)
+    # Plotting params
+    ax.set_xscale(xscale)
+    ax.set_yscale(yscale)
+    ax.grid(True, which='both')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.legend()
+
+
+def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
+    # Read diagnostic file
+    ax_loss = figure(title="Loss Curves")
+    ax_accr = figure(title="Accuracy Curves")
+    ax_roc  = figure(title="ROC Curves")
+    # colour map
+    cmap = plt.cm.get_cmap('hsv', len(overview_filepaths))
+    
+    for n, overview_filepath in enumerate(overview_filepaths):
+        data = np.loadtxt(overview_filepath)
+        
+        # All data fields
+        epochs = data[:,0] + 1.0
+        training_loss = data[:,1]
+        validation_loss = data[:,2]
+        training_accuracy = data[:,3]
+        validation_accuracy = data[:,4]
+        
+        ## Loss Curves
+        _overplot(ax_loss, epochs, training_loss, label=run_names[n], ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
+        _overplot(ax_loss, epochs, validation_loss, ls='dashed', ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
+        
+        ## Accuracy Curves
+        _overplot(ax_accr, epochs, training_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap[n])
+        _overplot(ax_accr, epochs, validation_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap[n])
+    
+    ax_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
+    ax_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))
+    ax_loss.close()
+    ax_accr.close()
+    
+    # Plotting the ROC overlay plot
+    # colour map
+    cmap = plt.cm.get_cmap('hsv', len(roc_paths))
+    
+    for n, roc_path in enumerate(roc_paths):
+        fpr, tpr = np.load(roc_path)
+        ## Loss Curves
+        # Log ROC Curve
+        _overplot(ax_roc, fpr, tpr, c=cmap[n], 
+              ylabel="True Positive Rate", xlabel="False Positive Rate", 
+              yscale='log', xscale='log', label=run_names[n])
+    
+    ax_roc.savefig(os.path.join(save_dir, 'overlay_roc.png'))
+    ax_roc.close()
+    
+
 def snr_plotter(snr_dir, nepochs):
     snrs = np.loadtxt(snr_dir + '/snr_priors.csv')
     title = 'SNR Histogram over nepochs = {} with augmentation'.format(nepochs)
@@ -95,8 +167,15 @@ def debug_plotter(debug_dir):
     _plotter(title, xlabel, ylabel, [noise_slide_2], ['noise_slide_2'], save_path)
     
     dchirp = np.loadtxt(debug_dir + '/save_augment_dchirp.txt')
-    title = 'Chirp Distance 2 for 20 epochs of approx 1e4 signals each'
+    title = 'Chirp Distance for 20 epochs of approx 1e4 signals each'
     xlabel = 'Chirp Distance'
     ylabel = 'Number of Occurences'
     save_path = os.path.join(debug_dir, 'AUG_dchirp.png')
     _plotter(title, xlabel, ylabel, [dchirp], ['dchirp'], save_path)
+    
+    noise_idx = np.loadtxt(debug_dir + '/save_augment_random_noise_idx.txt')
+    title = 'Random noise idx for 20 epochs of approx 1e4 signals each'
+    xlabel = 'Random noise idx'
+    ylabel = 'Number of Occurences'
+    save_path = os.path.join(debug_dir, 'AUG_noise_idx.png')
+    _plotter(title, xlabel, ylabel, [noise_idx], ['random_noise_idx'], save_path)

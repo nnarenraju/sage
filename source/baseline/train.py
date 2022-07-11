@@ -26,6 +26,7 @@ Documentation: NULL
 # IN-BUILT
 import os
 import gc
+import glob
 import torch
 import argparse
 import numpy as np
@@ -44,7 +45,7 @@ from lightning import simple
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
 from data.MP_save_trainable import MP_Trainable
-from utils.plotter import debug_plotter, snr_plotter
+from utils.plotter import debug_plotter, snr_plotter, overlay_plotter
 
 # Tensorboard
 from torch.utils.tensorboard import SummaryWriter
@@ -195,6 +196,7 @@ def run_trainer():
         # This step is mandatory before the inference/testing module
         # Network.load_state_dict(torch.load(cfg.weights_path))
         
+        
         # Debug method plotting
         debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
         debug_plotter(debug_dir)
@@ -205,8 +207,40 @@ def run_trainer():
         
         # Move export dir for current run to online workspace
         file_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
-        www_dir = 'RUN-{}-dataset{}-model-{}-remark-{}'.format(file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
+        if cfg.debug:
+            run_type = 'DEBUG'
+        else:
+            run_type = 'RUN'
+        www_dir = '{}-{}-dataset{}-model-{}-remark-{}'.format(run_type, file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
         copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
+        
+        ## Making an overlay plot of all runs in the online workspace
+        # All runs that are in DEBUG mode are ignored for the overlay plots
+        overview_paths = []
+        roc_paths = []
+        run_names = []
+        flag_1 = False
+        flag_2 = False
+        for run_dir in glob.glob(os.path.join(cfg.online_workspace, 'RUN-*')):
+            # Get the loss, accuracy and ROC curve data from the best file (if present)
+            overview_path = os.path.join(run_dir, 'losses.txt')
+            if os.path.exists(overview_path):
+                overview_paths.append(overview_path)
+                flag_1 = True
+            roc_path = os.path.join(run_dir, 'BEST/roc_best.npy')
+            if os.path.exists(roc_path):
+                overview_paths.append(roc_path)
+                flag_2 = True
+            if flag_1 and flag_2:
+                run_names.append(os.path.split(run_dir)[-1])
+            flag_1 = False
+            flag_2 = False
+        
+        save_dir = os.path.join(cfg.online_workspace, 'ALL_OVERLAY')
+        if not os.path.isdir(save_dir):
+            os.makedirs(save_dir, exist_ok=False)
+        if run_names != []:
+            overlay_plotter(overview_paths, roc_paths, save_dir, run_names)
         
 
 if __name__ == "__main__":

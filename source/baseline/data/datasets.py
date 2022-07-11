@@ -568,6 +568,7 @@ class MLMDC1_IterSample(Dataset):
         
         """ Random noise realisation """
         self.noise_idx = np.argwhere(self.targets == 0).flatten()
+        self.noise_norm_idx = np.arange(len(self.noise_idx))
         self.noise_paths = self.data_paths[self.noise_idx]
         
         
@@ -655,7 +656,15 @@ class MLMDC1_IterSample(Dataset):
         
         if self.cfg.add_random_noise_realisation and target:
             # Pick a random noise realisation to add to the signal
-            random_noise_data_path = random.choice(self.noise_paths)
+            random_noise_idx = random.choice(self.noise_idx)
+            if self.debug:
+                debug_idx = np.argwhere(self.noise_idx == random_noise_idx)
+                with open(os.path.join(self.debug_dir, 'save_augment_random_noise_idx.txt'), 'a') as fp:
+                    string = "{} ".format(self.noise_norm_idx[debug_idx])
+                    fp.write(string)
+                    
+            random_noise_data_path = self.data_paths[random_noise_idx]
+            
             # Read the noise data
             pure_noise, _, _ = self._read_(random_noise_data_path)
             
