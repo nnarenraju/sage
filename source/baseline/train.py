@@ -222,6 +222,7 @@ def run_trainer():
         roc_aucs = []
         flag_1 = False
         flag_2 = False
+        flag_3 = False
         for run_dir in glob.glob(os.path.join(cfg.online_workspace, 'RUN-*')):
             # Get the loss, accuracy and ROC curve data from the best file (if present)
             overview_path = os.path.join(run_dir, 'losses.txt')
