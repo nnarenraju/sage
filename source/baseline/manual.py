@@ -155,13 +155,11 @@ def prediction_probability(nep, output, labels, export_dir):
     plt.close()    
 
 
-def plot_cnn_output(cfg, training_output, training_labels, network_snr):
+def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
     # Plotting the frontend CNN features
-    save_dir = os.path.join(cfg.export_dir, 'CNN_OUTPUT')
+    save_dir = os.path.join(cfg.export_dir, 'CNN_OUTPUT/epoch_{}'.format(epoch))
     if not os.path.isdir(save_dir):
         os.makedirs(save_dir, exist_ok=False)
-    else:
-        return
     
     outputs = training_output['pred_prob']
     features = training_output['cnn_output']
@@ -245,8 +243,9 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
             tc = training_output['tc']
         
         # Plotting cnn_output in debug mode
-        if cfg.debug:
-            plot_cnn_output(cfg, training_output, training_labels, params['network_snr'])
+        if cfg.debug and params['cnn_output']:
+            plot_cnn_output(cfg, training_output, training_labels, params['network_snr'], params['epoch'])
+            params['cnn_output'] = False
         
         ## TODO: Loss and accuracy need to be redefined to include 'tc'
         # Loss calculation
@@ -324,6 +323,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     best_accuracy = 0.0 # bad value
     best_epoch = 0
     overfitting_check = 0
+    params = {}
     
     loss_filepath = os.path.join(cfg.export_dir, cfg.output_loss_file)
     
@@ -362,11 +362,14 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             noise_aug_times = []
             transfrom_times = []
         
+        if cfg.debug:
+            params['cnn_output'] = True
+            params['epoch'] = nep
+        
         
         for nstep, (training_samples, training_labels, all_times, network_snr) in enumerate(pbar):
             
             # Update params
-            params = {}
             params['scheduler_step'] = nep + nstep / num_train_batches
             params['network_snr'] = network_snr
             
