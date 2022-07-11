@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 import os
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -71,7 +72,8 @@ def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names
     fig_accr, ax_accr = figure(title="Accuracy Curves")
     fig_roc, ax_roc  = figure(title="ROC Curves")
     # colour map
-    cmap = plt.cm.get_cmap('hsv', len(overview_filepaths))
+    numc = len(overview_filepaths)
+    cmap = ["#"+''.join([random.choice('ABCDEF0123456789') for _ in range(6)]) for _ in range(numc)]
     
     for n, overview_filepath in enumerate(overview_filepaths):
         data = np.loadtxt(overview_filepath)
@@ -84,12 +86,12 @@ def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names
         validation_accuracy = data[:,4]
         
         ## Loss Curves
-        _overplot(ax_loss, epochs, training_loss, label=run_names[n], ylabel='Avg Loss', xlabel='Epochs', c=cmap(n))
-        _overplot(ax_loss, epochs, validation_loss, ls='dashed', ylabel='Avg Loss', xlabel='Epochs', c=cmap(n))
+        _overplot(ax_loss, epochs, training_loss, label=run_names[n], ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
+        _overplot(ax_loss, epochs, validation_loss, ls='dashed', ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
         
         ## Accuracy Curves
-        _overplot(ax_accr, epochs, training_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap(n))
-        _overplot(ax_accr, epochs, validation_accuracy, ylabel='Avg Accuracy', xlabel='Epochs', ls='dashed', c=cmap(n))
+        _overplot(ax_accr, epochs, training_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap[n])
+        _overplot(ax_accr, epochs, validation_accuracy, ylabel='Avg Accuracy', xlabel='Epochs', ls='dashed', c=cmap[n])
     
     fig_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
     fig_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))
@@ -98,14 +100,15 @@ def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names
     
     # Plotting the ROC overlay plot
     # colour map
-    cmap = plt.cm.get_cmap('hsv', len(roc_paths))
+    numc = len(roc_paths)
+    cmap = ["#"+''.join([random.choice('ABCDEF0123456789') for _ in range(6)]) for _ in range(numc)]
     
     for n, roc_path in enumerate(roc_paths):
         fpr, tpr = np.load(roc_path)
         auc = np.load(roc_aucs[n])
         ## Loss Curves
         # Log ROC Curve
-        _overplot(ax_roc, fpr, tpr, c=cmap(n), 
+        _overplot(ax_roc, fpr, tpr, c=cmap[n], 
               ylabel="True Positive Rate", xlabel="False Positive Rate", 
               yscale='log', xscale='log', label=run_names[n]+'-AUC_{}'.format(np.around(auc, 3)))
     
