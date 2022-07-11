@@ -658,7 +658,7 @@ class MLMDC1_IterSample(Dataset):
             # Pick a random noise realisation to add to the signal
             random_noise_idx = random.choice(self.noise_idx)
             if self.debug:
-                debug_idx = np.argwhere(self.noise_idx == random_noise_idx)
+                debug_idx = np.argwhere(self.noise_idx == random_noise_idx).flatten()
                 with open(os.path.join(self.debug_dir, 'save_augment_random_noise_idx.txt'), 'a') as fp:
                     string = "{} ".format(self.noise_norm_idx[debug_idx])
                     fp.write(string)
