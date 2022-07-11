@@ -219,6 +219,7 @@ def run_trainer():
         overview_paths = []
         roc_paths = []
         run_names = []
+        roc_aucs = []
         flag_1 = False
         flag_2 = False
         for run_dir in glob.glob(os.path.join(cfg.online_workspace, 'RUN-*')):
@@ -229,18 +230,23 @@ def run_trainer():
             roc_path = os.path.join(run_dir, 'BEST/roc_best.npy')
             if os.path.exists(roc_path):
                 flag_2 = True
-            if flag_1 and flag_2:
+            roc_auc_path = os.path.join(run_dir, 'BEST/roc_auc_best.npy')
+            if os.path.exists(roc_auc_path):
+                flag_3 = True
+            if flag_1 and flag_2 and flag_3:
                 run_names.append(os.path.split(run_dir)[-1])
                 overview_paths.append(overview_path)
                 roc_paths.append(roc_path)
+                roc_aucs.append(roc_auc_path)
             flag_1 = False
             flag_2 = False
+            flag_3 = False
         
         save_dir = os.path.join(cfg.online_workspace, 'ALL_OVERLAY')
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir, exist_ok=False)
         if run_names != []:
-            overlay_plotter(overview_paths, roc_paths, save_dir, run_names)
+            overlay_plotter(overview_paths, roc_paths, roc_aucs, save_dir, run_names)
         
 
 if __name__ == "__main__":

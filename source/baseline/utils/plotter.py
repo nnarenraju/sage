@@ -65,7 +65,7 @@ def _overplot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid',
     ax.legend()
 
 
-def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
+def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names):
     # Read diagnostic file
     fig_loss, ax_loss = figure(title="Loss Curves")
     fig_accr, ax_accr = figure(title="Accuracy Curves")
@@ -89,7 +89,7 @@ def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
         
         ## Accuracy Curves
         _overplot(ax_accr, epochs, training_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap(n))
-        _overplot(ax_accr, epochs, validation_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap(n))
+        _overplot(ax_accr, epochs, validation_accuracy, ylabel='Avg Accuracy', xlabel='Epochs', ls='dashed', c=cmap(n))
     
     fig_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
     fig_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))
@@ -102,11 +102,16 @@ def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
     
     for n, roc_path in enumerate(roc_paths):
         fpr, tpr = np.load(roc_path)
+        auc = np.load(roc_aucs[n])
         ## Loss Curves
         # Log ROC Curve
         _overplot(ax_roc, fpr, tpr, c=cmap(n), 
               ylabel="True Positive Rate", xlabel="False Positive Rate", 
-              yscale='log', xscale='log', label=run_names[n])
+              yscale='log', xscale='log', label=run_names[n]+'-AUC_{}'.format(auc))
+    
+    _overplot(ax_roc, [0, 1], [0, 1], label="Random Classifier", c='k', 
+              ylabel="True Positive Rate", xlabel="False Positive Rate", 
+              ls="dashed", yscale='log', xscale='log')
     
     fig_roc.savefig(os.path.join(save_dir, 'overlay_roc.png'))
     plt.close(fig_roc)
