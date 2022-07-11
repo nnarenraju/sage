@@ -229,7 +229,7 @@ def run_trainer():
                 flag_1 = True
             roc_path = os.path.join(run_dir, 'BEST/roc_best.npy')
             if os.path.exists(roc_path):
-                overview_paths.append(roc_path)
+                roc_paths.append(roc_path)
                 flag_2 = True
             if flag_1 and flag_2:
                 run_names.append(os.path.split(run_dir)[-1])
