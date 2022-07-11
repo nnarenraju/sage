@@ -93,8 +93,8 @@ def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
     
     fig_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
     fig_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))
-    fig_loss.close()
-    fig_accr.close()
+    plt.close(fig_loss)
+    plt.close(fig_accr)
     
     # Plotting the ROC overlay plot
     # colour map
@@ -109,7 +109,7 @@ def overlay_plotter(overview_filepaths, roc_paths, save_dir, run_names):
               yscale='log', xscale='log', label=run_names[n])
     
     fig_roc.savefig(os.path.join(save_dir, 'overlay_roc.png'))
-    fig_roc.close()
+    plt.close(fig_roc)
     
 
 def snr_plotter(snr_dir, nepochs):
