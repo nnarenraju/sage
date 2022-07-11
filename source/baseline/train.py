@@ -225,14 +225,14 @@ def run_trainer():
             # Get the loss, accuracy and ROC curve data from the best file (if present)
             overview_path = os.path.join(run_dir, 'losses.txt')
             if os.path.exists(overview_path):
-                overview_paths.append(overview_path)
                 flag_1 = True
             roc_path = os.path.join(run_dir, 'BEST/roc_best.npy')
             if os.path.exists(roc_path):
-                roc_paths.append(roc_path)
                 flag_2 = True
             if flag_1 and flag_2:
                 run_names.append(os.path.split(run_dir)[-1])
+                overview_paths.append(overview_path)
+                roc_paths.append(roc_path)
             flag_1 = False
             flag_2 = False
         
