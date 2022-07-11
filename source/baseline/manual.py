@@ -33,6 +33,8 @@ from tqdm import tqdm
 import torch.utils.data as D
 import sklearn.metrics as metrics
 
+from distutils.dir_util import copy_tree
+
 # LOCAL
 from data.datasets import Simple
 from utils.record_times import record
@@ -164,7 +166,6 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
     outputs = training_output['pred_prob']
     features = training_output['cnn_output']
     for n, (output, label, feature, snr) in enumerate(zip(outputs, training_labels, features, network_snr)):
-        save_path = os.path.join(save_dir, 'debug_cnn_feature_{}.png'.format(n))
         # Plotting CNN frontend output feature
         det_features = feature.cpu().detach().numpy()
         fig, ax = plt.subplots(1, 2, figsize=(6.0*2, 6.0*1))
@@ -176,6 +177,10 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
         ax[0].grid()
         ax[1].imshow(det_features[1])
         ax[1].grid()
+        if network_snr != -1:
+            save_path = os.path.join(save_dir, 'debug_cnn_feature_SNR-{}_{}.png'.format(snr, n))
+        else:
+            save_path = os.path.join(save_dir, 'debug_cnn_feature_noise_{}.png'.format(n))
         plt.tight_layout()
         plt.savefig(save_path)
         plt.close()
@@ -622,7 +627,12 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     pred_path = os.path.join(cfg.export_dir, os.path.join(pred_dir, pred_file))
     shutil.copy(pred_path, os.path.join(best_dir, pred_file))
     
+    # Move best weights
     shutil.move(weights_save_path, os.path.join(best_dir, cfg.weights_path))
+    # Move best CNN features
+    src_best_features = os.path.join(cfg.export_dir, 'CNN_OUTPUT/epoch_{}'.format(best_epoch))
+    dst_best_features = os.path.join(best_dir, 'CNN_features_epoch_{}'.format(best_epoch))
+    copy_tree(src_best_features, dst_best_features)
     
     # Remake loss curve and accuracy curve with best epoch marked
     loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
