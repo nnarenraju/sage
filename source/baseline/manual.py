@@ -278,14 +278,12 @@ def validation_phase(cfg, Network, loss_function, validation_samples, validation
             validation_output = Network(validation_samples)
             # Get necessary output params from dict output
             pred_prob = validation_output['pred_prob']
-            if 'tc' in list(validation_output.keys()):
-                tc = validation_output['tc']
             
-            ## TODO: loss and accuracy must be redefined to include 'tc'
-            validation_loss = loss_function(validation_output, validation_labels)
+            # Calculate validation loss with params if required
+            validation_loss = loss_function(validation_output, validation_labels, cfg.parameter_estimation)
     
     # Accuracy calculation
-    accuracy = calculate_accuracy(pred_prob, validation_labels, cfg.accuracy_thresh)
+    accuracy = calculate_accuracy(pred_prob, validation_labels['gw'], cfg.accuracy_thresh)
     # Returning pred_prob if saving data
     return (validation_loss, accuracy, pred_prob)
 
@@ -491,7 +489,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 epoch_outputs = []
                 
                 pbar = tqdm(validDL)
-                for validation_samples, validation_labels, _, _ in pbar:
+                for validation_samples, validation_labels, _ in pbar:
                     
                     # Class balance assertions
                     batch_labels = validation_labels.numpy()
@@ -500,7 +498,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     
                     # Set the device and dtype
                     validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
-                    validation_labels = validation_labels.to(dtype=torch.float32, device=cfg.train_device)
+                    for key, value in validation_labels.items():
+                        validation_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
                     
                     batch_validation_loss = 0.
                     accuracies = []
@@ -537,7 +536,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # Run training phase and get loss and accuracy
                         validation_loss, accuracy, preds = validation_phase(cfg, Network, 
                                                                             loss_function, 
-                                                                            validation_samples, validation_labels)
+                                                                            validation_samples, 
+                                                                            validation_labels)
                         
                         # Display stuff
                         pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))

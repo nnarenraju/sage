@@ -47,7 +47,7 @@ class LossWrapper:
 
 class BCEgw_MSEtc(LossWrapper):
     
-    def __init__(self, always_apply=True, class_weight=None, mse_alpha=1.0):
+    def __init__(self, always_apply=True, class_weight=None, mse_alpha=0.3):
         super().__init__(always_apply)
         assert mse_alpha >= 0.0
         self.mse_alpha = mse_alpha
@@ -93,7 +93,7 @@ class BCEgw_MSEtc(LossWrapper):
         For the handling of 'tc'
         MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
         """
-        prefix = (self.mse_alpha/outputs['raw'].shape[0])
+        prefix = self.mse_alpha/outputs['raw'].shape[0]
         # mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
         mse_loss = sum((targets['norm_tc']-outputs['tc'])**2)
         MSEtc = prefix * mse_loss
@@ -103,7 +103,7 @@ class BCEgw_MSEtc(LossWrapper):
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
         """
-        print("BCE loss = {} and MSE loss = {}".format(BCEgw, MSEtc))
+        # print("BCE loss = {} and MSE loss = {}".format(BCEgw, MSEtc))
         
         custom_loss = BCEgw + MSEtc # not a leaf variable
         custom_loss = torch.tensor(custom_loss) # is a leaf variable
