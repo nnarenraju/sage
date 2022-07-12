@@ -512,13 +512,13 @@ class KappaModelPE(torch.nn.Module):
         x = self.frontend(cnn_output) # (100, 1000)
         ## Manipulate encoder output to get params
         # Global Pool
-        x = self.flatten_d0(self.avg_pool_1d(x))
+        x = self.flatten_d1(self.avg_pool_1d(x))
         # In the Kaggle architecture a dropout is added at this point
         # I see no reason to include at this stage. But we can experiment.
         ## Output necessary params
-        raw = self.flatten_d0(self.flatten_d1(self.signal_or_noise(x)))
+        raw = self.flatten_d0(self.signal_or_noise(x))
         pred_prob = self.sigmoid(raw)
-        tc = self.flatten_d0(self.flatten_d1(self.sigmoid(self.coalescence_time(x))))
+        tc = self.flatten_d0(self.sigmoid(self.coalescence_time(x)))
         # Return ouptut params (pred_prob, tc)
         return {'raw': raw, 'pred_prob': pred_prob, 'tc': tc, 'cnn_output': cnn_output}
 
