@@ -47,7 +47,7 @@ class LossWrapper:
 
 class BCEgw_MSEtc(LossWrapper):
     
-    def __init__(self, always_apply=True, class_weight=None, mse_alpha=0.0):
+    def __init__(self, always_apply=True, class_weight=None, mse_alpha=1.0):
         super().__init__(always_apply)
         assert mse_alpha >= 0.0
         self.mse_alpha = mse_alpha
