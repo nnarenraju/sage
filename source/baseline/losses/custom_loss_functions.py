@@ -83,9 +83,9 @@ class BCEgw_MSEtc(LossWrapper):
         BCEgw = criterion(outputs['pred_prob'], targets['gw'])
         
         """ Converting to numpy arrays """
-        for key, value in outputs:
+        for key, value in outputs.items():
             outputs['key'] = value.detach().cpu().numpy()
-        for key, value in targets:
+        for key, value in targets.items():
             targets['key'] = value.detach().cpu().numpy()
         
         """
