@@ -479,7 +479,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     debug_size = 1000
     
 
-class KaggleFirstPE_Jun9(KF_BatchTrain):
+class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
     name = "KaggleFirst_Jul11"
