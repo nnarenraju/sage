@@ -84,9 +84,9 @@ class BCEgw_MSEtc(LossWrapper):
         
         """ Converting to numpy arrays """
         for key, value in outputs.items():
-            outputs['key'] = value.detach().cpu().numpy()
+            outputs[key] = value.detach().cpu().numpy()
         for key, value in targets.items():
-            targets['key'] = value.detach().cpu().numpy()
+            targets[key] = value.detach().cpu().numpy()
         
         """
         MSE - Mean Squared Error Loss
