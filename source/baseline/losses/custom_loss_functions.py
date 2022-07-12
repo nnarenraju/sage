@@ -33,12 +33,12 @@ class LossWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
         
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, pe):
         raise NotImplementedError
     
-    def __call__(self, outputs, targets):
+    def __call__(self, outputs, targets, pe):
         if self.always_apply:
-            return self.forward(outputs, targets)
+            return self.forward(outputs, targets, pe)
         else:
             pass
 
