@@ -277,7 +277,8 @@ class DataModule:
         ttargets = train_fold['target'].values
         check_class_balance = len(ttargets[ttargets == 1])/len(ttargets)
         if check_class_balance == 0.5:
-            weights = [check_class_balance]*len(ttargets)
+            balanced_weight = 1.0/len(ttargets[ttargets == 1])
+            weights = [balanced_weight]*len(ttargets)
             tsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
         else:
             raise ValueError('Encountered a class imbalanced training dataset!')
@@ -295,7 +296,8 @@ class DataModule:
         vtargets = valid_fold['target'].values
         check_class_balance = len(vtargets[vtargets == 1])/len(vtargets)
         if check_class_balance == 0.5:
-            weights = [check_class_balance]*len(vtargets)
+            balanced_weight = 1.0/len(vtargets[vtargets == 1])
+            weights = [balanced_weight]*len(vtargets)
             vsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
         else:
             raise ValueError('Encountered a class imbalanced training dataset!')
