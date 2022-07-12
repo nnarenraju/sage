@@ -352,12 +352,12 @@ class DataModule:
         os.environ["OMP_NUM_THREADS"] = "1"
         
         train_loader = D.DataLoader(
-            train_data, batch_size=batch_size, shuffle=True,
+            train_data, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory, sampler=tsampler,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
         valid_loader = D.DataLoader(
-            valid_data, batch_size=batch_size, shuffle=False,
+            valid_data, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory, sampler=vsampler,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
