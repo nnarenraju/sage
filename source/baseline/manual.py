@@ -186,7 +186,7 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
         plt.tight_layout()
         plt.savefig(save_path)
         plt.close()
-    
+
 
 def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
     # Read diagnostic file
@@ -249,7 +249,7 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
         
         # Plotting cnn_output in debug mode
         if cfg.debug and params['cnn_output']:
-            plot_cnn_output(cfg, training_output, training_labels, params['network_snr'], params['epoch'])
+            plot_cnn_output(cfg, training_output, training_labels['gw'], params['network_snr'], params['epoch'])
             params['cnn_output'] = False
            
         # Loss calculation
@@ -258,7 +258,7 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
         training_loss.backward()
     
     # Accuracy calculation
-    accuracy = calculate_accuracy(pred_prob, training_labels, cfg.accuracy_thresh)
+    accuracy = calculate_accuracy(pred_prob, training_labels['gw'], cfg.accuracy_thresh)
     # Clip gradients to make convergence somewhat easier
     torch.nn.utils.clip_grad_norm_(Network.parameters(), max_norm=cfg.clip_norm)
     # Make the actual optimizer step and save the batch loss
@@ -399,9 +399,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 ## rather than moving a batch of data.
                 # Set the device and dtype
                 training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
-                training_labels = training_labels.to(dtype=torch.float32, device=cfg.train_device)
-                
-                raise
+                for key, value in training_labels.items():
+                    training_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
+                    
                 
                 batch_training_loss = 0.
                 accuracies = []
