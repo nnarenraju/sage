@@ -392,7 +392,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Class balance assertions
                 batch_labels = training_labels.numpy()
                 check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
-                assert check_balance >= 0.40 and check_balance <= 0.60
+                assert check_balance >= 0.30 and check_balance <= 0.70
                 
                 
                 """ Tensorification and Device Compatibility """
@@ -497,7 +497,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     # Class balance assertions
                     batch_labels = validation_labels.numpy()
                     check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
-                    assert check_balance >= 0.40 and check_balance <= 0.60
+                    assert check_balance >= 0.30 and check_balance <= 0.70
                     
                     # Set the device and dtype
                     validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
