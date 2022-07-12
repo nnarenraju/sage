@@ -94,8 +94,8 @@ def calculate_accuracy(output, labels, threshold = 0.5):
     correct = 0
     apply_thresh = lambda x: round(x - threshold + 0.5)
     for toutput, tlabel in zip(output, labels):
-        output_check = apply_thresh(float(toutput[0]))
-        labels_check = apply_thresh(float(tlabel[0]))
+        output_check = apply_thresh(float(toutput))
+        labels_check = apply_thresh(float(tlabel))
         if output_check == labels_check:
             correct+=1
 
