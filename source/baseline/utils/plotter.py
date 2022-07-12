@@ -181,9 +181,16 @@ def debug_plotter(debug_dir):
     save_path = os.path.join(debug_dir, 'AUG_dchirp.png')
     _plotter(title, xlabel, ylabel, [dchirp], ['dchirp'], save_path)
     
-    noise_idx = np.loadtxt(debug_dir + '/save_augment_random_noise_idx.txt')
-    title = 'Random noise idx for 20 epochs of approx 1e4 signals each'
-    xlabel = 'Random noise idx'
+    noise_idx = np.loadtxt(debug_dir + '/save_augment_train_random_noise_idx.txt')
+    title = 'Train Random noise idx for 20 epochs of approx 1e4 signals each'
+    xlabel = 'Train Random noise idx'
     ylabel = 'Number of Occurences'
-    save_path = os.path.join(debug_dir, 'AUG_noise_idx.png')
+    save_path = os.path.join(debug_dir, 'AUG_train_noise_idx.png')
+    _plotter(title, xlabel, ylabel, [noise_idx], ['random_noise_idx'], save_path)
+    
+    noise_idx = np.loadtxt(debug_dir + '/save_augment_valid_random_noise_idx.txt')
+    title = 'Valid Random noise idx for 20 epochs of approx 1e4 signals each'
+    xlabel = 'Valid Random noise idx'
+    ylabel = 'Number of Occurences'
+    save_path = os.path.join(debug_dir, 'AUG_valid_noise_idx.png')
     _plotter(title, xlabel, ylabel, [noise_idx], ['random_noise_idx'], save_path)

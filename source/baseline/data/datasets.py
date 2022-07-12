@@ -502,6 +502,8 @@ class MLMDC1_IterSample(Dataset):
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         
+        self.training = training
+        
         # Set CUDA device for pin_memory if needed
         if bool(re.search('cuda', self.cfg.store_device)):
             setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
@@ -659,7 +661,11 @@ class MLMDC1_IterSample(Dataset):
             random_noise_idx = random.choice(self.noise_idx)
             if self.debug:
                 debug_idx = np.argwhere(self.noise_idx == random_noise_idx).flatten()
-                with open(os.path.join(self.debug_dir, 'save_augment_random_noise_idx.txt'), 'a') as fp:
+                if self.training:
+                    filename = 'save_augment_train_random_noise_idx.txt'
+                else:
+                    filename = 'save_augment_valid_random_noise_idx.txt'
+                with open(os.path.join(self.debug_dir, filename), 'a') as fp:
                     string = "{} ".format(self.noise_norm_idx[debug_idx][0])
                     fp.write(string)
                     

@@ -309,7 +309,7 @@ class DataModule:
                 transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
                 signal_only_transforms=cfg.transforms['signal'],
                 noise_only_transforms=cfg.transforms['noise'],
-                training=True, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
+                training=False, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
         
         return (train_dataset, valid_dataset, tsampler, vsampler)
