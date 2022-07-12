@@ -247,12 +247,6 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
         # Get necessary output params from dict output
         pred_prob = training_output['pred_prob']
         
-        print(training_output)
-        
-        print(training_labels)
-        
-        raise
-        
         # Plotting cnn_output in debug mode
         if cfg.debug and params['cnn_output']:
             plot_cnn_output(cfg, training_output, training_labels['gw'], params['network_snr'], params['epoch'])
