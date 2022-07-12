@@ -554,6 +554,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
                     if nep % cfg.save_freq == 0:
                         # Move labels from cuda to cpu
+                        print(validation_labels['gw'])
                         epoch_labels.append(validation_labels['gw'].cpu())
                         epoch_outputs.append(pred_prob)
                         
