@@ -515,9 +515,9 @@ class KappaModelPE(torch.nn.Module):
         # In the Kaggle architecture a dropout is added at this point
         # I see no reason to include at this stage. But we can experiment.
         ## Output necessary params
-        raw = self.signal_or_noise(x)
+        raw = self.flatten(self.signal_or_noise(x))
         pred_prob = self.sigmoid(raw)
-        tc = self.softmax(self.coalescence_time(x))
+        tc = self.flatten(self.softmax(self.coalescence_time(x)))
         # Return ouptut params (pred_prob, tc)
         return {'raw': raw, 'pred_prob': pred_prob, 'tc': tc, 'cnn_output': cnn_output}
 

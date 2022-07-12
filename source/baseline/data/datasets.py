@@ -597,6 +597,7 @@ class MLMDC1_IterSample(Dataset):
         
         # Store all params within chunk file
         params = {}
+        targets = {}
         
         # Get data from ExternalLink'ed lookup file
         HDF5_Dataset, didx = os.path.split(data_path)
@@ -604,6 +605,7 @@ class MLMDC1_IterSample(Dataset):
         didx = int(didx)
         # Check whether data is signal or noise with target
         target = 1 if bool(re.search('signal', HDF5_Dataset)) else 0
+        targets['gw'] = target
         # Access group
         group = self.extmain[HDF5_Dataset]
         
@@ -612,6 +614,12 @@ class MLMDC1_IterSample(Dataset):
             noise_1 = np.array(group['noise_1'][didx])
             noise_2 = np.array(group['noise_2'][didx])
             sample = np.stack([noise_1, noise_2], axis=0)
+            # Dummy noise params
+            targets['norm_dchirp'] = -1
+            targets['norm_dist'] = -1
+            targets['norm_mchirp'] = -1
+            targets['norm_q'] = -1
+            targets['norm_tc'] = -1
         else:
             ## Read signal data
             h_plus = np.array(group['h_plus'][didx])
@@ -625,17 +633,18 @@ class MLMDC1_IterSample(Dataset):
             params['mass2'] = group['mass2'][didx]
             params['distance'] = group['distance'][didx]
             params['mchirp'] = group['mchirp'][didx]
-            params['norm_dchirp'] = group['norm_dchirp'][didx]
-            params['norm_dist'] = group['norm_dist'][didx]
-            params['norm_mchirp'] = group['norm_mchirp'][didx]
-            params['norm_q'] = group['norm_q'][didx]
-            params['norm_tc'] = group['norm_tc'][didx]
+            # Target params
+            targets['norm_dchirp'] = group['norm_dchirp'][didx]
+            targets['norm_dist'] = group['norm_dist'][didx]
+            targets['norm_mchirp'] = group['norm_mchirp'][didx]
+            targets['norm_q'] = group['norm_q'][didx]
+            targets['norm_tc'] = group['norm_tc'][didx]
         
         # Generic params
         params['sample_rate'] = self.sample_rate
         params['noise_low_freq_cutoff'] = self.noise_low_freq_cutoff
         
-        return (sample, target, params)
+        return (sample, targets, params)
     
     
     def _augmentation_(self, sample, target, params, debug):
@@ -734,24 +743,25 @@ class MLMDC1_IterSample(Dataset):
         data_path = self.data_paths[idx]
         
         ## Read the sample(s)
-        sample, target, params = self._read_(data_path)
-        
+        sample, targets, params = self._read_(data_path)
+        target_gw = targets['gw']
         
         try:
             ## Signal and Noise Augmentation
-            pure_sample = self._augmentation_(sample, target, params, self.debug)
+            pure_sample = self._augmentation_(sample, target_gw, params, self.debug)
             ## Add noise realisation to the signals
-            noisy_sample, pure_noise, network_snr = self._noise_realisation_(pure_sample, target, params)
+            noisy_sample, pure_noise, network_snr = self._noise_realisation_(pure_sample, target_gw, params)
             
             ## Target handling
-            target = np.array([self.targets[idx]])
-            # Concatenating the normalised_tc within the target variable
-            # target = np.append(target, normalised_tc)
-            ## Target should look like (1., 0., 0.567) for signal
-            ## Target should look like (0., 1., -1.0) for noise
+            target_gw = np.array([target_gw])
             
             ## Transforms
-            sample, target = self._transforms_(noisy_sample, target)
+            sample, target_gw = self._transforms_(noisy_sample, target_gw)
+            
+            # Storing target as dictionaries
+            all_targets = {}
+            all_targets['snr'] = network_snr
+            all_targets.update(targets)
             
             ## Plotting
             if self.debug:
@@ -762,7 +772,7 @@ class MLMDC1_IterSample(Dataset):
                 else:
                     num_created = 0
                     
-                if target[0] and num_created < self.cfg.num_sample_save:
+                if target_gw[0] and num_created < self.cfg.num_sample_save:
                     self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
         
         except Exception as e:
@@ -774,14 +784,12 @@ class MLMDC1_IterSample(Dataset):
         """ Reducing memory footprint """
         # This can only be performed after transforms and augmentation
         sample = np.array(sample, dtype=np.float32)
-        target = np.array(target, dtype=np.float32)
         
         """ Tensorification """
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
-        target = torch.from_numpy(target)
         
-        return (sample, target, [], network_snr)
+        return (sample, all_targets, [])
 
 
 

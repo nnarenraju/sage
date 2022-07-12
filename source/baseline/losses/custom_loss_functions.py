@@ -53,7 +53,7 @@ class BCEgw_MSEtc(LossWrapper):
         self.mse_alpha = mse_alpha
         self.pos_weight = class_weight
         
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, pe):
         # BCE to check whether the signal contains GW or is pure noise
         # MSE to add soft weight to the calculation of correct 'tc'
         # Output and target contain (isGW, tc). This is not a two class problem.
@@ -92,7 +92,7 @@ class BCEgw_MSEtc(LossWrapper):
         """
         prefix = (self.mse_alpha/outputs.shape[0])
         # mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
-        mse_loss = sum((targets[:,1]-outputs[:,1])**2)
+        mse_loss = sum((targets[:,1]-outputs['tc'])**2)
         MSEtc = prefix * mse_loss
         MSEtc = torch.tensor(MSEtc, dtype=torch.float32)
         
@@ -121,7 +121,7 @@ class regularised_BCELoss(torch.nn.BCELoss):
         self.regularization_A = epsilon
         self.regularization_B = 1. - epsilon*self.regularization_dim
     
-    def __call__(self, outputs, targets):
+    def __call__(self, outputs, targets, pe):
         return self.forward(outputs['pred_prob'], targets)
     
     def forward(self, outputs, targets, *args, **kwargs):
@@ -139,7 +139,7 @@ class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
         self.regularization_A = epsilon
         self.regularization_B = 1. - epsilon*self.regularization_dim
     
-    def __call__(self, outputs, targets):
+    def __call__(self, outputs, targets, pe):
         # We use raw values here as BCEWithLogitsLoss has a Sigmoid wrapper
         return self.forward(outputs['raw'], targets)
     

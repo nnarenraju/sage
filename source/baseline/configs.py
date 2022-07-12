@@ -199,6 +199,9 @@ class KaggleFirst:
     pretrained = False
     weights_path = 'weights.pt'
     
+    """ Parameter Estimation """
+    parameter_estimation = ('tc',)
+    
     """ Save trainable train and valid data """
     save_trainable_dataset = False
     

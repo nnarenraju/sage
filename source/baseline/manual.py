@@ -34,6 +34,7 @@ import torch.utils.data as D
 import sklearn.metrics as metrics
 
 from tqdm import tqdm
+from operator import itemgetter
 from distutils.dir_util import copy_tree
 
 # LOCAL
@@ -245,17 +246,14 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
         training_output = Network(training_samples)
         # Get necessary output params from dict output
         pred_prob = training_output['pred_prob']
-        if 'tc' in list(training_output.keys()):
-            tc = training_output['tc']
         
         # Plotting cnn_output in debug mode
         if cfg.debug and params['cnn_output']:
             plot_cnn_output(cfg, training_output, training_labels, params['network_snr'], params['epoch'])
             params['cnn_output'] = False
-        
-        ## TODO: Loss and accuracy need to be redefined to include 'tc'
+           
         # Loss calculation
-        training_loss = loss_function(training_output, training_labels)
+        training_loss = loss_function(training_output, training_labels, cfg.parameter_estimation)
         # Backward propogation using loss_function
         training_loss.backward()
     
@@ -374,11 +372,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 params['epoch'] = nep
             
             
-            for nstep, (training_samples, training_labels, all_times, network_snr) in enumerate(pbar):
+            for nstep, (training_samples, training_labels, all_times) in enumerate(pbar):
                 
                 # Update params
                 params['scheduler_step'] = nep + nstep / num_train_batches
-                params['network_snr'] = network_snr
+                params['network_snr'] = training_labels['snr']
                 
                 if cfg.num_workers == 0:
                     section_times.append(all_times['sections'])
@@ -390,7 +388,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 start_train = time.time()
                 
                 # Class balance assertions
-                batch_labels = training_labels.numpy()
+                batch_labels = training_labels['gw'].numpy()
                 check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
                 assert check_balance >= 0.30 and check_balance <= 0.70
                 
@@ -403,6 +401,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
                 training_labels = training_labels.to(dtype=torch.float32, device=cfg.train_device)
                 
+                raise
                 
                 batch_training_loss = 0.
                 accuracies = []
