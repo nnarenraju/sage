@@ -74,13 +74,13 @@ class BCEgw_MSEtc(LossWrapper):
         if not self.pos_weight:
             # Change to '2' if using two class outputs
             self.pos_weight = torch.ones([1])
-            self.pos_weight = self.pos_weight.to(device=outputs['pred_prob'].device)
+            self.pos_weight = self.pos_weight.to(device=outputs['raw'].device)
         
         # Creating loss function with weighted action
         criterion = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
         # criterion = torch.nn.BCELoss(weight=self.pos_weight)
         # Loss Topic: Does the given signal contain a GW or is it pure noise?
-        BCEgw = criterion(outputs['pred_prob'], targets['gw'])
+        BCEgw = criterion(outputs['raw'], targets['gw'])
         
         """ Converting to numpy arrays """
         for key, value in outputs.items():
@@ -93,7 +93,7 @@ class BCEgw_MSEtc(LossWrapper):
         For the handling of 'tc'
         MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
         """
-        prefix = (self.mse_alpha/outputs.shape[0])
+        prefix = (self.mse_alpha/outputs['raw'].shape[0])
         # mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
         mse_loss = sum((targets['norm_tc']-outputs['tc'])**2)
         MSEtc = prefix * mse_loss
