@@ -573,6 +573,13 @@ class MLMDC1_IterSample(Dataset):
         self.noise_norm_idx = np.arange(len(self.noise_idx))
         self.noise_paths = self.data_paths[self.noise_idx]
         
+        print(len(self.targets))
+        print(len(self.data_paths))
+        print(len(self.noise_idx))
+        print(max(self.noise_norm_idx))
+        print(len(self.noise_paths))
+        raise
+        
         
         """ Keep ExternalLink Lookup table open till end of run """
         lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
