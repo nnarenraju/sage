@@ -72,6 +72,10 @@ def run_trainer():
     
     opts = parser.parse_args()
     
+    # TODO: Implement inference section
+    if opts.inference:
+        raise NotImplementedError('Testing module under construction!')
+    
     """ Prepare Data """
     # Get model configuration
     cfg = dat.configure_pipeline(opts)
@@ -82,13 +86,11 @@ def run_trainer():
     dat.make_export_dir(cfg)
     
     # Prepare input data for training and testing
-    # TODO: Currently get_summary() does not handle testing dataset
     # This should create/use a dataset and save a copy of the lookup table
     dat.get_summary(cfg, data_cfg, cfg.export_dir)
     
     # Prepare dataset (read, split and return fold idx)
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
-    # TODO: Test data is not split (Under Construction!)
     train, folds = dat.get_metadata(cfg)
 
     """ Training """
@@ -99,10 +101,6 @@ def run_trainer():
         
     # Use folds for cross-validation
     for nfold, (train_idx, val_idx) in enumerate(folds):
-        
-        # TODO: Implement inference section
-        if opts.inference:
-            continue
         
         if cfg.splitter != None:
             print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
@@ -127,10 +125,10 @@ def run_trainer():
             continue
         
         # Get the dataset objects for training and validation
-        train_data, val_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
+        train_data, val_data, tsamp, vsamp = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
         
         # Get the Pytorch DataLoader objects of train and valid data
-        train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
+        train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data, tsamp, vsamp)
         
         # Initialise chosen model architecture (Backend + Frontend)
         # Equivalent to the "Network" variable in manual mode

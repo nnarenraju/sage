@@ -26,10 +26,14 @@ Documentation: NULL
 # IN-BUILT
 import os
 import h5py
+import torch
 import shutil
 import numpy as np
 import pandas as pd
 import torch.utils.data as D
+
+# Class balanced splitting
+from sklearn.model_selection import train_test_split
 
 # LOCAL
 from configs import *
@@ -150,11 +154,7 @@ class DataModule:
                 shutil.copy(elink_file, move_location)
         else:
             raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
-        
-        # Testing data
-        # TODO: A testing dataset should also be created in a similar format
-        # Under construction!
-    
+            
     
     def get_metadata(cfg):
         """
@@ -209,21 +209,36 @@ class DataModule:
         lookup = list(zip(ids, paths, targets))
         train = pd.DataFrame(lookup, columns=['id', 'path', 'target'])
         
-        # TODO: Do the same prodecure for testing dataset. Does not require splitting.
-        # Under construction!
         # if debug, use a data subset
         if cfg.debug:
-            train = train.iloc[:cfg.debug_size]
+            # Initial debug split has to be class balanced as well
+            idxs = np.arange(len(train))
+            all_targets = train['target'].values
+            # Compure the subset proportion based
+            if cfg.debug_size < len(train):
+                prop = cfg.debug_size/len(train)
+            else:
+                raise ValueError('cfg.debug_size > full dataset size!')
+                
+            _, X, _, y = train_test_split(idxs, all_targets, test_size=prop, 
+                                          random_state=42, stratify=all_targets)
+            train = train.iloc[X]
+        
         ## Splitting
         if cfg.splitter is not None:
             # Function ensures equal ratio of all classes in each fold
-            folds = list(cfg.splitter.split(train, train['target']))
+            folds = list(cfg.splitter.split(train, train['target'].values))
         else:
             # Splitting training and validation in 80-20 sections
             # This essentially has all the data in 1 fold
-            N = len(train)
-            idxs = np.arange(N)
-            folds = [(idxs[:int(0.8*N)], idxs[int(0.8*N):])]
+            idxs = np.arange(len(train))
+            # Use idxs as training data together with targets to stratify into train and test set
+            # This ensures a class balanced training and testing dataset
+            all_targets = train['target'].values
+            X_train, X_valid, _, _ = train_test_split(idxs, all_targets, test_size=0.2, 
+                                                      random_state=42, stratify=all_targets)
+            # Save as folds for training and validation            
+            folds = [(X_train, X_valid)]
         
         return (train, folds)
     
@@ -254,8 +269,20 @@ class DataModule:
         
         """
         
-        # transforms are not required if the cfg.dataset is made for trainable data
-        # this is automagically taken care of within the BatchLoader datasets class
+        # Create a Weighted Random Sampler for keeping class balance between batches
+        # StackOverflow Link: https://stackoverflow.com/questions/62878940/how-to-create-a-balancing-cycling-iterator-in-pytourch
+        # Where weights is the probability of each sample, it depends in how many samples
+        # per category you have, for instance, if you data is simple as that data = [0, 1, 0, 0, 1],
+        # class '0' count is 3, and class '1' count is 2 So weights vector is [1/3, 1/2, 1/3, 1/3, 1/2].
+        ttargets = train_fold['target'].values
+        check_class_balance = len(ttargets[ttargets == 1])/len(ttargets)
+        if check_class_balance == 0.5:
+            weights = [check_class_balance]*len(ttargets)
+            tsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
+        else:
+            raise ValueError('Encountered a class imbalanced training dataset!')
+        
+        # Create the training and validation dataset objects
         train_dataset = cfg.dataset(
                 data_paths=train_fold['path'].values, targets=train_fold['target'].values,
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
@@ -263,6 +290,15 @@ class DataModule:
                 noise_only_transforms=cfg.transforms['noise'],
                 training = True, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
+        
+        # Validation dataset
+        vtargets = valid_fold['target'].values
+        check_class_balance = len(vtargets[vtargets == 1])/len(vtargets)
+        if check_class_balance == 0.5:
+            weights = [check_class_balance]*len(vtargets)
+            vsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
+        else:
+            raise ValueError('Encountered a class imbalanced training dataset!')
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
@@ -272,10 +308,10 @@ class DataModule:
                 training=True, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
         
-        return (train_dataset, valid_dataset)
+        return (train_dataset, valid_dataset, tsampler, vsampler)
     
     
-    def get_dataloader(cfg, train_data, valid_data):
+    def get_dataloader(cfg, train_data, valid_data, tsampler, vsampler):
         """
         Create Pytorch DataLoader objects
         
@@ -317,12 +353,12 @@ class DataModule:
         
         train_loader = D.DataLoader(
             train_data, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=pin_memory, 
+            num_workers=num_workers, pin_memory=pin_memory, sampler=tsampler,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
         valid_loader = D.DataLoader(
             valid_data, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=pin_memory, 
+            num_workers=num_workers, pin_memory=pin_memory, sampler=vsampler,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
         return (train_loader, valid_loader)

@@ -389,6 +389,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Record time taken for training
                 start_train = time.time()
                 
+                # Class balance assertions
+                batch_labels = training_labels.numpy()
+                assert batch_labels[batch_labels == 1]/len(batch_labels) == 0.5
+                
                 
                 """ Tensorification and Device Compatibility """
                 ## Performing this here rather than in the Dataset object
