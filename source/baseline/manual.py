@@ -492,7 +492,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 for validation_samples, validation_labels, _ in pbar:
                     
                     # Class balance assertions
-                    batch_labels = validation_labels.numpy()
+                    batch_labels = validation_labels['gw'].numpy()
                     check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
                     assert check_balance >= 0.30 and check_balance <= 0.70
                     
