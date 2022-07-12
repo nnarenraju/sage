@@ -79,7 +79,7 @@ class BCEgw_MSEtc(LossWrapper):
         criterion = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
         # criterion = torch.nn.BCEWithLoss(weight=self.pos_weight)
         # Loss Topic: Does the given signal contain a GW or is it pure noise?
-        BCEgw = criterion(outputs['pred_prob'].to(dtype=torch.float32), targets['gw'].to(dtype=torch.float32))
+        BCEgw = criterion(outputs['pred_prob'], targets['gw'])
         
         """ Converting to numpy arrays """
         outputs = outputs.detach().cpu().numpy()

@@ -788,6 +788,9 @@ class MLMDC1_IterSample(Dataset):
         """ Tensorification """
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
+        for key, item in all_targets.items():
+            all_targets[key] = np.array(sample, dtype=np.float32)
+            all_targets[key] = torch.from_numpy(sample)
         
         return (sample, all_targets, [])
 

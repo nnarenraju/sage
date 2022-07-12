@@ -243,7 +243,6 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
     
     with torch.cuda.amp.autocast():
         # Obtain training output from network
-        print(training_samples)
         training_output = Network(training_samples)
         # Get necessary output params from dict output
         pred_prob = training_output['pred_prob']
