@@ -74,6 +74,8 @@ class BCEgw_MSEtc(LossWrapper):
         if not self.pos_weight:
             # Change to '2' if using two class outputs
             self.pos_weight = torch.ones([1])
+            self.pos_weight = self.pos_weight.to(device='cuda:1')
+            
         
         # Creating loss function with weighted action
         criterion = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
@@ -83,7 +85,7 @@ class BCEgw_MSEtc(LossWrapper):
         print(targets['gw'].device)
         print(outputs['pred_prob'])
         print(targets['gw'])
-        BCEgw = criterion(outputs['pred_prob'].to(dtype=torch.float32), targets['gw'].to(dtype=torch.float32))
+        BCEgw = criterion(outputs['pred_prob'], targets['gw'])
         
         """ Converting to numpy arrays """
         outputs = outputs.detach().cpu().numpy()
