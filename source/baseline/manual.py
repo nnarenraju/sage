@@ -429,7 +429,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 epoch_outputs = []
                 
                 pbar = tqdm(validDL)
-                for validation_samples, validation_labels, _ in pbar:
+                for validation_samples, validation_labels in pbar:
                     
                     # Class balance assertions
                     batch_labels = validation_labels['gw'].numpy()
