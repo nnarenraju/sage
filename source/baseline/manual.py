@@ -399,6 +399,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
                 for key, value in training_labels.items():
                     training_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
+                
+                
+                print(training_samples.device)
+                print(training_labels['gw'].device)
+                print('hello')
                     
                 
                 batch_training_loss = 0.
