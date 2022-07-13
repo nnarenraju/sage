@@ -200,7 +200,7 @@ class KaggleFirst:
     weights_path = 'weights.pt'
     
     """ Parameter Estimation """
-    parameter_estimation = ('tc',)
+    parameter_estimation = ('norm_tc',)
     
     """ Save trainable train and valid data """
     save_trainable_dataset = False

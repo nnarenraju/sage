@@ -83,10 +83,11 @@ class BCEgw_MSEtc(LossWrapper):
         BCEgw = criterion(outputs['raw'], targets['gw'])
         
         """ Converting to numpy arrays """
-        for key, value in outputs.items():
-            outputs[key] = value.detach().cpu().numpy()
-        for key, value in targets.items():
-            targets[key] = value.detach().cpu().numpy()
+        detached_outputs = {}
+        detached_targets = {}
+        for key in pe:
+            detached_outputs[key] = outputs[key].detach().cpu().numpy()
+            detached_targets[key] = targets[key].detach().cpu().numpy()
         
         """
         MSE - Mean Squared Error Loss
@@ -94,8 +95,11 @@ class BCEgw_MSEtc(LossWrapper):
         MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
         """
         prefix = self.mse_alpha/outputs['raw'].shape[0]
+        # Use a variance term if required in the mse loss
         # mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
-        mse_loss = sum((targets['norm_tc']-outputs['tc'])**2)
+        mse_loss = 0
+        for key in pe:
+            mse_loss += sum((detached_targets[key]-detached_outputs[key])**2)
         MSEtc = prefix * mse_loss
         MSEtc = torch.tensor(MSEtc, dtype=torch.float32)
         

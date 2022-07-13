@@ -500,8 +500,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
                     for key, value in validation_labels.items():
                         validation_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
-                    
-                    print(validation_labels['gw'].device)
+                        
                     
                     batch_validation_loss = 0.
                     accuracies = []
@@ -536,6 +535,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             
                     else:
                         # Run training phase and get loss and accuracy
+                        print(validation_labels['gw'].device)
                         validation_loss, accuracy, preds = validation_phase(cfg, Network, 
                                                                             loss_function, 
                                                                             validation_samples, 

@@ -520,7 +520,7 @@ class KappaModelPE(torch.nn.Module):
         pred_prob = self.sigmoid(raw)
         tc = self.flatten_d0(self.sigmoid(self.coalescence_time(x)))
         # Return ouptut params (pred_prob, tc)
-        return {'raw': raw, 'pred_prob': pred_prob, 'tc': tc, 'cnn_output': cnn_output}
+        return {'raw': raw, 'pred_prob': pred_prob, 'norm_tc': tc, 'cnn_output': cnn_output}
 
 
 class KappaModelSimplified(torch.nn.Module):
