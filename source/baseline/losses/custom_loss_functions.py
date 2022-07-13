@@ -151,8 +151,9 @@ class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
     
     def __call__(self, outputs, targets, pe):
         # We use raw values here as BCEWithLogitsLoss has a Sigmoid wrapper
-        print(outputs['raw'], targets)
-        return self.forward(outputs['raw'], targets)
+        raw_outputs = outputs['raw'].reshape(len(outputs['raw']), 1)
+        raw_targets = targets.reshape(len(targets), 1)
+        return self.forward(raw_outputs, raw_targets)
     
     def forward(self, outputs, targets, *args, **kwargs):
         assert outputs.shape[-1] == self.regularization_dim
