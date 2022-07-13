@@ -535,13 +535,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                             
                     else:
                         # Run training phase and get loss and accuracy
-                        print(validation_labels['gw'].device)
                         validation_loss, accuracy, preds = validation_phase(cfg, Network, 
                                                                             loss_function, 
                                                                             validation_samples, 
                                                                             validation_labels)
                         
-                        print(validation_labels['gw'].device)
                         
                         # Display stuff
                         pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
@@ -558,7 +556,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
                     if nep % cfg.save_freq == 0:
                         # Move labels from cuda to cpu
-                        print(validation_labels['gw'].device)
                         epoch_labels.append(validation_labels['gw'].cpu())
                         epoch_outputs.append(pred_prob)
                         
@@ -569,6 +566,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     outputs = np.concatenate(tuple(epoch_outputs))
                     
                     """ ROC Curve save data """
+                    print(outputs)
+                    print(labels)
                     roc_auc, fpr, tpr = roc_curve(nep, outputs, labels, cfg.export_dir)
                     
                     """ Calculating Pred Probs """
