@@ -789,7 +789,7 @@ class MLMDC1_IterSample(Dataset):
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
         
-        return (sample, all_targets, [])
+        return (sample, all_targets)
 
 
 
