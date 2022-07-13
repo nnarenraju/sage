@@ -47,69 +47,35 @@ class LossWrapper:
 
 class BCEgw_MSEtc(LossWrapper):
     
-    def __init__(self, always_apply=True, mse_alpha=0.0):
+    def __init__(self, always_apply=True, mse_alpha=0.5):
         super().__init__(always_apply)
         assert mse_alpha >= 0.0
         self.mse_alpha = mse_alpha
         
     def forward(self, outputs, targets, pe):
         # BCE to check whether the signal contains GW or is pure noise
-        # MSE to add soft weight to the calculation of correct 'tc'
-        # Output and target contain (isGW, tc). This is not a two class problem.
+        # MSE for calculation of correct 'tc'
         
-        """
-        PyTorch - BCEWithLogitsLoss
-            >>> target = torch.ones([10, 64], dtype=torch.float32)  # 64 classes, batch size = 10
-            >>> output = torch.full([10, 64], 1.5)  # A prediction (logit)
-            >>> pos_weight = torch.ones([64])  # All weights are equal to 1
-            >>> criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            >>> criterion(output, target)  # -log(sigmoid(1.5))
-            tensor(0.2014)
-            
-        # Convert 1-class output to 2-class output
-        outputs_ = np.array(1.0 - outputs)
-        
-        """
-        
-        # Creating loss function with weighted action
+        ## Criterions for GW prediction probabilities
         criterion = torch.nn.BCEWithLogitsLoss()
         # criterion = torch.nn.BCELoss(weight=self.pos_weight)
         # criterion = regularised_BCEWithLogitsLoss(dim=1)
-        # Loss Topic: Does the given signal contain a GW or is it pure noise?
         BCEgw = criterion(outputs['pred_prob'], targets['gw'])
-        
-        """ Converting to numpy arrays """
-        # detached_outputs = {}
-        # detached_targets = {}
-        # for key in pe:
-        #     detached_outputs[key] = outputs[key].detach().cpu().numpy()
-        #     detached_targets[key] = targets[key].detach().cpu().numpy()
         
         """
         MSE - Mean Squared Error Loss
         For the handling of 'tc'
         MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
         """
-        prefix = self.mse_alpha
-        # Use a variance term if required in the mse loss
-        # mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
         MSEpe = 0
         for key in pe:
-            MSEpe += prefix * torch.mean((targets[key]-outputs[key])**2)
+            MSEpe += self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
         
         """ 
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
         """
-        # print("BCE loss = {} and MSE loss = {}".format(BCEgw, MSEtc))
-        
-        
-        custom_loss = BCEgw + MSEpe # not a leaf variable
-        # custom_loss = torch.tensor(custom_loss) # is a leaf variable
-        # # Not using the following option leads to the following error
-        # # RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
-        # # Link: https://discuss.pytorch.org/t/runtimeerror-element-0-of-variables-does-not-require-grad-and-does-not-have-a-grad-fn/11074/7
-        # custom_loss.requires_grad = True # can be applied only to leaf variable
+        custom_loss = BCEgw + MSEpe
         
         return custom_loss
 
