@@ -459,9 +459,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # Move labels from cuda to cpu
                         epoch_labels.append(validation_labels['gw'].cpu())
                         epoch_outputs.append(preds.cpu().detach().numpy())
-                    
-                    print(epoch_labels)
-                    print(epoch_outputs)
                 
                 if nep % cfg.save_freq == 0:
                     # Concatenate all np arrays together
@@ -469,9 +466,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     outputs = np.concatenate(tuple(epoch_outputs))
                     
                     """ ROC Curve save data """
-                    print('4')
-                    print(outputs)
-                    print(labels)
                     roc_auc, fpr, tpr = roc_curve(nep, outputs, labels, cfg.export_dir)
                     
                     """ Calculating Pred Probs """
