@@ -546,13 +546,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # Updating
                         batch_validation_loss += validation_loss.clone().cpu().item()
                         accuracies.append(accuracy)
-                        print('1')
-                        print(preds)
                         pred_prob.append(preds.cpu().detach().numpy())
                         validation_batches += 1
-                    
-                    print('2')
-                    print(pred_prob)
                     
                     pred_prob = np.row_stack(pred_prob)
                     # Update losses and accuracy
@@ -563,7 +558,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         # Move labels from cuda to cpu
                         epoch_labels.append(validation_labels['gw'].cpu())
                         epoch_outputs.append(pred_prob)
-                        
+                    
+                    print(epoch_labels)
+                    print(epoch_outputs)
                 
                 if nep % cfg.save_freq == 0:
                     # Concatenate all np arrays together
@@ -571,7 +568,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     outputs = np.concatenate(tuple(epoch_outputs))
                     
                     """ ROC Curve save data """
-                    print('3')
+                    print('4')
                     print(outputs)
                     print(labels)
                     roc_auc, fpr, tpr = roc_curve(nep, outputs, labels, cfg.export_dir)
