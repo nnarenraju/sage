@@ -79,25 +79,23 @@ class BCEgw_MSEtc(LossWrapper):
         BCEgw = criterion(outputs['pred_prob'], targets['gw'])
         
         """ Converting to numpy arrays """
-        detached_outputs = {}
-        detached_targets = {}
-        for key in pe:
-            detached_outputs[key] = outputs[key].detach().cpu().numpy()
-            detached_targets[key] = targets[key].detach().cpu().numpy()
+        # detached_outputs = {}
+        # detached_targets = {}
+        # for key in pe:
+        #     detached_outputs[key] = outputs[key].detach().cpu().numpy()
+        #     detached_targets[key] = targets[key].detach().cpu().numpy()
         
         """
         MSE - Mean Squared Error Loss
         For the handling of 'tc'
         MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
         """
-        prefix = self.mse_alpha/outputs['raw'].shape[0]
+        prefix = self.mse_alpha
         # Use a variance term if required in the mse loss
         # mse_loss = sum((targets[:,1]-outputs[:,1])**2/np.var(outputs[:,1]))
-        mse_loss = 0
+        MSEpe = 0
         for key in pe:
-            mse_loss += sum((detached_targets[key]-detached_outputs[key])**2)
-        MSEtc = prefix * mse_loss
-        MSEtc = torch.tensor(MSEtc, dtype=torch.float32)
+            MSEpe += prefix * torch.mean((targets[key]-outputs[key])**2)
         
         """ 
         CUSTOM LOSS FUNCTION
@@ -105,12 +103,13 @@ class BCEgw_MSEtc(LossWrapper):
         """
         # print("BCE loss = {} and MSE loss = {}".format(BCEgw, MSEtc))
         
-        custom_loss = BCEgw + MSEtc # not a leaf variable
-        custom_loss = torch.tensor(custom_loss) # is a leaf variable
-        # Not using the following option leads to the following error
-        # RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
-        # Link: https://discuss.pytorch.org/t/runtimeerror-element-0-of-variables-does-not-require-grad-and-does-not-have-a-grad-fn/11074/7
-        custom_loss.requires_grad = True # can be applied only to leaf variable
+        
+        custom_loss = BCEgw + MSEpe # not a leaf variable
+        # custom_loss = torch.tensor(custom_loss) # is a leaf variable
+        # # Not using the following option leads to the following error
+        # # RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
+        # # Link: https://discuss.pytorch.org/t/runtimeerror-element-0-of-variables-does-not-require-grad-and-does-not-have-a-grad-fn/11074/7
+        # custom_loss.requires_grad = True # can be applied only to leaf variable
         
         return custom_loss
 
