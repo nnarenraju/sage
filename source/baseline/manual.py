@@ -517,6 +517,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             output_string = '{}    ' * len(args)
             output_string.format(*args)
             
+            print(len(args))
+            
             # Add the field names to file header
             if not os.path.exists(loss_filepath):
                 add_fieldnames = True
@@ -526,14 +528,16 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             with open(loss_filepath, 'a') as outfile:
                 # Add optional fieldnames
                 if add_fieldnames:
-                    field_names = "epoch    "
-                    field_names += "{}    " * len(args)
+                    field_names = "{}    " * len(args)
+                    epoch_field = ('epoch', )
                     tloss_fields = tuple(epoch_training_loss.keys())
                     tloss_fields = tuple(foo+'_tloss' for foo in tloss_fields)
                     vloss_fields = tuple(epoch_validation_loss.keys())
                     vloss_fields = tuple(foo+'_vloss' for foo in vloss_fields)
                     other_fields = ('train_acc', 'valid_acc', 'roc_auc', )
-                    all_fields = tloss_fields + vloss_fields + other_fields
+                    all_fields = epoch_field + tloss_fields + vloss_fields + other_fields
+                    print(all_fields)
+                    print(len(all_fields))
                     field_names.format(*all_fields)
                     outfile.write(field_names + '\n')
                 # Save output string in losses.txt
