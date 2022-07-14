@@ -515,7 +515,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             args += tuple(np.around(foo, 4) for foo in epoch_validation_loss.values())
             args += (avg_acc_train, avg_acc_valid, roc_auc, )
             output_string = '{}    ' * len(args)
-            output_string.format(*args)
+            output_string = output_string.format(*args)
             
             
             # Add the field names to file header
@@ -535,7 +535,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     vloss_fields = tuple(foo+'_vloss' for foo in vloss_fields)
                     other_fields = ('train_acc', 'valid_acc', 'roc_auc', )
                     all_fields = epoch_field + tloss_fields + vloss_fields + other_fields
-                    field_names.format(*all_fields)
+                    field_names = field_names.format(*all_fields)
                     outfile.write(field_names + '\n')
                 # Save output string in losses.txt
                 outfile.write(output_string + '\n')
