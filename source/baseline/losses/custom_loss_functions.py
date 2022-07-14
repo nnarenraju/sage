@@ -59,8 +59,15 @@ class BCEgw_MSEtc(LossWrapper):
         # MSE for calculation of correct 'tc'
         
         ## Criterions for GW prediction probabilities
-        BCEgw = self.gw_criterion(outputs, targets)
-        
+        losses = ['regularised_BCELoss', 'regularised_BCEWithLogitsLoss']
+        if self.gw_criterion.__class__.__name__ not in losses:
+            if isinstance(self.gw_criterion, torch.nn.BCEWithLogitsLoss):
+                BCEgw = self.gw_criterion(outputs['raw'], targets['gw'])
+            elif isinstance(self.gw_criterion, torch.nn.BCELoss):
+                BCEgw = self.gw_criterion(outputs['pred_prob'], targets['gw'])
+        else:
+            BCEgw = self.gw_criterion(outputs, targets)
+            
         """
         MSE - Mean Squared Error Loss
         For the handling of 'tc'
