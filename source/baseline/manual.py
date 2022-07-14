@@ -186,7 +186,7 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
 def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     # Read diagnostic file
     # option engine='python' required if sep > 1 character in length
-    data = pd.read_csv('test.txt', sep="    ", engine='python')
+    data = pd.read_csv(filepath, sep="    ", engine='python')
     if len(data['epoch']) == 1:
         return
     
@@ -517,7 +517,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             output_string = '{}    ' * len(args)
             output_string.format(*args)
             
-            print(len(args))
             
             # Add the field names to file header
             if not os.path.exists(loss_filepath):
@@ -536,8 +535,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     vloss_fields = tuple(foo+'_vloss' for foo in vloss_fields)
                     other_fields = ('train_acc', 'valid_acc', 'roc_auc', )
                     all_fields = epoch_field + tloss_fields + vloss_fields + other_fields
-                    print(all_fields)
-                    print(len(all_fields))
                     field_names.format(*all_fields)
                     outfile.write(field_names + '\n')
                 # Save output string in losses.txt
