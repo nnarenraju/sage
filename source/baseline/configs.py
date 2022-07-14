@@ -95,8 +95,6 @@ class Baseline:
     batch_size = 100
     # every 'n' epochs
     save_freq = 5
-    # MegaBatch Method (Datasets are produced in large chunk files)
-    megabatch = False
     # Overfitting check and Early Stopping
     early_stopping = True
     

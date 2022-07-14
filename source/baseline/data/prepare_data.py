@@ -176,11 +176,8 @@ class DataModule:
             
         """
         
-        # Set lookup table
-        if cfg.megabatch:
-            lookup_file = 'training.hdf'
-        else:
-            lookup_file = 'extlinks.hdf'
+        # Set lookup table ('training.hdf' lookup table is also present for batch-loading)
+        lookup_file = 'extlinks.hdf'
         
         lookup_table = os.path.join(cfg.export_dir, lookup_file)
         # Deprecated: Usage of self.get_metadata with make_default_dataset (non-MP)
@@ -338,17 +335,10 @@ class DataModule:
         
         """
         
-        # Check cfg and set batch_size to 1 if using MegaBatch
-        if cfg.megabatch:
-            batch_size = 1
-            num_workers = 0
-            pin_memory = False
-            persistent_workers = False
-        else:
-            batch_size = cfg.batch_size
-            num_workers = cfg.num_workers
-            pin_memory = cfg.pin_memory
-            persistent_workers = cfg.persistent_workers
+        batch_size = cfg.batch_size
+        num_workers = cfg.num_workers
+        pin_memory = cfg.pin_memory
+        persistent_workers = cfg.persistent_workers
         
         # Sometimes in MAC systems, setting num_workers > 0 causes a intraop warning to appear
         # This does not seem to produce any incorrect results. However it is worrying.
