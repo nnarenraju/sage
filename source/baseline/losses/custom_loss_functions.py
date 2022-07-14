@@ -79,7 +79,7 @@ class BCEgw_MSEtc(LossWrapper):
         for key in pe:
             # Get a masked loss calculation for parameter estimation
             # Ignore all targets corresponding to pure noise samples
-            mask = torch.lt(targets[key], 0.0)
+            mask = torch.ge(targets[key], 0.0)
             masked_target = torch.masked_select(targets[key], mask)
             print(targets[key])
             print(masked_target)
