@@ -26,6 +26,7 @@ Documentation: NULL
 import os
 import random
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 
@@ -76,15 +77,15 @@ def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names
     cmap = ["#"+''.join([random.choice('ABCDEF0123456789') for _ in range(6)]) for _ in range(numc)]
     
     for n, overview_filepath in enumerate(overview_filepaths):
-        data = np.loadtxt(overview_filepath)
+        data = pd.read_csv(overview_filepath, sep="    ", engine='python')
         
         try:
             # All data fields
-            epochs = data[:,0] + 1.0
-            training_loss = data[:,1]
-            validation_loss = data[:,2]
-            training_accuracy = data[:,3]
-            validation_accuracy = data[:,4]
+            epochs = data['epoch'] + 1.0
+            training_loss = data['tot_tloss']
+            validation_loss = data['tot_vloss']
+            training_accuracy = data['train_acc']
+            validation_accuracy = data['valid_acc']
             
             ## Loss Curves
             _overplot(ax_loss, epochs, training_loss, label=run_names[n], ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
