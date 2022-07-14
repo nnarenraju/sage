@@ -47,20 +47,19 @@ class LossWrapper:
 
 class BCEgw_MSEtc(LossWrapper):
     
-    def __init__(self, always_apply=True, mse_alpha=0.5):
+    def __init__(self, always_apply=True, mse_alpha=0.5, gw_criterion=None):
         super().__init__(always_apply)
         assert mse_alpha >= 0.0
         self.mse_alpha = mse_alpha
+        if gw_criterion == None:
+            self.gw_criterion = torch.nn.BCEWithLogitsLoss()
         
     def forward(self, outputs, targets, pe):
         # BCE to check whether the signal contains GW or is pure noise
         # MSE for calculation of correct 'tc'
         
         ## Criterions for GW prediction probabilities
-        criterion = torch.nn.BCEWithLogitsLoss()
-        # criterion = torch.nn.BCELoss(weight=self.pos_weight)
-        # criterion = regularised_BCEWithLogitsLoss(dim=1)
-        BCEgw = criterion(outputs['pred_prob'], targets['gw'])
+        BCEgw = self.gw_criterion(outputs, targets)
         
         """
         MSE - Mean Squared Error Loss
@@ -90,7 +89,9 @@ class regularised_BCELoss(torch.nn.BCELoss):
         self.regularization_B = 1. - epsilon*self.regularization_dim
     
     def __call__(self, outputs, targets, pe):
-        return self.forward(outputs['pred_prob'], targets)
+        raw_outputs = outputs['pred_prob'].reshape(len(outputs['pred_prob']), 1)
+        raw_targets = targets['gw'].reshape(len(targets['gw']), 1)
+        return self.forward(raw_outputs, raw_targets)
     
     def forward(self, outputs, targets, *args, **kwargs):
         assert outputs.shape[-1] == self.regularization_dim
@@ -110,7 +111,7 @@ class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
     def __call__(self, outputs, targets, pe):
         # We use raw values here as BCEWithLogitsLoss has a Sigmoid wrapper
         raw_outputs = outputs['raw'].reshape(len(outputs['raw']), 1)
-        raw_targets = targets.reshape(len(targets), 1)
+        raw_targets = targets['gw'].reshape(len(targets['gw']), 1)
         return self.forward(raw_outputs, raw_targets)
     
     def forward(self, outputs, targets, *args, **kwargs):

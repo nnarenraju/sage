@@ -60,20 +60,15 @@ def _plot(ax, x=None, y=None, xlabel="Epochs", ylabel="BCE Loss", ls='solid',
         
 if __name__ == "__main__":
     
-    loss_closest = np.loadtxt("losses_1e6_closest_p2.txt")
     loss_p1 = np.loadtxt("losses_1e6_closest.txt")
     
     num_epochs = 23
     # All data fields
-    epochs = range(1, len(loss_closest[:,0]) + len(loss_p1[:,0]) + 1)
-    train_loss = np.concatenate((loss_p1[:,1], loss_closest[:,1][:num_epochs]))
-    val_loss = np.concatenate((loss_p1[:,2], loss_closest[:,2][:num_epochs]))
-    train_accuracy = np.concatenate((loss_p1[:,3], loss_closest[:,3][:num_epochs]))
-    valid_accuracy = np.concatenate((loss_p1[:,4], loss_closest[:,4][:num_epochs]))
-    true_positive = np.concatenate((loss_p1[:,5]/loss_p1[:,9], loss_closest[:,5][:num_epochs]/loss_closest[:,9]))
-    true_negative = np.concatenate((loss_p1[:,6]/loss_p1[:,9], loss_closest[:,6][:num_epochs]/loss_closest[:,9]))
-    false_positive = np.concatenate((loss_p1[:,7]/loss_p1[:,9], loss_closest[:,7][:num_epochs]/loss_closest[:,9]))
-    false_negative = np.concatenate((loss_p1[:,8]/loss_p1[:,9], loss_closest[:,8][:num_epochs]/loss_closest[:,9]))
+    epochs = range(1, len(loss_p1[:,0]) + 1)
+    train_loss = loss_p1[:,1]
+    val_loss = loss_p1[:,2]
+    train_accuracy = loss_p1[:,3]
+    valid_accuracy = loss_p1[:,4]
     
     ## Loss Curves
     # Figure define
@@ -94,6 +89,7 @@ if __name__ == "__main__":
     plt.close()
     
     
+    """
     ## Confusion Matrix
     import seaborn as sns
     
@@ -154,7 +150,7 @@ if __name__ == "__main__":
     _plot(ax, [0, 1], [0, 1], label="Random Classifier", c='blue', ylabel="True Positive Rate", xlabel="False Positive Rate", ls="dashed", yscale='log')
     plt.savefig("roc_curve_{}.png".format(len(train_accuracy)))
     plt.close()
-    
+    """
     
     """
     ## Precision-Recall Trade off

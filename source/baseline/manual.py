@@ -30,16 +30,10 @@ import torch
 import shutil
 import traceback
 import numpy as np
-import torch.utils.data as D
 import sklearn.metrics as metrics
 
 from tqdm import tqdm
-from operator import itemgetter
 from distutils.dir_util import copy_tree
-
-# LOCAL
-from data.datasets import Simple
-from utils.record_times import record
 
 # Turning off Torch debugging
 torch.autograd.set_detect_anomaly(False)

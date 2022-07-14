@@ -44,7 +44,6 @@ warnings.filterwarnings("ignore")
 from lightning import simple
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
-from data.MP_save_trainable import MP_Trainable
 from utils.plotter import debug_plotter, snr_plotter, overlay_plotter
 
 # Tensorboard
@@ -95,9 +94,6 @@ def run_trainer():
 
     """ Training """
     # Folds are obtained only by splitting the training dataset
-    # Saving trainable dataset for each fold (if option enabled)
-    if cfg.save_trainable_dataset:
-        save_obj = MP_Trainable(cfg, data_cfg, len(folds)-1, opts.nbatch)
         
     # Use folds for cross-validation
     for nfold, (train_idx, val_idx) in enumerate(folds):
@@ -107,22 +103,6 @@ def run_trainer():
 
         train_fold = train.iloc[train_idx]
         val_fold = train.iloc[val_idx]
-        
-        # Saving a trainable dataset
-        """ Trainable data storage snippet """
-        # If we have cfg.splitter set to None, entire data is split in 80-20 partitions
-        # nfold will immediately be the last one, so we should store trainable.hdf for that one
-        if cfg.save_trainable_dataset:
-            # We do not discriminate between training and validation dataset
-            save_obj.data_paths = np.append(train_fold['path'].values, val_fold['path'].values)
-            save_obj.targets = np.append(train_fold['target'].values, val_fold['target'].values)
-            save_obj.nfold = nfold
-            # Run the trainable dataset iterator
-            save_obj.save_trainable_dataset()
-            # Return and leave if trainable data storage is complete
-            print("manual.py: Trainable data storage complete. Train with simple DataLoader.")
-            # Training and validation is not done when this option is on.
-            continue
         
         # Get the dataset objects for training and validation
         train_data, val_data, tsamp, vsamp = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
@@ -182,6 +162,7 @@ def run_trainer():
         ## LIGHTNING
         if opts.lightning:
             # Get Lightning Classifier from lightning.py
+            raise NotImplementedError('Lightning module under construction!')
             model = simple(ModelClass, optimizer, scheduler, loss_function)
             
             # Initialise the trainer

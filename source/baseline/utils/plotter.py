@@ -78,20 +78,24 @@ def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names
     for n, overview_filepath in enumerate(overview_filepaths):
         data = np.loadtxt(overview_filepath)
         
-        # All data fields
-        epochs = data[:,0] + 1.0
-        training_loss = data[:,1]
-        validation_loss = data[:,2]
-        training_accuracy = data[:,3]
-        validation_accuracy = data[:,4]
+        try:
+            # All data fields
+            epochs = data[:,0] + 1.0
+            training_loss = data[:,1]
+            validation_loss = data[:,2]
+            training_accuracy = data[:,3]
+            validation_accuracy = data[:,4]
+            
+            ## Loss Curves
+            _overplot(ax_loss, epochs, training_loss, label=run_names[n], ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
+            _overplot(ax_loss, epochs, validation_loss, ls='dashed', ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
+            
+            ## Accuracy Curves
+            _overplot(ax_accr, epochs, training_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap[n])
+            _overplot(ax_accr, epochs, validation_accuracy, ylabel='Avg Accuracy', xlabel='Epochs', ls='dashed', c=cmap[n])
         
-        ## Loss Curves
-        _overplot(ax_loss, epochs, training_loss, label=run_names[n], ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
-        _overplot(ax_loss, epochs, validation_loss, ls='dashed', ylabel='Avg Loss', xlabel='Epochs', c=cmap[n])
-        
-        ## Accuracy Curves
-        _overplot(ax_accr, epochs, training_accuracy, label=run_names[n], ylabel='Avg Accuracy', xlabel='Epochs', c=cmap[n])
-        _overplot(ax_accr, epochs, validation_accuracy, ylabel='Avg Accuracy', xlabel='Epochs', ls='dashed', c=cmap[n])
+        except:
+            continue
     
     fig_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
     fig_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))

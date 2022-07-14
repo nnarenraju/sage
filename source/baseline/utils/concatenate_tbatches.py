@@ -37,7 +37,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--batch-dir", type=str, default='/Users/nnarenraju/Desktop',
+    parser.add_argument("--batch-dir", type=str, default='/Users/nnarenraju/Desktop/dataset',
                         help="Directory containing all trainable.json files and trainable data files")
     parser.add_argument("--save-dir", type=str, default='dataset_trainable_batched',
                         help="Dataset dir in the usual format containing all relevant data")

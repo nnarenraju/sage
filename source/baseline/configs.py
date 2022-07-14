@@ -25,14 +25,12 @@ Documentation: NULL
 
 # IN-BUILT
 import json
-import math
-import torch
 from pathlib import Path
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 # LOCAL
-from data.datasets import MLMDC1_IterSample, BatchLoader
+from data.datasets import MLMDC1
 from architectures.frontend import GammaModel, KappaModel, KappaModelPE
 from data.transforms import Unify, UnifySignal, UnifyNoise
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling
@@ -61,7 +59,7 @@ class Baseline:
     """ Dataset """
     # Dataset object (opts, quick access, read only)
     # if dataset object is set to 'simple', trainable.hdf should exist
-    dataset = MLMDC1_IterSample
+    dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
@@ -177,7 +175,7 @@ class KaggleFirst:
     splitter = None
     
     """ Dataset """
-    dataset = MLMDC1_IterSample
+    dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
@@ -202,16 +200,11 @@ class KaggleFirst:
     """ Parameter Estimation """
     parameter_estimation = ('norm_tc',)
     
-    """ Save trainable train and valid data """
-    save_trainable_dataset = False
-    
     """ Epochs and Batches """
-    num_steps = 25000
     num_epochs = 25
     batch_size = 100
     save_freq = 5
-    num_samle_save = 100
-    megabatch = False
+    num_sample_save = 100
     early_stopping = False
     
     """ Dataloader params """
@@ -230,11 +223,9 @@ class KaggleFirst:
     """ Scheduler """
     scheduler = None
     scheduler_params = dict()
-    scheduler_target = None
-    batch_scheduler = False
     
     """ Loss Function """
-    loss_function = regularised_BCELoss(dim=2)
+    loss_function = regularised_BCELoss(dim=1)
     output_loss_file = "losses.txt"
     
     """ Evaluation Metric """
@@ -248,114 +239,8 @@ class KaggleFirst:
     """ Data Transforms """
     # Adding a random noise realisation during the data loading process
     # Procedure should be available within dataset object
+    # Fixed noise realisation method has been deprecated
     add_random_noise_realisation = True
-    
-    transforms = dict(
-        signal=None,
-        noise=None,
-        train=Unify([
-            BandPass(lower=16, upper=512, fs=2048., order=6),
-            Whiten(trunc_method='hann', remove_corrupted=True),
-            MultirateSampling(),
-        ]),
-        test=Unify([
-            BandPass(lower=16, upper=512, fs=2048., order=6),
-            Whiten(trunc_method='hann', remove_corrupted=True),
-            MultirateSampling(),
-        ]),
-        target=None
-    )
-    
-    debug = False
-    debug_size = 10000
-    
-    verbose = False
-
-
-class KF_Trainable(KaggleFirst):
-    
-    """ Parameters changed when creating Batched trainable dataset """
-    
-    """ Data storage """
-    name = "Batch_1"
-    export_dir = Path("/Users/nnarenraju/Desktop") / name
-    
-    """ Dataset Splitting """
-    # Split the iterable into several small iterables
-    est_file_size = 0.7 # MB
-    # Assumed to load entire batch into memory (if needed)
-    limit_RAM = 8000. # MB
-    # Number of files in each split
-    fold_size = limit_RAM/est_file_size
-    # Total number of input files/ number of samples
-    num_samples = 100
-    # Number of splits used to create Stratified folds
-    # Number of folds (must be at least 2, default = 5)
-    n_splits = int(math.ceil(num_samples/fold_size))
-    
-    # Seed for K-Fold shuffling
-    seed = 42
-    # Folds are made by preserving the percentage of samples for each class (StratifiedKFold)
-    # Each of these folds are stored as a batch of data
-    # Uses the splitter.split method with samples and target as input
-    # splitter = StratifiedKFold(n_splits=n_splits)
-    
-    # If splitter is set to None, we store the entire data into one HDF
-    splitter = None
-    
-    # Saves trainable transformed dataset
-    # Pipeline does not use the dataset object within datasets.py
-    # It has a custom version within save_trainable.py
-    # TODO: this can eventually be moved to datasets.py as well
-    save_trainable_dataset = True
-    
-    
-class KF_BatchTrain(KaggleFirst):
-    
-    """ Parameters changed when creating Batched trainable dataset """
-    
-    """ Data storage """
-    name = "KF_D1_BatchTrain"
-    export_dir = Path("/Users/nnarenraju/Desktop") / name
-    
-    """ Dataset """
-    dataset = BatchLoader
-    dataset_params = dict()
-    
-    """ Architecture """
-    model = KappaModel
-    
-    model_params = dict(
-        # Kaggle frontend+backend
-        # This model is ridiculously slow on cpu, use cuda:0
-        model_name = 'kaggle_first', 
-        filter_size = 16,
-        kernel_size = 32,
-        timm_params = {'model_name': 'resnet34', 
-                        'pretrained': True, 
-                        'in_chans': 2, 
-                        'drop_rate': 0.25},
-        store_device = 'cpu',
-    )
-    
-    pretrained = False
-    weights_path = 'weights.pt'
-    
-    """ Epochs and Batches """
-    num_steps = 25000
-    num_epochs = 25
-    batch_size = 100
-    save_freq = 5
-    early_stopping = False
-    
-    """ Data Transforms """
-    # Adding a random noise realisation during the data loading process
-    # Procedure should be available within dataset object
-    add_random_noise_realisation = True
-    
-    """ Loss Function """
-    loss_function = BCEgw_MSEtc()
-    output_loss_file = "losses.txt"
     
     transforms = dict(
         signal=UnifySignal([
@@ -378,21 +263,20 @@ class KF_BatchTrain(KaggleFirst):
         target=None
     )
     
-    """ Storage Devices """
-    store_device = 'cpu'
-    train_device = 'cpu'
-    
     debug = False
+    debug_size = 10000
+    
+    verbose = False
+    
 
-
-class Baseline_May18(KF_BatchTrain):
+class Baseline_May18(KaggleFirst):
     
     """ Data storage """
     name = "Baseline_May18"
     export_dir = Path("/Users/nnarenraju/Desktop") / name
     
     """ Dataset """
-    dataset = MLMDC1_IterSample
+    dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
@@ -407,19 +291,16 @@ class Baseline_May18(KF_BatchTrain):
     )
     
     """ Dataloader params """
-    num_workers = 8
+    num_workers = 16
     pin_memory = True
-    prefetch_factor = 10
+    prefetch_factor = 100
     persistent_workers = True
-    
-    """  DataLoader mode """
-    megabatch = False
     
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)
 
 
-class KaggleFirst_Jun9(KF_BatchTrain):
+class KaggleFirst_Jun9(KaggleFirst):
     
     """ Data storage """
     name = "KaggleFirst_Jul11"
@@ -427,7 +308,7 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     save_remarks = 'OverFitFix'
     
     """ Dataset """
-    dataset = MLMDC1_IterSample
+    dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
@@ -468,15 +349,8 @@ class KaggleFirst_Jun9(KF_BatchTrain):
     store_device = 'cuda:1'
     train_device = 'cuda:1'
     
-    """  DataLoader mode """
-    megabatch = False
-    
     """ Loss Function """
     loss_function = regularised_BCEWithLogitsLoss(dim=1)
-    
-    """ Optimizer """
-    # optimizer = optim.SGD
-    # optimizer_params = dict(lr=2e-4, momentum=0.9)
     
     debug = True
     debug_size = 1000
@@ -488,6 +362,10 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     name = "KaggleFirst_Jul11"
     export_dir = Path("/home/nnarenraju/Research") / name
     save_remarks = 'OverFitFix'
+    
+    """ Dataset """
+    dataset = MLMDC1
+    dataset_params = dict()
     
     """ Architecture """
     model = KappaModelPE
@@ -513,16 +391,17 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     """ Save samples """
     num_sample_save = 100
     
+    """ Parameter Estimation """
+    parameter_estimation = ('norm_tc',)
+    
     """ Storage Devices """
     store_device = 'cuda:1'
     train_device = 'cuda:1'
     
     """ Loss Function """
-    loss_function = BCEgw_MSEtc()
-    
-    """ Optimizer """
-    # optimizer = optim.SGD
-    # optimizer_params = dict(lr=2e-4, momentum=0.9)
+    # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
+    # All parameter estimation is done only using MSE loss at the moment
+    loss_function = BCEgw_MSEtc(mse_alpha=0.5, gw_criterion=None)
     
     debug = True
     debug_size = 1000
@@ -547,8 +426,10 @@ class Imported:
         self.splitter = None
         
         """ Dataset """
-        self.dataset = MLMDC1_IterSample
+        self.dataset = MLMDC1
         self.dataset_params = dict()
+        
+        raise NotImplementedError('Imported class under construction!')
     
     
     
