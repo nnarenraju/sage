@@ -76,7 +76,7 @@ class BCEgw_MSEtc(LossWrapper):
         """
         MSEpe = 0
         for key in pe:
-            if targets['key'] != -1:
+            if targets[key] != -1:
                 pe_loss = self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
             else:
                 pe_loss = 0.0
