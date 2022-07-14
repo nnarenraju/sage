@@ -30,6 +30,7 @@ import torch
 import shutil
 import traceback
 import numpy as np
+import pandas as pd
 import sklearn.metrics as metrics
 
 from tqdm import tqdm
@@ -182,18 +183,19 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
         plt.close()
 
 
-def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
+def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     # Read diagnostic file
-    data = np.loadtxt(filepath)
-    if len(data.shape) == 1:
-        return 
+    # option engine='python' required if sep > 1 character in length
+    data = pd.read_csv('test.txt', sep="    ", engine='python')
+    if len(data['epoch']) == 1:
+        return
     
     # All data fields
-    epochs = data[:,0] + 1.0
-    training_loss = data[:,1]
-    validation_loss = data[:,2]
-    training_accuracy = data[:,3]
-    validation_accuracy = data[:,4]
+    epochs = data['epoch'] + 1.0
+    training_loss = data['tot_tloss']
+    validation_loss = data['tot_vloss']
+    training_accuracy = data['train_acc']
+    validation_accuracy = data['valid_acc']
     
     ## Loss Curves
     ax = figure(title="Loss Curves")
@@ -205,6 +207,19 @@ def loss_and_accuracy_curves(filepath, export_dir, best_epoch=-1):
     save_path = os.path.join(export_dir, "loss_curves.png")
     plt.savefig(save_path)
     plt.close()
+    
+    ## Parameter Estimation Loss Curves
+    # tsearch_names = [foo+'_tloss' for foo in cfg.parameter_estimation]
+    # vsearch_names = [foo+'_vloss' for foo in cfg.parameter_estimation]
+    # ax = figure(title="PE Loss Curves")
+    # _plot(ax, epochs, training_loss, label="Training Loss", c='red')
+    # _plot(ax, epochs, validation_loss, label="Validation Loss", c='red', ls='dashed')
+    # if best_epoch != -1:
+    #     ax.scatter(epochs[best_epoch], training_loss[best_epoch], marker='*', s=200.0, c='k')
+    #     ax.scatter(epochs[best_epoch], validation_loss[best_epoch], marker='*', s=200.0, c='k')
+    # save_path = os.path.join(export_dir, "pe_loss_curves.png")
+    # plt.savefig(save_path)
+    # plt.close()
     
     ## Accuracy Curves
     # Figure define
@@ -247,8 +262,9 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
             params['cnn_output'] = False
            
         # Loss calculation
-        training_loss = loss_function(training_output, training_labels, cfg.parameter_estimation)
+        all_losses = loss_function(training_output, training_labels, cfg.parameter_estimation)
         # Backward propogation using loss_function
+        training_loss = all_losses['total_loss']
         training_loss.backward()
     
     # Accuracy calculation
@@ -260,7 +276,7 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
     # Scheduler step
     scheduler.step(params['scheduler_step'])
     
-    return (training_loss, accuracy)
+    return (all_losses, accuracy)
 
 
 def validation_phase(cfg, Network, loss_function, validation_samples, validation_labels):
@@ -274,12 +290,12 @@ def validation_phase(cfg, Network, loss_function, validation_samples, validation
             pred_prob = validation_output['pred_prob']
             
             # Calculate validation loss with params if required
-            validation_loss = loss_function(validation_output, validation_labels, cfg.parameter_estimation)
+            all_losses = loss_function(validation_output, validation_labels, cfg.parameter_estimation)
     
     # Accuracy calculation
     accuracy = calculate_accuracy(pred_prob, validation_labels['gw'], cfg.accuracy_thresh)
     # Returning pred_prob if saving data
-    return (validation_loss, accuracy, pred_prob)
+    return (all_losses, accuracy, pred_prob)
 
 
 def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
@@ -332,7 +348,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             Network.train()
             
             # Necessary save and update params
-            training_running_loss = 0.
+            training_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
+            training_running_loss.update({'total_loss': 0.0})
             training_batches = 0
             # Store accuracy params
             acc_train = []
@@ -388,11 +405,12 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                                                          params)
                 
                 # Display stuff
-                pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, training_loss, accuracy))
+                pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, training_loss['total_loss'], accuracy))
                 # Updating similar things (same same but different, but still same)
                 training_batches += 1
                 # Update losses and accuracy
-                training_running_loss += training_loss.clone().cpu().item()
+                for key in training_running_loss.keys():
+                    training_running_loss[key] += training_loss[key].clone().cpu().item()
                 acc_train.append(accuracy)
                 # Record time taken to load data (calculate avg time later)
                 train_times.append(time.time() - start_train)
@@ -416,7 +434,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             Network.eval()
             with torch.no_grad():
                 
-                validation_running_loss = 0.
+                validation_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
+                validation_running_loss.update({'total_loss': 0.0})
                 validation_batches = 0
                 
                 epoch_labels = []
@@ -443,10 +462,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                                                                         validation_labels)
                     
                     # Display stuff
-                    pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss, accuracy))
+                    pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss['total_loss'], accuracy))
                     # Update losses and accuracy
                     validation_batches += 1
-                    validation_running_loss += validation_loss.clone().cpu().item()
+                    for key in validation_running_loss.keys():
+                        validation_running_loss[key] += validation_loss[key].clone().cpu().item()
                     acc_valid.append(accuracy)
                     
                     if nep % cfg.save_freq == 0:
@@ -475,20 +495,51 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 [3] Reload the new weights once all phases are complete
             """
             # Print information on the training and validation loss in the current epoch and save current network state
-            epoch_validation_loss = validation_running_loss/validation_batches
-            epoch_training_loss = training_running_loss/training_batches
-            avg_acc_valid = sum(acc_valid)/len(acc_valid)
-            avg_acc_train = sum(acc_train)/len(acc_train)
+            epoch_validation_loss = {}
+            epoch_training_loss = {}
+            for key in training_running_loss.keys():
+                if key == 'total_loss':
+                    epoch_validation_loss['tot'] = validation_running_loss[key]/validation_batches
+                    epoch_training_loss['tot'] = training_running_loss[key]/training_batches
+                else:
+                    epoch_validation_loss[key] = validation_running_loss[key]/validation_batches
+                    epoch_training_loss[key] = training_running_loss[key]/training_batches
+                
+            avg_acc_valid = np.around(sum(acc_valid)/len(acc_valid), 4)
+            avg_acc_train = np.around(sum(acc_train)/len(acc_train), 4)
+            roc_auc = np.around(roc_auc, 4)
+            
+            # Save args
+            args = (nep, )
+            args += tuple(np.around(foo, 4) for foo in epoch_training_loss.values())
+            args += tuple(np.around(foo, 4) for foo in epoch_validation_loss.values())
+            args += (avg_acc_train, avg_acc_valid, roc_auc, )
+            output_string = '{}    ' * len(args)
+            output_string.format(*args)
+            
+            # Add the field names to file header
+            if not os.path.exists(loss_filepath):
+                add_fieldnames = True
+            else:
+                add_fieldnames = False
             
             with open(loss_filepath, 'a') as outfile:
+                # Add optional fieldnames
+                if add_fieldnames:
+                    field_names = "epoch    "
+                    field_names += "{}    " * len(args)
+                    tloss_fields = tuple(epoch_training_loss.keys())
+                    tloss_fields = tuple(foo+'_tloss' for foo in tloss_fields)
+                    vloss_fields = tuple(epoch_validation_loss.keys())
+                    vloss_fields = tuple(foo+'_vloss' for foo in vloss_fields)
+                    other_fields = ('train_acc', 'valid_acc', 'roc_auc', )
+                    all_fields = tloss_fields + vloss_fields + other_fields
+                    field_names.format(*all_fields)
+                    outfile.write(field_names + '\n')
                 # Save output string in losses.txt
-                output_string = '%04i    %f    %f    %f    %f    %f' % \
-                                (nep, epoch_training_loss, epoch_validation_loss,
-                                 avg_acc_train, avg_acc_valid, roc_auc)
-                                
                 outfile.write(output_string + '\n')
             
-            loss_and_accuracy_curves(loss_filepath, cfg.export_dir)
+            loss_and_accuracy_curves(cfg, loss_filepath, cfg.export_dir)
             
             """ Save the best weights (if global loss reduces) """
             if epoch_validation_loss < best_loss:
@@ -553,7 +604,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     copy_tree(src_best_features, dst_best_features)
     
     # Remake loss curve and accuracy curve with best epoch marked
-    loss_and_accuracy_curves(loss_filepath, best_dir, best_epoch=best_epoch)
+    loss_and_accuracy_curves(cfg, loss_filepath, best_dir, best_epoch=best_epoch)
     
     print('\nFIN')
     

@@ -57,7 +57,7 @@ class BCEgw_MSEtc(LossWrapper):
     def forward(self, outputs, targets, pe):
         # BCE to check whether the signal contains GW or is pure noise
         # MSE for calculation of correct 'tc'
-        
+        custom_loss = {}
         ## Criterions for GW prediction probabilities
         losses = ['regularised_BCELoss', 'regularised_BCEWithLogitsLoss']
         if self.gw_criterion.__class__.__name__ not in losses:
@@ -66,7 +66,8 @@ class BCEgw_MSEtc(LossWrapper):
             elif isinstance(self.gw_criterion, torch.nn.BCELoss):
                 BCEgw = self.gw_criterion(outputs['pred_prob'], targets['gw'])
         else:
-            BCEgw = self.gw_criterion(outputs, targets)
+            loss = self.gw_criterion(outputs, targets)
+            BCEgw = loss['total_loss']
             
         """
         MSE - Mean Squared Error Loss
@@ -75,13 +76,18 @@ class BCEgw_MSEtc(LossWrapper):
         """
         MSEpe = 0
         for key in pe:
-            MSEpe += self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
+            if targets['key'] != -1:
+                pe_loss = self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
+            else:
+                pe_loss = 0.0
+            custom_loss[key] = pe_loss
+            MSEpe += pe_loss
         
         """ 
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
         """
-        custom_loss = BCEgw + MSEpe
+        custom_loss['total_loss'] = BCEgw + MSEpe
         
         return custom_loss
 
@@ -103,7 +109,9 @@ class regularised_BCELoss(torch.nn.BCELoss):
     def forward(self, outputs, targets, *args, **kwargs):
         assert outputs.shape[-1] == self.regularization_dim
         transformed_input = self.regularization_A + self.regularization_B*outputs
-        return torch.nn.BCELoss.forward(self, transformed_input, targets, *args, **kwargs)
+        custom_loss = {}
+        custom_loss['total_loss'] = torch.nn.BCELoss.forward(self, transformed_input, targets, *args, **kwargs)
+        return custom_loss
 
 
 class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
@@ -124,5 +132,7 @@ class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
     def forward(self, outputs, targets, *args, **kwargs):
         assert outputs.shape[-1] == self.regularization_dim
         transformed_input = self.regularization_A + self.regularization_B*outputs
-        return torch.nn.BCEWithLogitsLoss.forward(self, transformed_input, targets, *args, **kwargs)
+        custom_loss = {}
+        custom_loss['total_loss'] = torch.nn.BCEWithLogitsLoss.forward(self, transformed_input, targets, *args, **kwargs)
+        return custom_loss
     
