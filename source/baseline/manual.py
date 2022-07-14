@@ -543,10 +543,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             loss_and_accuracy_curves(cfg, loss_filepath, cfg.export_dir)
             
             """ Save the best weights (if global loss reduces) """
-            if epoch_validation_loss < best_loss:
+            if epoch_validation_loss['tot'] < best_loss:
                 weights_save_path = os.path.join(cfg.export_dir, cfg.weights_path)
                 torch.save(Network.state_dict(), weights_save_path)
-                best_loss = epoch_validation_loss
+                best_loss = epoch_validation_loss['tot']
                 best_epoch = nep
                 best_roc_data = [fpr, tpr, roc_auc]
             
@@ -556,11 +556,13 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             """ Epoch Display """
             print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
-            print("\nEpoch Validation Loss = {}".format(epoch_validation_loss))
+            print("\nEpoch Validation Loss = {}".format(epoch_validation_loss['tot']))
+            for param in cfg.parameter_estimation:
+                print("Epoch Validation Loss ({}) = {}".format(param, epoch_validation_loss[param+'_vloss']))
             print("Epoch Training Loss = {}".format(epoch_training_loss))
             print("Average Validation Accuracy = {}".format(avg_acc_valid))
             print("Average Training Accuracy = {}".format(avg_acc_train))
-            if epoch_validation_loss > 1.1*epoch_training_loss and cfg.early_stopping:
+            if epoch_validation_loss['tot'] > 1.1*epoch_training_loss and cfg.early_stopping:
                 overfitting_check += 1
                 if overfitting_check > 3:
                     print("\nThe current model may be overfitting! Terminating.")
