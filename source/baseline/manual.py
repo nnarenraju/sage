@@ -558,11 +558,14 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
             print("\nEpoch Validation Loss = {}".format(epoch_validation_loss['tot']))
             for param in cfg.parameter_estimation:
-                print("Epoch Validation Loss ({}) = {}".format(param, epoch_validation_loss[param]))
-            print("Epoch Training Loss = {}".format(epoch_training_loss))
-            print("Average Validation Accuracy = {}".format(avg_acc_valid))
+                print("Epoch {} Loss = {}".format(param, epoch_validation_loss[param]))
+            print("Epoch Training Loss = {}".format(epoch_training_loss['tot']))
+            for param in cfg.parameter_estimation:
+                print("Epoch {} Loss = {}".format(param, epoch_training_loss[param]))
+                
+            print("\nAverage Validation Accuracy = {}".format(avg_acc_valid))
             print("Average Training Accuracy = {}".format(avg_acc_train))
-            if epoch_validation_loss['tot'] > 1.1*epoch_training_loss and cfg.early_stopping:
+            if epoch_validation_loss['tot'] > 1.1*epoch_training_loss['tot'] and cfg.early_stopping:
                 overfitting_check += 1
                 if overfitting_check > 3:
                     print("\nThe current model may be overfitting! Terminating.")
