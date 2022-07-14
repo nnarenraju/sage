@@ -81,12 +81,8 @@ class BCEgw_MSEtc(LossWrapper):
             # Ignore all targets corresponding to pure noise samples
             mask = torch.ge(targets[key], 0.0)
             masked_target = torch.masked_select(targets[key], mask)
-            print(targets[key])
-            print(masked_target)
+            assert -1 not in masked_target
             masked_output = torch.masked_select(outputs[key], mask)
-            print(outputs[key])
-            print(masked_output)
-            raise
             pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
             # Store losses
             custom_loss[key] = pe_loss
