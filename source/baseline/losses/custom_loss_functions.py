@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import torch
+import numpy as np
 
 
 """ WRAPPERS """
@@ -76,10 +77,13 @@ class BCEgw_MSEtc(LossWrapper):
         """
         MSEpe = 0
         for key in pe:
-            if targets[key] != -1:
-                pe_loss = self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
-            else:
-                pe_loss = 0.0
+            # Get a masked loss calculation for parameter estimation
+            # Ignore all targets corresponding to pure noise samples
+            mask = torch.lt(targets[key], 0.0)
+            masked_target = torch.masked_select(targets[key], mask)
+            masked_output = torch.masked_select(outputs[key], mask)
+            pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
+            # Store losses
             custom_loss[key] = pe_loss
             MSEpe += pe_loss
         
