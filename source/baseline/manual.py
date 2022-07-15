@@ -387,7 +387,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         
         for nep in range(cfg.num_epochs):
             
-            epoch_string = "\n" + "="*60 + " Epoch {} ".format(nep) + "="*60
+            epoch_string = "\n" + "="*65 + " Epoch {} ".format(nep) + "="*65
             print(epoch_string)
             
             # Training epoch
