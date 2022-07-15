@@ -163,20 +163,21 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     
     # Mask function
     mask_function = lambda foo: True if foo>=0.0 else False
+    mask = [mask_function(foo) for foo in network_snrs]
+    mx0 = np.ma.masked_array(network_snrs, mask=mask)
+    
     for param in outputs.keys():
         # Plotting routine
         ax = figure(title="Diagonal Plot of {} at Epoch = {}".format(param, nep))
         # Plotting the observed value vs actual value scatter
-        mask = [mask_function(foo) for foo in labels[param]]
         mx1 = np.ma.masked_array(outputs[param], mask=mask)
         mx2 = np.ma.masked_array(labels[param], mask=mask)
         # For labels == signal, true positive
         plot_output = mx1[mx1.mask == True].data
         plot_labels = mx2[mx2.mask == True].data
-        print(plot_labels)
-        print(plot_output)
+        plot_snrs = mx0[mx0.mask == True].data
         # Plotting
-        ax.scatter(plot_output, plot_labels, marker='.', s=200.0, c=network_snrs)
+        ax.scatter(plot_output, plot_labels, marker='.', s=200.0, c=plot_snrs)
         # Plotting params
         ax.grid(True, which='both')
         ax.set_xlabel('Observed Value [{}]'.format(param))
