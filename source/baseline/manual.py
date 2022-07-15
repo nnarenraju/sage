@@ -163,7 +163,6 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     
     # Mask function
     mask_function = lambda foo: True if foo>=0.0 else False
-    print(network_snrs)
     mask = [mask_function(foo) for foo in network_snrs]
     mx0 = np.ma.masked_array(network_snrs, mask=mask)
     
@@ -456,6 +455,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Update losses and accuracy
                 for key in training_running_loss.keys():
                     training_running_loss[key] += training_loss[key].clone().cpu().item()
+                training_running_loss['gw'] = training_loss['gw'].clone().cpu().item()
                 acc_train.append(accuracy)
                 # Record time taken to load data (calculate avg time later)
                 train_times.append(time.time() - start_train)
@@ -513,6 +513,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     validation_batches += 1
                     for key in validation_running_loss.keys():
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
+                    validation_running_loss['gw'] = validation_loss['gw'].clone().cpu().item()
                     acc_valid.append(accuracy)
                     
                     # Params for storing labels and outputs
