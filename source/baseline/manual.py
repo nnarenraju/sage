@@ -387,7 +387,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         
         for nep in range(cfg.num_epochs):
             
-            print("\n================================= Epoch {} =================================".format(nep))
+            epoch_string = "\n" + "="*60 + " Epoch {} ".format(nep) + "="*60
+            print(epoch_string)
             
             # Training epoch
             Network.train()
@@ -406,7 +407,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 [1] Do gradient clipping. Set value in cfg.
             """
             print("\nTraining Phase Initiated")
-            pbar = tqdm(trainDL, bar_format='{l_bar}{bar:20}{r_bar}{bar:-10b}')
+            pbar = tqdm(trainDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}')
             
             # Total Number of batches
             num_train_batches = len(trainDL)
@@ -490,7 +491,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 epoch_outputs = {foo: [] for foo in cfg.parameter_estimation + ('gw', )}
                 validation_snrs = []
                 
-                pbar = tqdm(validDL, bar_format='{l_bar}{bar:20}{r_bar}{bar:-10b}')
+                pbar = tqdm(validDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}')
                 for validation_samples, validation_labels in pbar:
                     
                     ## Class balance assertions
