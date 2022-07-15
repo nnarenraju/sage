@@ -187,7 +187,6 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
               ylabel='Actual Value [{}]'.format(param), 
               xlabel='Observed Value [{}]'.format(param), ls="dashed")
         
-        plt.tight_layout()
         save_path = os.path.join(save_dir, "diagonal_{}_{}.png".format(param, nep))
         plt.savefig(save_path)
         plt.close()
@@ -393,7 +392,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             # Necessary save and update params
             training_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
-            training_running_loss.update({'total_loss': 0.0})
+            training_running_loss.update({'total_loss': 0.0, 'gw': 0.0})
             training_batches = 0
             # Store accuracy params
             acc_train = []
@@ -449,15 +448,16 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                                                          params)
                 
                 # Display stuff
+                loss = np.around(training_loss['total_loss'].clone().cpu().item(), 4)
                 pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, 
-                                                                                       np.around(training_loss['total_loss'].cpu().detach().numpy(), 4), 
+                                                                                       loss,
                                                                                        accuracy))
                 # Updating similar things (same same but different, but still same)
                 training_batches += 1
                 # Update losses and accuracy
                 for key in training_running_loss.keys():
                     training_running_loss[key] += training_loss[key].clone().cpu().item()
-                training_running_loss['gw'] = training_loss['gw'].clone().cpu().item()
+                training_running_loss['gw'] += training_loss['gw'].clone().cpu().item()
                 acc_train.append(accuracy)
                 # Record time taken to load data (calculate avg time later)
                 train_times.append(time.time() - start_train)
@@ -482,7 +482,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             with torch.no_grad():
                 
                 validation_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
-                validation_running_loss.update({'total_loss': 0.0})
+                validation_running_loss.update({'total_loss': 0.0, 'gw': 0.0})
                 validation_batches = 0
                 
                 epoch_labels = {foo: [] for foo in cfg.parameter_estimation + ('gw', )}
@@ -510,14 +510,15 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                                                                         validation_labels)
                     
                     # Display stuff
+                    loss = np.around(validation_loss['total_loss'].clone().cpu().item(), 4)
                     pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, 
-                                                                                           np.around(validation_loss['total_loss'].cpu().detach().numpy(), 4), 
+                                                                                           loss,
                                                                                            accuracy))
                     # Update losses and accuracy
                     validation_batches += 1
                     for key in validation_running_loss.keys():
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
-                    validation_running_loss['gw'] = validation_loss['gw'].clone().cpu().item()
+                    validation_running_loss['gw'] += validation_loss['gw'].clone().cpu().item()
                     acc_valid.append(accuracy)
                     
                     # Params for storing labels and outputs
@@ -629,9 +630,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             print("\n-- Average losses in Training Phase --")
             print("Total Loss = {}".format(epoch_training_loss['tot']))
-            print("  GW Loss = {}".format(epoch_training_loss['gw']))
+            print("GW Loss = {}".format(epoch_training_loss['gw']))
             for param in cfg.parameter_estimation:
-                print("  {} Loss = {}".format(param, epoch_training_loss[param]))
+                print("{} Loss = {}".format(param, epoch_training_loss[param]))
             
             print("\nAverage Validation Accuracy = {}".format(avg_acc_valid))
             print("Average Training Accuracy = {}".format(avg_acc_train))
@@ -682,6 +683,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     src_best_features = os.path.join(cfg.export_dir, 'CNN_OUTPUT/epoch_{}'.format(best_epoch))
     dst_best_features = os.path.join(best_dir, 'CNN_features_epoch_{}'.format(best_epoch))
     copy_tree(src_best_features, dst_best_features)
+    # Move best diagonal plots
+    src_best_diagonals = os.path.join(cfg.export_dir, 'DIAGONAL/epoch_{}'.format(best_epoch))
+    dst_best_diagonals = os.path.join(best_dir, 'diagonal_epoch_{}'.format(best_epoch))
+    copy_tree(src_best_diagonals, dst_best_diagonals)
     
     # Remake loss curve and accuracy curve with best epoch marked
     loss_and_accuracy_curves(cfg, loss_filepath, best_dir, best_epoch=best_epoch)
