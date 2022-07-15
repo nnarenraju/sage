@@ -163,6 +163,7 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     
     # Mask function
     mask_function = lambda foo: True if foo>=0.0 else False
+    print(network_snrs)
     mask = [mask_function(foo) for foo in network_snrs]
     mx0 = np.ma.masked_array(network_snrs, mask=mask)
     
