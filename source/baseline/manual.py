@@ -161,11 +161,13 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=False)
     
+    # Mask function
+    mask_function = lambda foo: True if foo>=0.0 else False
     for param in outputs.keys():
         # Plotting routine
         ax = figure(title="Diagonal Plot of {} at Epoch = {}".format(param, nep))
         # Plotting the observed value vs actual value scatter
-        mask = list(filter(lambda foo: True if foo>=0.0 else False, labels[param]))
+        mask = [mask_function(foo) for foo in labels[param]]
         mx1 = np.ma.masked_array(outputs[param], mask=mask)
         mx2 = np.ma.masked_array(labels[param], mask=mask)
         # For labels == signal, true positive
