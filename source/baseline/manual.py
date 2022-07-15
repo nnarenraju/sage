@@ -457,7 +457,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Update losses and accuracy
                 for key in training_running_loss.keys():
                     training_running_loss[key] += training_loss[key].clone().cpu().item()
-                training_running_loss['gw'] += training_loss['gw'].clone().cpu().item()
                 acc_train.append(accuracy)
                 # Record time taken to load data (calculate avg time later)
                 train_times.append(time.time() - start_train)
@@ -518,7 +517,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     validation_batches += 1
                     for key in validation_running_loss.keys():
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
-                    validation_running_loss['gw'] += validation_loss['gw'].clone().cpu().item()
                     acc_valid.append(accuracy)
                     
                     # Params for storing labels and outputs
@@ -622,17 +620,19 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             """ Epoch Display """
             print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
             
-            print("\n-- Average losses in Validation Phase --")
+            print('\n----------------------------------------------------------------------')
+            print("Average losses in Validation Phase:")
             print("Total Loss = {}".format(epoch_validation_loss['tot']))
-            print("GW Loss = {}".format(epoch_validation_loss['gw']))
-            for param in cfg.parameter_estimation:
-                print("{} Loss = {}".format(param, epoch_validation_loss[param]))
+            print("1. GW Loss = {}".format(epoch_validation_loss['gw']))
+            for n, param in enumerate(cfg.parameter_estimation):
+                print("{}. {} Loss = {}".format(n+2, param, epoch_validation_loss[param]))
             
-            print("\n-- Average losses in Training Phase --")
+            print("\nAverage losses in Training Phase:")
             print("Total Loss = {}".format(epoch_training_loss['tot']))
             print("GW Loss = {}".format(epoch_training_loss['gw']))
-            for param in cfg.parameter_estimation:
-                print("{} Loss = {}".format(param, epoch_training_loss[param]))
+            for n, param in enumerate(cfg.parameter_estimation):
+                print("{}. {} Loss = {}".format(n+2, param, epoch_training_loss[param]))
+            print('----------------------------------------------------------------------')
             
             print("\nAverage Validation Accuracy = {}".format(avg_acc_valid))
             print("Average Training Accuracy = {}".format(avg_acc_train))
