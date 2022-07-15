@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import time
 import torch
+import random
 import shutil
 import traceback
 import numpy as np
@@ -151,7 +152,33 @@ def prediction_probability(nep, output, labels, export_dir):
     
     save_path = os.path.join(save_dir, "log_pred_prob_{}.png".format(nep))
     plt.savefig(save_path)
-    plt.close()    
+    plt.close()
+
+
+def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
+    # Save (append) the above list of lists to CSV file
+    save_dir = os.path.join(export_dir, "DIAGONAL/epoch_{}".format(nep))
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=False)
+    
+    for param in outputs.keys():
+        # Plotting routine
+        ax = figure(title="Diagonal Plot of {} at Epoch = {}".format(param, nep))
+        # Plotting the observed value vs actual value scatter
+        ax.scatter(outputs[param], labels[param], marker='.', s=200.0, c=network_snrs)
+        # Plotting params
+        ax.grid(True, which='both')
+        ax.set_xlabel('Observed Value [{}]'.format(param))
+        ax.set_ylabel('Actual Value [{}]'.format(param))
+        # Plotting the diagonal dashed line for reference
+        _plot(ax, [0, 1], [0, 1], label="Best Classifier", c='k', 
+              ylabel='Actual Value [{}]'.format(param), 
+              xlabel='Observed Value [{}]'.format(param), ls="dashed")
+        
+        plt.tight_layout()
+        save_path = os.path.join(save_dir, "diagonal_{}_{}.png".format(param, nep))
+        plt.savefig(save_path)
+        plt.close()
 
 
 def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
@@ -178,6 +205,7 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
             save_path = os.path.join(save_dir, 'debug_cnn_feature_SNR-{}_{}.png'.format(snr, n))
         else:
             save_path = os.path.join(save_dir, 'debug_cnn_feature_noise_{}.png'.format(n))
+            
         plt.tight_layout()
         plt.savefig(save_path)
         plt.close()
@@ -209,17 +237,24 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     plt.close()
     
     ## Parameter Estimation Loss Curves
-    # tsearch_names = [foo+'_tloss' for foo in cfg.parameter_estimation]
-    # vsearch_names = [foo+'_vloss' for foo in cfg.parameter_estimation]
-    # ax = figure(title="PE Loss Curves")
-    # _plot(ax, epochs, training_loss, label="Training Loss", c='red')
-    # _plot(ax, epochs, validation_loss, label="Validation Loss", c='red', ls='dashed')
-    # if best_epoch != -1:
-    #     ax.scatter(epochs[best_epoch], training_loss[best_epoch], marker='*', s=200.0, c='k')
-    #     ax.scatter(epochs[best_epoch], validation_loss[best_epoch], marker='*', s=200.0, c='k')
-    # save_path = os.path.join(export_dir, "pe_loss_curves.png")
-    # plt.savefig(save_path)
-    # plt.close()
+    tsearch_names = [foo+'_tloss' for foo in cfg.parameter_estimation+('gw', )]
+    vsearch_names = [foo+'_vloss' for foo in cfg.parameter_estimation+('gw', )]
+    ax = figure(title="PE Loss Curves")
+    # Colour map
+    numc = len(cfg.parameter_estimation)
+    cmap = ["#"+''.join([random.choice('ABCDEF0123456789') for _ in range(6)]) for _ in range(numc)]
+    
+    for n, (tsearch_name, vsearch_name) in enumerate(zip(tsearch_names, vsearch_names)):
+        _plot(ax, epochs, data[tsearch_name], label=tsearch_name, c=cmap[n])
+        _plot(ax, epochs, data[vsearch_name], label=vsearch_name, c=cmap[n], ls='dashed')
+        # Marking the best epoch    
+        if best_epoch != -1:
+            ax.scatter(epochs[best_epoch], data[tsearch_name][best_epoch], marker='*', s=300.0, c='k')
+            ax.scatter(epochs[best_epoch], data[vsearch_name][best_epoch], marker='*', s=300.0, c='k')
+            
+    save_path = os.path.join(export_dir, "pe_loss_curves.png")
+    plt.savefig(save_path)
+    plt.close()
     
     ## Accuracy Curves
     # Figure define
@@ -227,8 +262,8 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     _plot(ax, epochs, training_accuracy, label="Avg Training Accuracy", c='red', ylabel="Avg Accuracy")
     _plot(ax, epochs, validation_accuracy, label="Avg Validation Accuracy", c='blue', ylabel="Avg Accuracy")
     if best_epoch != -1:
-        ax.scatter(epochs[best_epoch], training_accuracy[best_epoch], marker='*', s=200.0, c='k')
-        ax.scatter(epochs[best_epoch], validation_accuracy[best_epoch], marker='*', s=200.0, c='k')
+        ax.scatter(epochs[best_epoch], training_accuracy[best_epoch], marker='*', s=300.0, c='k')
+        ax.scatter(epochs[best_epoch], validation_accuracy[best_epoch], marker='*', s=300.0, c='k')
     save_path = os.path.join(export_dir, "accuracy_curves.png")
     plt.savefig(save_path)
     plt.close()
@@ -286,16 +321,13 @@ def validation_phase(cfg, Network, loss_function, validation_samples, validation
         # Make sure that we don't do a .backward() function anywhere inside this scope
         with torch.no_grad():
             validation_output = Network(validation_samples)
-            # Get necessary output params from dict output
-            pred_prob = validation_output['pred_prob']
-            
             # Calculate validation loss with params if required
             all_losses = loss_function(validation_output, validation_labels, cfg.parameter_estimation)
     
     # Accuracy calculation
-    accuracy = calculate_accuracy(pred_prob, validation_labels['gw'], cfg.accuracy_thresh)
-    # Returning pred_prob if saving data
-    return (all_losses, accuracy, pred_prob)
+    accuracy = calculate_accuracy(validation_output['pred_prob'], validation_labels['gw'], cfg.accuracy_thresh)
+    # Returning quantities if saving data
+    return (all_losses, accuracy, validation_output)
 
 
 def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
@@ -342,7 +374,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         
         for nep in range(cfg.num_epochs):
             
-            print("\n=========== Epoch {} ===========".format(nep))
+            print("\n====================== Epoch {} ======================".format(nep))
             
             # Training epoch
             Network.train()
@@ -438,8 +470,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 validation_running_loss.update({'total_loss': 0.0})
                 validation_batches = 0
                 
-                epoch_labels = []
-                epoch_outputs = []
+                epoch_labels = {foo: [] for foo in cfg.parameter_estimation + ('gw', )}
+                epoch_outputs = {foo: [] for foo in cfg.parameter_estimation + ('gw', )}
+                validation_snrs = []
                 
                 pbar = tqdm(validDL)
                 for validation_samples, validation_labels in pbar:
@@ -456,7 +489,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         
                     """ Call Validation Phase """
                     # Run training phase and get loss and accuracy
-                    validation_loss, accuracy, preds = validation_phase(cfg, Network, 
+                    validation_loss, accuracy, voutput = validation_phase(cfg, Network, 
                                                                         loss_function, 
                                                                         validation_samples, 
                                                                         validation_labels)
@@ -469,25 +502,37 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
                     acc_valid.append(accuracy)
                     
+                    # Params for storing labels and outputs
                     if nep % cfg.save_freq == 0:
+                        # Save SNRs for the validation phase (used in diagonal plots)
+                        validation_snrs.append(validation_labels['snr'].cpu())
                         # Move labels from cuda to cpu
-                        epoch_labels.append(validation_labels['gw'].cpu())
-                        epoch_outputs.append(preds.cpu().detach().numpy())
+                        epoch_labels['gw'].append(validation_labels['gw'].cpu())
+                        epoch_outputs['gw'].append(voutput['pred_prob'].cpu().detach().numpy())
+                        # Add parameter estimation actual and observed values
+                        for param in cfg.parameter_estimation:
+                            epoch_labels[param].append(validation_labels[param].cpu())
+                            epoch_outputs[param].append(voutput[param].cpu().detach().numpy())
+                            
                 
                 if nep % cfg.save_freq == 0:
                     # Concatenate all np arrays together
-                    labels = np.concatenate(tuple(epoch_labels))
-                    outputs = np.concatenate(tuple(epoch_outputs))
+                    for param in epoch_labels.keys():
+                        epoch_labels[param] = np.concatenate(tuple(epoch_labels[param]))
+                        epoch_outputs[param] = np.concatenate(tuple(epoch_outputs[param]))
                     
                     """ ROC Curve save data """
-                    roc_auc, fpr, tpr = roc_curve(nep, outputs, labels, cfg.export_dir)
+                    roc_auc, fpr, tpr = roc_curve(nep, epoch_outputs['gw'], epoch_labels['gw'], cfg.export_dir)
                     
                     """ Calculating Pred Probs """
                     # Confusion matrix has been deprecated as of June 10, 2022
                     # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    prediction_probability(nep, outputs, labels, cfg.export_dir)
+                    prediction_probability(nep, epoch_outputs['gw'], epoch_labels['gw'], cfg.export_dir)
+                    
+                    """ Value VS Value Plots for PE """
+                    diagonal_compare(nep, epoch_outputs, epoch_labels, validation_snrs, cfg.export_dir)
     
-    
+            
             """
             PHASE 3 - Save
                 [1] Save losses, accuracy and confusion matrix elements
@@ -556,15 +601,25 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             """ Epoch Display """
             print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
-            print("\nEpoch Validation Loss = {}".format(epoch_validation_loss['tot']))
+            
+            print("\n-- Average losses in Validation Phase --")
+            print("Total Loss = {}".format(epoch_validation_loss['tot']))
+            print("  GW Loss = {}".format(epoch_validation_loss['gw']))
             for param in cfg.parameter_estimation:
-                print("Epoch {} Loss = {}".format(param, epoch_validation_loss[param]))
-            print("Epoch Training Loss = {}".format(epoch_training_loss['tot']))
+                print("  {} Loss = {}".format(param, epoch_validation_loss[param]))
+            
+            print("-- Average losses in Training Phase --")
+            print("Total Loss = {}".format(epoch_training_loss['tot']))
+            print("  GW Loss = {}".format(epoch_training_loss['gw']))
             for param in cfg.parameter_estimation:
-                print("Epoch {} Loss = {}".format(param, epoch_training_loss[param]))
-                
+                print("  {} Loss = {}".format(param, epoch_training_loss[param]))
+            
             print("\nAverage Validation Accuracy = {}".format(avg_acc_valid))
             print("Average Training Accuracy = {}".format(avg_acc_train))
+            print("\n")
+            
+            
+            """ Early Stopping """
             if epoch_validation_loss['tot'] > 1.1*epoch_training_loss['tot'] and cfg.early_stopping:
                 overfitting_check += 1
                 if overfitting_check > 3:

@@ -25,7 +25,6 @@ Documentation: NULL
 
 # IN-BUILT
 import torch
-import numpy as np
 
 
 """ WRAPPERS """
@@ -69,7 +68,9 @@ class BCEgw_MSEtc(LossWrapper):
         else:
             loss = self.gw_criterion(outputs, targets)
             BCEgw = loss['total_loss']
-            
+        
+        custom_loss['gw'] = BCEgw
+        
         """
         MSE - Mean Squared Error Loss
         For the handling of 'tc'
@@ -116,6 +117,7 @@ class regularised_BCELoss(torch.nn.BCELoss):
         transformed_input = self.regularization_A + self.regularization_B*outputs
         custom_loss = {}
         custom_loss['total_loss'] = torch.nn.BCELoss.forward(self, transformed_input, targets, *args, **kwargs)
+        custom_loss['gw'] = custom_loss['total_loss']
         return custom_loss
 
 
@@ -139,5 +141,6 @@ class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
         transformed_input = self.regularization_A + self.regularization_B*outputs
         custom_loss = {}
         custom_loss['total_loss'] = torch.nn.BCEWithLogitsLoss.forward(self, transformed_input, targets, *args, **kwargs)
+        custom_loss['gw'] = custom_loss['total_loss']
         return custom_loss
     
