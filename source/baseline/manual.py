@@ -167,6 +167,8 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     mx0 = np.ma.masked_array(network_snrs, mask=mask)
     
     for param in outputs.keys():
+        if param == 'gw':
+            continue
         # Plotting routine
         ax = figure(title="Diagonal Plot of {} at Epoch = {}".format(param, nep))
         # Plotting the observed value vs actual value scatter
@@ -385,7 +387,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         
         for nep in range(cfg.num_epochs):
             
-            print("\n====================== Epoch {} ======================".format(nep))
+            print("\n================================= Epoch {} =================================".format(nep))
             
             # Training epoch
             Network.train()
@@ -627,9 +629,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             for n, param in enumerate(cfg.parameter_estimation):
                 print("{}. {} Loss = {}".format(n+2, param, epoch_validation_loss[param]))
             
-            print("\nAverage losses in Training Phase:")
+            print('----+----+----+----+----+----+----+----+----')
+            print("Average losses in Training Phase:")
             print("Total Loss = {}".format(epoch_training_loss['tot']))
-            print("GW Loss = {}".format(epoch_training_loss['gw']))
+            print("1. GW Loss = {}".format(epoch_training_loss['gw']))
             for n, param in enumerate(cfg.parameter_estimation):
                 print("{}. {} Loss = {}".format(n+2, param, epoch_training_loss[param]))
             print('----------------------------------------------------------------------')
@@ -652,7 +655,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         print('manual.py: Terminated due to user controlled KeyboardInterrupt.')
     
         
-    print("\n================================================================\n")
+    print("\n==========================================================================\n")
     print("Training Complete!")
     print("Best validation loss = {}".format(best_loss))
     print("Best validation accuracy = {}".format(best_accuracy))
