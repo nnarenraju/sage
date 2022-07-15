@@ -253,7 +253,7 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     vsearch_names = [foo+'_vloss' for foo in cfg.parameter_estimation+('gw', )]
     ax = figure(title="PE Loss Curves")
     # Colour map
-    numc = len(cfg.parameter_estimation)
+    numc = len(tsearch_names)
     cmap = ["#"+''.join([random.choice('ABCDEF0123456789') for _ in range(6)]) for _ in range(numc)]
     
     for n, (tsearch_name, vsearch_name) in enumerate(zip(tsearch_names, vsearch_names)):
@@ -449,7 +449,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                                                          params)
                 
                 # Display stuff
-                pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, training_loss['total_loss'], accuracy))
+                pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, 
+                                                                                       np.around(training_loss['total_loss'], 4), 
+                                                                                       accuracy))
                 # Updating similar things (same same but different, but still same)
                 training_batches += 1
                 # Update losses and accuracy
@@ -508,7 +510,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                                                                         validation_labels)
                     
                     # Display stuff
-                    pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, validation_loss['total_loss'], accuracy))
+                    pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, 
+                                                                                           np.around(validation_loss['total_loss'], 4), 
+                                                                                           accuracy))
                     # Update losses and accuracy
                     validation_batches += 1
                     for key in validation_running_loss.keys():
@@ -559,12 +563,12 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             epoch_training_loss = {}
             for key in training_running_loss.keys():
                 if key == 'total_loss':
-                    epoch_validation_loss['tot'] = validation_running_loss[key]/validation_batches
-                    epoch_training_loss['tot'] = training_running_loss[key]/training_batches
+                    epoch_validation_loss['tot'] = np.around(validation_running_loss[key]/validation_batches, 4)
+                    epoch_training_loss['tot'] = np.around(training_running_loss[key]/training_batches, 4)
                 else:
-                    epoch_validation_loss[key] = validation_running_loss[key]/validation_batches
-                    epoch_training_loss[key] = training_running_loss[key]/training_batches
-                
+                    epoch_validation_loss[key] = np.around(validation_running_loss[key]/validation_batches, 4)
+                    epoch_training_loss[key] = np.around(training_running_loss[key]/training_batches, 4)
+            
             avg_acc_valid = np.around(sum(acc_valid)/len(acc_valid), 4)
             avg_acc_train = np.around(sum(acc_train)/len(acc_train), 4)
             roc_auc = np.around(roc_auc, 4)
@@ -619,11 +623,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             print("\n-- Average losses in Validation Phase --")
             print("Total Loss = {}".format(epoch_validation_loss['tot']))
-            print("  GW Loss = {}".format(epoch_validation_loss['gw']))
+            print("GW Loss = {}".format(epoch_validation_loss['gw']))
             for param in cfg.parameter_estimation:
-                print("  {} Loss = {}".format(param, epoch_validation_loss[param]))
+                print("{} Loss = {}".format(param, epoch_validation_loss[param]))
             
-            print("-- Average losses in Training Phase --")
+            print("\n-- Average losses in Training Phase --")
             print("Total Loss = {}".format(epoch_training_loss['tot']))
             print("  GW Loss = {}".format(epoch_training_loss['gw']))
             for param in cfg.parameter_estimation:
@@ -631,7 +635,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             print("\nAverage Validation Accuracy = {}".format(avg_acc_valid))
             print("Average Training Accuracy = {}".format(avg_acc_train))
-            print("\n")
+            print("ROC Area Under the Curve (ROC-AUC) = {}".format(roc_auc))
             
             
             """ Early Stopping """
