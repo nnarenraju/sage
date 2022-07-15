@@ -165,7 +165,16 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         # Plotting routine
         ax = figure(title="Diagonal Plot of {} at Epoch = {}".format(param, nep))
         # Plotting the observed value vs actual value scatter
-        ax.scatter(outputs[param], labels[param], marker='.', s=200.0, c=network_snrs)
+        mask = list(filter(lambda foo: True if foo>=0.0 else False, labels[param]))
+        mx1 = np.ma.masked_array(outputs[param], mask=mask)
+        mx2 = np.ma.masked_array(labels[param], mask=mask)
+        # For labels == signal, true positive
+        plot_output = mx1[mx1.mask == True].data
+        plot_labels = mx2[mx2.mask == True].data
+        print(plot_labels)
+        print(plot_output)
+        # Plotting
+        ax.scatter(plot_output, plot_labels, marker='.', s=200.0, c=network_snrs)
         # Plotting params
         ax.grid(True, which='both')
         ax.set_xlabel('Observed Value [{}]'.format(param))
@@ -389,7 +398,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             
             """
-            PHASE 1 - Training
+            PHASE 1 - Training 
                 [1] Do gradient clipping. Set value in cfg.
             """
             print("\nTraining Phase Initiated")
