@@ -428,10 +428,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 # Record time taken for training
                 start_train = time.time()
                 
-                # Class balance assertions
-                batch_labels = training_labels['gw'].numpy()
-                check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
-                assert check_balance >= 0.30 and check_balance <= 0.70
+                ## Class balance assertions
+                # batch_labels = training_labels['gw'].numpy()
+                # check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
+                # assert check_balance >= 0.30 and check_balance <= 0.70
                 
                 """ Tensorification and Device Compatibility """
                 ## Performing this here rather than in the Dataset object
@@ -490,10 +490,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 pbar = tqdm(validDL)
                 for validation_samples, validation_labels in pbar:
                     
-                    # Class balance assertions
-                    batch_labels = validation_labels['gw'].numpy()
-                    check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
-                    assert check_balance >= 0.30 and check_balance <= 0.70
+                    ## Class balance assertions
+                    # batch_labels = validation_labels['gw'].numpy()
+                    # check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
+                    # assert check_balance >= 0.30 and check_balance <= 0.70
                     
                     """ Set the device and dtype """
                     validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
@@ -530,6 +530,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 if nep % cfg.save_freq == 0:
                     # Concatenate all np arrays together
+                    validation_snrs = np.concatenate(tuple(validation_snrs))
                     for param in epoch_labels.keys():
                         epoch_labels[param] = np.concatenate(tuple(epoch_labels[param]))
                         epoch_outputs[param] = np.concatenate(tuple(epoch_outputs[param]))
