@@ -450,7 +450,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 # Display stuff
                 pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, training_batches, 
-                                                                                       np.around(training_loss['total_loss'], 4), 
+                                                                                       np.around(training_loss['total_loss'].cpu().detach().numpy(), 4), 
                                                                                        accuracy))
                 # Updating similar things (same same but different, but still same)
                 training_batches += 1
@@ -511,7 +511,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     
                     # Display stuff
                     pbar.set_description("Epoch {}, batch {} - loss = {}, acc = {}".format(nep, validation_batches, 
-                                                                                           np.around(validation_loss['total_loss'], 4), 
+                                                                                           np.around(validation_loss['total_loss'].cpu().detach().numpy(), 4), 
                                                                                            accuracy))
                     # Update losses and accuracy
                     validation_batches += 1
