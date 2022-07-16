@@ -357,9 +357,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Jul16"
+    name = "KaggleFirst_Jul17"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'OverFitFix-batch500-PE'
+    save_remarks = 'OverFitFix-batch1000-PE-all'
     
     """ Dataset """
     dataset = MLMDC1
@@ -383,14 +383,14 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Epochs and Batches """
     num_epochs = 20
-    batch_size = 500
+    batch_size = 1000
     save_freq = 1
     
     """ Save samples """
     num_sample_save = 100
     
     """ Parameter Estimation """
-    parameter_estimation = ('norm_tc', 'norm_dist', )
+    parameter_estimation = ('norm_tc', 'norm_dist', 'norm_q', 'norm_dchirp', 'norm_mchirp', )
     
     """ Storage Devices """
     store_device = 'cuda:1'
