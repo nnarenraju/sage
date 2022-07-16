@@ -161,10 +161,6 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=False)
     
-    print(outputs)
-    print(labels)
-    print(network_snrs)
-    
     # Mask function
     mask_function = lambda foo: 1 if foo>=0.0 else 0
     mask = [mask_function(foo) for foo in network_snrs]
@@ -182,7 +178,6 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         plot_output = mx1[mx1.mask == True].data
         plot_labels = mx2[mx2.mask == True].data
         plot_snrs = mx0[mx0.mask == True].data
-        print(len(plot_output), len(plot_labels), len(plot_snrs))
         # Plotting
         ax.scatter(plot_output, plot_labels, marker='.', s=200.0, c=plot_snrs)
         # Plotting params
