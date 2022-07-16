@@ -249,7 +249,7 @@ class MLMDC1(Dataset):
             pure_noise, _, _ = self._read_(random_noise_data_path)
             
             """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
-            network_snr = get_network_snr(sample, self.psds_data, params, self.cfg.export_dir)
+            network_snr = get_network_snr(sample, self.psds_data, params, self.cfg.export_dir, self.debug)
             
             """ Adding noise to signals """
             if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):

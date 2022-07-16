@@ -178,12 +178,12 @@ def run_trainer():
         
         # Debug method plotting
         if cfg.debug:
+            # Debug directory and plots
             debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
             debug_plotter(debug_dir)
-        
-        # Plotting the SNR histogram
-        snr_dir = os.path.join(cfg.export_dir, 'SNR')
-        snr_plotter(snr_dir, cfg.num_epochs)
+            # Plotting the SNR histogram
+            snr_dir = os.path.join(cfg.export_dir, 'SNR')
+            snr_plotter(snr_dir, cfg.num_epochs)
         
         # Move export dir for current run to online workspace
         file_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
