@@ -301,9 +301,9 @@ class Baseline_May18(KaggleFirst):
 class KaggleFirst_Jun9(KaggleFirst):
     
     """ Data storage """
-    name = "KaggleFirst_Jul16"
+    name = "KaggleFirst_Jul11"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'OverFitFix-batch500-PE'
+    save_remarks = 'OverFitFix'
     
     """ Dataset """
     dataset = MLMDC1
@@ -336,8 +336,8 @@ class KaggleFirst_Jun9(KaggleFirst):
     persistent_workers = True
     
     """ Epochs and Batches """
-    num_epochs = 20
-    batch_size = 500
+    num_epochs = 10
+    batch_size = 100
     save_freq = 1
     
     """ Save samples """
@@ -350,16 +350,16 @@ class KaggleFirst_Jun9(KaggleFirst):
     """ Loss Function """
     loss_function = regularised_BCEWithLogitsLoss(dim=1)
     
-    debug = False
+    debug = True
     debug_size = 1000
     
 
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Jul11"
+    name = "KaggleFirst_Jul16"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'OverFitFix'
+    save_remarks = 'OverFitFix-batch500-PE'
     
     """ Dataset """
     dataset = MLMDC1
@@ -382,8 +382,8 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     )
     
     """ Epochs and Batches """
-    num_epochs = 10
-    batch_size = 100
+    num_epochs = 20
+    batch_size = 500
     save_freq = 1
     
     """ Save samples """
