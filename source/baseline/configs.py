@@ -390,7 +390,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     num_sample_save = 100
     
     """ Parameter Estimation """
-    parameter_estimation = ('norm_tc',)
+    parameter_estimation = ('norm_tc', 'norm_dist', )
     
     """ Storage Devices """
     store_device = 'cuda:1'
@@ -399,9 +399,11 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(mse_alpha=0.5, gw_criterion=None)
+    loss_function = BCEgw_MSEtc(mse_alpha=5.0, gw_criterion=None)
     
-    debug = True
+    # When debug is False the following plots are not made
+    # SAMPLES, DEBUG, CNN_OUTPUT
+    debug = False
     debug_size = 1000
 
 

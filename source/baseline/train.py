@@ -177,8 +177,9 @@ def run_trainer():
         
         
         # Debug method plotting
-        debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
-        debug_plotter(debug_dir)
+        if cfg.debug:
+            debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
+            debug_plotter(debug_dir)
         
         # Plotting the SNR histogram
         snr_dir = os.path.join(cfg.export_dir, 'SNR')

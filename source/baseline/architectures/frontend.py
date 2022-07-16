@@ -478,6 +478,10 @@ class KappaModelPE(torch.nn.Module):
         # Primary outputs
         self.signal_or_noise = nn.Linear(self.frontend.num_features, 1)
         self.coalescence_time = nn.Linear(self.frontend.num_features, 1)
+        self.chirp_distance = nn.Linear(self.frontend.num_features, 1)
+        self.chirp_mass = nn.Linear(self.frontend.num_features, 1)
+        self.distance = nn.Linear(self.frontend.num_features, 1)
+        self.mass_ratio = nn.Linear(self.frontend.num_features, 1)
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.batchnorm = nn.BatchNorm1d(2)
@@ -495,6 +499,10 @@ class KappaModelPE(torch.nn.Module):
         # Mod layers
         self.signal_or_noise.to(dtype=data_type, device=self.store_device)
         self.coalescence_time.to(dtype=data_type, device=self.store_device)
+        self.chirp_distance.to(dtype=data_type, device=self.store_device)
+        self.chirp_mass.to(dtype=data_type, device=self.store_device)
+        self.distance.to(dtype=data_type, device=self.store_device)
+        self.mass_ratio.to(dtype=data_type, device=self.store_device)
         # Main layers
         self._det1.to(dtype=data_type, device=self.store_device)
         self._det2.to(dtype=data_type, device=self.store_device)
@@ -518,9 +526,16 @@ class KappaModelPE(torch.nn.Module):
         ## Output necessary params
         raw = self.flatten_d0(self.signal_or_noise(x))
         pred_prob = self.sigmoid(raw)
+        # Parameter Estimation
         tc = self.flatten_d0(self.sigmoid(self.coalescence_time(x)))
+        dchirp = self.flatten_d0(self.sigmoid(self.chirp_distance(x)))
+        mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(x)))
+        dist = self.flatten_d0(self.sigmoid(self.distance(x)))
+        q = self.flatten_d0(self.sigmoid(self.mass_ratio(x)))
         # Return ouptut params (pred_prob, tc)
-        return {'raw': raw, 'pred_prob': pred_prob, 'norm_tc': tc, 'cnn_output': cnn_output}
+        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
+                'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,
+                'norm_dist': dist, 'norm_q': q}
 
 
 class KappaModelSimplified(torch.nn.Module):
