@@ -47,6 +47,29 @@ from pycbc.types import FrequencySeries
 # Datatype for storage
 tensor_dtype=torch.float32
 
+
+""" Utility Classes """
+
+class Normalise:
+    """
+    Normalise the parameter using prior ranges
+    
+        For example, norm_tc = (tc - min_val)/(max_val - min_val)
+        The values of max_val and min_val are provided
+        to the class. self.get_norm can be called during
+        data generation to get normalised values of tc, if needed.
+    
+    """
+    
+    def __init__(self, min_val, max_val):
+        self.min_val = min_val
+        self.max_val = max_val
+
+    def norm(self, val):
+        # Return lambda to use for normalisation
+        return (val - self.min_val)/(self.max_val - self.min_val)
+
+
 """ Dataset Objects """
 
 class MLMDC1(Dataset):
@@ -124,6 +147,33 @@ class MLMDC1(Dataset):
         # Distributions object
         self.distrs = {'pol': self.uniform_angle_distr, 'sky': self.skylocation_distr,
                        'mass': self.mass_distr, 'dchirp': self.chirp_distance_distr}
+        
+        
+        """ Normalising the augmented params (if needed) """
+        # Normalise chirp mass
+        ml = self.data_cfg.prior_low_mass
+        mu = self.data_cfg.prior_high_mass
+        # m2 will always be slightly lower than m1, but (m, m) will give limit
+        # that the mchirp will never reach but tends to as num_samples tends to inf.
+        # Range for mchirp can be written as --> (min_mchirp, max_mchirp)
+        min_mchirp = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
+        max_mchirp = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
+        
+        # Get distance ranges from chirp distance priors
+        # mchirp present in numerator of self.distance_from_chirp_distance.
+        # Thus, min_mchirp for dist_lower and max_mchirp for dist_upper
+        dist_lower = self._dist_from_dchirp(self.data_cfg.prior_low_chirp_dist, min_mchirp)
+        dist_upper = self._dist_from_dchirp(self.data_cfg.prior_high_chirp_dist, max_mchirp)
+        # get normlised distance class
+        self.norm_dist = Normalise(min_val=dist_lower, max_val=dist_upper)
+        
+        # Normalise chirp distance
+        self.norm_dchirp = Normalise(min_val=self.data_cfg.prior_low_chirp_dist, 
+                                     max_val=self.data_cfg.prior_high_chirp_dist)
+        # All normalisation variables
+        self.norm = {}
+        self.norm['dist'] = self.norm_dist
+        self.norm['dchirp'] = self.norm_dchirp
         
         
         """ Data Save Params (for plotting sample just before training) """
@@ -212,17 +262,29 @@ class MLMDC1(Dataset):
         return (sample, targets, params)
     
     
+    def _dist_from_dchirp(self, chirp_distance, mchirp, ref_mass=1.4):
+        # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
+        # Returns the luminosity distance given a chirp distance and chirp mass.
+        return chirp_distance * (2.**(-1./5) * ref_mass / mchirp)**(-5./6)
+    
+    
     def _augmentation_(self, sample, target, params, debug):
         """ Signal and Noise only Augmentation """
-        ## Convert the signal from h_plus and h_cross to h_t
-        # During this procedure randomise the value of polarisation angle, ra and dec
-        # This should give us the strains required (project_wave might cause issues with MP)
+        ## Convert the signal from h_plus and h_cross to h_t and augment
+        # Get augmented values if they affect the parameter estimation labels
+        augmented_labels = {}
         if target and self.signal_only_transforms:
-            sample, times = self.signal_only_transforms(sample, self.detectors, self.distrs, self.debug_dir, **params)
+            aug_sample = self.signal_only_transforms(sample, self.detectors, self.distrs, self.debug_dir, **params)
+            sample = aug_sample['signal']
+            # Change the values of augmented parameters for sample and update corresponding labels (if needed)
+            augkeys = [foo for foo in aug_sample.keys() if foo != 'signal']
+            for augkey in augkeys:
+                augmented_labels['norm_'+augkey] = self.norm[augkey].norm(aug_sample[augkey])
+            
         elif not target and self.noise_only_transforms:
-            sample, times = self.noise_only_transforms(sample, self.debug_dir)
+            sample = self.noise_only_transforms(sample, self.debug_dir)
         
-        return sample
+        return sample, augmented_labels
     
     
     def _noise_realisation_(self, sample, target, params):
@@ -274,7 +336,7 @@ class MLMDC1(Dataset):
         """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
-            sample, _ = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
+            sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
         else:
             sample = noisy_sample
             
@@ -288,7 +350,7 @@ class MLMDC1(Dataset):
         """ Plotting idx data (if flag is set to True) """
         # Input parameters
         if self.transforms:
-            trans_pure_signal, _ = self.transforms(pure_sample, self.psds_data, self.data_cfg)
+            trans_pure_signal = self.transforms(pure_sample, self.psds_data, self.data_cfg)
         else:
             trans_pure_signal = None
         
@@ -310,7 +372,7 @@ class MLMDC1(Dataset):
         
         try:
             ## Signal and Noise Augmentation
-            pure_sample = self._augmentation_(sample, target_gw, params, self.debug)
+            pure_sample, aug_labels = self._augmentation_(sample, target_gw, params, self.debug)
             ## Add noise realisation to the signals
             noisy_sample, pure_noise, network_snr = self._noise_realisation_(pure_sample, target_gw, params)
             
@@ -324,6 +386,10 @@ class MLMDC1(Dataset):
             all_targets = {}
             all_targets['snr'] = network_snr
             all_targets.update(targets)
+            
+            # Update parameter labels if augmentation changed them
+            # aug_labels must have the same keys as targets dict
+            all_targets.update(aug_labels)
             
             ## Plotting
             if self.debug:

@@ -225,7 +225,6 @@ class GenerateData:
     
     
     def distance_from_chirp_distance(self, chirp_distance, mchirp, ref_mass=1.4):
-
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
         # Returns the luminosity distance given a chirp distance and chirp mass.
         return chirp_distance * (2.**(-1./5) * ref_mass / mchirp)**(-5./6)

@@ -54,12 +54,9 @@ class Unify:
         self.transforms = transforms
 
     def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
-        times = {}
         for transform in self.transforms:
-            start = time.time()
             y = transform(y, psds, data_cfg)
-            times[transform.__class__.__name__] = time.time() - start
-        return y, times
+        return y
 
 
 class UnifySignal:
@@ -67,12 +64,11 @@ class UnifySignal:
         self.transforms = transforms
 
     def __call__(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
-        times = {}
+        aug = {}
+        aug['signal'] = y
         for transform in self.transforms:
-            start = time.time()
-            y = transform(y, dets, distrs, debug, **params)
-            times[transform.__class__.__name__] = time.time() - start
-        return y, times
+            aug = transform(aug, dets, distrs, debug, **params)
+        return aug
 
 
 class UnifyNoise:
@@ -80,12 +76,9 @@ class UnifyNoise:
         self.transforms = transforms
 
     def __call__(self, y: np.ndarray, debug=''):
-        times = {}
         for transform in self.transforms:
-            start = time.time()
             y = transform(y, debug)
-            times[transform.__class__.__name__] = time.time() - start
-        return y, times
+        return y
 
 
 class TransformWrapper:
@@ -345,13 +338,15 @@ class AugmentPolSky(SignalWrapper):
         # Get Augmentation params
         for key, value in params.items():
             setattr(self, key, value)
+        # Get signal from input dict
+        signal = y['signal']
         
         # Set lal.Detector object as global as workaround for MP methods
         setattr(self, 'dets', dets)
         
         ## Get random value (with a given prior) for polarisation angle, ra, dec
         # Polarisation angle
-        # maxlen = len(y[0]) --> many signals
+        # maxlen = len(signal[0]) --> many signals
         pol_angles = distrs['pol'].rvs()[0][0]
         # Right ascension, declination
         sky_positions = distrs['sky'].rvs()[0]
@@ -365,7 +360,7 @@ class AugmentPolSky(SignalWrapper):
                 fp.write("{} ".format(sky_positions[1]))
         
         times = (self.interval_lower, self.interval_upper, self.start_time, )
-        args = (y[0], y[1], pol_angles, sky_positions, ) + times
+        args = (signal[0], signal[1], pol_angles, sky_positions, ) + times
         out = self.augment(*args)
         
         """
@@ -380,7 +375,8 @@ class AugmentPolSky(SignalWrapper):
         
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         # Shape remains the same, so reading in dataset object won't be a problem
-        return out
+        y['signal'] = out
+        return y
 
 
 class AugmentDistance(SignalWrapper):
@@ -404,18 +400,23 @@ class AugmentDistance(SignalWrapper):
                 fp.write("{} ".format(chirp_distance))
         
         # Augmenting on the distance
-        return (distance_old/distance_new) * signal
+        return ((distance_old/distance_new) * signal, distance_new, chirp_distance)
 
     def apply(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
         # TODO: Set all distances during data generation to 1Mpc.
         # Augmenting on distance parameter
         for key, value in params.items():
             setattr(self, key, value)
+        # Get the signal from input dict
+        signal = y['signal']
         
         # Augmentation should be valid if given a batch of signals
         # Run through the augmentation procedure with given dist, mchirp
-        augmented_signals = self.get_augmented_signal(y, self.distance, self.mchirp, distrs, debug)
-        return augmented_signals
+        out, new_distance, new_dchirp = self.get_augmented_signal(signal, self.distance, self.mchirp, distrs, debug)
+        y['signal'] = out
+        y['dist'] = new_distance
+        y['dchirp'] = new_dchirp
+        return y
 
 
 
