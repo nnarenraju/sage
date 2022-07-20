@@ -170,6 +170,9 @@ class MLMDC1(Dataset):
         # Normalise chirp distance
         self.norm_dchirp = Normalise(min_val=self.data_cfg.prior_low_chirp_dist, 
                                      max_val=self.data_cfg.prior_high_chirp_dist)
+        # Normalise the mass ratio 'q'
+        self.norm_q = Normalise(min_val=1.0, max_val=mu/ml)
+        
         # All normalisation variables
         self.norm = {}
         self.norm['dist'] = self.norm_dist
@@ -252,7 +255,8 @@ class MLMDC1(Dataset):
             targets['norm_dchirp'] = group['norm_dchirp'][didx]
             targets['norm_dist'] = group['norm_dist'][didx]
             targets['norm_mchirp'] = group['norm_mchirp'][didx]
-            targets['norm_q'] = group['norm_q'][didx]
+            # TODO: Handle 'q' normalisation in MPB generation
+            targets['norm_q'] = self.norm_q.norm(group['norm_q'][didx])
             targets['norm_tc'] = group['norm_tc'][didx]
         
         # Generic params

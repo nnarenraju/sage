@@ -83,12 +83,7 @@ class BCEgw_MSEtc(LossWrapper):
             mask = torch.ge(targets[key], 0.0)
             masked_target = torch.masked_select(targets[key], mask)
             masked_output = torch.masked_select(outputs[key], mask)
-            print(key)
-            print(masked_target)
-            print(masked_output)
             pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
-            print(pe_loss)
-            print("\n")
             # Store losses
             custom_loss[key] = pe_loss
             MSEpe += pe_loss
