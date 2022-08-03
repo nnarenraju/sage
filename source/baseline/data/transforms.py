@@ -131,7 +131,7 @@ class NoiseWrapper:
             pass
     
 
-#########################################################################################
+####################################################################################################
 #                             Transforms & their Functionality
 # [0] Buffer - Absolutely nothing, say it again y'all
 # [1] Normalise - Normalisation of each sample wrt entire dataset (0.0008s)
@@ -142,7 +142,7 @@ class NoiseWrapper:
 # [6] CyclicShift - Time shift noise samples. (5e-5s or less)
 # [7] AugmentDistance - Augmenting on GW distance. (0.01s or less)
 # 
-#########################################################################################
+####################################################################################################
 
 class Buffer(TransformWrapper):
     def __init__(self, always_apply=True):

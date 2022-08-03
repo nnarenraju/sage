@@ -29,7 +29,6 @@ import gc
 import glob
 import torch
 import argparse
-import numpy as np
 import pytorch_lightning as pl
 
 from torchsummary import summary
@@ -42,6 +41,7 @@ warnings.filterwarnings("ignore")
 
 # LOCAL
 from lightning import simple
+from test import run_test
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
 from utils.plotter import debug_plotter, snr_plotter, overlay_plotter
@@ -156,8 +156,8 @@ def run_trainer():
         if opts.manual:
             # Running the manual pipeline version using pure PyTorch
             # Initialise the trainer
-            manual_train(cfg, data_cfg, ModelClass, optimizer, scheduler, loss_function, 
-                         train_loader, val_loader, verbose=cfg.verbose)
+            Network = manual_train(cfg, data_cfg, ModelClass, optimizer, scheduler, loss_function, 
+                                   train_loader, val_loader, verbose=cfg.verbose)
         
         ## LIGHTNING
         if opts.lightning:
@@ -170,12 +170,9 @@ def run_trainer():
             
             """ Fit """
             trainer.fit(model, train_loader, val_loader)
-
-        # Loading the network with the best weights path
-        # This step is mandatory before the inference/testing module
-        # Network.load_state_dict(torch.load(cfg.weights_path))
+            
         
-        
+        """ Saving results and moving to online workspace """
         # Debug method plotting
         if cfg.debug:
             # Debug directory and plots
@@ -228,6 +225,19 @@ def run_trainer():
             os.makedirs(save_dir, exist_ok=False)
         if run_names != []:
             overlay_plotter(overview_paths, roc_paths, roc_aucs, save_dir, run_names)
+        
+        # Save a copy of the entire code used to run this config into the RUN/DEBUG directory
+        # The GIT file size may be too large. Storing it each time within online_workspace may be overkill.
+        # shutil.make_archive(os.path.join(cfg.online_workspace, www_dir), 'zip', src)
+        
+        
+        """ TESTING """
+        if opts.inference:
+            testfile = 'foreground.hdf'
+            evalfile = 'testing_output.hdf'
+            run_test(Network, testfile, evalfile, step_size=0.1, slice_length=51200,
+                     trigger_threshold=0.2, cluster_threshold=0.35, peak_offset=18.1,
+                     device='cpu', verbose=False)
         
 
 if __name__ == "__main__":

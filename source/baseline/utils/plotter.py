@@ -46,7 +46,7 @@ def figure(title=""):
     plt.rc('font', family='serif')
     plt.rc('xtick', labelsize='medium')
     plt.rc('ytick', labelsize='medium')
-    fig, axs = plt.subplots(1, figsize=(16.0, 14.0))
+    fig, axs = plt.subplots(1, figsize=(16.0+16.0, 14.0))
     fig.suptitle(title, fontsize=28, y=0.92)
     return fig, axs
 
@@ -97,6 +97,21 @@ def overlay_plotter(overview_filepaths, roc_paths, roc_aucs, save_dir, run_names
         
         except:
             continue
+    
+    ## Keep legends outside the main plot for the sake of clarity
+    # Shrink current axis by 20%
+    box1 = ax_loss.get_position()
+    box2 = ax_accr.get_position()
+    box3 = ax_roc.get_position()
+    # Alter boxsize
+    ax_loss.set_position([box1.x0, box1.y0, box1.width * 0.5, box1.height])
+    ax_accr.set_position([box2.x0, box2.y0, box2.width * 0.5, box2.height])
+    ax_roc.set_position([box3.x0, box3.y0, box3.width * 0.5, box3.height])
+    
+    # Put a legend to the right of the current axis
+    ax_loss.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+    ax_accr.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+    ax_roc.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     
     fig_loss.savefig(os.path.join(save_dir, 'overlay_loss.png'))
     fig_accr.savefig(os.path.join(save_dir, 'overlay_accuracy.png'))

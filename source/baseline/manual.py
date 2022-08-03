@@ -46,7 +46,9 @@ torch.backends.cudnn.benchmark = True
 # Clear PyTorch Cache before init
 torch.cuda.empty_cache()
 
+from matplotlib import cm
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 # Font and plot parameters
 plt.rcParams.update({'font.size': 22})
 
@@ -57,7 +59,7 @@ def figure(title=""):
     plt.rc('ytick', labelsize='medium')
     fig, axs = plt.subplots(1, figsize=(16.0, 14.0))
     fig.suptitle(title, fontsize=28, y=0.92)
-    return axs
+    return axs, fig
 
 
 def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid', 
@@ -110,7 +112,7 @@ def roc_curve(nep, output, labels, export_dir):
     roc_auc = metrics.auc(fpr, tpr)
     
     # Plotting routine
-    ax = figure(title="ROC Curve at Epoch = {}".format(nep))
+    ax, _ = figure(title="ROC Curve at Epoch = {}".format(nep))
     
     # Log ROC Curve
     _plot(ax, fpr, tpr, label='AUC = %0.2f' % roc_auc, c='red', 
@@ -141,7 +143,7 @@ def prediction_probability(nep, output, labels, export_dir):
     pred_prob_tn = mx[mx.mask == False].data
     
     # Plotting routine
-    ax = figure(title="Prediction Probabilities at Epoch = {}".format(nep))
+    ax, _ = figure(title="Prediction Probabilities at Epoch = {}".format(nep))
     # Log pred probs
     _plot(ax, y=pred_prob_tp, label="Signals", c='red', 
           ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
@@ -166,11 +168,15 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     mask = [mask_function(foo) for foo in network_snrs]
     mx0 = np.ma.masked_array(network_snrs, mask=mask)
     
+    # Colormap
+    cmap = cm.get_cmap('RdBlYu_r', 10)
+    
     for param in outputs.keys():
         if param == 'gw':
             continue
         # Plotting routine
-        ax = figure(title="Diagonal Plot of {} at Epoch = {}".format(param, nep))
+        ax, fig = figure(title="Diagonal Plot of {} at Epoch = {}".format(param, nep))
+        ax_snr_gt8, fig_gt8 = figure(title="Diagonal Plot of {} (SNR>8) at Epoch = {}".format(param, nep))
         # Plotting the observed value vs actual value scatter
         mx1 = np.ma.masked_array(outputs[param], mask=mask)
         mx2 = np.ma.masked_array(labels[param], mask=mask)
@@ -178,8 +184,22 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         plot_output = mx1[mx1.mask == True].data
         plot_labels = mx2[mx2.mask == True].data
         plot_snrs = mx0[mx0.mask == True].data
+        # Order the data
+        data = np.stack((plot_output, plot_labels, plot_snrs), axis=1)
+        data = data[data[:,2].argsort()]
+        plot_output, plot_labels, plot_snrs = np.hsplit(data, data.shape[1])
+        # Get rows where SNR > 8
+        data_gt8 = data[data[:,2]>8.0]
+        plot_output_gt8, plot_labels_gt8, plot_snrs_gt8 = np.hsplit(data_gt8, data_gt8.shape[1])
         # Plotting
-        ax.scatter(plot_output, plot_labels, marker='.', s=200.0, c=plot_snrs)
+        foo = ax.scatter(plot_output, plot_labels, marker='.', s=200.0, c=plot_snrs, cmap=cmap)
+        bar = ax_snr_gt8.scatter(plot_output_gt8, plot_labels_gt8, marker='.', s=200.0, c=plot_snrs_gt8, cmap=cmap)
+        # Colorbar
+        cbar = plt.colorbar(foo)
+        cbar.set_label('Network SNR', rotation=270, labelpad=40)
+        cbar_snr_gt8 = plt.colorbar(bar)
+        cbar_snr_gt8.set_label('Network SNR', rotation=270, labelpad=40)
+        
         # Plotting params
         ax.grid(True, which='both')
         ax.set_xlabel('Observed Value [{}]'.format(param))
@@ -189,9 +209,22 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
               ylabel='Actual Value [{}]'.format(param), 
               xlabel='Observed Value [{}]'.format(param), ls="dashed")
         
+        # Plotting params
+        ax_snr_gt8.grid(True, which='both')
+        ax_snr_gt8.set_xlabel('Observed Value [{}]'.format(param))
+        ax_snr_gt8.set_ylabel('Actual Value [{}]'.format(param))
+        # Plotting the diagonal dashed line for reference
+        _plot(ax_snr_gt8, [0, 1], [0, 1], label="Best Classifier", c='k', 
+              ylabel='Actual Value [{}]'.format(param), 
+              xlabel='Observed Value [{}]'.format(param), ls="dashed")
+        
+        # Saving the plots
         save_path = os.path.join(save_dir, "diagonal_{}_{}.png".format(param, nep))
-        plt.savefig(save_path)
-        plt.close()
+        save_path_gt8 = os.path.join(save_dir, "diagonal_snr_gt8_{}_{}.png".format(param, nep))
+        fig.savefig(save_path)
+        fig_gt8.savefig(save_path_gt8)
+        fig.close()
+        fig_gt8.close()
 
 
 def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
@@ -239,7 +272,7 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     validation_accuracy = data['valid_acc']
     
     ## Loss Curves
-    ax = figure(title="Loss Curves")
+    ax, _ = figure(title="Loss Curves")
     _plot(ax, epochs, training_loss, label="Training Loss", c='red')
     _plot(ax, epochs, validation_loss, label="Validation Loss", c='red', ls='dashed')
     if best_epoch != -1:
@@ -252,7 +285,7 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     ## Parameter Estimation Loss Curves
     tsearch_names = [foo+'_tloss' for foo in cfg.parameter_estimation+('gw', )]
     vsearch_names = [foo+'_vloss' for foo in cfg.parameter_estimation+('gw', )]
-    ax = figure(title="PE Loss Curves")
+    ax, _ = figure(title="PE Loss Curves")
     # Colour map
     numc = len(tsearch_names)
     cmap = ["#"+''.join([random.choice('ABCDEF0123456789') for _ in range(6)]) for _ in range(numc)]
@@ -271,7 +304,7 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     
     ## Accuracy Curves
     # Figure define
-    ax = figure(title="Accuracy Curves")
+    ax, _ = figure(title="Accuracy Curves")
     _plot(ax, epochs, training_accuracy, label="Avg Training Accuracy", c='red', ylabel="Avg Accuracy")
     _plot(ax, epochs, validation_accuracy, label="Avg Validation Accuracy", c='blue', ylabel="Avg Accuracy")
     if best_epoch != -1:
@@ -698,6 +731,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     loss_and_accuracy_curves(cfg, loss_filepath, best_dir, best_epoch=best_epoch)
     
     print('\nFIN')
+    
+    # Return the trained network with the best possible weights
+    # This step is mandatory before the inference/testing module
+    Network.load_state_dict(torch.load(cfg.weights_path))
+    return Network
     
     
     
