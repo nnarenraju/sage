@@ -71,9 +71,6 @@ def run_trainer():
     
     opts = parser.parse_args()
     
-    # TODO: Implement inference section
-    if opts.inference:
-        raise NotImplementedError('Testing module under construction!')
     
     """ Prepare Data """
     # Get model configuration

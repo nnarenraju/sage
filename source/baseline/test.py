@@ -232,7 +232,7 @@ def get_clusters(triggers, cluster_threshold=0.35):
     return cluster_times, cluster_values, cluster_timevars
 
 
-def get_triggers(Network, inputfile, step_size, trigger_threshold, device, verbose):
+def get_triggers(Network, inputfile, step_size, trigger_threshold, slice_length, peak_offset, device, verbose):
     """
     Use a network to generate a list of triggers, where the network
     outputs a value above a given threshold.
@@ -268,7 +268,7 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold, device, verbo
     triggers = []
     # Read data from testing dataset and slice into overlapping segments
     with h5py.File(inputfile, 'r') as infile:
-        slicer = TorchSlicer(infile, step_size=step_size)
+        slicer = TorchSlicer(infile, step_size=step_size, peak_offset=peak_offset, slice_length=slice_length)
         data_loader = torch.utils.data.DataLoader(slicer, batch_size=1000, shuffle=False)
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
         iterable = tqdm(data_loader, desc="Testing Dataset") if verbose else data_loader
@@ -329,6 +329,8 @@ def run_test(Network, testfile, evalfile, step_size=0.1, slice_length=51200,
                             testfile,
                             step_size=step_size,
                             trigger_threshold=trigger_threshold,
+                            peak_offset=peak_offset,
+                            slice_length=slice_length,
                             device=device,
                             verbose=verbose)
     

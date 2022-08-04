@@ -273,11 +273,11 @@ class GenerateData:
         # Normalise chirp distance
         self.norm_dchirp = Normalise(min_val=self.prior_low_chirp_dist, max_val=self.prior_high_chirp_dist)
         
-        # Normalise mass ratio (m2/m1 is mass ratio 'q')
-        # m2 is always less than m1, and as an approx. we keep min ratio as m_lowest/m_highest=0.0
-        # max ratio will just be (ml_highest, mu_lowest), since m2 always > m1 --> max ratio ~ 1.0
+        # Normalise mass ratio (m1/m2 is mass ratio 'q')
+        # m2 is always less than m1, and as an approx. we keep min ratio as m/m=1.0
+        # max ratio will just be (mu, ml) --> max ratio ~ 1.0
         # The range can be written as --> (min_val, max_val]
-        self.norm_q = Normalise(min_val=0.0, max_val=1.0)
+        self.norm_q = Normalise(min_val=1.0, max_val=mu/ml)
         
         ## End normalisation ##
         

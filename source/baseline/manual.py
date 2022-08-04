@@ -169,7 +169,7 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
     mx0 = np.ma.masked_array(network_snrs, mask=mask)
     
     # Colormap
-    cmap = cm.get_cmap('RdBlYu_r', 10)
+    cmap = cm.get_cmap('RdYlBu_r', 10)
     
     for param in outputs.keys():
         if param == 'gw':
@@ -338,7 +338,8 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
         pred_prob = training_output['pred_prob']
         
         # Plotting cnn_output in debug mode
-        if cfg.debug and params['cnn_output']:
+        permitted_models = ['KappaModel', 'KappaModelPE']
+        if cfg.debug and params['cnn_output'] and cfg.model.__name__ in permitted_models:
             plot_cnn_output(cfg, training_output, training_labels['gw'], params['network_snr'], params['epoch'])
             params['cnn_output'] = False
            
@@ -714,7 +715,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     pred_path = os.path.join(cfg.export_dir, os.path.join(pred_dir, pred_file))
     shutil.copy(pred_path, os.path.join(best_dir, pred_file))
     
-    # Move best weights
+    # Move weights to BEST dir
     shutil.move(weights_save_path, os.path.join(best_dir, cfg.weights_path))
     
     if cfg.debug:
@@ -734,7 +735,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
     # Return the trained network with the best possible weights
     # This step is mandatory before the inference/testing module
-    Network.load_state_dict(torch.load(cfg.weights_path))
+    Network.load_state_dict(torch.load(os.path.join(best_dir, cfg.weights_path)))
     return Network
     
     

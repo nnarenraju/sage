@@ -196,7 +196,7 @@ class KaggleFirst:
     weights_path = 'weights.pt'
     
     """ Parameter Estimation """
-    parameter_estimation = ('norm_tc',)
+    parameter_estimation = ()
     
     """ Epochs and Batches """
     num_epochs = 25
@@ -219,8 +219,8 @@ class KaggleFirst:
     optimizer_params = dict(lr=5e-5, weight_decay=1e-6)
     
     """ Scheduler """
-    scheduler = None
-    scheduler_params = dict()
+    scheduler = CosineAnnealingWarmRestarts
+    scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
     
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)
@@ -272,6 +272,7 @@ class Baseline_May18(KaggleFirst):
     """ Data storage """
     name = "Baseline_May18"
     export_dir = Path("/Users/nnarenraju/Desktop") / name
+    save_remarks = 'TestingMod'
     
     """ Dataset """
     dataset = MLMDC1

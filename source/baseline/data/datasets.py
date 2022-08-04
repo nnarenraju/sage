@@ -409,7 +409,7 @@ class MLMDC1(Dataset):
         
         except Exception as e:
             print('\n\n{}: {}'.format(e.__class__, e))
-            shutil.rmtree(self.cfg.export_dir)
+            # shutil.rmtree(self.cfg.export_dir)
             print('datasets.py: Terminated due to raised exception.')
             exit(1)
         
