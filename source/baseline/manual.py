@@ -718,7 +718,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     # Move weights to BEST dir
     shutil.move(weights_save_path, os.path.join(best_dir, cfg.weights_path))
     
-    if cfg.debug:
+    permitted_models = ['KappaModel', 'KappaModelPE']
+    if cfg.debug and cfg.model.__name__ in permitted_models:
         # Move best CNN features
         src_best_features = os.path.join(cfg.export_dir, 'CNN_OUTPUT/epoch_{}'.format(best_epoch))
         dst_best_features = os.path.join(best_dir, 'CNN_features_epoch_{}'.format(best_epoch))
