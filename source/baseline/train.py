@@ -236,7 +236,7 @@ def run_trainer():
         if opts.inference:
             testfile = 'foreground.hdf'
             evalfile = 'testing_output.hdf'
-            transforms = cfg.transforms['train']
+            transforms = cfg.transforms['test']
             
             """ PSD Handling (used in whitening) """
             # Store the PSD files here in RAM. This reduces the overhead when whitening.

@@ -174,6 +174,7 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
             sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
         else:
             sample = noisy_sample
+            raise ValueError('Transforms was not invoked.')
         
         return sample
 
@@ -291,16 +292,26 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                              transforms=transforms, psds_data=psds_data,
                              data_cfg=data_cfg)
         
-        data_loader = torch.utils.data.DataLoader(slicer, batch_size=1000, shuffle=False)
+        data_loader = torch.utils.data.DataLoader(slicer, batch_size=100, shuffle=False)
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
         iterable = tqdm(data_loader, desc="Testing Dataset") if verbose else data_loader
         
         for slice_batch, slice_times in iterable:
+            
+            print(slice_batch)
+            
             # Running evaluation procedure on testing dataset
-            with torch.no_grad():
-                output_values = Network(slice_batch.to(dtype=dtype, device=device))[:, 0]
-                trigger_bools = torch.gt(output_values, trigger_threshold)
-                for slice_time, trigger_bool, output_value in zip(slice_times, trigger_bools, output_values):
+            with torch.cuda.amp.autocast():
+                # Gradient evaluation is not required for validation and testing
+                # Make sure that we don't do a .backward() function anywhere inside this scope
+                with torch.no_grad():
+                    testing_output = Network(slice_batch.to(dtype=dtype, device=device))
+                    # Get required output values from dictionary
+                    pred_prob = testing_output['pred_prob']
+                    # Get a boolean vector of output values greater than the trigger threshold
+                    trigger_bools = torch.gt(pred_prob, trigger_threshold)
+                    
+                for slice_time, trigger_bool, output_value in zip(slice_times, trigger_bools, pred_prob):
                     if trigger_bool.clone().cpu().item():
                         triggers.append([slice_time.clone().cpu().item(), output_value.clone().cpu().item()])
         

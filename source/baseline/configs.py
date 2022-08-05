@@ -295,6 +295,11 @@ class Baseline_May18(KaggleFirst):
     prefetch_factor = 100
     persistent_workers = True
     
+    """ Epochs and Batches """
+    num_epochs = 10
+    batch_size = 100
+    save_freq = 1
+    
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)
     
