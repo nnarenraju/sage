@@ -170,6 +170,8 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
 
     def _transforms_(self, noisy_sample):
         # Apply transforms to signal and target (if any)
+        print(self.transforms)
+        print(self.psds_data)
         if self.transforms:
             sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
         else:
@@ -181,7 +183,11 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
     def __getitem__(self, index):
         next_slice, next_time = Slicer.__getitem__(self, index)
         # Convert all noisy samples using transformations
+        print(next_slice)
         next_transformed_slice = self._transforms_(next_slice)
+        print(next_transformed_slice)
+        raise
+        
         return torch.from_numpy(next_transformed_slice), torch.tensor(next_time)
 
 
