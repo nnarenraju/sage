@@ -130,7 +130,6 @@ class Slicer(object):
                 sidx = i * index_step_size
                 eidx = sidx + self.slice_length + 512
                 ts = pycbc.types.TimeSeries(rawdat[sidx:eidx], delta_t=dt)
-                ts = ts.whiten(0.5, 0.25, low_frequency_cutoff=18.)
                 data[i, detnum, :] = ts.numpy()
         return data, times
     
@@ -170,8 +169,6 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
 
     def _transforms_(self, noisy_sample):
         # Apply transforms to signal and target (if any)
-        print(self.transforms)
-        print(self.psds_data)
         if self.transforms:
             sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
         else:
@@ -183,11 +180,7 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
     def __getitem__(self, index):
         next_slice, next_time = Slicer.__getitem__(self, index)
         # Convert all noisy samples using transformations
-        print(next_slice)
         next_transformed_slice = self._transforms_(next_slice)
-        print(next_transformed_slice)
-        raise
-        
         return torch.from_numpy(next_transformed_slice), torch.tensor(next_time)
 
 
