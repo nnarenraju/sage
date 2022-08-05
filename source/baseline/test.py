@@ -164,6 +164,9 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
     def __init__(self, *args, **kwargs):
         torch.utils.data.Dataset.__init__(self)
         Slicer.__init__(self, *args, **kwargs)
+        self.transforms = kwargs['transforms']
+        self.psds_data = kwargs['psds_data']
+        self.data_cfg = kwargs['data_cfg']
 
     def _transforms_(self, noisy_sample):
         # Apply transforms to signal and target (if any)
