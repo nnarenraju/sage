@@ -56,7 +56,8 @@ class Slicer(object):
         
     """
     
-    def __init__(self, infile, step_size, peak_offset, slice_length, detectors=None):
+    def __init__(self, infile, step_size, peak_offset, slice_length, detectors=None,
+                 transforms=None, psds_data=None, data_cfg=None):
         
         # Data params
         self.infile = infile
