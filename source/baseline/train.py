@@ -27,13 +27,17 @@ Documentation: NULL
 import os
 import gc
 import glob
+import h5py
 import torch
 import argparse
+import numpy as np
 import pytorch_lightning as pl
 
 from torchsummary import summary
 from datetime import datetime
 from distutils.dir_util import copy_tree
+
+from pycbc.types import FrequencySeries
 
 # Warnings
 import warnings
@@ -232,7 +236,29 @@ def run_trainer():
         if opts.inference:
             testfile = 'foreground.hdf'
             evalfile = 'testing_output.hdf'
-            run_test(Network, testfile, evalfile, step_size=0.1, slice_length=51200,
+            transforms = cfg.transforms['train']
+            
+            """ PSD Handling (used in whitening) """
+            # Store the PSD files here in RAM. This reduces the overhead when whitening.
+            # Read all psds in the data_dir and store then as FrequencySeries
+            PSDs = {}
+            data_loc = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+            psd_files = glob.glob(os.path.join(data_loc, "psds/*"))
+            for psd_file in psd_files:
+                with h5py.File(psd_file, 'r') as fp:
+                    data = np.array(fp['data'])
+                    delta_f = fp.attrs['delta_f']
+                    name = fp.attrs['name']
+                    
+                psd_data = FrequencySeries(data, delta_f=delta_f)
+                # Store PSD data into lookup dict
+                PSDs[name] = psd_data
+            
+            if data_cfg.dataset == 1:
+                psds_data = [PSDs['aLIGOZeroDetHighPower']]*2
+            
+            run_test(Network, testfile, evalfile, psds_data, transforms, data_cfg,
+                     step_size=0.1, slice_length=51200,
                      trigger_threshold=0.2, cluster_threshold=0.35, peak_offset=18.1,
                      device='cpu', verbose=False)
         

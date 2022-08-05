@@ -164,9 +164,20 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
         torch.utils.data.Dataset.__init__(self)
         Slicer.__init__(self, *args, **kwargs)
 
+    def _transforms_(self, noisy_sample):
+        # Apply transforms to signal and target (if any)
+        if self.transforms:
+            sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
+        else:
+            sample = noisy_sample
+        
+        return sample
+
     def __getitem__(self, index):
         next_slice, next_time = Slicer.__getitem__(self, index)
-        return torch.from_numpy(next_slice), torch.tensor(next_time)
+        # Convert all noisy samples using transformations
+        next_transformed_slice = self._transforms_(next_slice)
+        return torch.from_numpy(next_transformed_slice), torch.tensor(next_time)
 
 
 def get_clusters(triggers, cluster_threshold=0.35):
@@ -232,7 +243,10 @@ def get_clusters(triggers, cluster_threshold=0.35):
     return cluster_times, cluster_values, cluster_timevars
 
 
-def get_triggers(Network, inputfile, step_size, trigger_threshold, slice_length, peak_offset, device, verbose):
+def get_triggers(Network, inputfile, step_size, trigger_threshold, 
+                 slice_length, peak_offset,
+                 data_cfg, transforms, psds_data,
+                 device, verbose):
     """
     Use a network to generate a list of triggers, where the network
     outputs a value above a given threshold.
@@ -268,7 +282,11 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold, slice_length,
     triggers = []
     # Read data from testing dataset and slice into overlapping segments
     with h5py.File(inputfile, 'r') as infile:
-        slicer = TorchSlicer(infile, step_size=step_size, peak_offset=peak_offset, slice_length=slice_length)
+        slicer = TorchSlicer(infile, step_size=step_size, 
+                             peak_offset=peak_offset, slice_length=slice_length,
+                             transforms=transforms, psds_data=psds_data,
+                             data_cfg=data_cfg)
+        
         data_loader = torch.utils.data.DataLoader(slicer, batch_size=1000, shuffle=False)
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
         iterable = tqdm(data_loader, desc="Testing Dataset") if verbose else data_loader
@@ -287,9 +305,9 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold, slice_length,
     return triggers
 
 
-def run_test(Network, testfile, evalfile, step_size=0.1, slice_length=51200,
-             trigger_threshold=0.2, cluster_threshold=0.35, peak_offset=18.1,
-             device='cpu', verbose=False):
+def run_test(Network, testfile, evalfile, psds_data, transforms, data_cfg,
+             step_size=0.1, slice_length=51200, trigger_threshold=0.2, cluster_threshold=0.35, 
+             peak_offset=18.1, device='cpu', verbose=False):
     """
     Run the inference module
     
@@ -331,6 +349,9 @@ def run_test(Network, testfile, evalfile, step_size=0.1, slice_length=51200,
                             trigger_threshold=trigger_threshold,
                             peak_offset=peak_offset,
                             slice_length=slice_length,
+                            data_cfg=data_cfg,
+                            transforms=transforms,
+                            psds_data=psds_data,
                             device=device,
                             verbose=verbose)
     

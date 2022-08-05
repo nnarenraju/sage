@@ -271,7 +271,7 @@ class Baseline_May18(KaggleFirst):
     
     """ Data storage """
     name = "Baseline_May18"
-    export_dir = Path("/Users/nnarenraju/Desktop") / name
+    export_dir = Path("/home/nnarenraju/Research") / name
     save_remarks = 'TestingMod'
     
     """ Dataset """
@@ -297,6 +297,9 @@ class Baseline_May18(KaggleFirst):
     
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)
+    
+    debug = True
+    debug_size = 10000
 
 
 class KaggleFirst_Jun9(KaggleFirst):
