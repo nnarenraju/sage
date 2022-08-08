@@ -261,9 +261,25 @@ class KaggleFirst:
         target=None
     )
     
+    """ Testing Phase """
+    testing_dataset = "testing_foreground.hdf"
+    testing_output = "testing_output.hdf"
+    
+    ## Testing config
+    # Real step will be slightly different due to rounding errors
+    step_size = 0.1
+    # Based on prediction probabilities in best epoch
+    trigger_threshold = 0.2
+    # Time shift the signal by multiple of step_size and check pred probs
+    cluster_threshold = 0.35
+    # Run device for testing phase
+    testing_device = 'cpu'
+    
+    """ Pipeline debug mode """
     debug = False
     debug_size = 10000
     
+    """ Pipeline verbosity """
     verbose = False
     
 
@@ -358,6 +374,20 @@ class KaggleFirst_Jun9(KaggleFirst):
     
     """ Loss Function """
     loss_function = regularised_BCEWithLogitsLoss(dim=1)
+    
+    """ Testing Phase """
+    testing_dataset = "testing_foreground.hdf"
+    testing_output = "testing_output.hdf"
+    
+    ## Testing config
+    # Real step will be slightly different due to rounding errors
+    step_size = 0.1
+    # Based on prediction probabilities in best epoch
+    trigger_threshold = 0.2
+    # Time shift the signal by multiple of step_size and check pred probs
+    cluster_threshold = 0.35
+    # Run device for testing phase
+    testing_device = 'cuda:1'
     
     debug = True
     debug_size = 1000

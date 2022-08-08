@@ -102,7 +102,10 @@ class DataModule:
     
     def make_export_dir(cfg):
         # Results directory (preferred: /mnt/nnarenraju)
-        cfg.export_dir.mkdir(parents=True, exist_ok=False)
+        if not os.path.exists(cfg.export_dir):
+            cfg.export_dir.mkdir(parents=True, exist_ok=False)
+        else:
+            raise IOError('Export directory already exists!')
     
     
     def get_summary(cfg, data_cfg, export_dir):

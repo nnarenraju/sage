@@ -27,17 +27,13 @@ Documentation: NULL
 import os
 import gc
 import glob
-import h5py
 import torch
 import argparse
-import numpy as np
 import pytorch_lightning as pl
 
 from torchsummary import summary
 from datetime import datetime
 from distutils.dir_util import copy_tree
-
-from pycbc.types import FrequencySeries
 
 # Warnings
 import warnings
@@ -70,8 +66,6 @@ def run_trainer():
                         help="Running the pipeline using manual PyTorch")
     parser.add_argument("--summary", action='store_true',
                         help="Store model summary using pytorch_summary")
-    parser.add_argument("--debug", action='store_true')
-    parser.add_argument("--silent", action='store_true')
     
     opts = parser.parse_args()
     
@@ -100,6 +94,7 @@ def run_trainer():
     for nfold, (train_idx, val_idx) in enumerate(folds):
         
         if cfg.splitter != None:
+            raise NotImplementedError('K-fold cross validation method under construction!')
             print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
 
         train_fold = train.iloc[train_idx]
@@ -112,7 +107,7 @@ def run_trainer():
         train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data, tsamp, vsamp)
         
         # Initialise chosen model architecture (Backend + Frontend)
-        # Equivalent to the "Network" variable in manual mode
+        # Equivalent to the "Network" variable in manual mode without weights
         ModelClass = cfg.model(**cfg.model_params)
         
         # Load weights snapshot
@@ -234,33 +229,15 @@ def run_trainer():
         
         """ TESTING """
         if opts.inference:
-            testfile = 'foreground.hdf'
-            evalfile = 'testing_output.hdf'
+            testfile = cfg.testing_dataset
+            evalfile = cfg.testing_output
             transforms = cfg.transforms['test']
             
-            """ PSD Handling (used in whitening) """
-            # Store the PSD files here in RAM. This reduces the overhead when whitening.
-            # Read all psds in the data_dir and store then as FrequencySeries
-            PSDs = {}
-            data_loc = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
-            psd_files = glob.glob(os.path.join(data_loc, "psds/*"))
-            for psd_file in psd_files:
-                with h5py.File(psd_file, 'r') as fp:
-                    data = np.array(fp['data'])
-                    delta_f = fp.attrs['delta_f']
-                    name = fp.attrs['name']
-                    
-                psd_data = FrequencySeries(data, delta_f=delta_f)
-                # Store PSD data into lookup dict
-                PSDs[name] = psd_data
-            
-            if data_cfg.dataset == 1:
-                psds_data = [PSDs['aLIGOZeroDetHighPower']]*2
-            
-            run_test(Network, testfile, evalfile, psds_data, transforms, data_cfg,
-                     step_size=0.1, slice_length=51200,
-                     trigger_threshold=0.2, cluster_threshold=0.35, peak_offset=18.1,
-                     device='cpu', verbose=False)
+            run_test(Network, testfile, evalfile, transforms, data_cfg,
+                     step_size=cfg.step_size, slice_length=data_cfg.sample_length_in_num,
+                     trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
+                     batch_size = cfg.batch_size,
+                     device=cfg.testing_device, verbose=cfg.verbose)
         
 
 if __name__ == "__main__":

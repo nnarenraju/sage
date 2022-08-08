@@ -24,11 +24,20 @@ Documentation: NULL
 """
 
 # BUILT-IN
+import os
+import glob
 import h5py
 import torch
-import pycbc
+import argparse
 import numpy as np
 from tqdm import tqdm
+
+# PyCBC
+import pycbc
+from pycbc.types import FrequencySeries
+
+# LOCAL
+from data.prepare_data import DataModule as dat
 
 # Torch default datatype
 dtype = torch.float32
@@ -82,11 +91,11 @@ class Slicer(object):
         start = 0
         # Iterating over the detector keys
         for ds_key in self.keys:
-            ds = self.detectors[0][ds_key]
-            dt = ds.attrs['delta_t']
-            index_step_size = int(self.step_size / dt)
-            # Number of steps taken
-            nsteps = int((len(ds) - self.slice_length - 512) // index_step_size)
+            ds = self.detectors[0][ds_key] # eg. 32000 seconds
+            dt = ds.attrs['delta_t'] # eg. 1./2048.
+            index_step_size = int(self.step_size / dt) # eg. int(0.1 * 2048.) = 204
+            # Number of steps taken -> eg. (32000 * 2048 - 51200) // 204 = 321003 segments
+            nsteps = int((len(ds) - self.slice_length) // index_step_size)
             # Dictionary containing params of how to slice large segment
             # We can slice the data when needed using these params
             self.n_slices[ds_key] = {'start': start,
@@ -119,18 +128,23 @@ class Slicer(object):
         # Due to numerical limitations this may be off by a single sample
         dt = 1. / 2048. # This definition limits the scope of this object
         index_step_size = int(self.step_size / dt)
+        # Create start and end indices from slice dict
         sidx = (index.start - self.n_slices[key]['start']) * index_step_size
-        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length + 512
+        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length
+        # Slice raw data using above indices
         rawdata = [det[key][sidx:eidx] for det in self.detectors]
+        # Get times offset by average peak 'tc' value
         times = (self.detectors[0][key].attrs['start_time'] + sidx * dt) + index_step_size * dt * np.arange(index.stop - index.start) + self.peak_offset
         
+        # Get segment data
         data = np.zeros((index.stop - index.start, len(rawdata), self.slice_length))
         for detnum, rawdat in enumerate(rawdata):
             for i in range(index.stop - index.start):
                 sidx = i * index_step_size
-                eidx = sidx + self.slice_length + 512
+                eidx = sidx + self.slice_length
                 ts = pycbc.types.TimeSeries(rawdat[sidx:eidx], delta_t=dt)
                 data[i, detnum, :] = ts.numpy()
+        
         return data, times
     
     
@@ -141,6 +155,7 @@ class Slicer(object):
             if index < 0:
                 index = len(self) + index
             index = slice(index, index+1)
+            
         access_slices = self._generate_access_indices(index)
         
         data = []
@@ -149,6 +164,7 @@ class Slicer(object):
             dat, t = self.generate_data(key, idxs)
             data.append(dat)
             times.append(t)
+            
         data = np.concatenate(data)
         times = np.concatenate(times)
         
@@ -249,7 +265,7 @@ def get_clusters(triggers, cluster_threshold=0.35):
 
 def get_triggers(Network, inputfile, step_size, trigger_threshold, 
                  slice_length, peak_offset,
-                 data_cfg, transforms, psds_data,
+                 data_cfg, transforms, psds_data, batch_size,
                  device, verbose):
     """
     Use a network to generate a list of triggers, where the network
@@ -291,13 +307,11 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                              transforms=transforms, psds_data=psds_data,
                              data_cfg=data_cfg)
         
-        data_loader = torch.utils.data.DataLoader(slicer, batch_size=100, shuffle=False)
+        data_loader = torch.utils.data.DataLoader(slicer, batch_size=batch_size, shuffle=False)
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
         iterable = tqdm(data_loader, desc="Testing Dataset") if verbose else data_loader
         
         for slice_batch, slice_times in iterable:
-            
-            print(slice_batch)
             
             # Running evaluation procedure on testing dataset
             with torch.cuda.amp.autocast():
@@ -319,9 +333,32 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
     return triggers
 
 
-def run_test(Network, testfile, evalfile, psds_data, transforms, data_cfg,
+def get_psd_data(data_cfg):
+    """ PSD Handling (used in whitening) """
+    # Store the PSD files here in RAM. This reduces the overhead when whitening.
+    # Read all psds in the data_dir and store then as FrequencySeries
+    PSDs = {}
+    data_loc = os.path.join(data_cfg.parent_dir, data_cfg.data_dir)
+    psd_files = glob.glob(os.path.join(data_loc, "psds/*"))
+    for psd_file in psd_files:
+        with h5py.File(psd_file, 'r') as fp:
+            data = np.array(fp['data'])
+            delta_f = fp.attrs['delta_f']
+            name = fp.attrs['name']
+            
+        psd_data = FrequencySeries(data, delta_f=delta_f)
+        # Store PSD data into lookup dict
+        PSDs[name] = psd_data
+    
+    if data_cfg.dataset == 1:
+        psds_data = [PSDs['aLIGOZeroDetHighPower']]*2
+    
+    return psds_data
+
+
+def run_test(Network, testfile, evalfile, transforms, data_cfg,
              step_size=0.1, slice_length=51200, trigger_threshold=0.2, cluster_threshold=0.35, 
-             peak_offset=18.1, device='cpu', verbose=False):
+             batch_size=100, device='cpu', verbose=False):
     """
     Run the inference module
     
@@ -356,6 +393,19 @@ def run_test(Network, testfile, evalfile, psds_data, transforms, data_cfg,
     
     """
     
+    if not os.path.exists(cfg.export_dir):
+        raise IOError('Export directory does not exist. Cannot write testing output files.')
+    
+    # Make a testing directory within the export_dir
+    testing_dir = os.path.join(cfg.export_dir, 'TESTING')
+    if not os.path.exists(testing_dir):
+        os.makedirs(testing_dir, exist_ok=False)
+    
+    # Get the psd data for transformation methods
+    psds_data = get_psd_data(data_cfg)
+    # Average value in seconds where signal peak would be present
+    peak_offset = (data_cfg.tc_inject_lower + data_cfg.tc_inject_upper) / 2.0
+    
     # Run inference and get triggers from the testing dataset
     triggers = get_triggers(Network,
                             testfile,
@@ -366,6 +416,7 @@ def run_test(Network, testfile, evalfile, psds_data, transforms, data_cfg,
                             data_cfg=data_cfg,
                             transforms=transforms,
                             psds_data=psds_data,
+                            batch_size=batch_size,
                             device=device,
                             verbose=verbose)
     
@@ -382,4 +433,43 @@ def run_test(Network, testfile, evalfile, psds_data, transforms, data_cfg,
         outfile.create_dataset('var', data=var)
     
         print("Triggers saved in HDF5 format for evaluation")
+    
+    # Evaluating the triggers to get output comparative plots
+    
+    
 
+
+if __name__ == "__main__":
+    
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument("--config", type=str, default='Baseline',
+                        help="Uses the pipeline architecture as described in configs.py")
+    parser.add_argument("--data-config", type=str, default='Default',
+                        help="Creates or uses a particular dataset as provided in data_configs.py")
+    
+    opts = parser.parse_args()
+    
+    """ Prepare Data """
+    # Get model configuration
+    cfg = dat.configure_pipeline(opts)
+    # Get data creation/usage configuration
+    data_cfg = dat.configure_dataset(opts)
+    
+    testfile = cfg.testing_dataset
+    evalfile = cfg.testing_output
+    transforms = cfg.transforms['test']
+    
+    # Initialise Network with best weight found in export dir
+    if not os.path.exists(cfg.export_dir):
+        raise IOError('Export directory does not exist. Cannot write testing output files.')
+    
+    best_dir = os.path.join(cfg.export_dir, 'BEST')
+    weights_path = os.path.join(best_dir, cfg.weights_path)
+    Network = cfg.model(**cfg.model_params)
+    Network.load_state_dict(torch.load(weights_path))
+    
+    run_test(Network, testfile, evalfile, transforms, data_cfg,
+             step_size=cfg.step_size, slice_length=data_cfg.sample_length_in_num,
+             trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
+             batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
