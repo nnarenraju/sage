@@ -381,8 +381,8 @@ class KaggleFirst_Jun9(KaggleFirst):
     loss_function = regularised_BCEWithLogitsLoss(dim=1)
     
     """ Testing Phase """
-    testing_dataset = "testing_foreground.hdf"
-    testing_output = "testing_output.hdf"
+    testing_dataset = "testing_background.hdf"
+    testing_output = "testing_boutput.hdf"
     
     ## Testing config
     # Real step will be slightly different due to rounding errors
@@ -437,8 +437,8 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     parameter_estimation = ('norm_tc', 'norm_dist', 'norm_q', 'norm_dchirp', 'norm_mchirp', )
     
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
     
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
@@ -451,8 +451,8 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     rescaled_snr_upper = 20.0
     
     """ Testing Phase """
-    testing_dataset = "testing_foreground.hdf"
-    testing_output = "testing_output.hdf"
+    testing_dataset = "testing_background.hdf"
+    testing_output = "testing_boutput.hdf"
     
     ## Testing config
     # Real step will be slightly different due to rounding errors
@@ -462,12 +462,14 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # Time shift the signal by multiple of step_size and check pred probs
     cluster_threshold = 0.35
     # Run device for testing phase
-    testing_device = 'cuda:1'
+    testing_device = 'cuda:0'
     
     # When debug is False the following plots are not made
     # SAMPLES, DEBUG, CNN_OUTPUT
     debug = False
     debug_size = 1000
+    
+    verbose = True
 
 
 
