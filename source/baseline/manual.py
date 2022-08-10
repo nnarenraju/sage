@@ -223,8 +223,8 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         save_path_gt8 = os.path.join(save_dir, "diagonal_snr_gt8_{}_{}.png".format(param, nep))
         fig.savefig(save_path)
         fig_gt8.savefig(save_path_gt8)
-        fig.close()
-        fig_gt8.close()
+        plt.close(fig)
+        plt.close(fig_gt8)
 
 
 def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
