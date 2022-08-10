@@ -240,6 +240,11 @@ class KaggleFirst:
     # Fixed noise realisation method has been deprecated
     add_random_noise_realisation = True
     
+    # Rescaling the SNR (mapped into uniform distribution)
+    rescale_snr = False
+    rescaled_snr_lower = 5.0
+    rescaled_snr_upper = 20.0
+    
     transforms = dict(
         signal=UnifySignal([
             AugmentPolSky(),
@@ -439,6 +444,25 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # All parameter estimation is done only using MSE loss at the moment
     loss_function = BCEgw_MSEtc(mse_alpha=5.0, gw_criterion=None)
+    
+    # Rescaling the SNR (mapped into uniform distribution)
+    rescale_snr = False
+    rescaled_snr_lower = 5.0
+    rescaled_snr_upper = 20.0
+    
+    """ Testing Phase """
+    testing_dataset = "testing_foreground.hdf"
+    testing_output = "testing_output.hdf"
+    
+    ## Testing config
+    # Real step will be slightly different due to rounding errors
+    step_size = 0.1
+    # Based on prediction probabilities in best epoch
+    trigger_threshold = 0.2
+    # Time shift the signal by multiple of step_size and check pred probs
+    cluster_threshold = 0.35
+    # Run device for testing phase
+    testing_device = 'cuda:1'
     
     # When debug is False the following plots are not made
     # SAMPLES, DEBUG, CNN_OUTPUT
