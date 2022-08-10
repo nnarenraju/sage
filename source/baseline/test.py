@@ -38,6 +38,7 @@ from pycbc.types import FrequencySeries
 
 # LOCAL
 from data.prepare_data import DataModule as dat
+from data.multirate_sampling import get_sampling_rate_bins
 
 # Torch default datatype
 dtype = torch.float32
@@ -400,12 +401,17 @@ def run_test(Network, testfile, evalfile, transforms, data_cfg,
     testing_dir = os.path.join(cfg.export_dir, 'TESTING')
     if not os.path.exists(testing_dir):
         os.makedirs(testing_dir, exist_ok=False)
+        
+    """ Multi-rate Sampling """
+    # Get the sampling rates and their bins idx
+    data_cfg.dbins = get_sampling_rate_bins(data_cfg)
     
     # Get the psd data for transformation methods
     psds_data = get_psd_data(data_cfg)
     # Average value in seconds where signal peak would be present
     peak_offset = (data_cfg.tc_inject_lower + data_cfg.tc_inject_upper) / 2.0
     
+    print('Obtaining triggers using {}'.format(cfg.testing_dataset))
     # Run inference and get triggers from the testing dataset
     triggers = get_triggers(Network,
                             testfile,
@@ -420,6 +426,7 @@ def run_test(Network, testfile, evalfile, transforms, data_cfg,
                             device=device,
                             verbose=verbose)
     
+    print('Clustering the triggers to obtain events')
     # Cluster the triggers and obtain {tc, ranking statistic, variance on tc} as output
     time, stat, var = get_clusters(triggers, cluster_threshold)
     
@@ -464,11 +471,13 @@ if __name__ == "__main__":
     if not os.path.exists(cfg.export_dir):
         raise IOError('Export directory does not exist. Cannot write testing output files.')
     
+    print('Applying best weights from the {} run to Network'.format(cfg.export_dir))
     best_dir = os.path.join(cfg.export_dir, 'BEST')
     weights_path = os.path.join(best_dir, cfg.weights_path)
     Network = cfg.model(**cfg.model_params)
     Network.load_state_dict(torch.load(weights_path))
     
+    print('Initiating the testing module')
     run_test(Network, testfile, evalfile, transforms, data_cfg,
              step_size=cfg.step_size, slice_length=data_cfg.sample_length_in_num,
              trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
