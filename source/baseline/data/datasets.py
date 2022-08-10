@@ -198,6 +198,9 @@ class MLMDC1(Dataset):
         self.sample_rate = self.extmain.attrs['sample_rate']
         self.noise_low_freq_cutoff = self.extmain.attrs['noise_low_freq_cutoff']
         
+        """ numpy random """
+        self.np_gen = np.random.default_rng()
+        
         self.debug = cfg.debug
         if self.debug:
             self.debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
@@ -318,7 +321,12 @@ class MLMDC1(Dataset):
             
             """ Adding noise to signals """
             if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):
-                noisy_signal = sample + pure_noise
+                if self.cfg.rescale_snr:
+                    # Rescaling the SNR to a uniform distribution within a given range
+                    target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
+                    noisy_signal = pure_noise + sample * (target_snr/network_snr)
+                else:
+                    noisy_signal = sample + pure_noise
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
             
