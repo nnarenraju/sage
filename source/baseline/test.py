@@ -40,6 +40,8 @@ from pycbc.types import FrequencySeries
 from data.prepare_data import DataModule as dat
 from data.multirate_sampling import get_sampling_rate_bins
 
+import matplotlib.pyplot as plt
+
 # Torch default datatype
 dtype = torch.float32
 
@@ -186,11 +188,22 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
 
     def _transforms_(self, noisy_sample):
         # Apply transforms to signal and target (if any)
+        
+        plt.figure(figsize=(9.0,9.0))
+        plt.plot(range(len(noisy_sample)), noisy_sample)
+        plt.savefig('noisy_sample.png')
+        plt.close()
+        
         if self.transforms:
             sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
+            plt.figure(figsize=(9.0,9.0))
+            plt.plot(range(len(sample)), sample)
+            plt.savefig('transformed_sample.png')
+            plt.close()
+            
         else:
             sample = noisy_sample
-            raise ValueError('Transforms was not invoked.')
+            raise ValueError('Transforms were not invoked.')
         
         return sample
 
@@ -440,9 +453,6 @@ def run_test(Network, testfile, evalfile, transforms, data_cfg,
         outfile.create_dataset('var', data=var)
     
         print("Triggers saved in HDF5 format for evaluation")
-    
-    # Evaluating the triggers to get output comparative plots
-    
     
 
 

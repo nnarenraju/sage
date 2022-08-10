@@ -258,7 +258,7 @@ class MLMDC1(Dataset):
             targets['norm_dchirp'] = group['norm_dchirp'][didx]
             targets['norm_dist'] = group['norm_dist'][didx]
             targets['norm_mchirp'] = group['norm_mchirp'][didx]
-            targets['norm_q'] = group['norm_q'][didx]
+            targets['norm_q'] = self.norm_q(group['norm_q'][didx])
             targets['norm_tc'] = group['norm_tc'][didx]
         
         # Generic params
