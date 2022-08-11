@@ -468,11 +468,6 @@ class KappaModelPE(torch.nn.Module):
         # resnet34 --> 21 Mil. trainable params trainable frontend
         self.frontend = timm.create_model(**timm_params)
         
-        # reset_classifier edits the number of outputs that Timm produces
-        # The following is set if we need a two-class output from Timm
-        # This can be set to a larger value and connected to a linear layer
-        ## self.frontend.reset_classifier(2)
-        
         """ Mods """
         ## Penultimate and output layers
         # Primary outputs
@@ -482,6 +477,7 @@ class KappaModelPE(torch.nn.Module):
         self.chirp_mass = nn.Linear(self.frontend.num_features, 1)
         self.distance = nn.Linear(self.frontend.num_features, 1)
         self.mass_ratio = nn.Linear(self.frontend.num_features, 1)
+        self.snr = nn.Linear(self.frontend.num_features, 1)
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.batchnorm = nn.BatchNorm1d(2)
@@ -503,6 +499,7 @@ class KappaModelPE(torch.nn.Module):
         self.chirp_mass.to(dtype=data_type, device=self.store_device)
         self.distance.to(dtype=data_type, device=self.store_device)
         self.mass_ratio.to(dtype=data_type, device=self.store_device)
+        self.snr.to(dtype=data_type, device=self.store_device)
         # Main layers
         self._det1.to(dtype=data_type, device=self.store_device)
         self._det2.to(dtype=data_type, device=self.store_device)
@@ -532,10 +529,11 @@ class KappaModelPE(torch.nn.Module):
         mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(x)))
         dist = self.flatten_d0(self.sigmoid(self.distance(x)))
         q = self.flatten_d0(self.sigmoid(self.mass_ratio(x)))
+        snr = self.flatten_d0(self.ReLU(self.snr(x)))
         # Return ouptut params (pred_prob, tc)
         return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,
-                'norm_dist': dist, 'norm_q': q}
+                'norm_dist': dist, 'norm_q': q, 'snr': snr}
 
 
 class KappaModelSimplified(torch.nn.Module):
