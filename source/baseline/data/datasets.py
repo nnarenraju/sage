@@ -363,6 +363,7 @@ class MLMDC1(Dataset):
             # If the sample is pure noise
             noisy_signal = sample
             pure_noise = None
+            updated_targets = {}
             # For pure noise sample, we could calculate the matched filter SNR and set a target
             # This value will be very low, but could help improve FAR
             if self.cfg.network_snr_for_noise:
