@@ -47,10 +47,11 @@ class LossWrapper:
 
 class BCEgw_MSEtc(LossWrapper):
     
-    def __init__(self, always_apply=True, mse_alpha=0.5, gw_criterion=None):
+    def __init__(self, always_apply=True, network_snr_for_noise=False, mse_alpha=0.5, gw_criterion=None):
         super().__init__(always_apply)
         assert mse_alpha >= 0.0
         self.mse_alpha = mse_alpha
+        self.network_snr_for_noise = network_snr_for_noise
         if gw_criterion == None:
             self.gw_criterion = torch.nn.BCEWithLogitsLoss()
         
@@ -83,7 +84,13 @@ class BCEgw_MSEtc(LossWrapper):
             mask = torch.ge(targets[key], 0.0)
             masked_target = torch.masked_select(targets[key], mask)
             masked_output = torch.masked_select(outputs[key], mask)
-            pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
+            assert -1 not in masked_target, 'Found invalid value (-1) in PE target!'
+            # Calculating the individual PE MSE loss
+            if key == 'snr' and self.network_snr_for_noise:
+                # All samples are included in the prediction of SNR (noise and signals)
+                pe_loss = self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
+            else:
+                pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
             # Store losses
             custom_loss[key] = pe_loss
             MSEpe += pe_loss
