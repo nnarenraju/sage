@@ -399,11 +399,10 @@ class AugmentDistance(SignalWrapper):
             with open(os.path.join(debug, 'save_augment_dchirp.txt'), 'a') as fp:
                 fp.write("{} ".format(chirp_distance))
         
-        # Augmenting on the distance
+        ## Augmenting on the distance
         return ((distance_old/distance_new) * signal, distance_new, chirp_distance)
 
     def apply(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
-        # TODO: Set all distances during data generation to 1Mpc.
         # Augmenting on distance parameter
         for key, value in params.items():
             setattr(self, key, value)
