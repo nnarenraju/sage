@@ -177,6 +177,7 @@ class MLMDC1(Dataset):
         self.norm = {}
         self.norm['dist'] = self.norm_dist
         self.norm['dchirp'] = self.norm_dchirp
+        self.norm['q'] = self.norm_q
         
         
         """ Data Save Params (for plotting sample just before training) """
@@ -258,7 +259,8 @@ class MLMDC1(Dataset):
             targets['norm_dchirp'] = group['norm_dchirp'][didx]
             targets['norm_dist'] = group['norm_dist'][didx]
             targets['norm_mchirp'] = group['norm_mchirp'][didx]
-            targets['norm_q'] = self.norm_q(group['norm_q'][didx])
+            # TODO: Create a new dataset with the correct definition of 'q' (inv_q in PyCBC)
+            targets['norm_q'] = self.norm['q'](group['norm_q'][didx])
             targets['norm_tc'] = group['norm_tc'][didx]
         
         # Generic params
@@ -274,6 +276,12 @@ class MLMDC1(Dataset):
         return chirp_distance * (2.**(-1./5) * ref_mass / mchirp)**(-5./6)
     
     
+    def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
+        # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
+        # Returns the chirp distance given the luminosity distance and chirp mass.
+        return dist * (2.**(-1./5) * ref_mass / mchirp)**(5./6)
+    
+    
     def _augmentation_(self, sample, target, params, debug):
         """ Signal and Noise only Augmentation """
         ## Convert the signal from h_plus and h_cross to h_t and augment
@@ -286,11 +294,15 @@ class MLMDC1(Dataset):
             augkeys = [foo for foo in aug_sample.keys() if foo != 'signal']
             for augkey in augkeys:
                 augmented_labels['norm_'+augkey] = self.norm[augkey].norm(aug_sample[augkey])
-            
+                # Update the distance parameter according to the new augmented distance
+                # Generalise this to include all params
+                if augkey == 'dist':
+                    params['distance'] = aug_sample[augkey]
+                
         elif not target and self.noise_only_transforms:
             sample = self.noise_only_transforms(sample, self.debug_dir)
         
-        return sample, augmented_labels
+        return sample, augmented_labels, params
     
     
     def _noise_realisation_(self, sample, target, params):
@@ -317,16 +329,29 @@ class MLMDC1(Dataset):
             pure_noise, _, _ = self._read_(random_noise_data_path)
             
             """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
-            network_snr = get_network_snr(sample, self.psds_data, params, self.cfg.export_dir, self.debug)
+            prelim_network_snr = get_network_snr(sample, self.psds_data, params, self.cfg.export_dir, self.debug)
             
             """ Adding noise to signals """
             if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):
                 if self.cfg.rescale_snr:
                     # Rescaling the SNR to a uniform distribution within a given range
                     target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
-                    noisy_signal = pure_noise + sample * (target_snr/network_snr)
+                    rescaling_factor = target_snr/prelim_network_snr
+                    noisy_signal = pure_noise + sample * rescaling_factor
+                    # Adjust distance parameter for signal according to the new rescaled SNR
+                    rescaled_distance = params['distance'] / rescaling_factor
+                    # Update targets and params with new rescaled distance
+                    rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
+                    updated_targets = {'norm_dist': self.norm_dist(rescaled_distance), 
+                                       'norm_dchirp': self.norm_dchirp(rescaled_dchirp)}
+                    # Update final network SNR to new value given by target SNR
+                    network_snr = target_snr
+                    # Update the params dictionary with new rescaled distances
+                    params['distance'] = rescaled_distance
                 else:
+                    network_snr = prelim_network_snr
                     noisy_signal = sample + pure_noise
+                    
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
             
@@ -338,9 +363,14 @@ class MLMDC1(Dataset):
             # If the sample is pure noise
             noisy_signal = sample
             pure_noise = None
-            network_snr = -1
+            # For pure noise sample, we could calculate the matched filter SNR and set a target
+            # This value will be very low, but could help improve FAR
+            if self.cfg.network_snr_for_noise:
+                network_snr = get_network_snr(sample, self.psds_data, params, None, False)
+            else:
+                network_snr = -1
         
-        return (noisy_signal, pure_noise, network_snr)
+        return (noisy_signal, pure_noise, network_snr, updated_targets, params)
     
     
     def _transforms_(self, noisy_sample, target):
@@ -383,9 +413,9 @@ class MLMDC1(Dataset):
         
         try:
             ## Signal and Noise Augmentation
-            pure_sample, aug_labels = self._augmentation_(sample, target_gw, params, self.debug)
+            pure_sample, aug_labels, params = self._augmentation_(sample, target_gw, params, self.debug)
             ## Add noise realisation to the signals
-            noisy_sample, pure_noise, network_snr = self._noise_realisation_(pure_sample, target_gw, params)
+            noisy_sample, pure_noise, network_snr, updated_targets, params = self._noise_realisation_(pure_sample, target_gw, params)
             
             ## Target handling
             target_gw = np.array([target_gw])
@@ -401,6 +431,9 @@ class MLMDC1(Dataset):
             # Update parameter labels if augmentation changed them
             # aug_labels must have the same keys as targets dict
             all_targets.update(aug_labels)
+            
+            # Update parameter labels if rescaling occured within _noise_realisation_ method
+            all_targets.update(updated_targets)
             
             ## Plotting
             if self.debug:
