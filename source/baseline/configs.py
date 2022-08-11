@@ -245,6 +245,10 @@ class KaggleFirst:
     rescaled_snr_lower = 5.0
     rescaled_snr_upper = 20.0
     
+    # Calculate the network SNR for pure noise samples as well
+    # If used with parameter estimation, loss functions will include SNR for noise as well
+    network_snr_for_noise = False
+    
     transforms = dict(
         signal=UnifySignal([
             AugmentPolSky(),
@@ -401,9 +405,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Jul17"
+    name = "KaggleFirst_Aug11"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'OverFitFix-batch1000-PE-all'
+    save_remarks = 'UniformSNR-batch1000-PE-all'
     
     """ Dataset """
     dataset = MLMDC1
@@ -434,7 +438,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     num_sample_save = 100
     
     """ Parameter Estimation """
-    parameter_estimation = ('norm_tc', 'norm_dist', 'norm_q', 'norm_dchirp', 'norm_mchirp', )
+    parameter_estimation = ('norm_tc', 'norm_dist', 'norm_q', 'norm_dchirp', 'norm_mchirp', 'snr', )
     
     """ Storage Devices """
     store_device = 'cuda:0'
@@ -443,16 +447,20 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(mse_alpha=5.0, gw_criterion=None)
+    loss_function = BCEgw_MSEtc(mse_alpha=5.0, network_snr_for_noise=False, gw_criterion=None)
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = False
-    rescaled_snr_lower = 5.0
+    rescaled_snr_lower = 7.0
     rescaled_snr_upper = 20.0
     
+    # Calculate the network SNR for pure noise samples as well
+    # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
+    network_snr_for_noise = False
+    
     """ Testing Phase """
-    testing_dataset = "testing_background.hdf"
-    testing_output = "testing_boutput.hdf"
+    testing_dataset = "testing_foreground.hdf"
+    testing_output = "testing_foutput.hdf"
     
     ## Testing config
     # Real step will be slightly different due to rounding errors
@@ -467,7 +475,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # When debug is False the following plots are not made
     # SAMPLES, DEBUG, CNN_OUTPUT
     debug = False
-    debug_size = 1000
+    debug_size = 10000
     
     verbose = True
 
