@@ -263,7 +263,7 @@ class MLMDC1(Dataset):
             targets['norm_dist'] = group['norm_dist'][didx]
             targets['norm_mchirp'] = group['norm_mchirp'][didx]
             # TODO: Create a new dataset with the correct definition of 'q' (inv_q in PyCBC)
-            targets['norm_q'] = self.norm['q'](group['norm_q'][didx])
+            targets['norm_q'] = self.norm['q'].norm(group['norm_q'][didx])
             targets['norm_tc'] = group['norm_tc'][didx]
         
         # Generic params
