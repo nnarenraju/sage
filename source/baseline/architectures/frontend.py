@@ -470,18 +470,30 @@ class KappaModelPE(torch.nn.Module):
         
         """ Mods """
         ## Penultimate and output layers
+        self.linear_relu_stack = nn.Sequential(
+            nn.Linear(28*28, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 128),
+            nn.ReLU(),
+            nn.Linear(128, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1),
+        )
+        
         # Primary outputs
-        self.signal_or_noise = nn.Linear(self.frontend.num_features, 1)
-        self.coalescence_time = nn.Linear(self.frontend.num_features, 1)
-        self.chirp_distance = nn.Linear(self.frontend.num_features, 1)
-        self.chirp_mass = nn.Linear(self.frontend.num_features, 1)
-        self.distance = nn.Linear(self.frontend.num_features, 1)
-        self.mass_ratio = nn.Linear(self.frontend.num_features, 1)
-        self.snr = nn.Linear(self.frontend.num_features, 1)
+        self.signal_or_noise = self.linear_relu_stack
+        self.coalescence_time = self.linear_relu_stack
+        self.chirp_distance = self.linear_relu_stack
+        self.chirp_mass = self.linear_relu_stack
+        self.distance = self.linear_relu_stack
+        self.mass_ratio = self.linear_relu_stack
+        self.snr = self.linear_relu_stack
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.batchnorm = nn.BatchNorm1d(2)
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
+        self.avg_pool_1d = nn.AdaptiveAvgPool1d(28*28)
         self.flatten_d1 = nn.Flatten(start_dim=1)
         self.flatten_d0 = nn.Flatten(start_dim=0)
         self.dropout = nn.Dropout(0.25)
@@ -514,7 +526,7 @@ class KappaModelPE(torch.nn.Module):
         # Conv Backend
         cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
         # Timm Frontend
-        x = self.frontend(cnn_output) # (100, 1000)
+        x = self.frontend(cnn_output) # (100, 1000) by default
         ## Manipulate encoder output to get params
         # Global Pool
         x = self.flatten_d1(self.avg_pool_1d(x))
@@ -525,11 +537,11 @@ class KappaModelPE(torch.nn.Module):
         pred_prob = self.sigmoid(raw)
         # Parameter Estimation
         tc = self.flatten_d0(self.sigmoid(self.coalescence_time(x)))
-        dchirp = self.flatten_d0(self.sigmoid(self.chirp_distance(x)))
+        dchirp = self.flatten_d0(self.ReLU(self.chirp_distance(x)))
         mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(x)))
-        dist = self.flatten_d0(self.sigmoid(self.distance(x)))
+        dist = self.flatten_d0(self.ReLU(self.distance(x)))
         q = self.flatten_d0(self.sigmoid(self.mass_ratio(x)))
-        snr = self.flatten_d0(self.ReLU(self.snr(x)))
+        snr = self.flatten_d0(self.sigmoid(self.snr(x)))
         # Return ouptut params (pred_prob, tc)
         return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,

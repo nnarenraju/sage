@@ -172,6 +172,9 @@ class MLMDC1(Dataset):
                                      max_val=self.data_cfg.prior_high_chirp_dist)
         # Normalise the mass ratio 'q'
         self.norm_q = Normalise(min_val=1.0, max_val=mu/ml)
+        # Normalise the SNR
+        self.norm_snr = Normalise(min_val=self.cfg.rescaled_snr_lower,
+                                  max_val=self.cfg.rescaled_snr_upper)
         
         # All normalisation variables
         self.norm = {}
@@ -342,10 +345,10 @@ class MLMDC1(Dataset):
                     rescaled_distance = params['distance'] / rescaling_factor
                     # Update targets and params with new rescaled distance
                     rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
-                    updated_targets = {'norm_dist': self.norm_dist(rescaled_distance), 
-                                       'norm_dchirp': self.norm_dchirp(rescaled_dchirp)}
+                    updated_targets = {'norm_dist': rescaled_distance, 
+                                       'norm_dchirp': rescaled_dchirp}
                     # Update final network SNR to new value given by target SNR
-                    network_snr = target_snr
+                    network_snr = self.norm_snr.norm(target_snr)
                     # Update the params dictionary with new rescaled distances
                     params['distance'] = rescaled_distance
                 else:

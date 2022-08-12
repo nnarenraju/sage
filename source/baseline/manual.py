@@ -195,9 +195,9 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         foo = ax.scatter(plot_output, plot_labels, marker='.', s=200.0, c=plot_snrs, cmap=cmap)
         bar = ax_snr_gt8.scatter(plot_output_gt8, plot_labels_gt8, marker='.', s=200.0, c=plot_snrs_gt8, cmap=cmap)
         # Colorbar
-        cbar = plt.colorbar(foo)
+        cbar = fig.colorbar(foo)
         cbar.set_label('Network SNR', rotation=270, labelpad=40)
-        cbar_snr_gt8 = plt.colorbar(bar)
+        cbar_snr_gt8 = fig_gt8.colorbar(bar)
         cbar_snr_gt8.set_label('Network SNR', rotation=270, labelpad=40)
         
         # Plotting params
@@ -205,18 +205,20 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         ax.set_xlabel('Observed Value [{}]'.format(param))
         ax.set_ylabel('Actual Value [{}]'.format(param))
         # Plotting the diagonal dashed line for reference
-        _plot(ax, [0, 1], [0, 1], label="Best Classifier", c='k', 
-              ylabel='Actual Value [{}]'.format(param), 
-              xlabel='Observed Value [{}]'.format(param), ls="dashed")
+        if param != 'norm_dist' and param != 'norm_dchirp':
+            _plot(ax, [0, 1], [0, 1], label="Best Classifier", c='k', 
+                  ylabel='Actual Value [{}]'.format(param), 
+                  xlabel='Observed Value [{}]'.format(param), ls="dashed")
         
         # Plotting params
         ax_snr_gt8.grid(True, which='both')
         ax_snr_gt8.set_xlabel('Observed Value [{}]'.format(param))
         ax_snr_gt8.set_ylabel('Actual Value [{}]'.format(param))
         # Plotting the diagonal dashed line for reference
-        _plot(ax_snr_gt8, [0, 1], [0, 1], label="Best Classifier", c='k', 
-              ylabel='Actual Value [{}]'.format(param), 
-              xlabel='Observed Value [{}]'.format(param), ls="dashed")
+        if param != 'norm_dist' and param != 'norm_dchirp':
+            _plot(ax_snr_gt8, [0, 1], [0, 1], label="Best Classifier", c='k', 
+                  ylabel='Actual Value [{}]'.format(param), 
+                  xlabel='Observed Value [{}]'.format(param), ls="dashed")
         
         # Saving the plots
         save_path = os.path.join(save_dir, "diagonal_{}_{}.png".format(param, nep))
