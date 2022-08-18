@@ -59,12 +59,18 @@ The options mean the following
 
 """
 
+import os
+import h5py
+import logging
 import argparse
 import numpy as np
-import h5py
-import os
-import logging
+import matplotlib.pyplot as plt
+
+from matplotlib import cm
 from tqdm import tqdm
+
+# PyCBC handling
+import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.detector
 
 
 def find_injection_times(fgfiles, injfile, padding_start=0, padding_end=0):
@@ -159,7 +165,7 @@ def mchirp(mass1, mass2):
 
 
 def get_stats(fgevents, bgevents, injparams, duration=None,
-              chirp_distance=False):
+              chirp_distance=False, output_dir=None):
     """Calculate the false-alarm rate and sensitivity of a search
     algorithm.
     
@@ -211,8 +217,10 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     
     logging.info('Finding injection times closest to event times')
     idxs = find_closest_index(injtimes, fgevents[0])
-    # print(idxs)
     diff = np.abs(injtimes[idxs] - fgevents[0])
+    print('Difference between injection times and event times in foreground')
+    print(diff)
+    print('max = {}, min = {}, mean = {}, median = {}'.format(max(diff), min(diff), np.mean(diff), np.median(diff)))
     
     logging.info('Finding true- and false-positives')
     tpbidxs = diff <= fgevents[2]
@@ -235,10 +243,19 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     ret['true-positives'] = tpevents
     ret['false-positives'] = fpevents
     
+    print('true positive diffs')
+    print('max tp diff = {}, min tp diff = {}, mean tp diff = {}'.format(max(diff[tpidxs]), min(diff[tpidxs]), np.mean(diff[tpidxs])))
+    
+    print('false positive diffs')
+    print('max fp diff = {}, min fp diff = {}, mean fp diff = {}'.format(max(diff[fpidxs]), min(diff[fpidxs]), np.mean(diff[fpidxs])))
+    
     # Calculate foreground FAR
     logging.info('Calculating foreground FAR')
     noise_stats = fpevents[1].copy()
     noise_stats.sort()
+    print('ranking statistics for false positive events')
+    print(noise_stats)
+    print('max = {}, min = {}, mean = {}, median = {}'.format(max(noise_stats), min(noise_stats), np.mean(noise_stats), np.median(noise_stats)))
     fgfar = len(noise_stats) - np.arange(len(noise_stats)) - 1
     fgfar = fgfar / duration
     ret['fg-far'] = fgfar
@@ -247,6 +264,9 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     logging.info('Calculating background FAR')
     noise_stats = bgevents[1].copy()
     noise_stats.sort()
+    print('ranking statistics for true positive events')
+    print(noise_stats)
+    print('max = {}, min = {}, mean = {}, median = {}'.format(max(noise_stats), min(noise_stats), np.mean(noise_stats), np.median(noise_stats)))
     far = len(noise_stats) - np.arange(len(noise_stats)) - 1
     far = far / duration
     ret['far'] = far
@@ -274,6 +294,7 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         iidxs[tmpsidxs[L:R]] = False
     
     found_injections = np.array(found_injections).T
+    print('Number of found injections = {}'.format(len(found_injections)))
     
     # Calculate sensitivity
     # CARE! THIS APPLIES ONLY WHEN THE DISTRIBUTION IS CHOSEN CORRECTLY
@@ -282,10 +303,64 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     found_injections = found_injections.T[sidxs].T  # Sort found injections
     if chirp_distance:
         found_mchirp_total = massc[found_injections[0].astype(int)]
+        print('found_mchirp_total is the chirp mass of all found injections')
+        print(found_mchirp_total)
+        print('max = {}, min = {}, mean={}, median = {}'.format(max(found_mchirp_total), min(found_mchirp_total), np.mean(found_mchirp_total), np.median(found_mchirp_total)))
+        
         mchirp_max = massc.max()
+        print('maximum chirp mass = {}'.format(mchirp_max))
+        print('this is the maximum chirp mass as found in all found injections')
+        
+        ## Plotting the comparison plots (injections and found histogram) for all params 
+        ['chirp_distance', 'coa_phase', 'dec', 'distance', 'inclination', 'mass1', 'mass2', 'mchirp', 
+         'polarization', 'q', 'ra', 'spin1_a', 'spin1_azimuthal', 'spin1_polar', 'spin1x', 'spin1y', 
+         'spin1z', 'spin2_a', 'spin2_azimuthal', 'spin2_polar', 'spin2x', 'spin2y', 'spin2z', 'tc']
+        
+        cmap = cm.get_cmap('RdYlBu_r', 10)
+        for param in injparams.keys():
+            all_param = injparams[param]
+            found_param = all_param[found_injections[0].astype(int)]
+            # Plotting the overlap histograms of all and found data
+            plt.figure(figsize=(9.0, 9.0))
+            plt.title('Comparing testing data with found signals - {}'.format(param))
+            plt.hist(all_param, bins=100, label='{}-all'.format(param), alpha=0.8)
+            plt.hist(found_param, bins=100, label='{}-found'.format(param), alpha=0.8)
+            plt.grid(True, which='both')
+            plt.xscale('log')
+            plt.xlabel('{}'.format(param))
+            plt.ylabel('Number of Occurences')
+            plt.savefig(os.path.join(output_dir, '{}-compare.png'.format(param)))
+            plt.close()
+        
+        ## Other related plots
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('mchirp vs distance')
+        param_1 = injparams['mchirp'][found_injections[0].astype(int)]
+        param_2 = injparams['distance'][found_injections[0].astype(int)]
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('Chirp Mass')
+        plt.ylabel('Distance')
+        plt.savefig(os.path.join(output_dir, 'mchirp_vs_distance.png'))
+        plt.close()
+        
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('mchirp vs q')
+        param_1 = injparams['mchirp'][found_injections[0].astype(int)]
+        param_2 = injparams['q'][found_injections[0].astype(int)]
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('Chirp Mass')
+        plt.ylabel('Mass Ratio (m1/m2)')
+        plt.savefig(os.path.join(output_dir, 'mchirp_vs_distance.png'))
+        plt.close()
+        
+        
     max_distance = dist.max()
     vtot = (4. / 3.) * np.pi * max_distance**3.
     Ninj = len(dist)
+    print('total number of injections = {}'.format(Ninj))
+    
     if chirp_distance:
         mc_norm = mchirp_max ** (5. / 2.) * len(massc)
     else:
@@ -317,20 +392,55 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     else:
         mc_sum = nfound
         sample_variance = nfound / Ninj - (nfound / Ninj) ** 2
+        
     vol = prefactor * mc_sum
+    print('volumes = {}'.format(vol))
+    print('min err = {}, max err = {}, mean err = {}'.format(min(vol), max(vol), np.mean(vol)))
+    
     vol_err = prefactor * (Ninj * sample_variance) ** 0.5
+    print('volume error = {}'.format(vol_err))
+    print('min err = {}, max err = {}, mean err = {}'.format(min(vol_err), max(vol_err), np.mean(vol_err)))
+    
     rad = (3 * vol / (4 * np.pi))**(1. / 3.)
+    print('Radius or sensitive distance as calculated from the volume obtained')
+    print(rad)
+    print('min rad = {}, max rad = {}, mean = {}'.format(min(rad), max(rad), np.mean(rad)))
     
     ret['sensitive-volume'] = vol
     ret['sensitive-distance'] = rad
     ret['sensitive-volume-error'] = vol_err
     ret['sensitive-fraction'] = nfound / Ninj
+    
+    print('Sensitive fraction is the nfound/Ninj = {}'.format(nfound/Ninj))
         
     return ret
 
 
-def main(doc):
-    parser = argparse.ArgumentParser(description=doc)
+def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, waveform_kwargs):
+    # Use self.waveform_kwargs to calculate the fmin for given params
+    # Such that the length of the signal is atleast 20s by the time it reaches fmin
+    current_start_time = -1*h_pol.get_sample_times()[0]
+    req_start_time = signal_length - h_pol.get_sample_times()[-1]
+    fmin = signal_low_freq_cutoff*(current_start_time/req_start_time)**(3./8.)
+    
+    while True:
+        # fmin_new is the fmin required for the current params to produce 20.0s signal
+        waveform_kwargs['f_lower'] = fmin
+        h_plus, h_cross = pycbc.waveform.get_td_waveform(**waveform_kwargs)
+        # Sanity check to verify the new signal length
+        new_signal_length = len(h_plus)/sample_rate
+        if new_signal_length > signal_length:
+            break
+        else:
+            fmin = fmin - 3.0
+        
+    # Return new signal
+    return h_plus, h_cross
+
+
+def main(raw_args):
+    
+    parser = argparse.ArgumentParser(description='Testing phase evaluator')
     
     parser.add_argument('--injection-file', type=str, required=True,
                         help=("Path to the file containing information "
@@ -356,6 +466,10 @@ def main(doc):
     parser.add_argument('--output-file', type=str, required=True,
                         help=("Path at which to store the output HDF5 "
                               "file. (Path must end in `.hdf`)"))
+    parser.add_argument('--output-dir', type=str, required=True,
+                        help=("Path at which to store the output png "
+                              "files. (Path must exist within export_dir)"))
+    
     
     parser.add_argument('--verbose', action='store_true',
                         help="Print update messages.")
@@ -394,13 +508,97 @@ def main(doc):
     
     # Read injection parameters
     logging.info(f'Reading injections from {args.injection_file}')
+    
     injparams = {}
     with h5py.File(args.injection_file, 'r') as fp:
-        injparams['tc'] = fp['tc'][()][idxs]
-        injparams['distance'] = fp['distance'][()][idxs]
-        injparams['mass1'] = fp['mass1'][()][idxs]
-        injparams['mass2'] = fp['mass2'][()][idxs]
-        use_chirp_distance = 'chirp_distance' in fp.keys()
+        params = list(fp.keys())
+        for param in params:
+            injparams[param] = fp[param][()][idxs]
+        use_chirp_distance = 'chirp_distance' in params
+    
+    ### Get SNRs of all the injections
+    """ Injection """
+    
+    """
+    # Generate source parameters
+    waveform_kwargs = {'delta_t': 1./sample_rate}
+    waveform_kwargs['f_lower'] = signal_low_freq_cutoff
+    waveform_kwargs['approximant'] = signal_approximant
+    waveform_kwargs['f_ref'] = reference_freq
+    
+    for idx in range(len(injparams['tc'])):
+        # Get the waveform kwargs from injparams
+        waveform_kwargs = {param:injparams[param][idx] for param in injparams.keys()}
+        
+        # Generate the full waveform
+        h_plus, h_cross = pycbc.waveform.get_td_waveform(**waveform_kwargs)
+        # If the signal is smaller than 20s, we change fmin such that it is atleast 20s
+        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] < self.signal_length:
+            # Pass h_plus or h_cross
+            h_plus, h_cross = self.optimise_fmin(h_plus)
+        
+        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] > self.signal_length:
+            new_end = h_plus.get_sample_times()[-1]
+            new_start = -1*(self.signal_length - new_end)
+            h_plus = h_plus.time_slice(start=new_start, end=new_end)
+            h_cross = h_cross.time_slice(start=new_start, end=new_end)
+    
+    # Sanity check for signal lengths
+    # if len(h_plus)/self.sample_rate != self.signal_length:
+    #     act = self.signal_length*self.sample_rate
+    #     obs = len(h_plus)
+    #     raise ValueError('Signal length ({}) is not as expected ({})!'.format(obs, act))
+    
+    # # Properly time and project the waveform (What there is)
+    start_time = prior_values['injection_time'] + h_plus.get_sample_times()[0]
+    end_time = prior_values['injection_time'] + h_plus.get_sample_times()[-1]
+    
+    # Calculate the number of zeros to append or prepend (What we need)
+    # Whitening padding will be corrupt and removed in whiten transformation
+    start_samp = prior_values['tc'] + (self.whiten_padding/2.0)
+    start_interval = prior_values['injection_time'] - start_samp
+    # subtract delta value for length error (0.001 if needed)
+    end_padding = self.whiten_padding/2.0
+    post_merger = self.signal_length - prior_values['tc']
+    end_interval = prior_values['injection_time'] + post_merger + end_padding
+    
+    # Calculate the difference (if any) between two time sets
+    diff_start = start_time - start_interval
+    diff_end = end_interval - end_time
+    # Convert num seconds to num samples
+    diff_end_num = int(diff_end * self.sample_rate)
+    diff_start_num = int(diff_start * self.sample_rate)
+    
+    expected_length = ((end_interval-start_interval) + self.error_padding_in_s*2.0) * self.sample_rate
+    observed_length = len(h_plus) + (diff_start_num + diff_end_num + self.error_padding_in_num*2.0)
+    diff_length = expected_length - observed_length
+    if diff_length != 0:
+        diff_end_num += diff_length
+    
+    # If any positive difference exists, add padding on that side
+    # Pad h_plus and h_cross with zeros on both end for slicing
+    if diff_end > 0.0:
+        # Append zeros if we need samples after signal ends
+        h_plus.append_zeros(int(diff_end_num + self.error_padding_in_num))
+        h_cross.append_zeros(int(diff_end_num + self.error_padding_in_num))
+    
+    if diff_start > 0.0:
+        # Prepend zeros if we need samples before signal begins
+        # prepend_zeros arg must be an integer
+        h_plus.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
+        h_cross.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
+    
+    assert len(h_plus) == self.sample_length_in_num + self.error_padding_in_num*2.0
+    assert len(h_cross) == self.sample_length_in_num + self.error_padding_in_num*2.0
+    
+    # Setting the start_time, sets epoch and end_time as well within the TS
+    # Set the start time of h_plus and h_plus after accounting for prepended zeros
+    h_plus.start_time = start_interval - self.error_padding_in_s
+    h_cross.start_time = start_interval - self.error_padding_in_s
+    """
+    
+    
+    
     
     # Read foreground events
     logging.info(f'Reading foreground events from {args.foreground_events}')
@@ -424,7 +622,8 @@ def main(doc):
     
     stats = get_stats(fg_events, bg_events, injparams,
                       duration=dur,
-                      chirp_distance=use_chirp_distance)
+                      chirp_distance=use_chirp_distance,
+                      output_dir=args.output_dir)
     
     # Store results
     logging.info(f'Writing output to {args.output_file}')
@@ -436,4 +635,4 @@ def main(doc):
 
 
 if __name__ == "__main__":
-    main(__doc__)
+    main()
