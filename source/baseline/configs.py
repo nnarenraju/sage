@@ -219,8 +219,8 @@ class KaggleFirst:
     optimizer_params = dict(lr=5e-5, weight_decay=1e-6)
     
     """ Scheduler """
-    scheduler = CosineAnnealingWarmRestarts
-    scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
+    scheduler = None
+    scheduler_params = dict()
     
     """ Loss Function """
     loss_function = regularised_BCELoss(dim=1)
@@ -271,8 +271,12 @@ class KaggleFirst:
     )
     
     """ Testing Phase """
-    testing_dataset = "testing_foreground.hdf"
-    testing_output = "testing_output.hdf"
+    test_foreground_dataset = "testing_foreground.hdf"
+    test_foreground_output = "testing_foutput.hdf"
+    
+    test_background_dataset = "testing_background.hdf"
+    test_background_output = "testing_boutput.hdf"
+    
     
     ## Testing config
     # Real step will be slightly different due to rounding errors
@@ -295,7 +299,7 @@ class KaggleFirst:
 class Baseline_May18(KaggleFirst):
     
     """ Data storage """
-    name = "Baseline_May18"
+    name = "Baseline_Aug18"
     export_dir = Path("/home/nnarenraju/Research") / name
     save_remarks = 'TestingMod'
     
@@ -311,7 +315,7 @@ class Baseline_May18(KaggleFirst):
         model_name = 'mlmdc_example',
         in_channels = 2,
         out_channels = 1,
-        store_device = 'cpu',
+        store_device = 'cuda:1',
     )
     
     """ Dataloader params """
@@ -320,13 +324,50 @@ class Baseline_May18(KaggleFirst):
     prefetch_factor = 100
     persistent_workers = True
     
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+    
     """ Epochs and Batches """
     num_epochs = 10
     batch_size = 100
     save_freq = 1
     
+    # Rescaling the SNR (mapped into uniform distribution)
+    rescale_snr = False
+    rescaled_snr_lower = 5.0
+    rescaled_snr_upper = 20.0
+    
     """ Loss Function """
-    loss_function = regularised_BCELoss(dim=1)
+    loss_function = regularised_BCEWithLogitsLoss(dim=1)
+    
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+            AugmentPolSky(),
+            AugmentDistance(),
+        ]),
+        noise=UnifyNoise([
+            CyclicShift(),
+        ]),
+        train=Unify([
+            HighPass(lower=16, fs=2048., order=6),
+            Whiten(trunc_method='hann', remove_corrupted=True),
+        ]),
+        test=Unify([
+            HighPass(lower=16, fs=2048., order=6),
+            Whiten(trunc_method='hann', remove_corrupted=True),
+        ]),
+        target=None
+    )
+    
+    
+    """ Testing Phase """
+    test_foreground_dataset = "testing_foreground.hdf"
+    test_foreground_output = "testing_foutput.hdf"
+    
+    test_background_dataset = "testing_background.hdf"
+    test_background_output = "testing_boutput.hdf"
     
     debug = True
     debug_size = 10000
@@ -385,8 +426,18 @@ class KaggleFirst_Jun9(KaggleFirst):
     loss_function = regularised_BCEWithLogitsLoss(dim=1)
     
     """ Testing Phase """
-    testing_dataset = "testing_background.hdf"
-    testing_output = "testing_boutput.hdf"
+    testing_dir = "/local/scratch/igr/nnarenraju"
+    injection_file = 'testing_injections.hdf'
+    evaluation_output = 'evaluation.hdf'
+    # FAR scaling factor --> seconds per month
+    far_scaling_factor = 30 * 24 * 60 * 60
+    
+    
+    test_foreground_dataset = "testing_foreground.hdf"
+    test_foreground_output = "testing_foutput.hdf"
+    
+    test_background_dataset = "testing_background.hdf"
+    test_background_output = "testing_boutput.hdf"
     
     ## Testing config
     # Real step will be slightly different due to rounding errors
@@ -459,8 +510,11 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     network_snr_for_noise = False
     
     """ Testing Phase """
-    testing_dataset = "testing_foreground.hdf"
-    testing_output = "testing_foutput.hdf"
+    test_foreground_dataset = "testing_foreground.hdf"
+    test_foreground_output = "testing_foutput.hdf"
+    
+    test_background_dataset = "testing_background.hdf"
+    test_background_output = "testing_boutput.hdf"
     
     ## Testing config
     # Real step will be slightly different due to rounding errors
