@@ -27,9 +27,11 @@ Documentation: NULL
 import os
 import gc
 import glob
+import h5py
 import torch
 import argparse
 import pytorch_lightning as pl
+import matplotlib.pyplot as plt
 
 from torchsummary import summary
 from datetime import datetime
@@ -40,8 +42,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # LOCAL
-from lightning import simple
 from test import run_test
+from lightning import simple
+from evaluate import main as evaluator
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
 from utils.plotter import debug_plotter, snr_plotter, overlay_plotter
@@ -229,15 +232,59 @@ def run_trainer():
         
         """ TESTING """
         if opts.inference:
-            testfile = cfg.testing_dataset
-            evalfile = cfg.testing_output
+            # Running the testing phase for foreground data
             transforms = cfg.transforms['test']
+            jobs = ['foreground', 'background']
             
-            run_test(Network, testfile, evalfile, transforms, data_cfg,
-                     step_size=cfg.step_size, slice_length=data_cfg.sample_length_in_num,
-                     trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
-                     batch_size = cfg.batch_size,
-                     device=cfg.testing_device, verbose=cfg.verbose)
+            output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
+            for job in jobs:
+                # Get the required data based on testing job
+                if job == 'foreground':
+                    testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
+                    evalfile = os.path.join(output_testing_dir, cfg.test_foreground_output)
+                elif job == 'background':
+                    testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
+                    evalfile = os.path.join(output_testing_dir, cfg.test_background_output)
+                    
+                print('Running the testing phase on {} data'.format(job))
+                run_test(Network, testfile, evalfile, transforms, data_cfg,
+                         step_size=cfg.step_size, slice_length=data_cfg.sample_length_in_num,
+                         trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
+                         batch_size = cfg.batch_size,
+                         device=cfg.testing_device, verbose=cfg.verbose)
+        
+        # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
+        raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
+        raw_args += ['--foreground-events', os.path.join(output_testing_dir, cfg.test_foreground_output)]
+        raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
+        raw_args += ['--background-events', os.path.join(output_testing_dir, cfg.test_background_output)]
+        out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
+        raw_args += ['--output-file', out_eval]
+        raw_args += ['--output-dir', output_testing_dir]
+        raw_args += ['--verbose']
+        
+        # Running the evaluator to obtain output triggers (with clustering)
+        evaluator(raw_args)
+        
+        # Create the sensitivity vs FAR/month plot from the output evaluation obtained
+        with h5py.File(out_eval, 'r') as fp:
+            far = fp['far'][()]
+            sens = fp['sensitive-distance'][()]
+            sidxs = far.argsort()
+            far = far[sidxs][1:] * cfg.far_scaling_factor
+            sens = sens[sidxs][1:]
+            
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('Sensitivity Measure for {}'.format(cfg.export_dir))
+        plt.plot(far, sens, color='k', linewidth=3)
+        plt.grid(True, which='both')
+        plt.xscale('log')
+        plt.xlabel('False Alarm Rate (FAR) per month')
+        plt.ylabel('Sensitive Distance [MPc]')
+        plt.savefig(os.path.join(output_testing_dir, 'sensitivity.png'))
+        plt.close()
+        
+        
         
 
 if __name__ == "__main__":
