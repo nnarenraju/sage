@@ -358,7 +358,8 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
     # Make the actual optimizer step and save the batch loss
     optimizer.step()
     # Scheduler step
-    scheduler.step(params['scheduler_step'])
+    if scheduler:
+        scheduler.step(params['scheduler_step'])
     
     return (all_losses, accuracy)
 
