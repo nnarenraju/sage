@@ -253,12 +253,12 @@ class Revert:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 500000
-    num_noises = 500000
+    num_waveforms = 50000
+    num_noises = 50000
     # For efficient RAM usage in data generation
     # Here too, keep both nums equal
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
-    chunk_size = [25000, 25000]
+    chunk_size = [5000, 5000]
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
