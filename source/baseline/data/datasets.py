@@ -415,47 +415,41 @@ class MLMDC1(Dataset):
         sample, targets, params = self._read_(data_path)
         target_gw = targets['gw']
         
-        try:
-            ## Signal and Noise Augmentation
-            pure_sample, aug_labels, params = self._augmentation_(sample, target_gw, params, self.debug)
-            ## Add noise realisation to the signals
-            noisy_sample, pure_noise, network_snr, updated_targets, params = self._noise_realisation_(pure_sample, target_gw, params)
-            
-            ## Target handling
-            target_gw = np.array([target_gw])
-            
-            ## Transforms
-            sample, target_gw = self._transforms_(noisy_sample, target_gw)
-            
-            # Storing target as dictionaries
-            all_targets = {}
-            all_targets['snr'] = network_snr
-            all_targets.update(targets)
-            
-            # Update parameter labels if augmentation changed them
-            # aug_labels must have the same keys as targets dict
-            all_targets.update(aug_labels)
-            
-            # Update parameter labels if rescaling occured within _noise_realisation_ method
-            all_targets.update(updated_targets)
-            
-            ## Plotting
-            if self.debug:
-                check_dir = os.path.join(self.cfg.export_dir, 'SAMPLES')
-                if os.path.isdir(check_dir):
-                    check_path = os.path.join(check_dir, '*.png')
-                    num_created = len(glob.glob(check_path))
-                else:
-                    num_created = 0
-                    
-                if target_gw[0] and num_created < self.cfg.num_sample_save:
-                    self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
+        ## Signal and Noise Augmentation
+        pure_sample, aug_labels, params = self._augmentation_(sample, target_gw, params, self.debug)
+        ## Add noise realisation to the signals
+        noisy_sample, pure_noise, network_snr, updated_targets, params = self._noise_realisation_(pure_sample, target_gw, params)
         
-        except Exception as e:
-            print('\n\n{}: {}'.format(e.__class__, e))
-            # shutil.rmtree(self.cfg.export_dir)
-            print('datasets.py: Terminated due to raised exception.')
-            exit(1)
+        ## Target handling
+        target_gw = np.array([target_gw])
+        
+        ## Transforms
+        sample, target_gw = self._transforms_(noisy_sample, target_gw)
+        
+        # Storing target as dictionaries
+        all_targets = {}
+        all_targets['snr'] = network_snr
+        all_targets.update(targets)
+        
+        # Update parameter labels if augmentation changed them
+        # aug_labels must have the same keys as targets dict
+        all_targets.update(aug_labels)
+        
+        # Update parameter labels if rescaling occured within _noise_realisation_ method
+        all_targets.update(updated_targets)
+        
+        ## Plotting
+        if self.debug:
+            check_dir = os.path.join(self.cfg.export_dir, 'SAMPLES')
+            if os.path.isdir(check_dir):
+                check_path = os.path.join(check_dir, '*.png')
+                num_created = len(glob.glob(check_path))
+            else:
+                num_created = 0
+                
+            if target_gw[0] and num_created < self.cfg.num_sample_save:
+                self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
+        
         
         """ Reducing memory footprint """
         # This can only be performed after transforms and augmentation
