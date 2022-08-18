@@ -154,6 +154,7 @@ class GammaModel(torch.nn.Module):
                  model_name='simple', 
                  in_channels: int = 2,
                  out_channels: int = 2,
+                 flatten_size: int = 1088,
                  store_device: str = 'cpu'):
         
         super().__init__()
@@ -161,6 +162,7 @@ class GammaModel(torch.nn.Module):
         self.model_name = model_name
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.flatten_size = flatten_size
         self.store_device = store_device
         
         # Initialise Frontend Model
@@ -183,26 +185,27 @@ class GammaModel(torch.nn.Module):
                 torch.nn.Conv1d(16, 16, 16),                # 16x 117
                 torch.nn.MaxPool1d(4),                      # 16x  29
                 torch.nn.ELU(),                             # 16x  29
-                torch.nn.Flatten(),                         #     464
-                torch.nn.Linear(1088, 32),                  #      32
+                torch.nn.Flatten(),                         #      xx
+                torch.nn.Linear(self.flatten_size, 32),     #      32
                 torch.nn.Dropout(p=0.5),                    #      32
                 torch.nn.ELU(),                             #      32
                 torch.nn.Linear(32, 16),                    #      16
                 torch.nn.Dropout(p=0.5),                    #      16
                 torch.nn.ELU(),                             #      16
                 torch.nn.Linear(16, self.out_channels),     #       2/1
-                torch.nn.Sigmoid()                          #       2/1
         )
         
         # Convert network into given dtype and store in proper device
         self.frontend.to(dtype=data_type, device=self.store_device)
+        self.sigmoid = torch.nn.Sigmoid()
     
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
         # Simple NN frontend (no backend)
-        pred_prob = self.frontend(x)
-        return {'pred_prob': pred_prob}
+        raw = self.frontend(x)
+        pred_prob = self.sigmoid(raw)
+        return {'pred_prob': pred_prob, 'raw': raw}
 
 
 class GammaModelPE(torch.nn.Module):
@@ -521,12 +524,12 @@ class KappaModelPE(torch.nn.Module):
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
-        # Batch Normalisation
-        x = self.batchnorm(x)
         # Conv Backend
         cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
+        # Batchnorm before passing to ResNeT
+        norm_cnn_output = self.batchnorm(cnn_output)
         # Timm Frontend
-        x = self.frontend(cnn_output) # (100, 1000) by default
+        x = self.frontend(norm_cnn_output) # (100, 1000) by default
         ## Manipulate encoder output to get params
         # Global Pool
         x = self.flatten_d1(self.avg_pool_1d(x))
