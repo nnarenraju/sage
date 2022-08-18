@@ -78,6 +78,7 @@ class Slicer(object):
         self.step_size = step_size
         self.peak_offset = peak_offset
         self.slice_length = slice_length
+        self.data_cfg = data_cfg
         
         # Detectors
         self.detectors = detectors
@@ -97,8 +98,8 @@ class Slicer(object):
             ds = self.detectors[0][ds_key] # eg. 32000 seconds
             dt = ds.attrs['delta_t'] # eg. 1./2048.
             index_step_size = int(self.step_size / dt) # eg. int(0.1 * 2048.) = 204
-            # Number of steps taken -> eg. (32000 * 2048 - 51200) // 204 = 321003 segments
-            nsteps = int((len(ds) - self.slice_length) // index_step_size)
+            # Number of steps taken -> eg. (32000 * 2048 - 40960 - 10240) // 204 = 321003 segments
+            nsteps = int((len(ds) - self.slice_length - (self.data_cfg.whiten_padding * self.data_cfg.sample_rate)) // index_step_size)
             # Dictionary containing params of how to slice large segment
             # We can slice the data when needed using these params
             self.n_slices[ds_key] = {'start': start,
@@ -133,18 +134,18 @@ class Slicer(object):
         index_step_size = int(self.step_size / dt)
         # Create start and end indices from slice dict
         sidx = (index.start - self.n_slices[key]['start']) * index_step_size
-        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length
+        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length + (self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
         # Slice raw data using above indices
         rawdata = [det[key][sidx:eidx] for det in self.detectors]
         # Get times offset by average peak 'tc' value
         times = (self.detectors[0][key].attrs['start_time'] + sidx * dt) + index_step_size * dt * np.arange(index.stop - index.start) + self.peak_offset
         
         # Get segment data
-        data = np.zeros((index.stop - index.start, len(rawdata), self.slice_length))
+        data = np.zeros((index.stop - index.start, len(rawdata), self.slice_length+(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)))
         for detnum, rawdat in enumerate(rawdata):
             for i in range(index.stop - index.start):
                 sidx = i * index_step_size
-                eidx = sidx + self.slice_length
+                eidx = sidx + self.slice_length + (self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
                 ts = pycbc.types.TimeSeries(rawdat[sidx:eidx], delta_t=dt)
                 data[i, detnum, :] = ts.numpy()
         
@@ -186,32 +187,11 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
         self.psds_data = kwargs['psds_data']
         self.data_cfg = kwargs['data_cfg']
 
-    def _transforms_(self, noisy_sample):
-        # Apply transforms to signal and target (if any)
-        
-        plt.figure(figsize=(9.0,9.0))
-        plt.plot(range(len(noisy_sample)), noisy_sample)
-        plt.savefig('noisy_sample.png')
-        plt.close()
-        
-        if self.transforms:
-            sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
-            plt.figure(figsize=(9.0,9.0))
-            plt.plot(range(len(sample)), sample)
-            plt.savefig('transformed_sample.png')
-            plt.close()
-            
-        else:
-            sample = noisy_sample
-            raise ValueError('Transforms were not invoked.')
-        
-        return sample
-
     def __getitem__(self, index):
         next_slice, next_time = Slicer.__getitem__(self, index)
         # Convert all noisy samples using transformations
-        next_transformed_slice = self._transforms_(next_slice)
-        return torch.from_numpy(next_transformed_slice), torch.tensor(next_time)
+        sample = self.transforms(next_slice, self.psds_data, self.data_cfg)
+        return torch.from_numpy(sample), torch.tensor(next_time)
 
 
 def get_clusters(triggers, cluster_threshold=0.35):
@@ -278,7 +258,7 @@ def get_clusters(triggers, cluster_threshold=0.35):
 
 
 def get_triggers(Network, inputfile, step_size, trigger_threshold, 
-                 slice_length, peak_offset,
+                 slice_length, peak_offset, cfg,
                  data_cfg, transforms, psds_data, batch_size,
                  device, verbose):
     """
@@ -321,7 +301,11 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                              transforms=transforms, psds_data=psds_data,
                              data_cfg=data_cfg)
         
-        data_loader = torch.utils.data.DataLoader(slicer, batch_size=batch_size, shuffle=False)
+        data_loader = torch.utils.data.DataLoader(slicer, batch_size=batch_size, shuffle=False, 
+                                                  num_workers=cfg.num_workers, pin_memory=cfg.pin_memory, 
+                                                  prefetch_factor=cfg.prefetch_factor, 
+                                                  persistent_workers=cfg.persistent_workers)
+        
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
         iterable = tqdm(data_loader, desc="Testing Dataset") if verbose else data_loader
         
@@ -370,8 +354,8 @@ def get_psd_data(data_cfg):
     return psds_data
 
 
-def run_test(Network, testfile, evalfile, transforms, data_cfg,
-             step_size=0.1, slice_length=51200, trigger_threshold=0.2, cluster_threshold=0.35, 
+def run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
+             step_size=0.1, slice_length=40960, trigger_threshold=0.2, cluster_threshold=0.35, 
              batch_size=100, device='cpu', verbose=False):
     """
     Run the inference module
@@ -432,6 +416,7 @@ def run_test(Network, testfile, evalfile, transforms, data_cfg,
                             trigger_threshold=trigger_threshold,
                             peak_offset=peak_offset,
                             slice_length=slice_length,
+                            cfg=cfg,
                             data_cfg=data_cfg,
                             transforms=transforms,
                             psds_data=psds_data,
@@ -488,7 +473,7 @@ if __name__ == "__main__":
     Network.load_state_dict(torch.load(weights_path))
     
     print('Initiating the testing module')
-    run_test(Network, testfile, evalfile, transforms, data_cfg,
-             step_size=cfg.step_size, slice_length=data_cfg.sample_length_in_num,
+    run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
+             step_size=cfg.step_size, slice_length=data_cfg.signal_length*data_cfg.sample_rate,
              trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
              batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
