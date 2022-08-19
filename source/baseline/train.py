@@ -248,7 +248,7 @@ def run_trainer():
                     
                 print('Running the testing phase on {} data'.format(job))
                 run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-                         step_size=cfg.step_size, slice_length=data_cfg.signal_length*data_cfg.sample_rate,
+                         step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
                          trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
                          batch_size = cfg.batch_size,
                          device=cfg.testing_device, verbose=cfg.verbose)
