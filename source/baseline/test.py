@@ -134,7 +134,7 @@ class Slicer(object):
         index_step_size = int(self.step_size / dt)
         # Create start and end indices from slice dict
         sidx = (index.start - self.n_slices[key]['start']) * index_step_size
-        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length + (self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
+        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length + int(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
         # Slice raw data using above indices
         if not isinstance(sidx, int) or not isinstance(eidx, int):
             sidx = int(sidx)
@@ -144,11 +144,11 @@ class Slicer(object):
         times = (self.detectors[0][key].attrs['start_time'] + sidx * dt) + index_step_size * dt * np.arange(index.stop - index.start) + self.peak_offset
         
         # Get segment data
-        data = np.zeros((index.stop - index.start, len(rawdata), self.slice_length+(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)))
+        data = np.zeros((index.stop - index.start, len(rawdata), self.slice_length+int(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)))
         for detnum, rawdat in enumerate(rawdata):
             for i in range(index.stop - index.start):
                 sidx = i * index_step_size
-                eidx = sidx + self.slice_length + (self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
+                eidx = sidx + self.slice_length + int(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
                 ts = pycbc.types.TimeSeries(rawdat[sidx:eidx], delta_t=dt)
                 data[i, detnum, :] = ts.numpy()
         
