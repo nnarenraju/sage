@@ -476,7 +476,7 @@ def main(raw_args):
     parser.add_argument('--force', action='store_true',
                         help="Overwrite existing files.")
     
-    args = parser.parse_args()
+    args = parser.parse_args(raw_args)
     
     # Setup logging
     log_level = logging.INFO if args.verbose else logging.WARN

@@ -246,7 +246,7 @@ def run_trainer():
                     testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
                     evalfile = os.path.join(output_testing_dir, cfg.test_background_output)
                     
-                print('Running the testing phase on {} data'.format(job))
+                print('\nRunning the testing phase on {} data'.format(job))
                 run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
                          step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
                          trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
