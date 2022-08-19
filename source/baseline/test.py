@@ -193,6 +193,10 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
     def __getitem__(self, index):
         next_slice, next_time = Slicer.__getitem__(self, index)
         # Convert all noisy samples using transformations
+        exp_length = self.data_cfg.sample_length_in_num
+        if len(next_slice[0]) != exp_length or len(next_slice[1]) != exp_length:
+            raise ValueError('Length error in next_slice. Expected = {}, observed = {}'.format(self.data_cfg.sample_length_in_num, len(next_slice[0])))
+            
         sample = self.transforms(next_slice, self.psds_data, self.data_cfg)
         return torch.from_numpy(sample), torch.tensor(next_time)
 
