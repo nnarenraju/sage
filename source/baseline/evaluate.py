@@ -65,6 +65,8 @@ import logging
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+# Font and plot parameters
+plt.rcParams.update({'font.size': 18})
 
 from matplotlib import cm
 from tqdm import tqdm
@@ -219,7 +221,6 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     idxs = find_closest_index(injtimes, fgevents[0])
     diff = np.abs(injtimes[idxs] - fgevents[0])
     print('Difference between injection times and event times in foreground')
-    print(diff)
     print('max = {}, min = {}, mean = {}, median = {}'.format(max(diff), min(diff), np.mean(diff), np.median(diff)))
     
     logging.info('Finding true- and false-positives')
@@ -254,7 +255,6 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     noise_stats = fpevents[1].copy()
     noise_stats.sort()
     print('ranking statistics for false positive events')
-    print(noise_stats)
     print('max = {}, min = {}, mean = {}, median = {}'.format(max(noise_stats), min(noise_stats), np.mean(noise_stats), np.median(noise_stats)))
     fgfar = len(noise_stats) - np.arange(len(noise_stats)) - 1
     fgfar = fgfar / duration
@@ -265,7 +265,6 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     noise_stats = bgevents[1].copy()
     noise_stats.sort()
     print('ranking statistics for true positive events')
-    print(noise_stats)
     print('max = {}, min = {}, mean = {}, median = {}'.format(max(noise_stats), min(noise_stats), np.mean(noise_stats), np.median(noise_stats)))
     far = len(noise_stats) - np.arange(len(noise_stats)) - 1
     far = far / duration
@@ -294,7 +293,7 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         iidxs[tmpsidxs[L:R]] = False
     
     found_injections = np.array(found_injections).T
-    print('Number of found injections = {}'.format(len(found_injections)))
+    print('Number of found injections = {}'.format(len(found_injections[0])))
     
     # Calculate sensitivity
     # CARE! THIS APPLIES ONLY WHEN THE DISTRIBUTION IS CHOSEN CORRECTLY
@@ -304,36 +303,28 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     if chirp_distance:
         found_mchirp_total = massc[found_injections[0].astype(int)]
         print('found_mchirp_total is the chirp mass of all found injections')
-        print(found_mchirp_total)
         print('max = {}, min = {}, mean={}, median = {}'.format(max(found_mchirp_total), min(found_mchirp_total), np.mean(found_mchirp_total), np.median(found_mchirp_total)))
         
         mchirp_max = massc.max()
-        print('maximum chirp mass = {}'.format(mchirp_max))
-        print('this is the maximum chirp mass as found in all found injections')
         
         ## Plotting the comparison plots (injections and found histogram) for all params 
-        ['chirp_distance', 'coa_phase', 'dec', 'distance', 'inclination', 'mass1', 'mass2', 'mchirp', 
-         'polarization', 'q', 'ra', 'spin1_a', 'spin1_azimuthal', 'spin1_polar', 'spin1x', 'spin1y', 
-         'spin1z', 'spin2_a', 'spin2_azimuthal', 'spin2_polar', 'spin2x', 'spin2y', 'spin2z', 'tc']
-        
-        cmap = cm.get_cmap('RdYlBu_r', 10)
+        # cmap = cm.get_cmap('RdYlBu_r', 10)
         for param in injparams.keys():
             all_param = injparams[param]
             found_param = all_param[found_injections[0].astype(int)]
             # Plotting the overlap histograms of all and found data
-            plt.figure(figsize=(9.0, 9.0))
+            plt.figure(figsize=(12.0, 12.0))
             plt.title('Comparing testing data with found signals - {}'.format(param))
             plt.hist(all_param, bins=100, label='{}-all'.format(param), alpha=0.8)
             plt.hist(found_param, bins=100, label='{}-found'.format(param), alpha=0.8)
             plt.grid(True, which='both')
-            plt.xscale('log')
             plt.xlabel('{}'.format(param))
             plt.ylabel('Number of Occurences')
             plt.savefig(os.path.join(output_dir, '{}-compare.png'.format(param)))
             plt.close()
         
         ## Other related plots
-        plt.figure(figsize=(9.0, 9.0))
+        plt.figure(figsize=(12.0, 12.0))
         plt.title('mchirp vs distance')
         param_1 = injparams['mchirp'][found_injections[0].astype(int)]
         param_2 = injparams['distance'][found_injections[0].astype(int)]
@@ -352,14 +343,14 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         plt.grid(True, which='both')
         plt.xlabel('Chirp Mass')
         plt.ylabel('Mass Ratio (m1/m2)')
-        plt.savefig(os.path.join(output_dir, 'mchirp_vs_distance.png'))
+        plt.savefig(os.path.join(output_dir, 'mchirp_vs_q.png'))
         plt.close()
         
         
     max_distance = dist.max()
     vtot = (4. / 3.) * np.pi * max_distance**3.
     Ninj = len(dist)
-    print('total number of injections = {}'.format(Ninj))
+    print('Total number of injections = {}'.format(Ninj))
     
     if chirp_distance:
         mc_norm = mchirp_max ** (5. / 2.) * len(massc)
@@ -394,24 +385,21 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         sample_variance = nfound / Ninj - (nfound / Ninj) ** 2
         
     vol = prefactor * mc_sum
-    print('volumes = {}'.format(vol))
+    print('Volumes found')
     print('min err = {}, max err = {}, mean err = {}'.format(min(vol), max(vol), np.mean(vol)))
     
     vol_err = prefactor * (Ninj * sample_variance) ** 0.5
-    print('volume error = {}'.format(vol_err))
+    print('Volume error')
     print('min err = {}, max err = {}, mean err = {}'.format(min(vol_err), max(vol_err), np.mean(vol_err)))
     
     rad = (3 * vol / (4 * np.pi))**(1. / 3.)
     print('Radius or sensitive distance as calculated from the volume obtained')
-    print(rad)
     print('min rad = {}, max rad = {}, mean = {}'.format(min(rad), max(rad), np.mean(rad)))
     
     ret['sensitive-volume'] = vol
     ret['sensitive-distance'] = rad
     ret['sensitive-volume-error'] = vol_err
     ret['sensitive-fraction'] = nfound / Ninj
-    
-    print('Sensitive fraction is the nfound/Ninj = {}'.format(nfound/Ninj))
         
     return ret
 
