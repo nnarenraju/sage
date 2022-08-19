@@ -491,7 +491,8 @@ def main(raw_args):
         raise IOError(f'The file {args.output_file} already exists. '
                       'Set the flag `force` to overwrite it.')
     
-    # Find indices contained in foreground file
+    # Find indices contained in foreground 
+    print("\nRunning Testing Phase Evaluator")
     logging.info('Finding injections contained in data')
     padding_start, padding_end = 30, 30
     dur, idxs = find_injection_times(args.foreground_files,
