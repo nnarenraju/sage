@@ -408,7 +408,6 @@ def run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
     # Average value in seconds where signal peak would be present
     peak_offset = (data_cfg.tc_inject_lower + data_cfg.tc_inject_upper) / 2.0
     
-    print('Obtaining triggers using {}'.format(cfg.testing_dataset))
     # Run inference and get triggers from the testing dataset
     triggers = get_triggers(Network,
                             testfile,
@@ -457,9 +456,6 @@ if __name__ == "__main__":
     cfg = dat.configure_pipeline(opts)
     # Get data creation/usage configuration
     data_cfg = dat.configure_dataset(opts)
-    
-    testfile = cfg.testing_dataset
-    evalfile = cfg.testing_output
     transforms = cfg.transforms['test']
     
     # Initialise Network with best weight found in export dir
@@ -472,7 +468,17 @@ if __name__ == "__main__":
     Network = cfg.model(**cfg.model_params)
     Network.load_state_dict(torch.load(weights_path))
     
-    print('Initiating the testing module')
+    testfile = cfg.test_foreground_dataset
+    evalfile = cfg.test_foreground_output
+    print('Initiating the testing module for foreground data')
+    run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
+             step_size=cfg.step_size, slice_length=data_cfg.signal_length*data_cfg.sample_rate,
+             trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
+             batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
+    
+    testfile = cfg.test_background_dataset
+    evalfile = cfg.test_background_output
+    print('Initiating the testing module for background data')
     run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
              step_size=cfg.step_size, slice_length=data_cfg.signal_length*data_cfg.sample_rate,
              trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
