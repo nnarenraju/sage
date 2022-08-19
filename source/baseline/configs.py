@@ -371,17 +371,17 @@ class Baseline_May18(KaggleFirst):
     
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju"
-    injection_file = 'testing_injections.hdf'
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month"
+    injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
     far_scaling_factor = 30 * 24 * 60 * 60
     
     
-    test_foreground_dataset = "testing_foreground.hdf"
+    test_foreground_dataset = "foreground.hdf"
     test_foreground_output = "testing_foutput.hdf"
     
-    test_background_dataset = "testing_background.hdf"
+    test_background_dataset = "background.hdf"
     test_background_output = "testing_boutput.hdf"
     
     debug = True
