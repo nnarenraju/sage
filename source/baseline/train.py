@@ -32,6 +32,8 @@ import torch
 import argparse
 import pytorch_lightning as pl
 import matplotlib.pyplot as plt
+# Font and plot parameters
+plt.rcParams.update({'font.size': 18})
 
 from torchsummary import summary
 from datetime import datetime
@@ -274,10 +276,17 @@ def run_trainer():
             far = far[sidxs][1:] * cfg.far_scaling_factor
             sens = sens[sidxs][1:]
             
-        plt.figure(figsize=(9.0, 9.0))
-        plt.title('Sensitivity Measure for {}'.format(cfg.export_dir))
-        plt.plot(far, sens, color='k', linewidth=3)
+        plt.figure(figsize=(12.0, 12.0))
+        plt.title('Sensitivity Measure for Dataset 1')
+        plt.plot(far, sens, color='m', linewidth=1.5, label='nnarenraju')
+        plt.plot([1000, 0], [2900, 2500], color='o', linewidth=1.0, label='PyCBC')
+        plt.plot([1000, 0], [2850, 2400], color='r', linewidth=1.0, label='TPI FSU Jena')
+        plt.plot([1000, 0], [2750, 2200], color='blueviolet', linewidth=1.0, label='Virgo-AUth')
+        plt.plot([600, 0], [1750, 1000], color='g', linewidth=1.0, label='CNN-Coinc')
+        plt.plot([300, 0], [1750, 800], color='b', linewidth=1.0, label='MFCNN')
         plt.grid(True, which='both')
+        plt.xlim(1000, 0)
+        plt.ylim(0, 3500)
         plt.xscale('log')
         plt.xlabel('False Alarm Rate (FAR) per month')
         plt.ylabel('Sensitive Distance [MPc]')
