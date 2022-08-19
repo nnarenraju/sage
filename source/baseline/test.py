@@ -136,6 +136,11 @@ class Slicer(object):
         sidx = (index.start - self.n_slices[key]['start']) * index_step_size
         eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length + (self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
         # Slice raw data using above indices
+        if sidx/int(sidx) != 1.0 or eidx/int(eidx) != 1.0:
+            raise ValueError('sidx or eidx is not an integer')
+        if not isinstance(sidx, int) or not isinstance(eidx, int):
+            sidx = int(sidx)
+            eidx = int(eidx)
         rawdata = [det[key][sidx:eidx] for det in self.detectors]
         # Get times offset by average peak 'tc' value
         times = (self.detectors[0][key].attrs['start_time'] + sidx * dt) + index_step_size * dt * np.arange(index.stop - index.start) + self.peak_offset
