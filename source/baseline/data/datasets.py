@@ -354,6 +354,7 @@ class MLMDC1(Dataset):
                 else:
                     network_snr = prelim_network_snr
                     noisy_signal = sample + pure_noise
+                    updated_targets = {}
                     
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
