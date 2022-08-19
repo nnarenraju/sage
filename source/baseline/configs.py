@@ -322,6 +322,7 @@ class Baseline_May18(KaggleFirst):
         model_name = 'mlmdc_example',
         in_channels = 2,
         out_channels = 1,
+        flatten_size = 464,
         store_device = 'cuda:1',
     )
     
@@ -336,14 +337,14 @@ class Baseline_May18(KaggleFirst):
     train_device = 'cuda:1'
     
     """ Epochs and Batches """
-    num_epochs = 10
+    num_epochs = 25
     batch_size = 100
     save_freq = 1
     
     # Rescaling the SNR (mapped into uniform distribution)
-    rescale_snr = False
+    rescale_snr = True
     rescaled_snr_lower = 5.0
-    rescaled_snr_upper = 20.0
+    rescaled_snr_upper = 15.0
     
     """ Loss Function """
     loss_function = regularised_BCEWithLogitsLoss(dim=1)
