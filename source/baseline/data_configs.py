@@ -237,7 +237,7 @@ class Revert:
     # Data storage drive or /mnt absolute path
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
-    data_dir = "dataset_1e6_Aug16_1s"
+    data_dir = "dataset_1e5_Aug19_1s"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -253,12 +253,12 @@ class Revert:
     
     """ Number of samples """
     # For now, keep both values equal
-    num_waveforms = 50000
-    num_noises = 50000
+    num_waveforms = 250000
+    num_noises = 250000
     # For efficient RAM usage in data generation
     # Here too, keep both nums equal
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
-    chunk_size = [5000, 5000]
+    chunk_size = [25000, 25000]
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
