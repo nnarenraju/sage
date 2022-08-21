@@ -414,6 +414,8 @@ def run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
     psds_data = get_psd_data(data_cfg)
     # Average value in seconds where signal peak would be present
     peak_offset = (data_cfg.tc_inject_lower + data_cfg.tc_inject_upper) / 2.0
+    # Account for the loss of corrupted data during whitening process in the peak offset value
+    peak_offset += data_cfg.whiten_padding / 2.0
     
     # Run inference and get triggers from the testing dataset
     triggers = get_triggers(Network,
