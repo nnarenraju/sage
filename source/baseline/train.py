@@ -263,36 +263,11 @@ def run_trainer():
         out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
         raw_args += ['--output-file', out_eval]
         raw_args += ['--output-dir', output_testing_dir]
+        raw_args += ['--far-scaling-factor', cfg.far_scaling_factor]
         raw_args += ['--verbose']
         
         # Running the evaluator to obtain output triggers (with clustering)
         evaluator(raw_args)
-        
-        # Create the sensitivity vs FAR/month plot from the output evaluation obtained
-        with h5py.File(out_eval, 'r') as fp:
-            far = fp['far'][()]
-            sens = fp['sensitive-distance'][()]
-            sidxs = far.argsort()
-            far = far[sidxs][1:] * cfg.far_scaling_factor
-            sens = sens[sidxs][1:]
-            
-        plt.figure(figsize=(18.0, 12.0))
-        plt.title('Sensitivity Measure for Dataset 1')
-        plt.plot(far, sens, color='m', linewidth=3.0, label='nnarenraju')
-        plt.plot([1000, 1], [2900, 2500], color='orange', linewidth=2.5, linestyle='dashed', label='PyCBC')
-        plt.plot([1000, 1], [2850, 2400], color='red', linewidth=2.5, linestyle='dashed', label='TPI FSU Jena')
-        plt.plot([1000, 1], [2750, 2200], color='blueviolet', linewidth=2.5, linestyle='dashed', label='Virgo-AUth')
-        plt.plot([600, 1], [1750, 1000], color='green', linewidth=2.5, linestyle='dashed', label='CNN-Coinc')
-        plt.plot([300, 1], [1750, 800], color='blue', linewidth=2.5, linestyle='dashed', label='MFCNN')
-        plt.grid(True, which='both')
-        plt.xlim(1000, 1)
-        plt.ylim(0, 3500)
-        plt.xscale('log')
-        plt.xlabel('False Alarm Rate (FAR) per month')
-        plt.ylabel('Sensitive Distance [MPc]')
-        plt.legend()
-        plt.savefig(os.path.join(output_testing_dir, 'sensitivity.png'))
-        plt.close()
         
         
         

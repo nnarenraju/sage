@@ -457,6 +457,8 @@ def main(raw_args):
     parser.add_argument('--output-dir', type=str, required=True,
                         help=("Path at which to store the output png "
                               "files. (Path must exist within export_dir)"))
+    parser.add_argument('--far-scaling-factor', type=float, required=True,
+                        help=("FAR scaling factor (seconds in a month by default)"))
     
     
     parser.add_argument('--verbose', action='store_true',
@@ -505,89 +507,6 @@ def main(raw_args):
             injparams[param] = fp[param][()][idxs]
         use_chirp_distance = 'chirp_distance' in params
     
-    ### Get SNRs of all the injections
-    """ Injection """
-    
-    """
-    # Generate source parameters
-    waveform_kwargs = {'delta_t': 1./sample_rate}
-    waveform_kwargs['f_lower'] = signal_low_freq_cutoff
-    waveform_kwargs['approximant'] = signal_approximant
-    waveform_kwargs['f_ref'] = reference_freq
-    
-    for idx in range(len(injparams['tc'])):
-        # Get the waveform kwargs from injparams
-        waveform_kwargs = {param:injparams[param][idx] for param in injparams.keys()}
-        
-        # Generate the full waveform
-        h_plus, h_cross = pycbc.waveform.get_td_waveform(**waveform_kwargs)
-        # If the signal is smaller than 20s, we change fmin such that it is atleast 20s
-        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] < self.signal_length:
-            # Pass h_plus or h_cross
-            h_plus, h_cross = self.optimise_fmin(h_plus)
-        
-        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] > self.signal_length:
-            new_end = h_plus.get_sample_times()[-1]
-            new_start = -1*(self.signal_length - new_end)
-            h_plus = h_plus.time_slice(start=new_start, end=new_end)
-            h_cross = h_cross.time_slice(start=new_start, end=new_end)
-    
-    # Sanity check for signal lengths
-    # if len(h_plus)/self.sample_rate != self.signal_length:
-    #     act = self.signal_length*self.sample_rate
-    #     obs = len(h_plus)
-    #     raise ValueError('Signal length ({}) is not as expected ({})!'.format(obs, act))
-    
-    # # Properly time and project the waveform (What there is)
-    start_time = prior_values['injection_time'] + h_plus.get_sample_times()[0]
-    end_time = prior_values['injection_time'] + h_plus.get_sample_times()[-1]
-    
-    # Calculate the number of zeros to append or prepend (What we need)
-    # Whitening padding will be corrupt and removed in whiten transformation
-    start_samp = prior_values['tc'] + (self.whiten_padding/2.0)
-    start_interval = prior_values['injection_time'] - start_samp
-    # subtract delta value for length error (0.001 if needed)
-    end_padding = self.whiten_padding/2.0
-    post_merger = self.signal_length - prior_values['tc']
-    end_interval = prior_values['injection_time'] + post_merger + end_padding
-    
-    # Calculate the difference (if any) between two time sets
-    diff_start = start_time - start_interval
-    diff_end = end_interval - end_time
-    # Convert num seconds to num samples
-    diff_end_num = int(diff_end * self.sample_rate)
-    diff_start_num = int(diff_start * self.sample_rate)
-    
-    expected_length = ((end_interval-start_interval) + self.error_padding_in_s*2.0) * self.sample_rate
-    observed_length = len(h_plus) + (diff_start_num + diff_end_num + self.error_padding_in_num*2.0)
-    diff_length = expected_length - observed_length
-    if diff_length != 0:
-        diff_end_num += diff_length
-    
-    # If any positive difference exists, add padding on that side
-    # Pad h_plus and h_cross with zeros on both end for slicing
-    if diff_end > 0.0:
-        # Append zeros if we need samples after signal ends
-        h_plus.append_zeros(int(diff_end_num + self.error_padding_in_num))
-        h_cross.append_zeros(int(diff_end_num + self.error_padding_in_num))
-    
-    if diff_start > 0.0:
-        # Prepend zeros if we need samples before signal begins
-        # prepend_zeros arg must be an integer
-        h_plus.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
-        h_cross.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
-    
-    assert len(h_plus) == self.sample_length_in_num + self.error_padding_in_num*2.0
-    assert len(h_cross) == self.sample_length_in_num + self.error_padding_in_num*2.0
-    
-    # Setting the start_time, sets epoch and end_time as well within the TS
-    # Set the start time of h_plus and h_plus after accounting for prepended zeros
-    h_plus.start_time = start_interval - self.error_padding_in_s
-    h_cross.start_time = start_interval - self.error_padding_in_s
-    """
-    
-    
-    
     
     # Read foreground events
     logging.info(f'Reading foreground events from {args.foreground_events}')
@@ -620,7 +539,32 @@ def main(raw_args):
     with h5py.File(args.output_file, mode) as fp:
         for key, val in stats.items():
             fp.create_dataset(key, data=np.array(val))
-    return
+    
+    # Create the sensitivity vs FAR/month plot from the output evaluation obtained
+    with h5py.File(args.output_file, 'r') as fp:
+        far = fp['far'][()]
+        sens = fp['sensitive-distance'][()]
+        sidxs = far.argsort()
+        far = far[sidxs][1:] * args.far_scaling_factor
+        sens = sens[sidxs][1:]
+        
+    plt.figure(figsize=(18.0, 12.0))
+    plt.title('Sensitivity Measure for Dataset 1')
+    plt.plot(far, sens, color='m', linewidth=3.0, label='nnarenraju')
+    plt.plot([1000, 1], [2900, 2500], color='orange', linewidth=2.5, linestyle='dashed', label='PyCBC')
+    plt.plot([1000, 1], [2850, 2400], color='red', linewidth=2.5, linestyle='dashed', label='TPI FSU Jena')
+    plt.plot([1000, 1], [2750, 2200], color='blueviolet', linewidth=2.5, linestyle='dashed', label='Virgo-AUth')
+    plt.plot([600, 1], [1750, 1000], color='green', linewidth=2.5, linestyle='dashed', label='CNN-Coinc')
+    plt.plot([300, 1], [1750, 800], color='blue', linewidth=2.5, linestyle='dashed', label='MFCNN')
+    plt.grid(True, which='both')
+    plt.xlim(1000, 1)
+    plt.ylim(0, 3500)
+    plt.xscale('log')
+    plt.xlabel('False Alarm Rate (FAR) per month')
+    plt.ylabel('Sensitive Distance [MPc]')
+    plt.legend()
+    plt.savefig(os.path.join(args.output_dir, 'sensitivity.png'))
+    plt.close()
 
 
 if __name__ == "__main__":
