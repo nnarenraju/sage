@@ -306,9 +306,9 @@ class KaggleFirst:
 class Baseline_May18(KaggleFirst):
     
     """ Data storage """
-    name = "Baseline_Aug18"
+    name = "Baseline_Aug20"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'TestingMod'
+    save_remarks = 'Improve-Sensitivity'
     
     """ Dataset """
     dataset = MLMDC1
@@ -319,7 +319,7 @@ class Baseline_May18(KaggleFirst):
     
     model_params = dict(
         # Simple NN Model
-        model_name = 'mlmdc_example',
+        model_name = 'baseline',
         in_channels = 2,
         out_channels = 1,
         flatten_size = 464,
@@ -338,13 +338,13 @@ class Baseline_May18(KaggleFirst):
     
     """ Epochs and Batches """
     num_epochs = 25
-    batch_size = 100
+    batch_size = 32
     save_freq = 1
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
-    rescaled_snr_lower = 5.0
-    rescaled_snr_upper = 15.0
+    rescaled_snr_lower = 0.01
+    rescaled_snr_upper = 25.0
     
     """ Loss Function """
     loss_function = regularised_BCEWithLogitsLoss(dim=1)
@@ -384,8 +384,20 @@ class Baseline_May18(KaggleFirst):
     test_background_dataset = "background.hdf"
     test_background_output = "testing_boutput.hdf"
     
+    ## Testing config
+    # Real step will be slightly different due to rounding errors
+    step_size = 0.1
+    # Based on prediction probabilities in best epoch
+    trigger_threshold = 0.2
+    # Time shift the signal by multiple of step_size and check pred probs
+    cluster_threshold = 0.35
+    # Run device for testing phase
+    testing_device = 'cuda:1'
+    
     debug = True
     debug_size = 10000
+    
+    verbose = True
 
 
 class KaggleFirst_Jun9(KaggleFirst):
