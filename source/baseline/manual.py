@@ -50,7 +50,7 @@ from matplotlib import cm
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 # Font and plot parameters
-plt.rcParams.update({'font.size': 22})
+plt.rcParams.update({'font.size': 18})
 
 
 def figure(title=""):
