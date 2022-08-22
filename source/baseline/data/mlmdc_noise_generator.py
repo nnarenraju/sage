@@ -39,15 +39,16 @@ BLOCK_SAMPLES = 1638400
 
 class NoiseGenerator(object):
     
-    psd_options = {'H1': [f'../../external/ml-mock-data-challenge-1/psds/H1/psd-{i}.hdf' for i in range(20)],
-                   'L1': [f'../../external/ml-mock-data-challenge-1/psds/L1/psd-{i}.hdf' for i in range(20)]}
+    psd_options = {'H1': [f'./psds/H1/psd-{i}.hdf' for i in range(20)],
+                   'L1': [f'./psds/L1/psd-{i}.hdf' for i in range(20)]}
     
-    def __init__(self, dataset, seed=0, delta_f=0.04,
-                 sample_rate=2048, low_frequency_cutoff=15,
+    def __init__(self, dataset, seed=42, delta_f=0.04,
+                 sample_rate=2048.0, low_frequency_cutoff=15,
                  detectors=['H1', 'L1']):
         
         if dataset not in [1, 2, 3]:
-            raise ValueError('PsdGenerator is only defined for datasets 1, 2, and 3.')
+            raise ValueError('PSDGenerator is only defined for datasets 1, 2, and 3.')
+            
         self.dataset = dataset
         self.sample_rate = sample_rate
         self.low_frequency_cutoff = low_frequency_cutoff
@@ -58,15 +59,20 @@ class NoiseGenerator(object):
         self.rs = np.random.RandomState(seed=seed)
         self.seed = list(self.rs.randint(0, 2**32, len(self.detectors)))
     
-    def __call__(self, start, end, generate_duration=3600):
+    
+    def __call__(self, start, end, generate_duration=None):
         return self.get(start, end, generate_duration=generate_duration)
     
-    def get(self, start, end, generate_duration=3600):        
+    
+    def get(self, start, end, generate_duration=None):
+        # Get noise PSD data for a given dataset type
         keys = {}
+        
         if self.dataset == 1:
             logging.debug('Called with dataset 1')
             for det in self.detectors:
                 keys[det] = 'aLIGOZeroDetHighPower'
+                
         elif self.dataset == 2:
             logging.debug('Called with dataset 2')
             for det in self.detectors:
@@ -74,6 +80,7 @@ class NoiseGenerator(object):
                     key = self.rs.randint(0, len(self.psd_options[det]))
                     self.fixed_psds[det] = self.psd_options[det][key]
                 keys[det] = self.fixed_psds[det]
+                
         elif self.dataset == 3:
             logging.debug('Called with dataset 3')
             for det in self.detectors:
@@ -95,6 +102,7 @@ class NoiseGenerator(object):
             if generate_duration is None:
                 generate_duration = end - start
                 logging.debug('Generate duration was None')
+                
             logging.debug(f'Generate duration set to {generate_duration}')
             done_duration = 0
             noise = None
@@ -118,6 +126,7 @@ class NoiseGenerator(object):
                                          sample_rate=self.sample_rate,
                                          low_frequency_cutoff=self.low_frequency_cutoff,
                                          filter_duration=1./self.delta_f)
+                
                 tmp = tmp[:len(tmp)-int(pad * tmp.sample_rate)]
                 #End of workaround for sample-rate issue
                 
@@ -125,10 +134,8 @@ class NoiseGenerator(object):
 
                 logging.debug('Succsessfully generated time domain noise')
                 if noise is None:
-                    logging.debug('Setting noise to tmp')
                     noise = tmp
                 else:
-                    logging.debug('Appending tmp to noise')
                     noise.append_zeros(len(tmp))
                     noise.data[-len(tmp):] = tmp.data[:]
                 done_duration += segend - segstart
@@ -140,10 +147,12 @@ class NoiseGenerator(object):
         
         return ret, psds
     
+    
     def colored_noise(self, psd, start_time, end_time,
-                  seed=0, sample_rate=16384,
+                  seed=42, sample_rate=16384,
                   low_frequency_cutoff=1.0,
                   filter_duration=128):
+        
         """ Create noise from a PSD
     
         Return noise from the chosen PSD. Note that if unique noise is desired
@@ -172,6 +181,7 @@ class NoiseGenerator(object):
         noise : TimeSeries
             A TimeSeries containing gaussian noise colored by the given psd.
         """
+        
         psd = psd.copy()
     
         flen = int(sample_rate / psd.delta_f) // 2 + 1
@@ -228,6 +238,7 @@ class NoiseGenerator(object):
         del white_noise
         return colored.time_slice(start_time, end_time)
     
+    
     def normal(self, start, end, sample_rate=16384, seed=0):
         """ Generate data with a white Gaussian (normal) distribution
     
@@ -263,6 +274,7 @@ class NoiseGenerator(object):
                                   for i in np.arange(s, e + 1, 1)])
         ts = TimeSeries(data, delta_t=1.0 / sample_rate, epoch=(s * block_dur))
         return ts.time_slice(start, end)
+    
     
     def block(self, seed, sample_rate):
         """ Return block of normal random numbers
