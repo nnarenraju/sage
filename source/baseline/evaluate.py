@@ -28,6 +28,7 @@ Documentation:
     --foreground-files foreground.hdf \
     --background-events <path to output of algorithm on background data> \
     --output-file eval-output.hdf \
+    --output-dir ./
     --verbose
 
 The options mean the following
@@ -364,6 +365,16 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     if chirp_distance:
         # Get found chirp-mass indices for given threshold
         fidxs = np.searchsorted(found_injections[1], noise_stats, side='right')
+        # Plotting the noise and signals stats for found samples
+        plt.figure(figsize=(12.0, 12.0))
+        plt.hist(found_injections[1], label='found_injections', bins=100, alpha=0.8)
+        plt.hist(noise_stats, label='noise', bins=100, alpha=0.8)
+        plt.yscale('log')
+        plt.grid(True, which='both')
+        plt.legend()
+        plt.savefig('compare_fidxs.png')
+        plt.close()
+        
         found_mchirp_total = np.flip(found_mchirp_total)
         
         # Calculate sum(found_mchirp ** (5/2))
@@ -457,8 +468,6 @@ def main(raw_args):
     parser.add_argument('--output-dir', type=str, required=True,
                         help=("Path at which to store the output png "
                               "files. (Path must exist within export_dir)"))
-    parser.add_argument('--far-scaling-factor', type=float, required=True,
-                        help=("FAR scaling factor (seconds in a month by default)"))
     
     
     parser.add_argument('--verbose', action='store_true',
@@ -541,11 +550,12 @@ def main(raw_args):
             fp.create_dataset(key, data=np.array(val))
     
     # Create the sensitivity vs FAR/month plot from the output evaluation obtained
+    far_scaling_factor = 30 * 24 * 60 * 60 # seconds in a month
     with h5py.File(args.output_file, 'r') as fp:
         far = fp['far'][()]
         sens = fp['sensitive-distance'][()]
         sidxs = far.argsort()
-        far = far[sidxs][1:] * args.far_scaling_factor
+        far = far[sidxs][1:] * far_scaling_factor
         sens = sens[sidxs][1:]
         
     plt.figure(figsize=(18.0, 12.0))
