@@ -356,7 +356,7 @@ class MLMDC1(Dataset):
                     if 'norm_dist' in self.cfg.parameter_estimation or 'norm_dchirp' in self.cfg.parameter_estimation:
                         raise RuntimeError('rescale_snr option cannot be used with dist/dchirp PE!')
                     # Update final network SNR to new value given by target SNR
-                    network_snr = self.norm_snr.norm(target_snr)
+                    network_snr = target_snr
                     # Update the params dictionary with new rescaled distances
                     params['distance'] = rescaled_distance
                 else:
@@ -435,7 +435,7 @@ class MLMDC1(Dataset):
         
         # Storing target as dictionaries
         all_targets = {}
-        all_targets['snr'] = network_snr
+        all_targets['snr'] = self.norm_snr(network_snr)
         all_targets.update(targets)
         
         # Update parameter labels if augmentation changed them
