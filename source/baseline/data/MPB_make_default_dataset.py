@@ -45,10 +45,17 @@ plt.rcParams.update({'font.size': 16})
 
 # PyCBC handling
 import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.detector
+
+from pycbc.psd import interpolate
+from pycbc.types import load_frequencyseries
 from pycbc.distributions.utils import draw_samples_from_config
 
 # LOCAL
 from data.mlmdc_noise_generator import NoiseGenerator
+
+# Addressing HDF5 error with file locking (used to address PSD file read error)
+# PSD file read has been moved to dataset object.
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
 
@@ -131,7 +138,7 @@ class GenerateData:
             # Here, we should pick two PSDs randomly and read the files
             # PSDs are obtained from the noise generator
             self.psds = []
-            self.psd_names = []
+            self.psd_names = ['median_det1', 'median_det2']
         
         # Fixed parameter options for iteration
         if self.dataset == 1:
@@ -202,32 +209,53 @@ class GenerateData:
             raise IOError("make_default_dataset: Dataset dir already exists!")
     
     
+    def _save_(self, save_name, psd_data, psd_name):
+        ## Store the PSD in HDF5 format
+        psd_save_dir = os.path.join(self.dirs['parent'], "psds")
+        if not os.path.exists(psd_save_dir):
+            os.makedirs(psd_save_dir, exist_ok=False)
+        save_path = os.path.join(psd_save_dir, save_name)
+        psd_file_path = os.path.abspath(save_path)
+        # Remove and rewrite if the PSD file already exists
+        if os.path.exists(psd_file_path):
+            os.remove(psd_file_path)
+        # Write PSD in HDF5 format
+        with h5py.File(psd_file_path, 'a') as fp:
+            data = psd_data
+            key = 'data'
+            fp.create_dataset(key, data=data, compression='gzip', 
+                              compression_opts=9, shuffle=True)
+            # Adding all relevant attributes
+            fp.attrs['delta_f'] = self.delta_f
+            fp.attrs['name'] = psd_name
+            
+    
     def save_PSD(self):
         # Saving the PSD file used for dataset/sample
         if self.dataset == 1:
-            # Both detectors have the same PSD for dataset 1
-            psd_save_dir = os.path.join(self.dirs['parent'], "psds")
-            if not os.path.exists(psd_save_dir):
-                os.makedirs(psd_save_dir, exist_ok=False)
-            save_path = os.path.join(psd_save_dir, "psd-aLIGOZeroDetHighPower.hdf")
-            psd_file_path = os.path.abspath(save_path)
-            # Remove and rewrite if the PSD file already exists
-            if os.path.exists(psd_file_path):
-                os.remove(psd_file_path)
-            # Write PSD in HDF5 format
-            with h5py.File(psd_file_path, 'a') as fp:
-                data = self.psds[0].numpy()
-                key = 'data'
-                fp.create_dataset(key, data=data, compression='gzip', 
-                                  compression_opts=9, shuffle=True)
-                # Adding all relevant attributes
-                fp.attrs['delta_f'] = self.delta_f
-                fp.attrs['name'] = 'aLIGOZeroDetHighPower'
-        
+            save_name = "psd-aLIGOZeroDetHighPower.hdf"
+            psd_data = self.psds[0].numpy()
+            psd_name = 'aLIGOZeroDetHighPower'
+            self._save_(save_name, psd_data, psd_name)
         else:
-            raise NotImplementedError('Save PSD for datasets (2,3,4) under construction!')
             ## Save the median PSD from the PSD files provided
-    
+            psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
+                           'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
+            # Iterate through all PSD files for detector and compute the median PSD
+            for det in self.detectors_abbr:
+                # Read all detector PSDs as frequency series with appropriate delta_f
+                det_psds = []
+                for psd_det in psd_options[det]:
+                    psd = load_frequencyseries(psd_det)
+                    psd = interpolate(psd, self.delta_f)
+                    det_psds.append(psd.numpy())
+                # Compute the median of all PSDs along axis=0
+                psd_data = np.median(det_psds, axis=0)
+                # Save the PSD in HDF5 format
+                save_name = 'psd-median-{}.hdf'.format(det)
+                psd_name = 'median_det{}'.format(1 if det=='H1' else 2)
+                self._save_(save_name, psd_data, psd_name)
+                
     
     def distance_from_chirp_distance(self, chirp_distance, mchirp, ref_mass=1.4):
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
@@ -239,7 +267,7 @@ class GenerateData:
         ## Generate source prior parameters
         
         # A path to the .ini file.
-        ini_parent = './ini_files'
+        ini_parent = './data/ini_files'
         CONFIG_PATH = "{}/ds{}.ini".format(ini_parent, self.dataset)
         random_seed = self.seed
         
@@ -353,7 +381,7 @@ class GenerateData:
                 assert len(noise[0]) == maxlen
                 assert len(noise[1]) == maxlen
             else:
-                noise, self.psds = self.noise_generator(0.0, self.sample_length_in_s, None)
+                noise, _ = self.noise_generator(0.0, self.sample_length_in_s, None)
                 noise = [noise[det].numpy() for det in self.detectors_abbr]
                 assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
                 assert len(noise[1]) == self.sample_length_in_s * self.sample_rate
