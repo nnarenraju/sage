@@ -90,7 +90,7 @@ class GenerateData:
                  'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff',
                  'max_signal_length', 'ringdown_leeway', 'merger_leeway', 'start_freq_factor',
                  'fs_reduction_factor', 'fbin_reduction_factor', 'dbins', 'check_seeds',
-                 'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q']
+                 'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq']
     
     
     def __init__(self, **kwargs):
@@ -161,6 +161,7 @@ class GenerateData:
         self.norm_dchirp = None
         self.norm_mchirp = None
         self.norm_q = None
+        self.norm_invq = None
         
         ## Save tmp tree structure for HDF5 file
         self.hdf5_tree = []
@@ -170,7 +171,7 @@ class GenerateData:
         ## Names
         # All datasets that need to be created from the sample dict
         self.waveform_names = ['h_plus', 'h_cross', 'start_time', 'interval_lower', 'interval_upper',
-                          'norm_tc', 'norm_dist', 'norm_mchirp', 'norm_dchirp', 'norm_q',
+                          'norm_tc', 'norm_dist', 'norm_mchirp', 'norm_dchirp', 'norm_q', 'norm_invq',
                           'mass1', 'mass2', 'distance', 'mchirp', 'label']
         
         self.noise_names = ['noise_1', 'noise_2', 'label']
@@ -221,7 +222,11 @@ class GenerateData:
                                   compression_opts=9, shuffle=True)
                 # Adding all relevant attributes
                 fp.attrs['delta_f'] = self.delta_f
-                fp.attrs['name'] = 'aLIGOZeroDetHighPower'  
+                fp.attrs['name'] = 'aLIGOZeroDetHighPower'
+        
+        else:
+            raise NotImplementedError('Save PSD for datasets (2,3,4) under construction!')
+            ## Save the median PSD from the PSD files provided
     
     
     def distance_from_chirp_distance(self, chirp_distance, mchirp, ref_mass=1.4):
@@ -234,7 +239,7 @@ class GenerateData:
         ## Generate source prior parameters
         
         # A path to the .ini file.
-        ini_parent = '.'
+        ini_parent = './ini_files'
         CONFIG_PATH = "{}/ds{}.ini".format(ini_parent, self.dataset)
         random_seed = self.seed
         
@@ -275,9 +280,12 @@ class GenerateData:
         
         # Normalise mass ratio (m1/m2 is mass ratio 'q')
         # m2 is always less than m1, and as an approx. we keep min ratio as m/m=1.0
-        # max ratio will just be (mu, ml) --> max ratio ~ 1.0
+        # max ratio will just be (mu/ml) --> max ratio = 50/7 ~ 7 
         # The range can be written as --> (min_val, max_val]
         self.norm_q = Normalise(min_val=1.0, max_val=mu/ml)
+        
+        # Define inv_q as well (m2/m1) --> as per PyCBC definition
+        self.norm_invq = Normalise(min_val=0.0, max_val=1.0)
         
         ## End normalisation ##
         
@@ -347,6 +355,8 @@ class GenerateData:
             else:
                 noise, self.psds = self.noise_generator(0.0, self.sample_length_in_s, None)
                 noise = [noise[det].numpy() for det in self.detectors_abbr]
+                assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
+                assert len(noise[1]) == self.sample_length_in_s * self.sample_rate
             
             # Saving noise params for storage
             sample['noise_1'] = noise[0]
@@ -446,6 +456,7 @@ class GenerateData:
             sample['norm_mchirp'] = self.norm_mchirp.norm(prior_values['mchirp'])
             sample['norm_dchirp'] = self.norm_dchirp.norm(prior_values['chirp_distance'])
             sample['norm_q'] = self.norm_q.norm(prior_values['q'])
+            sample['norm_invq'] = 1./sample['norm_q']
             # waveform_kwargs will contain all prior values and additional attrs.
             sample.update(self.waveform_kwargs)
             ## norm SNR will be added to attributes after converting h_pols into h_t
@@ -575,8 +586,8 @@ class GenerateData:
             
             ## Segregate data from Queue
             # sample is a dict of information about sample (refer worker)
+            # idx = data['idx'] --> Use if needed
             sample = data['sample']
-            idx = data['idx']
             save_idx = data['save_idx']
             is_waveform = data['is_waveform']
             
