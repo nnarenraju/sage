@@ -24,7 +24,6 @@ Documentation: NULL
 """
 
 # IN-BUILT
-import time
 import logging
 import numpy as np
 from numpy.random import RandomState
@@ -39,8 +38,8 @@ BLOCK_SAMPLES = 1638400
 
 class NoiseGenerator(object):
     
-    psd_options = {'H1': [f'./psds/H1/psd-{i}.hdf' for i in range(20)],
-                   'L1': [f'./psds/L1/psd-{i}.hdf' for i in range(20)]}
+    psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
+                   'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
     
     def __init__(self, dataset, seed=42, delta_f=0.04,
                  sample_rate=2048.0, low_frequency_cutoff=15,
@@ -95,7 +94,7 @@ class NoiseGenerator(object):
         for i, (det, key) in enumerate(keys.items()):
             logging.debug(f'Starting generating process for detector {det} and key {key}')
             
-            #Try loading from frequency series
+            # Try loading from frequency series
             psd = load_frequencyseries(key)
             psd = interpolate(psd, self.delta_f) 
             
