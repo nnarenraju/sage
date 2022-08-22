@@ -347,7 +347,7 @@ class MLMDC1(Dataset):
                     # Rescaling the SNR to a uniform distribution within a given range
                     target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
                     rescaling_factor = target_snr/prelim_network_snr
-                    noisy_signal = pure_noise + sample * rescaling_factor
+                    noisy_signal = pure_noise + (sample * rescaling_factor)
                     # Adjust distance parameter for signal according to the new rescaled SNR
                     rescaled_distance = params['distance'] / rescaling_factor
                     # rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
@@ -357,10 +357,12 @@ class MLMDC1(Dataset):
                         raise RuntimeError('rescale_snr option cannot be used with dist/dchirp PE!')
                     # Update final network SNR to new value given by target SNR
                     network_snr = target_snr
+                    norm_snr = self.norm_snr.norm(network_snr)
                     # Update the params dictionary with new rescaled distances
                     params['distance'] = rescaled_distance
                 else:
                     network_snr = prelim_network_snr
+                    norm_snr = self.norm_snr.norm(network_snr)
                     noisy_signal = sample + pure_noise
                     
             else:
@@ -377,11 +379,13 @@ class MLMDC1(Dataset):
             # For pure noise sample, we could calculate the matched filter SNR and set a target
             # This value will be very low, but could help improve FAR
             if self.cfg.network_snr_for_noise:
+                raise NotImplementedError('SNR for noise samples under construction!')
                 network_snr = get_network_snr(sample, self.psds_data, params, None, False)
             else:
                 network_snr = -1
+                norm_snr = -1
         
-        return (noisy_signal, pure_noise, network_snr, params)
+        return (noisy_signal, pure_noise, network_snr, norm_snr, params)
     
     
     def _transforms_(self, noisy_sample, target):
@@ -425,7 +429,7 @@ class MLMDC1(Dataset):
         ## Signal and Noise Augmentation
         pure_sample, aug_labels, params = self._augmentation_(sample, target_gw, params, self.debug)
         ## Add noise realisation to the signals
-        noisy_sample, pure_noise, network_snr, params = self._noise_realisation_(pure_sample, target_gw, params)
+        noisy_sample, pure_noise, network_snr, norm_snr, params = self._noise_realisation_(pure_sample, target_gw, params)
         
         ## Target handling
         target_gw = np.array([target_gw])
@@ -435,7 +439,7 @@ class MLMDC1(Dataset):
         
         # Storing target as dictionaries
         all_targets = {}
-        all_targets['snr'] = self.norm_snr.norm(network_snr)
+        all_targets['snr'] = norm_snr
         all_targets.update(targets)
         
         # Update parameter labels if augmentation changed them
