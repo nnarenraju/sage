@@ -37,6 +37,7 @@ import pycbc
 from pycbc.types import FrequencySeries
 
 # LOCAL
+from evaluate import main as evaluator
 from data.prepare_data import DataModule as dat
 from data.multirate_sampling import get_sampling_rate_bins
 
@@ -471,24 +472,38 @@ if __name__ == "__main__":
     if not os.path.exists(cfg.export_dir):
         raise IOError('Export directory does not exist. Cannot write testing output files.')
     
-    print('Applying best weights from the {} run to Network'.format(cfg.export_dir))
+    print('\nApplying best weights from the {} run to Network'.format(cfg.export_dir))
     best_dir = os.path.join(cfg.export_dir, 'BEST')
     weights_path = os.path.join(best_dir, cfg.weights_path)
     Network = cfg.model(**cfg.model_params)
     Network.load_state_dict(torch.load(weights_path))
     
-    testfile = cfg.test_foreground_dataset
-    evalfile = cfg.test_foreground_output
-    print('Initiating the testing module for foreground data')
+    testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
+    evalfile = os.path.join(cfg.testing_dir, cfg.test_foreground_output)
+    print('\nInitiating the testing module for foreground data')
     run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-             step_size=cfg.step_size, slice_length=data_cfg.signal_length*data_cfg.sample_rate,
+             step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
              trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
              batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
     
-    testfile = cfg.test_background_dataset
-    evalfile = cfg.test_background_output
-    print('Initiating the testing module for background data')
+    testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
+    evalfile = os.path.join(cfg.testing_dir, cfg.test_background_output)
+    print('\nInitiating the testing module for background data')
     run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-             step_size=cfg.step_size, slice_length=data_cfg.signal_length*data_cfg.sample_rate,
+             step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
              trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
              batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
+    
+    # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
+    output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
+    raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
+    raw_args += ['--foreground-events', os.path.join(cfg.testing_dir, cfg.test_foreground_output)]
+    raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
+    raw_args += ['--background-events', os.path.join(cfg.testing_dir, cfg.test_background_output)]
+    out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
+    raw_args += ['--output-file', out_eval]
+    raw_args += ['--output-dir', output_testing_dir]
+    raw_args += ['--verbose']
+    
+    # Running the evaluator to obtain output triggers (with clustering)
+    evaluator(raw_args)
