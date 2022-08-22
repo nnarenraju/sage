@@ -116,6 +116,8 @@ class MLMDC1(Dataset):
         
         if self.data_cfg.dataset == 1:
             self.psds_data = [self.PSDs['aLIGOZeroDetHighPower']]*2
+        else:
+            self.psds_data = [self.PSDs['median_det1'], self.PSDs['median_det2']]
             
         
         """ Multi-rate Sampling """
