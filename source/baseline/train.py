@@ -263,7 +263,6 @@ def run_trainer():
         out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
         raw_args += ['--output-file', out_eval]
         raw_args += ['--output-dir', output_testing_dir]
-        raw_args += ['--far-scaling-factor', cfg.far_scaling_factor]
         raw_args += ['--verbose']
         
         # Running the evaluator to obtain output triggers (with clustering)
