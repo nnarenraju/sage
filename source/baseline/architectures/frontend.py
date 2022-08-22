@@ -446,8 +446,8 @@ class KappaModelPE(torch.nn.Module):
 
     def __init__(self, 
                  model_name='trainable_backend_and_frontend', 
-                 filter_size: int = 16,
-                 kernel_size: int = 32,
+                 filter_size: int = 32,
+                 kernel_size: int = 64,
                  timm_params: dict = {'model_name': 'resnet34', 'pretrained': True, 'in_chans': 2, 'drop_rate': 0.25},
                  store_device: str = 'cpu',
                  **kwargs):
@@ -486,17 +486,17 @@ class KappaModelPE(torch.nn.Module):
         )
         
         # Primary outputs
-        self.signal_or_noise = self.linear_relu_stack
-        self.coalescence_time = self.linear_relu_stack
-        self.chirp_distance = self.linear_relu_stack
-        self.chirp_mass = self.linear_relu_stack
-        self.distance = self.linear_relu_stack
-        self.mass_ratio = self.linear_relu_stack
-        self.snr = self.linear_relu_stack
+        self.signal_or_noise = nn.Linear(self.frontend.num_features, 1)
+        self.coalescence_time = nn.Linear(self.frontend.num_features, 1)
+        self.chirp_distance = nn.Linear(self.frontend.num_features, 1)
+        self.chirp_mass = nn.Linear(self.frontend.num_features, 1)
+        self.distance = nn.Linear(self.frontend.num_features, 1)
+        self.mass_ratio = nn.Linear(self.frontend.num_features, 1)
+        self.snr = nn.Linear(self.frontend.num_features, 1)
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.batchnorm = nn.BatchNorm1d(2)
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(28*28)
+        self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
         self.flatten_d1 = nn.Flatten(start_dim=1)
         self.flatten_d0 = nn.Flatten(start_dim=0)
         self.dropout = nn.Dropout(0.25)
@@ -526,10 +526,8 @@ class KappaModelPE(torch.nn.Module):
         # batch_size, channel, signal_length = s.shape
         # Conv Backend
         cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
-        # Batchnorm before passing to ResNeT
-        norm_cnn_output = self.batchnorm(cnn_output)
         # Timm Frontend
-        x = self.frontend(norm_cnn_output) # (100, 1000) by default
+        x = self.frontend(cnn_output) # (100, 1000) by default
         ## Manipulate encoder output to get params
         # Global Pool
         x = self.flatten_d1(self.avg_pool_1d(x))
@@ -540,12 +538,13 @@ class KappaModelPE(torch.nn.Module):
         pred_prob = self.sigmoid(raw)
         # Parameter Estimation
         tc = self.flatten_d0(self.sigmoid(self.coalescence_time(x)))
-        dchirp = self.flatten_d0(self.ReLU(self.chirp_distance(x)))
+        dchirp = self.flatten_d0(self.sigmoid(self.chirp_distance(x)))
         mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(x)))
-        dist = self.flatten_d0(self.ReLU(self.distance(x)))
+        dist = self.flatten_d0(self.sigmoid(self.distance(x)))
         q = self.flatten_d0(self.sigmoid(self.mass_ratio(x)))
         snr = self.flatten_d0(self.sigmoid(self.snr(x)))
-        # Return ouptut params (pred_prob, tc)
+        
+        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
         return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,
                 'norm_dist': dist, 'norm_q': q, 'snr': snr}
