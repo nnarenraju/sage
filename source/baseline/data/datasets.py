@@ -172,6 +172,8 @@ class MLMDC1(Dataset):
                                      max_val=self.data_cfg.prior_high_chirp_dist)
         # Normalise the mass ratio 'q'
         self.norm_q = Normalise(min_val=1.0, max_val=mu/ml)
+        self.norm_invq = Normalise(min_val=0.0, max_val=1.0)
+        
         # Normalise the SNR
         self.norm_snr = Normalise(min_val=self.cfg.rescaled_snr_lower,
                                   max_val=self.cfg.rescaled_snr_upper)
@@ -181,6 +183,8 @@ class MLMDC1(Dataset):
         self.norm['dist'] = self.norm_dist
         self.norm['dchirp'] = self.norm_dchirp
         self.norm['q'] = self.norm_q
+        self.norm['invq'] = self.norm_invq
+        self.norm['snr'] = self.norm_snr
         
         
         """ Data Save Params (for plotting sample just before training) """
@@ -244,6 +248,7 @@ class MLMDC1(Dataset):
             targets['norm_dist'] = -1
             targets['norm_mchirp'] = -1
             targets['norm_q'] = -1
+            targets['norm_invq'] = -1
             targets['norm_tc'] = -1
         else:
             ## Read signal data
@@ -262,8 +267,8 @@ class MLMDC1(Dataset):
             targets['norm_dchirp'] = group['norm_dchirp'][didx]
             targets['norm_dist'] = group['norm_dist'][didx]
             targets['norm_mchirp'] = group['norm_mchirp'][didx]
-            # TODO: Create a new dataset with the correct definition of 'q' (inv_q in PyCBC)
-            targets['norm_q'] = self.norm['q'].norm(group['norm_q'][didx])
+            targets['norm_q'] = group['norm_q'][didx]
+            targets['norm_invq'] = group['norm_invq'][didx]
             targets['norm_tc'] = group['norm_tc'][didx]
         
         # Generic params
@@ -343,10 +348,11 @@ class MLMDC1(Dataset):
                     noisy_signal = pure_noise + sample * rescaling_factor
                     # Adjust distance parameter for signal according to the new rescaled SNR
                     rescaled_distance = params['distance'] / rescaling_factor
-                    # Update targets and params with new rescaled distance
-                    rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
-                    updated_targets = {'norm_dist': rescaled_distance, 
-                                       'norm_dchirp': rescaled_dchirp}
+                    # rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
+                    # Update targets and params with new rescaled distance is not possible
+                    # We do not know the priors of network_snr properly
+                    if 'norm_dist' in self.cfg.parameter_estimation or 'norm_dchirp' in self.cfg.parameter_estimation:
+                        raise RuntimeError('rescale_snr option cannot be used with dist/dchirp PE!')
                     # Update final network SNR to new value given by target SNR
                     network_snr = self.norm_snr.norm(target_snr)
                     # Update the params dictionary with new rescaled distances
@@ -354,7 +360,6 @@ class MLMDC1(Dataset):
                 else:
                     network_snr = prelim_network_snr
                     noisy_signal = sample + pure_noise
-                    updated_targets = {}
                     
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
@@ -367,7 +372,6 @@ class MLMDC1(Dataset):
             # If the sample is pure noise
             noisy_signal = sample
             pure_noise = None
-            updated_targets = {}
             # For pure noise sample, we could calculate the matched filter SNR and set a target
             # This value will be very low, but could help improve FAR
             if self.cfg.network_snr_for_noise:
@@ -375,7 +379,7 @@ class MLMDC1(Dataset):
             else:
                 network_snr = -1
         
-        return (noisy_signal, pure_noise, network_snr, updated_targets, params)
+        return (noisy_signal, pure_noise, network_snr, params)
     
     
     def _transforms_(self, noisy_sample, target):
@@ -419,7 +423,7 @@ class MLMDC1(Dataset):
         ## Signal and Noise Augmentation
         pure_sample, aug_labels, params = self._augmentation_(sample, target_gw, params, self.debug)
         ## Add noise realisation to the signals
-        noisy_sample, pure_noise, network_snr, updated_targets, params = self._noise_realisation_(pure_sample, target_gw, params)
+        noisy_sample, pure_noise, network_snr, params = self._noise_realisation_(pure_sample, target_gw, params)
         
         ## Target handling
         target_gw = np.array([target_gw])
@@ -435,9 +439,6 @@ class MLMDC1(Dataset):
         # Update parameter labels if augmentation changed them
         # aug_labels must have the same keys as targets dict
         all_targets.update(aug_labels)
-        
-        # Update parameter labels if rescaling occured within _noise_realisation_ method
-        all_targets.update(updated_targets)
         
         ## Plotting
         if self.debug:
