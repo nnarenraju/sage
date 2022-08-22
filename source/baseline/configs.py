@@ -504,7 +504,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
                         'pretrained': True, 
                         'in_chans': 2, 
                         'drop_rate': 0.25},
-        store_device = 'cuda:1',
+        store_device = 'cuda:0',
     )
     
     """ Epochs and Batches """
