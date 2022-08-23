@@ -358,6 +358,8 @@ def get_psd_data(data_cfg):
     
     if data_cfg.dataset == 1:
         psds_data = [PSDs['aLIGOZeroDetHighPower']]*2
+    else:
+        psds_data = [PSDs['median_det1'], PSDs['median_det2']]
     
     return psds_data
 
