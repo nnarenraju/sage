@@ -144,12 +144,7 @@ class GenerateData:
         if self.dataset == 1:
             self.noise_generator = pycbc.noise.gaussian.frequency_noise_from_psd
         else:
-            self.noise_generator = NoiseGenerator(self.dataset,
-                                                  seed=self.seed,
-                                                  delta_f=self.delta_f,
-                                                  sample_rate=self.sample_rate,
-                                                  low_frequency_cutoff=self.noise_low_freq_cutoff,
-                                                  detectors=self.detectors_abbr)
+            self.noise_generator = None
         
         """ Generating signals """
         # Generate source parameters
@@ -380,7 +375,15 @@ class GenerateData:
                 
                 assert len(noise[0]) == maxlen
                 assert len(noise[1]) == maxlen
+            
             else:
+                self.noise_generator = NoiseGenerator(self.dataset,
+                                                      seed=int(idx+1),
+                                                      delta_f=self.delta_f,
+                                                      sample_rate=self.sample_rate,
+                                                      low_frequency_cutoff=self.noise_low_freq_cutoff,
+                                                      detectors=self.detectors_abbr)
+                
                 noise, _ = self.noise_generator(0.0, self.sample_length_in_s, None)
                 noise = [noise[det].numpy() for det in self.detectors_abbr]
                 assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
