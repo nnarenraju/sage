@@ -443,6 +443,7 @@ class MLMDC1(Dataset):
         # Storing target as dictionaries
         all_targets = {}
         all_targets['norm_snr'] = norm_snr
+        all_targets['snr'] = network_snr
         all_targets.update(targets)
         
         # Update parameter labels if augmentation changed them
