@@ -347,6 +347,10 @@ class MLMDC1(Dataset):
                     # Rescaling the SNR to a uniform distribution within a given range
                     target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
                     rescaling_factor = target_snr/prelim_network_snr
+                    print('old snr = {}, target snr = {}, old max = {}, new max = {}'.format(prelim_network_snr,
+                                                                                             target_snr,
+                                                                                             max(sample),
+                                                                                             max(sample*rescaling_factor)))
                     noisy_signal = pure_noise + (sample * rescaling_factor)
                     # Adjust distance parameter for signal according to the new rescaled SNR
                     rescaled_distance = params['distance'] / rescaling_factor

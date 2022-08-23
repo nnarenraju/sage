@@ -115,7 +115,7 @@ def roc_curve(nep, output, labels, export_dir):
     ax, _ = figure(title="ROC Curve at Epoch = {}".format(nep))
     
     # Log ROC Curve
-    _plot(ax, fpr, tpr, label='AUC = %0.2f' % roc_auc, c='red', 
+    _plot(ax, fpr, tpr, label='AUC = %0.5f' % roc_auc, c='red', 
           ylabel="True Positive Rate", xlabel="False Positive Rate", 
           yscale='log', xscale='log')
     _plot(ax, [0, 1], [0, 1], label="Random Classifier", c='blue', 
