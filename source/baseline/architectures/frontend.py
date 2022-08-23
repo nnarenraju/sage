@@ -550,7 +550,7 @@ class KappaModelPE(torch.nn.Module):
         # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
         return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,
-                'norm_dist': dist, 'norm_q': q, 'norm_invq': invq, 'snr': snr}
+                'norm_dist': dist, 'norm_q': q, 'norm_invq': invq, 'norm_snr': snr}
 
 
 class KappaModelSimplified(torch.nn.Module):

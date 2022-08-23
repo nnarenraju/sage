@@ -365,6 +365,7 @@ class MLMDC1(Dataset):
                     network_snr = prelim_network_snr
                     if 'norm_snr' in self.cfg.parameter_estimation:
                         raise RuntimeError('rescale_snr option is off. Cannot use norm_snr PE!')
+                    norm_snr = -1
                     noisy_signal = sample + pure_noise
                     
             else:
@@ -441,7 +442,7 @@ class MLMDC1(Dataset):
         
         # Storing target as dictionaries
         all_targets = {}
-        all_targets['snr'] = norm_snr
+        all_targets['norm_snr'] = norm_snr
         all_targets.update(targets)
         
         # Update parameter labels if augmentation changed them
