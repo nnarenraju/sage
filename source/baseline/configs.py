@@ -516,7 +516,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     num_sample_save = 100
     
     """ Parameter Estimation """
-    parameter_estimation = ('norm_tc', 'norm_mchirp', 'snr', )
+    parameter_estimation = ('norm_tc', 'norm_mchirp', 'norm_snr', )
     
     """ Storage Devices """
     store_device = 'cuda:0'
