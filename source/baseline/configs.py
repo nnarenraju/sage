@@ -27,7 +27,7 @@ Documentation: NULL
 import json
 from pathlib import Path
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 
 # LOCAL
 from data.datasets import MLMDC1
@@ -483,9 +483,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Aug11"
+    name = "KaggleFirst_Sept1"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'UniformSNR-batch1000-PE-all'
+    save_remarks = 'Improve-Sensitivity-'
     
     """ Dataset """
     dataset = MLMDC1
@@ -508,7 +508,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     )
     
     """ Epochs and Batches """
-    num_epochs = 20
+    num_epochs = 25
     batch_size = 1000
     save_freq = 1
     
@@ -516,11 +516,20 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     num_sample_save = 100
     
     """ Parameter Estimation """
-    parameter_estimation = ('norm_tc', 'norm_dist', 'norm_q', 'norm_dchirp', 'norm_mchirp', 'snr', )
+    parameter_estimation = ('norm_tc', 'norm_mchirp', 'snr', )
     
     """ Storage Devices """
     store_device = 'cuda:0'
     train_device = 'cuda:0'
+    
+    """ Optimizer """
+    optimizer = optim.SGD
+    optimizer_params = dict(lr=1e-4, momentum=0.9, weight_decay=1e-6)
+    
+    """ Scheduler """
+    scheduler = LambdaLR
+    lambda1 = lambda epoch: 0.95 ** epoch
+    scheduler_params = dict(lr_lambda=lambda1)
     
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
@@ -528,33 +537,32 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     loss_function = BCEgw_MSEtc(mse_alpha=5.0, network_snr_for_noise=False, gw_criterion=None)
     
     # Rescaling the SNR (mapped into uniform distribution)
-    rescale_snr = False
-    rescaled_snr_lower = 7.0
-    rescaled_snr_upper = 20.0
+    rescale_snr = True
+    rescaled_snr_lower = 0.01
+    rescaled_snr_upper = 25.0
     
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
     network_snr_for_noise = False
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju"
-    injection_file = 'testing_injections.hdf'
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month"
+    injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
     far_scaling_factor = 30 * 24 * 60 * 60
     
-    
-    test_foreground_dataset = "testing_foreground.hdf"
+    test_foreground_dataset = "foreground.hdf"
     test_foreground_output = "testing_foutput.hdf"
     
-    test_background_dataset = "testing_background.hdf"
+    test_background_dataset = "background.hdf"
     test_background_output = "testing_boutput.hdf"
     
     ## Testing config
     # Real step will be slightly different due to rounding errors
     step_size = 0.1
     # Based on prediction probabilities in best epoch
-    trigger_threshold = 0.2
+    trigger_threshold = 0.0
     # Time shift the signal by multiple of step_size and check pred probs
     cluster_threshold = 0.35
     # Run device for testing phase

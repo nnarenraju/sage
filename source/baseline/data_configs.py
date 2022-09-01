@@ -108,7 +108,7 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
-    data_dir = "dataset_1e6_Jul20"
+    data_dir = "dataset_1e6_Aug24_D1"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -135,7 +135,7 @@ class Default:
     # Used in MP and MPB dataset generation methods
     # chunk_size[0] and chunk_size[1] must be divisible exactly by num_queues_datasave
     num_queues_datasave = 1
-    num_cores_datagen = 9
+    num_cores_datagen = 24
     
     """ Save frequency """
     # Save every 'n' number of iterations
