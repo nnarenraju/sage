@@ -485,7 +485,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     """ Data storage """
     name = "KaggleFirst_Sept1"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'Improve-Sensitivity-'
+    save_remarks = 'Improve-Sensitivity-noiseEmphasis'
     
     """ Dataset """
     dataset = MLMDC1
@@ -534,7 +534,9 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(mse_alpha=5.0, network_snr_for_noise=False, gw_criterion=None)
+    loss_function = BCEgw_MSEtc(mse_alpha=5.0, network_snr_for_noise=False, gw_criterion=None, 
+                                emphasis_threshold=0.7, noise_emphasis=True, signal_emphasis=False,
+                                fp_boundary_loss=True, fn_boundary_loss=False, boundary_loss_alpha=0.5)
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
@@ -546,11 +548,11 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     network_snr_for_noise = False
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_month"
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_32000"
     injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
-    far_scaling_factor = 30 * 24 * 60 * 60
+    far_scaling_factor = 32000.0
     
     test_foreground_dataset = "foreground.hdf"
     test_foreground_output = "testing_foutput.hdf"
