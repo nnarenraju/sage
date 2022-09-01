@@ -48,7 +48,6 @@ torch.cuda.empty_cache()
 
 from matplotlib import cm
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 # Font and plot parameters
 plt.rcParams.update({'font.size': 18})
 
@@ -138,17 +137,20 @@ def prediction_probability(nep, output, labels, export_dir):
     # Get pred probs from output
     mx = np.ma.masked_array(output, mask=labels)
     # For labels == signal, true positive
-    pred_prob_tp = mx[mx.mask == True].data
+    raw_tp = mx[mx.mask == True].data
     # For labels == noise, true negative
-    pred_prob_tn = mx[mx.mask == False].data
+    raw_tn = mx[mx.mask == False].data
+    
+    # Diffference between noise and signal stats
+    boundary_diff = np.around(max(raw_tp) - max(raw_tn), 5)
     
     # Plotting routine
-    ax, _ = figure(title="Prediction Probabilities at Epoch = {}".format(nep))
+    ax, _ = figure(title="Raw output at Epoch = {}, fp_diff = {}".format(nep, boundary_diff))
     # Log pred probs
-    _plot(ax, y=pred_prob_tp, label="Signals", c='red', 
+    _plot(ax, y=raw_tp, label="Signals", c='red', 
           ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
           yscale='log', histogram=True)
-    _plot(ax, y=pred_prob_tn, label="Noise", c='blue', 
+    _plot(ax, y=raw_tn, label="Noise", c='blue', 
           ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
           yscale='log', histogram=True)
     
@@ -415,6 +417,15 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         ### Initialise global (over all epochs) params
         best_loss = 1.e10 # impossibly bad value
         best_accuracy = 0.0 # bad value
+        best_roc_auc = 0.0 # bad value
+        lowest_max_noise_stat = 1.0 # bad value
+        lowest_min_noise_stat = 1.0 # bad value
+        highest_max_signal_stat = 0.0 # bad value
+        highest_min_signal_stat = 0.0 # bad value
+        best_noise_stats = -1 # impossible value
+        best_signal_stats = -1 # impossible value
+        best_stat_compromise = -1 # impossible value
+        # Other
         best_epoch = 0
         best_roc_data = None
         overfitting_check = 0
@@ -461,7 +472,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 # Update params
                 params['scheduler_step'] = nep + nstep / num_train_batches
-                params['network_snr'] = training_labels['snr']
+                params['network_snr'] = training_labels['params']['snr']
                 
                 # Record time taken for training
                 start_train = time.time()
@@ -526,6 +537,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 epoch_labels = {foo: [] for foo in cfg.parameter_estimation + ('gw', )}
                 epoch_outputs = {foo: [] for foo in cfg.parameter_estimation + ('gw', )}
+                raw_output = {'raw': []}
                 validation_snrs = []
                 
                 pbar = tqdm(validDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}')
@@ -562,10 +574,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     # Params for storing labels and outputs
                     if nep % cfg.save_freq == 0:
                         # Save SNRs for the validation phase (used in diagonal plots)
-                        validation_snrs.append(validation_labels['snr'].cpu())
+                        validation_snrs.append(validation_labels['params']['snr'].cpu())
                         # Move labels from cuda to cpu
                         epoch_labels['gw'].append(validation_labels['gw'].cpu())
                         epoch_outputs['gw'].append(voutput['pred_prob'].cpu().detach().numpy())
+                        raw_output['raw'].append(voutput['raw'].cpu().detach().numpy())
                         # Add parameter estimation actual and observed values
                         for param in cfg.parameter_estimation:
                             epoch_labels[param].append(validation_labels[param].cpu())
@@ -575,6 +588,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 if nep % cfg.save_freq == 0:
                     # Concatenate all np arrays together
                     validation_snrs = np.concatenate(tuple(validation_snrs))
+                    raw_output['raw'] = np.concatenate(tuple(raw_output['raw']))
                     for param in epoch_labels.keys():
                         epoch_labels[param] = np.concatenate(tuple(epoch_labels[param]))
                         epoch_outputs[param] = np.concatenate(tuple(epoch_outputs[param]))
@@ -585,10 +599,15 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     """ Calculating Pred Probs """
                     # Confusion matrix has been deprecated as of June 10, 2022
                     # apply_thresh = lambda x: round(x - cfg.accuracy_thresh + 0.5)
-                    prediction_probability(nep, epoch_outputs['gw'], epoch_labels['gw'], cfg.export_dir)
+                    prediction_probability(nep, raw_output['raw'], epoch_labels['gw'], cfg.export_dir)
                     
                     """ Value VS Value Plots for PE """
                     diagonal_compare(nep, epoch_outputs, epoch_labels, validation_snrs, cfg.export_dir)
+                    
+                    """ Found Params """
+                    # Under construction!
+                    
+                    
     
             
             """
@@ -655,6 +674,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             if avg_acc_valid > best_accuracy:
                 best_accuracy = avg_acc_valid
+            
+            
             
             
             """ Epoch Display """
