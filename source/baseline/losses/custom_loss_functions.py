@@ -47,13 +47,30 @@ class LossWrapper:
 
 class BCEgw_MSEtc(LossWrapper):
     
-    def __init__(self, always_apply=True, network_snr_for_noise=False, mse_alpha=0.5, gw_criterion=None):
+    def __init__(self, always_apply=True, network_snr_for_noise=False, mse_alpha=0.5, gw_criterion=None,
+                 emphasis_threshold=0.7, noise_emphasis=False, signal_emphasis=False,
+                 fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.5):
+        
         super().__init__(always_apply)
-        assert mse_alpha >= 0.0
+        # Assertions on input params
+        assert mse_alpha >= 0.0, 'mse_alpha must be greater than 0.0'
+        assert emphasis_threshold >= 0.0, 'emphasis_threshold on pred_prob must be greater than 0.0'
+        assert emphasis_threshold <= 1.0, 'emphasis_threshold set on pred_prob value and not raw. Set value <= 1.0'
+        assert boundary_loss_alpha >= 0.0, 'boundary loss must have alpha value greater than 0.0'
+        
+        # Set generic params
         self.mse_alpha = mse_alpha
         self.network_snr_for_noise = network_snr_for_noise
         if gw_criterion == None:
             self.gw_criterion = torch.nn.BCEWithLogitsLoss()
+        
+        # Extra loss params
+        self.emphasis_threshold = emphasis_threshold
+        self.noise_emphasis = noise_emphasis
+        self.signal_emphasis = signal_emphasis
+        self.fp_boundary_loss = fp_boundary_loss
+        self.fn_boundary_loss = fn_boundary_loss
+        self.boundary_loss_alpha = boundary_loss_alpha
         
     def forward(self, outputs, targets, pe):
         # BCE to check whether the signal contains GW or is pure noise
@@ -63,10 +80,66 @@ class BCEgw_MSEtc(LossWrapper):
         losses = ['regularised_BCELoss', 'regularised_BCEWithLogitsLoss']
         if self.gw_criterion.__class__.__name__ not in losses:
             if isinstance(self.gw_criterion, torch.nn.BCEWithLogitsLoss):
-                BCEgw = self.gw_criterion(outputs['raw'], targets['gw'])
+                # Check for emphasis loss
+                if not self.noise_emphasis and not self.signal_emphasis:
+                    emphasis_loss = 0.0
+                else:
+                    # First order mask must be made using pred_prob values as raw is unbounded
+                    mask = torch.ge(outputs['pred_prob'], self.emphasis_threshold)
+                    # Get all values above the emphasis threshold for outputs and targets
+                    masked_target = torch.masked_select(targets['gw'], mask)
+                    masked_output = torch.masked_select(outputs['raw'], mask)
+                    # Create a second order mask that isolates on signal or noise
+                    if self.noise_emphasis and self.signal_emphasis:
+                        emphasis_loss = self.gw_criterion(masked_output, masked_target)
+                    elif self.noise_emphasis or self.signal_emphasis:
+                        if self.noise_emphasis:
+                            emphasise_on = 0.0
+                        elif self.signal_emphasis:
+                            emphasise_on = 1.0
+                        
+                        # Create a second order mask to emphasise on noise or signal
+                        second_order_mask = torch.eq(masked_target, emphasise_on)
+                        second_order_masked_target = torch.masked_select(masked_target, second_order_mask)
+                        second_order_masked_output = torch.masked_select(masked_output, second_order_mask)
+                        # Emphasis loss
+                        emphasis_loss = self.gw_criterion(second_order_masked_output, second_order_masked_target)
+                
+                # Check for fp or fn boundary loss
+                boundary_loss = 0.0
+                if self.fp_boundary_loss:
+                    noise_mask = torch.eq(targets['gw'], 0.0)
+                    # Get the outputs of noise
+                    masked_noise = torch.masked_select(outputs['pred_prob'], noise_mask)
+                    # Calculate the difference between 1.0 and noise stat
+                    # 1.0 - max_noise_stat must be positive and as large as possible
+                    max_noise_stat = torch.max(masked_noise)
+                    # FP boundary loss (loss will be high for high max noise stat)
+                    fp_boundary_loss = self.boundary_loss_alpha * max_noise_stat
+                    boundary_loss += fp_boundary_loss
+                
+                if self.fn_boundary_loss:
+                    signal_mask = torch.eq(targets['gw'], 1.0)
+                    # Get the outputs of noise
+                    masked_signal = torch.masked_select(outputs['pred_prob'], signal_mask)
+                    # Calculate the difference between min value of signal stat and 0.0
+                    # min_signal_stat must be positive and as large as possible
+                    min_signal_stat = torch.min(masked_signal)
+                    # FP boundary loss
+                    fn_boundary_loss = self.boundary_loss_alpha * (1.0 - min_signal_stat)
+                    boundary_loss += fn_boundary_loss
+                
+                # Total loss for GW detection
+                BCEgw = self.gw_criterion(outputs['raw'], targets['gw']) + emphasis_loss + boundary_loss
+
             elif isinstance(self.gw_criterion, torch.nn.BCELoss):
+                if self.noise_emphasis or self.signal_emphasis:
+                    raise NotImplementedError('Emphasis loss not implemented for BCELoss')
                 BCEgw = self.gw_criterion(outputs['pred_prob'], targets['gw'])
+        
         else:
+            if self.noise_emphasis or self.signal_emphasis:
+                raise NotImplementedError('Emphasis loss not implemented for regularised losses')
             loss = self.gw_criterion(outputs, targets)
             BCEgw = loss['total_loss']
         
@@ -86,7 +159,7 @@ class BCEgw_MSEtc(LossWrapper):
             masked_output = torch.masked_select(outputs[key], mask)
             assert -1 not in masked_target, 'Found invalid value (-1) in PE target!'
             # Calculating the individual PE MSE loss
-            if key == 'snr' and self.network_snr_for_noise:
+            if key == 'norm_snr' and self.network_snr_for_noise:
                 # All samples are included in the prediction of SNR (noise and signals)
                 pe_loss = self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
             else:
