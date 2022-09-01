@@ -28,7 +28,7 @@ Documentation:
     --foreground-files foreground.hdf \
     --background-events <path to output of algorithm on background data> \
     --output-file eval-output.hdf \
-    --output-dir ./
+    --output-dir ./ \
     --verbose
 
 The options mean the following
@@ -349,6 +349,7 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         
         
     max_distance = dist.max()
+    print('Maximum distance given by injections = {}'.format(max_distance))
     vtot = (4. / 3.) * np.pi * max_distance**3.
     Ninj = len(dist)
     print('Total number of injections = {}'.format(Ninj))
@@ -372,7 +373,7 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         plt.yscale('log')
         plt.grid(True, which='both')
         plt.legend()
-        plt.savefig('compare_fidxs.png')
+        plt.savefig(os.path.join(output_dir, 'compare_fidxs.png'))
         plt.close()
         
         found_mchirp_total = np.flip(found_mchirp_total)
@@ -437,7 +438,7 @@ def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, wav
     return h_plus, h_cross
 
 
-def main(raw_args):
+def main(raw_args=None):
     
     parser = argparse.ArgumentParser(description='Testing phase evaluator')
     
@@ -462,6 +463,8 @@ def main(raw_args):
                               "returned by the search on the background"
                               "data set as returned by "
                               "`generate_data.py --output-background-file`."))
+    parser.add_argument("--far-scaling-factor", help="Rescale FAR when making sensitivity plot",
+                        type=float)
     parser.add_argument('--output-file', type=str, required=True,
                         help=("Path at which to store the output HDF5 "
                               "file. (Path must end in `.hdf`)"))
@@ -537,6 +540,7 @@ def main(raw_args):
                                         fp['var']]))
     bg_events = np.concatenate(bg_events, axis=-1)
     
+    print('Duration calculated by find_injection_times = {}'.format(dur))
     stats = get_stats(fg_events, bg_events, injparams,
                       duration=dur,
                       chirp_distance=use_chirp_distance,
@@ -550,12 +554,14 @@ def main(raw_args):
             fp.create_dataset(key, data=np.array(val))
     
     # Create the sensitivity vs FAR/month plot from the output evaluation obtained
-    far_scaling_factor = 30 * 24 * 60 * 60 # seconds in a month
+    assert dur == args.far_scaling_factor, 'FAR scaling factor discrepancy! Check duration.'
     with h5py.File(args.output_file, 'r') as fp:
         far = fp['far'][()]
         sens = fp['sensitive-distance'][()]
         sidxs = far.argsort()
-        far = far[sidxs][1:] * far_scaling_factor
+        far = far[sidxs][1:] * args.far_scaling_factor
+        print('FAR values just before making sensitivity plot')
+        print(far)
         sens = sens[sidxs][1:]
         
     plt.figure(figsize=(18.0, 12.0))
