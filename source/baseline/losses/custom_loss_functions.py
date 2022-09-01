@@ -48,7 +48,7 @@ class LossWrapper:
 class BCEgw_MSEtc(LossWrapper):
     
     def __init__(self, always_apply=True, network_snr_for_noise=False, mse_alpha=0.5, gw_criterion=None,
-                 emphasis_threshold=0.7, noise_emphasis=False, signal_emphasis=False,
+                 emphasis_threshold=0.7, noise_emphasis=False, signal_emphasis=False, emphasis_alpha=0.5,
                  fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.5):
         
         super().__init__(always_apply)
@@ -68,6 +68,7 @@ class BCEgw_MSEtc(LossWrapper):
         self.emphasis_threshold = emphasis_threshold
         self.noise_emphasis = noise_emphasis
         self.signal_emphasis = signal_emphasis
+        self.emphasis_alpha = emphasis_alpha
         self.fp_boundary_loss = fp_boundary_loss
         self.fn_boundary_loss = fn_boundary_loss
         self.boundary_loss_alpha = boundary_loss_alpha
@@ -102,8 +103,13 @@ class BCEgw_MSEtc(LossWrapper):
                         second_order_mask = torch.eq(masked_target, emphasise_on)
                         second_order_masked_target = torch.masked_select(masked_target, second_order_mask)
                         second_order_masked_output = torch.masked_select(masked_output, second_order_mask)
-                        # Emphasis loss
-                        emphasis_loss = self.gw_criterion(second_order_masked_output, second_order_masked_target)
+                        ## Emphasis loss
+                        # Sanity check (if no noise values above threshold)
+                        if len(second_order_masked_target) == 0:
+                            emphasis_loss = 0.0
+                        else:
+                            emphasis_loss = self.gw_criterion(second_order_masked_output, second_order_masked_target)
+                            emphasis_loss = self.emphasis_alpha * emphasis_loss
                 
                 # Check for fp or fn boundary loss
                 boundary_loss = 0.0
