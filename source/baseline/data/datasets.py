@@ -451,8 +451,7 @@ class MLMDC1(Dataset):
         all_targets.update(aug_labels)
         
         # Add sample params to all_targets variable
-        all_targets['params'] = {}
-        all_targets['params']['snr'] = network_snr
+        all_targets['snr'] = network_snr
         
         ## Plotting
         if self.debug:
