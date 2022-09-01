@@ -384,6 +384,7 @@ class MLMDC1(Dataset):
             if self.cfg.network_snr_for_noise:
                 raise NotImplementedError('SNR for noise samples under construction!')
                 network_snr = get_network_snr(sample, self.psds_data, params, None, False)
+                norm_snr = self.norm_snr.norm(network_snr)
             else:
                 network_snr = -1
                 norm_snr = -1
@@ -443,12 +444,15 @@ class MLMDC1(Dataset):
         # Storing target as dictionaries
         all_targets = {}
         all_targets['norm_snr'] = norm_snr
-        all_targets['snr'] = network_snr
         all_targets.update(targets)
         
         # Update parameter labels if augmentation changed them
         # aug_labels must have the same keys as targets dict
         all_targets.update(aug_labels)
+        
+        # Add sample params to all_targets variable
+        all_targets['params'] = {}
+        all_targets['params']['snr'] = network_snr
         
         ## Plotting
         if self.debug:
