@@ -326,15 +326,18 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                 with torch.no_grad():
                     testing_output = Network(slice_batch.to(dtype=dtype, device=device))
                     # Get required output values from dictionary
-                    pred_prob = testing_output['pred_prob']
+                    # Use raw values here as sigmoid tends to lose dynamic range
+                    raw_values = testing_output['raw']
                     # Get a boolean vector of output values greater than the trigger threshold
-                    trigger_bools = torch.gt(pred_prob, trigger_threshold)
+                    trigger_bools = torch.gt(raw_values, trigger_threshold)
                     
-                for slice_time, trigger_bool, output_value in zip(slice_times, trigger_bools, pred_prob):
+                for slice_time, trigger_bool, output_value in zip(slice_times, trigger_bools, raw_values):
                     if trigger_bool.clone().cpu().item():
                         triggers.append([slice_time.clone().cpu().item(), output_value.clone().cpu().item()])
         
         print("A total of {} slices have exceeded the threshold of {}".format(len(triggers), trigger_threshold))
+        _triggers = np.array(triggers)
+        print('raw values of output: max = {}, min = {}'.format(max(_triggers[:,1]), min(_triggers[:,1])))
     
     return triggers
 
@@ -502,6 +505,7 @@ if __name__ == "__main__":
     raw_args += ['--foreground-events', os.path.join(cfg.testing_dir, cfg.test_foreground_output)]
     raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
     raw_args += ['--background-events', os.path.join(cfg.testing_dir, cfg.test_background_output)]
+    raw_args += ['--far-scaling-factor', float(cfg.far_scaling_factor)]
     out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
     raw_args += ['--output-file', out_eval]
     raw_args += ['--output-dir', output_testing_dir]
