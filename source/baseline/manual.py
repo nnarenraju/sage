@@ -472,7 +472,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 # Update params
                 params['scheduler_step'] = nep + nstep / num_train_batches
-                params['network_snr'] = training_labels['params']['snr']
+                params['network_snr'] = training_labels['snr']
                 
                 # Record time taken for training
                 start_train = time.time()
@@ -574,7 +574,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     # Params for storing labels and outputs
                     if nep % cfg.save_freq == 0:
                         # Save SNRs for the validation phase (used in diagonal plots)
-                        validation_snrs.append(validation_labels['params']['snr'].cpu())
+                        validation_snrs.append(validation_labels['snr'].cpu())
                         # Move labels from cuda to cpu
                         epoch_labels['gw'].append(validation_labels['gw'].cpu())
                         epoch_outputs['gw'].append(voutput['pred_prob'].cpu().detach().numpy())
