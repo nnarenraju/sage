@@ -438,7 +438,7 @@ def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, wav
     return h_plus, h_cross
 
 
-def main(raw_args=None):
+def main(raw_args=None, cfg_far_scaling_factor=None):
     
     parser = argparse.ArgumentParser(description='Testing phase evaluator')
     
@@ -464,7 +464,7 @@ def main(raw_args=None):
                               "data set as returned by "
                               "`generate_data.py --output-background-file`."))
     parser.add_argument("--far-scaling-factor", help="Rescale FAR when making sensitivity plot",
-                        type=float)
+                        type=float, required=False, default=-1.0)
     parser.add_argument('--output-file', type=str, required=True,
                         help=("Path at which to store the output HDF5 "
                               "file. (Path must end in `.hdf`)"))
@@ -492,6 +492,11 @@ def main(raw_args=None):
     if os.path.isfile(args.output_file) and not args.force:
         raise IOError(f'The file {args.output_file} already exists. '
                       'Set the flag `force` to overwrite it.')
+    
+    if args.far_scaling_factor == -1:
+        far_scaling_factor = cfg_far_scaling_factor
+    else:
+        far_scaling_factor = args.far_scaling_factor
     
     # Find indices contained in foreground 
     print("\nRunning Testing Phase Evaluator")
@@ -554,12 +559,12 @@ def main(raw_args=None):
             fp.create_dataset(key, data=np.array(val))
     
     # Create the sensitivity vs FAR/month plot from the output evaluation obtained
-    assert dur == args.far_scaling_factor, 'FAR scaling factor discrepancy! Check duration.'
+    assert dur == far_scaling_factor, 'FAR scaling factor discrepancy! Check duration.'
     with h5py.File(args.output_file, 'r') as fp:
         far = fp['far'][()]
         sens = fp['sensitive-distance'][()]
         sidxs = far.argsort()
-        far = far[sidxs][1:] * args.far_scaling_factor
+        far = far[sidxs][1:] * far_scaling_factor
         print('FAR values just before making sensitivity plot')
         print(far)
         sens = sens[sidxs][1:]
