@@ -483,7 +483,7 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Sept1"
+    name = "KaggleFirst_Sept3"
     export_dir = Path("/home/nnarenraju/Research") / name
     save_remarks = 'Improve-Sensitivity-noiseEmphasis'
     
@@ -508,7 +508,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     )
     
     """ Epochs and Batches """
-    num_epochs = 25
+    num_epochs = 10
     batch_size = 1000
     save_freq = 1
     
@@ -535,13 +535,13 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # All parameter estimation is done only using MSE loss at the moment
     loss_function = BCEgw_MSEtc(mse_alpha=5.0, network_snr_for_noise=False, gw_criterion=None, 
-                                emphasis_threshold=0.7, noise_emphasis=True, signal_emphasis=False, emphasis_alpha=0.5,
-                                fp_boundary_loss=True, fn_boundary_loss=False, boundary_loss_alpha=0.5)
+                                emphasis_threshold=0.7, noise_emphasis=True, signal_emphasis=False, emphasis_alpha=0.2,
+                                fp_boundary_loss=True, fn_boundary_loss=False, boundary_loss_alpha=0.33)
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
-    rescaled_snr_lower = 0.01
-    rescaled_snr_upper = 25.0
+    rescaled_snr_lower = 1.0
+    rescaled_snr_upper = 15.0
     
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
