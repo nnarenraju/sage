@@ -92,7 +92,10 @@ class BCEgw_MSEtc(LossWrapper):
                     masked_output = torch.masked_select(outputs['raw'], mask)
                     # Create a second order mask that isolates on signal or noise
                     if self.noise_emphasis and self.signal_emphasis:
-                        emphasis_loss = self.gw_criterion(masked_output, masked_target)
+                        if len(masked_target) == 0:
+                            emphasis_loss = 0.0
+                        else:
+                            emphasis_loss = self.gw_criterion(masked_output, masked_target)
                     elif self.noise_emphasis or self.signal_emphasis:
                         if self.noise_emphasis:
                             emphasise_on = 0.0
