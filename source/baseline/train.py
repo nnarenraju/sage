@@ -260,14 +260,13 @@ def run_trainer():
         raw_args += ['--foreground-events', os.path.join(output_testing_dir, cfg.test_foreground_output)]
         raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
         raw_args += ['--background-events', os.path.join(output_testing_dir, cfg.test_background_output)]
-        raw_args += ['--far-scaling-factor', float(cfg.far_scaling_factor)]
         out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
         raw_args += ['--output-file', out_eval]
         raw_args += ['--output-dir', output_testing_dir]
         raw_args += ['--verbose']
         
         # Running the evaluator to obtain output triggers (with clustering)
-        evaluator(raw_args)
+        evaluator(raw_args, far_scaling_factor=float(cfg.far_scaling_factor))
         
         
         
