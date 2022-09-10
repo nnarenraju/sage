@@ -130,7 +130,7 @@ def roc_curve(nep, output, labels, export_dir):
 
 def prediction_probability(nep, output, labels, export_dir):
     # Save (append) the above list of lists to CSV file
-    save_dir = os.path.join(export_dir, "PRED_PROB")
+    save_dir = os.path.join(export_dir, "PRED_RAW")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=False)
     
@@ -142,19 +142,19 @@ def prediction_probability(nep, output, labels, export_dir):
     raw_tn = mx[mx.mask == False].data
     
     # Diffference between noise and signal stats
-    boundary_diff = np.around(max(raw_tp) - max(raw_tn), 5)
+    boundary_diff = np.around(max(raw_tp) - max(raw_tn), 3)
     
     # Plotting routine
-    ax, _ = figure(title="Raw output at Epoch = {}, fp_diff = {}".format(nep, boundary_diff))
+    ax, _ = figure(title="Raw output at Epoch = {}, max signal stat - max noise stat = {}".format(nep, boundary_diff))
     # Log pred probs
     _plot(ax, y=raw_tp, label="Signals", c='red', 
-          ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
+          ylabel="log10 Number of Occurences", xlabel="Raw Output Values", 
           yscale='log', histogram=True)
     _plot(ax, y=raw_tn, label="Noise", c='blue', 
-          ylabel="log10 Number of Occurences", xlabel="Predicted Probabilities", 
+          ylabel="log10 Number of Occurences", xlabel="Raw Output Values", 
           yscale='log', histogram=True)
     
-    save_path = os.path.join(save_dir, "log_pred_prob_{}.png".format(nep))
+    save_path = os.path.join(save_dir, "log_raw_output_{}.png".format(nep))
     plt.savefig(save_path)
     plt.close()
 
@@ -604,10 +604,6 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     """ Value VS Value Plots for PE """
                     diagonal_compare(nep, epoch_outputs, epoch_labels, validation_snrs, cfg.export_dir)
                     
-                    """ Found Params """
-                    # Under construction!
-                    
-                    
     
             
             """
@@ -664,16 +660,81 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             loss_and_accuracy_curves(cfg, loss_filepath, cfg.export_dir)
             
+            
             """ Save the best weights (if global loss reduces) """
             if epoch_validation_loss['tot'] < best_loss:
                 weights_save_path = os.path.join(cfg.export_dir, cfg.weights_path)
                 torch.save(Network.state_dict(), weights_save_path)
                 best_loss = epoch_validation_loss['tot']
-                best_epoch = nep
-                best_roc_data = [fpr, tpr, roc_auc]
+                if cfg.save_best_option == 'loss':
+                    best_epoch = nep
             
             if avg_acc_valid > best_accuracy:
+                weights_name = ""
                 best_accuracy = avg_acc_valid
+                if cfg.save_best_option == 'accuracy':
+                    best_epoch = nep
+            
+            if roc_auc > best_roc_auc:
+                weights_name = ""
+                best_roc_auc = roc_auc
+                best_roc_data = [fpr, tpr, roc_auc]
+                if cfg.save_best_option == 'roc_auc':
+                    best_epoch = nep
+            
+            # Get raw values from output
+            mx1 = np.ma.masked_array(raw_output['raw'], mask=epoch_labels['gw'])
+            # For labels == signal, true positive
+            raw_tp = mx1[mx1.mask == True].data
+            # For labels == noise, true negative
+            raw_tn = mx1[mx1.mask == False].data
+            
+            # Get pred probs for output
+            # Pred probs == signal
+            mx2 = np.ma.masked_array(epoch_outputs['gw'], mask=epoch_labels['gw'])
+            pred_prob_tp = mx2[mx2.mask == True].data
+            pred_prob_tn = mx2[mx2.mask == False].data
+            
+            if nep == 0:
+                lowest_max_noise_stat = max(raw_tn)
+                lowest_min_noise_stat = min(raw_tn)
+                highest_max_signal_stat = max(raw_tp)
+                highest_min_signal_stat = min(raw_tp)
+                best_noise_stats = min(pred_prob_tn) + max(pred_prob_tn)
+                best_signal_stats = min(pred_prob_tp) + max(pred_prob_tp)
+                best_stat_compromise = (best_noise_stats - 0.0)**2. + (best_signal_stats - 2.0)**2.
+            else:
+                if max(raw_tn) < lowest_max_noise_stat:
+                    weights_name = ""
+                    lowest_max_noise_stat = max(raw_tn)
+                
+                if min(raw_tn) < lowest_min_noise_stat:
+                    weights_name = ""
+                    lowest_min_noise_stat = min(raw_tn)
+                
+                if max(raw_tp) > highest_max_signal_stat:
+                    weights_name = ""
+                    highest_max_signal_stat = max(raw_tp)
+                
+                if min(raw_tp) > highest_min_signal_stat:
+                    weights_name = ""
+                    highest_min_signal_stat = min(raw_tp)
+                
+                if min(pred_prob_tn) + max(pred_prob_tn) < best_noise_stats:
+                    weights_name = ""
+                    best_noise_stats = min(pred_prob_tn) + max(pred_prob_tn)
+                
+                if min(pred_prob_tp) + max(pred_prob_tp) > best_signal_stats:
+                    weights_name = ""
+                    best_signal_stats = min(pred_prob_tp) + max(pred_prob_tp)
+                
+                if (best_noise_stats - 0.0)**2. + (best_signal_stats - 2.0)**2. < best_stat_compromise:
+                    weights_name = ""
+                    best_stat_compromise = (best_noise_stats - 0.0)**2. + (best_signal_stats - 2.0)**2.
+            
+            
+            
+            
             
             
             
@@ -734,8 +795,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     np.save(os.path.join(best_dir, 'roc_auc_best.npy'), np.array(best_roc_data[2]))
     
     # Best prediction probabilities
-    pred_dir = 'PRED_PROB'
-    pred_file = "log_pred_prob_{}.png".format(best_epoch)
+    pred_dir = 'PRED_RAW'
+    pred_file = "log_raw_output_{}.png".format(best_epoch)
     pred_path = os.path.join(cfg.export_dir, os.path.join(pred_dir, pred_file))
     shutil.copy(pred_path, os.path.join(best_dir, pred_file))
     
