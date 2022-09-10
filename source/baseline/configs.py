@@ -205,6 +205,9 @@ class KaggleFirst:
     num_sample_save = 100
     early_stopping = False
     
+    # Saving weights
+    save_best_option = 'loss'
+    
     """ Dataloader params """
     num_workers = 0
     pin_memory = False
@@ -546,6 +549,12 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
     network_snr_for_noise = False
+    
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 100
+    persistent_workers = True
     
     """ Testing Phase """
     testing_dir = "/local/scratch/igr/nnarenraju/testing_32000"
