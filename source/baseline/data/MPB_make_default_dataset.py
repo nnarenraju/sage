@@ -360,7 +360,8 @@ class GenerateData:
         """ Set the random seed for this iteration here """
         # Deprecation: This seed is not longer used to create priors. 
         # We can however, use this for selecting the queue to deposit data.
-        np.random.seed(int(idx+1))
+        seed = int(idx+1)
+        np.random.seed(seed)
         
         """ Obtain sample """
         is_waveform = idx < self.num_waveforms
@@ -370,7 +371,7 @@ class GenerateData:
             ## Generate noise
             if self.dataset == 1:
                 maxlen = round(self.sample_length_in_num)
-                noise = [self.noise_generator(psd).to_timeseries()[:maxlen]
+                noise = [self.noise_generator(psd, seed=seed).to_timeseries()[:maxlen]
                           for psd in self.psds]
                 
                 assert len(noise[0]) == maxlen
