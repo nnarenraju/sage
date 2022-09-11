@@ -482,6 +482,7 @@ if __name__ == "__main__":
     weights_path = os.path.join(best_dir, cfg.weights_path)
     Network = cfg.model(**cfg.model_params)
     Network.load_state_dict(torch.load(weights_path))
+    Network.eval()
     
     testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
     evalfile = os.path.join(cfg.testing_dir, cfg.test_foreground_output)
