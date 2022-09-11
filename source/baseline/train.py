@@ -266,7 +266,7 @@ def run_trainer():
         raw_args += ['--verbose']
         
         # Running the evaluator to obtain output triggers (with clustering)
-        evaluator(raw_args, far_scaling_factor=float(cfg.far_scaling_factor))
+        evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor))
         
         
         
