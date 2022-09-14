@@ -25,6 +25,7 @@ Documentation: NULL
 
 # IN-BUILT
 import torch
+import numpy as np
 
 
 """ WRAPPERS """
@@ -47,9 +48,15 @@ class LossWrapper:
 
 class BCEgw_MSEtc(LossWrapper):
     
-    def __init__(self, always_apply=True, network_snr_for_noise=False, mse_alpha=0.5, gw_criterion=None,
-                 emphasis_threshold=0.7, noise_emphasis=False, signal_emphasis=False, emphasis_alpha=0.5,
-                 fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.5):
+    def __init__(self, always_apply=True, gw_criterion=None,
+                 network_snr_for_noise=False, mse_alpha=0.5,
+                 emphasis_threshold=0.7, noise_emphasis=False, signal_emphasis=False, 
+                 emphasis_alpha=0.5, emphasis_type='pred_prob',
+                 fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.5,
+                 overlap_loss=False, overlap_alpha=0.5, 
+                 detectable_snr_loss=False, detectable_snr_thresh=8.0, detectable_snr_alpha=0.5,
+                 fp_signal_area_loss=False, fp_signal_area_alpha=0.5,
+                 fp_noise_area_loss=False, fp_noise_area_percentage=None, fp_noise_area_alpha=0.5):
         
         super().__init__(always_apply)
         # Assertions on input params
@@ -64,14 +71,32 @@ class BCEgw_MSEtc(LossWrapper):
         if gw_criterion == None:
             self.gw_criterion = torch.nn.BCEWithLogitsLoss()
         
-        # Extra loss params
+        ### Extra loss params
+        # Emphasis Loss
         self.emphasis_threshold = emphasis_threshold
         self.noise_emphasis = noise_emphasis
         self.signal_emphasis = signal_emphasis
         self.emphasis_alpha = emphasis_alpha
+        self.emphasis_type = emphasis_type
+        # Boundary Loss
         self.fp_boundary_loss = fp_boundary_loss
         self.fn_boundary_loss = fn_boundary_loss
         self.boundary_loss_alpha = boundary_loss_alpha
+        # Overlap Loss
+        self.overlap_loss = overlap_loss
+        self.overlap_alpha = overlap_alpha
+        # Detectable SNR Loss
+        self.detectable_snr_loss = self.detectable_snr_loss
+        self.detectable_snr_thresh = detectable_snr_thresh
+        self.detectable_snr_alpha = detectable_snr_alpha
+        # FP Signal Area Loss
+        self.fp_signal_area_loss = fp_signal_area_loss
+        self.fp_signal_area_alpha = fp_signal_area_alpha
+        # FP Noise Area Loss
+        self.fp_noise_area_loss = fp_noise_area_loss
+        self.fp_noise_area_percentage = fp_noise_area_percentage
+        self.fp_noise_area_alpha = fp_noise_area_alpha
+        
         
     def forward(self, outputs, targets, pe):
         # BCE to check whether the signal contains GW or is pure noise
@@ -81,12 +106,21 @@ class BCEgw_MSEtc(LossWrapper):
         losses = ['regularised_BCELoss', 'regularised_BCEWithLogitsLoss']
         if self.gw_criterion.__class__.__name__ not in losses:
             if isinstance(self.gw_criterion, torch.nn.BCEWithLogitsLoss):
-                # Check for emphasis loss
+                
+                """ Loss Function Bits and Bobs """
+                ### Check for emphasis loss
                 if not self.noise_emphasis and not self.signal_emphasis:
                     emphasis_loss = 0.0
                 else:
                     # First order mask must be made using pred_prob values as raw is unbounded
-                    mask = torch.ge(outputs['pred_prob'], self.emphasis_threshold)
+                    if self.emphasis_type == 'pred_prob':
+                        _check = outputs['pred_prob']
+                    elif self.emphasis_type == 'raw':
+                        _check = outputs['raw']
+                    else:
+                        raise ValueError('Emphasis type in custom loss function is invalid!')
+                        
+                    mask = torch.ge(_check, self.emphasis_threshold)
                     # Get all values above the emphasis threshold for outputs and targets
                     masked_target = torch.masked_select(targets['gw'], mask)
                     masked_output = torch.masked_select(outputs['raw'], mask)
@@ -114,7 +148,7 @@ class BCEgw_MSEtc(LossWrapper):
                             emphasis_loss = self.gw_criterion(second_order_masked_output, second_order_masked_target)
                             emphasis_loss = self.emphasis_alpha * emphasis_loss
                 
-                # Check for fp or fn boundary loss
+                ### Check for fp or fn boundary loss
                 boundary_loss = 0.0
                 if self.fp_boundary_loss:
                     noise_mask = torch.eq(targets['gw'], 0.0)
@@ -138,8 +172,71 @@ class BCEgw_MSEtc(LossWrapper):
                     fn_boundary_loss = self.boundary_loss_alpha * (1.0 - min_signal_stat)
                     boundary_loss += fn_boundary_loss
                 
-                # Total loss for GW detection
-                BCEgw = self.gw_criterion(outputs['raw'], targets['gw']) + emphasis_loss + boundary_loss
+                ### Check for overlap loss
+                overlap_loss = 0.0
+                if self.overlap_loss:
+                    noise_mask = torch.eq(targets['gw'], 0.0)
+                    signal_mask = torch.eq(targets['gw'], 1.0)
+                    # Get the outputs of noise and signals
+                    masked_noise = torch.masked_select(outputs['raw'], noise_mask)
+                    masked_signal = torch.masked_select(outputs['raw'], signal_mask)
+                    # Histogram data for noise and signals
+                    Hn = torch.histogram(masked_noise, bins=50, density=True)
+                    Hs = torch.histogram(masked_signal, bins=50, density=True)
+                    # Calculate normalised area of overlap [0, 1] +/- epsilon
+                    overlap_area = torch.sum(torch.min(Hn[0], Hs[0])) * (Hn[1][1:]-Hn[1][:-1])[0]
+                    # Use this normalised area of overlap as a loss value
+                    overlap_loss = overlap_area * self.overlap_alpha
+                
+                ### All signals above SNR 8.0 should be to the right of max value of noise
+                dsnr_loss = 0.0
+                if self.detectable_snr_loss:
+                    snr_mask = torch.gt(targets['snr'], self.detectable_snr_thresh)
+                    detectable_snr_masked_output = torch.masked_select(outputs['raw'], snr_mask)
+                    detectable_snr_masked_targets = torch.masked_select(targets['gw'], snr_mask)
+                    dsnr_loss = self.gw_criterion(detectable_snr_masked_output, detectable_snr_masked_targets)
+                    dsnr_loss = dsnr_loss * self.detectable_snr_alpha
+                
+                ### Area of signal histogram above max value of noise must increase
+                fp_signal_area_loss = 0.0
+                if self.fp_signal_area_loss:
+                    noise_mask = torch.eq(targets['gw'], 0.0)
+                    signal_mask = torch.eq(targets['gw'], 1.0)
+                    masked_noise = torch.masked_select(outputs['raw'], noise_mask)
+                    masked_signal = torch.masked_select(outputs['raw'], signal_mask)
+                    # Histogram data
+                    Hn = torch.histogram(masked_noise, bins=50, density=True)
+                    Hs = torch.histogram(masked_signal, bins=50, density=True)
+                    # Get histogram values of signal above max value of noise
+                    noise_argmax = np.argmax(Hn[1])
+                    fp_signal_area = torch.sum(Hs[0][Hs[1] > Hn[1][noise_argmax]]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                    fp_signal_area_loss = (1.0 - fp_signal_area) * self.fp_signal_area_alpha
+                
+                ### Area of noise histogram above threshold should decrease
+                fp_noise_area_loss = 0.0
+                if self.fp_noise_area_loss:
+                    noise_mask = torch.eq(targets['gw'], 0.0)
+                    masked_noise = torch.masked_select(outputs['raw'], noise_mask)
+                    # Histogram data
+                    Hn = torch.histogram(masked_noise, bins=50, density=True)
+                    # Get histogram values of noise above thresh value of noise
+                    thresh_dist = self.fp_noise_area_percentage * (torch.max(Hn[1]) - torch.min(Hn[1]))
+                    thresh = torch.min(Hn[1]) + thresh_dist
+                    fp_noise_area = torch.sum(Hn[0][Hn[1] > thresh]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                    fp_noise_area_loss = fp_noise_area * self.fp_noise_area_alpha
+                
+                ### Add a normalised distance metric for the two histograms and maximise that
+                
+                ### More weightage to signals that are longer
+                
+                ### If signal seems to be in one detector and not in the other, weight less
+                
+                
+                
+                """ Total loss for GW detection """
+                bits_and_bobs_loss = emphasis_loss + boundary_loss + overlap_loss 
+                bits_and_bobs_loss += dsnr_loss + fp_signal_area_loss + fp_noise_area_loss
+                BCEgw = self.gw_criterion(outputs['raw'], targets['gw']) + bits_and_bobs_loss
 
             elif isinstance(self.gw_criterion, torch.nn.BCELoss):
                 if self.noise_emphasis or self.signal_emphasis:
@@ -153,6 +250,7 @@ class BCEgw_MSEtc(LossWrapper):
             BCEgw = loss['total_loss']
         
         custom_loss['gw'] = BCEgw
+        
         
         """
         MSE - Mean Squared Error Loss
@@ -177,6 +275,7 @@ class BCEgw_MSEtc(LossWrapper):
             custom_loss[key] = pe_loss
             MSEpe += pe_loss
         
+        
         """ 
         CUSTOM LOSS FUNCTION
         L = BCE(P_0) + alpha * MSE(P_1)
@@ -184,6 +283,7 @@ class BCEgw_MSEtc(LossWrapper):
         custom_loss['total_loss'] = BCEgw + MSEpe
         
         return custom_loss
+
 
 
 class regularised_BCELoss(torch.nn.BCELoss):
@@ -207,6 +307,7 @@ class regularised_BCELoss(torch.nn.BCELoss):
         custom_loss['total_loss'] = torch.nn.BCELoss.forward(self, transformed_input, targets, *args, **kwargs)
         custom_loss['gw'] = custom_loss['total_loss']
         return custom_loss
+
 
 
 class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
