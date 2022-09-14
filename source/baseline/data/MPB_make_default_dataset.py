@@ -371,7 +371,7 @@ class GenerateData:
             ## Generate noise
             if self.dataset == 1:
                 maxlen = round(self.sample_length_in_num)
-                noise = [self.noise_generator(psd, seed=seed).to_timeseries()[:maxlen]
+                noise = [self.noise_generator(psd).to_timeseries()[:maxlen]
                           for psd in self.psds]
                 
                 assert len(noise[0]) == maxlen
