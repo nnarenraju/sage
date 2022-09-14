@@ -86,7 +86,7 @@ class BCEgw_MSEtc(LossWrapper):
         self.overlap_loss = overlap_loss
         self.overlap_alpha = overlap_alpha
         # Detectable SNR Loss
-        self.detectable_snr_loss = self.detectable_snr_loss
+        self.detectable_snr_loss = detectable_snr_loss
         self.detectable_snr_thresh = detectable_snr_thresh
         self.detectable_snr_alpha = detectable_snr_alpha
         # FP Signal Area Loss
