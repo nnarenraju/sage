@@ -537,9 +537,15 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(mse_alpha=5.0, network_snr_for_noise=False, gw_criterion=None, 
-                                emphasis_threshold=0.7, noise_emphasis=True, signal_emphasis=False, emphasis_alpha=0.2,
-                                fp_boundary_loss=True, fn_boundary_loss=False, boundary_loss_alpha=0.33)
+    loss_function = BCEgw_MSEtc(gw_criterion=None,
+                                network_snr_for_noise=False, mse_alpha=5.0,
+                                emphasis_threshold=0.5, noise_emphasis=True, signal_emphasis=True, 
+                                emphasis_alpha=0.6, emphasis_type='pred_prob',
+                                fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.2,
+                                overlap_loss=False, overlap_alpha=0.5, 
+                                detectable_snr_loss=False, detectable_snr_thresh=8.0, detectable_snr_alpha=0.5,
+                                fp_signal_area_loss=False, fp_signal_area_alpha=0.5,
+                                fp_noise_area_loss=False, fp_noise_area_percentage=None, fp_noise_area_alpha=0.5)
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
