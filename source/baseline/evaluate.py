@@ -167,6 +167,33 @@ def mchirp(mass1, mass2):
     return (mass1 * mass2) ** (3. / 5.) / (mass1 + mass2) ** (1. / 5.)
 
 
+def figure(title=""):
+    plt.rc('font', family='serif')
+    plt.rc('xtick', labelsize='medium')
+    plt.rc('ytick', labelsize='medium')
+    fig, axs = plt.subplots(1, figsize=(16.0, 14.0))
+    fig.suptitle(title, fontsize=28, y=0.92)
+    return axs, fig
+
+
+def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid', 
+          label="", c=None, yscale='linear', xscale='linear', histogram=False):
+    
+    # Plotting type
+    if histogram:
+        ax.hist(y, bins=100, label=label, alpha=0.8)
+    else:
+        ax.plot(x, y, ls=ls, c=c, linewidth=3.0, label=label)
+    
+    # Plotting params
+    ax.set_xscale(xscale)
+    ax.set_yscale(yscale)
+    ax.grid(True, which='both')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.legend()
+
+
 def get_stats(fgevents, bgevents, injparams, duration=None,
               chirp_distance=False, output_dir=None):
     """Calculate the false-alarm rate and sensitivity of a search
@@ -265,7 +292,7 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     logging.info('Calculating background FAR')
     noise_stats = bgevents[1].copy()
     noise_stats.sort()
-    print('ranking statistics for true positive events')
+    print('ranking statistics for true negative events')
     print('max = {}, min = {}, mean = {}, median = {}'.format(max(noise_stats), min(noise_stats), np.mean(noise_stats), np.median(noise_stats)))
     far = len(noise_stats) - np.arange(len(noise_stats)) - 1
     far = far / duration
@@ -308,21 +335,29 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         
         mchirp_max = massc.max()
         
+        ### Get the thresholds for different false alarm rates
+        # For a month-long testing dataset these should give FAR per month, per week and per day
+        far_thresholds = noise_stats[::-1][[0, 4, 30]]
+        thresh_names = ['month', 'week', 'day']
+        # How many signals are present above given threshold?
+        far_found_idx = {thresh_names[n]: found_injections[0][found_injections[1] > thresh] for n, thresh in enumerate(far_thresholds)}
+        
         ## Plotting the comparison plots (injections and found histogram) for all params 
         # cmap = cm.get_cmap('RdYlBu_r', 10)
         for param in injparams.keys():
             all_param = injparams[param]
-            found_param = all_param[found_injections[0].astype(int)]
-            # Plotting the overlap histograms of all and found data
-            plt.figure(figsize=(12.0, 12.0))
-            plt.title('Comparing testing data with found signals - {}'.format(param))
-            plt.hist(all_param, bins=100, label='{}-all'.format(param), alpha=0.8)
-            plt.hist(found_param, bins=100, label='{}-found'.format(param), alpha=0.8)
-            plt.grid(True, which='both')
-            plt.xlabel('{}'.format(param))
-            plt.ylabel('Number of Occurences')
-            plt.savefig(os.path.join(output_dir, '{}-compare.png'.format(param)))
-            plt.close()
+            for key, value in far_found_idx.items():
+                found_param = all_param[value.astype(int)]
+                # Plotting the overlap histograms of all and found data
+                plt.figure(figsize=(12.0, 12.0))
+                plt.title('Injected vs Found (FAR = 1/{}) - {}'.format(key, param))
+                plt.hist(all_param, bins=100, label='{}-all'.format(param), alpha=0.8)
+                plt.hist(found_param, bins=100, label='{}-found'.format(param), alpha=0.8)
+                plt.grid(True, which='both')
+                plt.xlabel('{}'.format(param))
+                plt.ylabel('Number of Occurences')
+                plt.savefig(os.path.join(output_dir, '{}-compare_FAR_1per{}.png'.format(param, key)))
+                plt.close()
         
         ## Other related plots
         plt.figure(figsize=(12.0, 12.0))
@@ -346,6 +381,18 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         plt.ylabel('Mass Ratio (m1/m2)')
         plt.savefig(os.path.join(output_dir, 'mchirp_vs_q.png'))
         plt.close()
+        
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('mchirp vs dchirp')
+        param_1 = injparams['mchirp'][found_injections[0].astype(int)]
+        param_2 = injparams['chirp_distance'][found_injections[0].astype(int)]
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('Chirp Mass')
+        plt.ylabel('Chirp Distance')
+        plt.savefig(os.path.join(output_dir, 'mchirp_vs_dchirp.png'))
+        plt.close()
+        
         
         
     max_distance = dist.max()
@@ -375,6 +422,33 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         plt.legend()
         plt.savefig(os.path.join(output_dir, 'compare_fidxs.png'))
         plt.close()
+        
+        # Making the parameter learning plots
+        source_params = {key: injparams[key][found_injections[0].astype(int)] for key in injparams.keys()}
+        lf = 20.0 # Hz
+        source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * source_params['mchirp']**(-5./3.)
+        predicted_outputs = found_injections[1]
+        save_name='raw_value'
+        # Create overlapping bins for the source_params and get the average value of predicted outputs
+        bin_width = 1000 # samples
+        overlap = 100 # samples
+        for key in source_params.keys():
+            # Sort the source_params for the particular key alongside the predicted outputs
+            assert len(source_params[key]) == len(predicted_outputs)
+            zipped = zip(source_params[key], predicted_outputs)
+            zsorted = np.array(sorted(zipped, key=lambda x: x[0]))
+            # Get the plotting data by averaging output in overlapping bins
+            overlap_range = range(0, len(zsorted), overlap)
+            plot = [[zsorted[:,0][idx], np.mean(zsorted[:,1][idx:idx+bin_width])] for idx in overlap_range]
+            plot = np.array(plot)
+            # Plotting the above data for the given parameter
+            ax, fig = figure(title="Learning {}".format(key))
+            _plot(ax, x=plot[:,0], y=plot[:,1], xlabel="key", ylabel="save_name", ls='solid', 
+                      label="", c='blue', yscale='linear', xscale='linear', histogram=False)
+            # Saving the plot in export_dir
+            save_path = 'learning_{}_{}.png'.format(save_name, key)
+            plt.savefig(save_path)
+            plt.close()
         
         found_mchirp_total = np.flip(found_mchirp_total)
         
