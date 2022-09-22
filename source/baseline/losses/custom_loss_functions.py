@@ -25,7 +25,6 @@ Documentation: NULL
 
 # IN-BUILT
 import torch
-import numpy as np
 
 
 """ WRAPPERS """
@@ -96,7 +95,21 @@ class BCEgw_MSEtc(LossWrapper):
         self.fp_noise_area_loss = fp_noise_area_loss
         self.fp_noise_area_percentage = fp_noise_area_percentage
         self.fp_noise_area_alpha = fp_noise_area_alpha
-        
+    
+    
+    def histogram(self, xs, bins, density=False):
+        # Like torch.histogram, but works with cuda
+        _min, _max = xs.min().item(), xs.max().item()
+        cuda0 = torch.device('cuda:0')
+        xs = xs.to(cuda0, torch.float32)
+        n = torch.histc(xs, bins, min=_min, max=_max)
+        bin_edges = torch.linspace(_min, _max, bins + 1)
+        bin_edges = bin_edges.to(cuda0, torch.float32)
+        if density:
+            db = torch.diff(bin_edges)
+            return n/db/n.sum(), bin_edges
+        return n, bin_edges
+
         
     def forward(self, outputs, targets, pe):
         # BCE to check whether the signal contains GW or is pure noise
@@ -181,8 +194,8 @@ class BCEgw_MSEtc(LossWrapper):
                     masked_noise = torch.masked_select(outputs['raw'], noise_mask)
                     masked_signal = torch.masked_select(outputs['raw'], signal_mask)
                     # Histogram data for noise and signals
-                    Hn = torch.histogram(masked_noise, bins=50, density=True)
-                    Hs = torch.histogram(masked_signal, bins=50, density=True)
+                    Hn = self.histogram(masked_noise, bins=50, density=True)
+                    Hs = self.histogram(masked_signal, bins=50, density=True)
                     # Calculate normalised area of overlap [0, 1] +/- epsilon
                     overlap_area = torch.sum(torch.min(Hn[0], Hs[0])) * (Hn[1][1:]-Hn[1][:-1])[0]
                     # Use this normalised area of overlap as a loss value
@@ -197,6 +210,15 @@ class BCEgw_MSEtc(LossWrapper):
                     dsnr_loss = self.gw_criterion(detectable_snr_masked_output, detectable_snr_masked_targets)
                     dsnr_loss = dsnr_loss * self.detectable_snr_alpha
                 
+                ### mchirp loss
+                dmchirp_loss = 0.0
+                if self.mchirp_loss:
+                    mc_mask = torch.gt(targets['norm_mchirp'], self.mchirp_thresh_percentage)
+                    detectable_mc_masked_output = torch.masked_select(outputs['raw'], mc_mask)
+                    detectable_mc_masked_targets = torch.masked_select(targets['gw'], mc_mask)
+                    dmchirp_loss = self.gw_criterion(detectable_mc_masked_output, detectable_mc_masked_targets)
+                    dmchirp_loss = dmchirp_loss * 1.0
+                
                 ### Area of signal histogram above max value of noise must increase
                 fp_signal_area_loss = 0.0
                 if self.fp_signal_area_loss:
@@ -205,11 +227,11 @@ class BCEgw_MSEtc(LossWrapper):
                     masked_noise = torch.masked_select(outputs['raw'], noise_mask)
                     masked_signal = torch.masked_select(outputs['raw'], signal_mask)
                     # Histogram data
-                    Hn = torch.histogram(masked_noise, bins=50, density=True)
-                    Hs = torch.histogram(masked_signal, bins=50, density=True)
+                    Hn = self.histogram(masked_noise, bins=50, density=True)
+                    Hs = self.histogram(masked_signal, bins=50, density=True)
                     # Get histogram values of signal above max value of noise
-                    noise_argmax = np.argmax(Hn[1])
-                    fp_signal_area = torch.sum(Hs[0][Hs[1] > Hn[1][noise_argmax]]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                    noise_argmax = torch.argmax(Hn[1])
+                    fp_signal_area = torch.sum(Hs[0][Hs[1][1:] > Hn[1][noise_argmax]]) * (Hn[1][1:]-Hn[1][:-1])[0]
                     fp_signal_area_loss = (1.0 - fp_signal_area) * self.fp_signal_area_alpha
                 
                 ### Area of noise histogram above threshold should decrease
@@ -218,16 +240,12 @@ class BCEgw_MSEtc(LossWrapper):
                     noise_mask = torch.eq(targets['gw'], 0.0)
                     masked_noise = torch.masked_select(outputs['raw'], noise_mask)
                     # Histogram data
-                    Hn = torch.histogram(masked_noise, bins=50, density=True)
+                    Hn = self.histogram(masked_noise, bins=50, density=True)
                     # Get histogram values of noise above thresh value of noise
                     thresh_dist = self.fp_noise_area_percentage * (torch.max(Hn[1]) - torch.min(Hn[1]))
                     thresh = torch.min(Hn[1]) + thresh_dist
-                    fp_noise_area = torch.sum(Hn[0][Hn[1] > thresh]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                    fp_noise_area = torch.sum(Hn[0][Hn[1][1:] > thresh]) * (Hn[1][1:]-Hn[1][:-1])[0]
                     fp_noise_area_loss = fp_noise_area * self.fp_noise_area_alpha
-                
-                ### Add a normalised distance metric for the two histograms and maximise that
-                
-                ### More weightage to signals that are longer
                 
                 ### If signal seems to be in one detector and not in the other, weight less
                 
@@ -235,7 +253,7 @@ class BCEgw_MSEtc(LossWrapper):
                 
                 """ Total loss for GW detection """
                 bits_and_bobs_loss = emphasis_loss + boundary_loss + overlap_loss 
-                bits_and_bobs_loss += dsnr_loss + fp_signal_area_loss + fp_noise_area_loss
+                bits_and_bobs_loss += dsnr_loss + fp_signal_area_loss + fp_noise_area_loss + dmchirp_loss
                 BCEgw = self.gw_criterion(outputs['raw'], targets['gw']) + bits_and_bobs_loss
 
             elif isinstance(self.gw_criterion, torch.nn.BCELoss):
