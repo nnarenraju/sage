@@ -351,7 +351,7 @@ class MLMDC1(Dataset):
                     noisy_signal = pure_noise + (sample * rescaling_factor)
                     # Adjust distance parameter for signal according to the new rescaled SNR
                     rescaled_distance = params['distance'] / rescaling_factor
-                    # rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
+                    rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
                     # Update targets and params with new rescaled distance is not possible
                     # We do not know the priors of network_snr properly
                     if 'norm_dist' in self.cfg.parameter_estimation or 'norm_dchirp' in self.cfg.parameter_estimation:
@@ -361,6 +361,7 @@ class MLMDC1(Dataset):
                     norm_snr = self.norm_snr.norm(network_snr)
                     # Update the params dictionary with new rescaled distances
                     params['distance'] = rescaled_distance
+                    params['dchirp'] = rescaled_dchirp
                 else:
                     network_snr = prelim_network_snr
                     if 'norm_snr' in self.cfg.parameter_estimation:
@@ -451,7 +452,23 @@ class MLMDC1(Dataset):
         all_targets.update(aug_labels)
         
         # Add sample params to all_targets variable
-        all_targets['snr'] = network_snr
+        source_params = {}
+        source_params['snr'] = network_snr
+        # Distance and dchirp could have been alterred when rescaling SNR
+        source_params['distance'] = params['distance']
+        if 'dchirp' in params.keys():
+            source_params['dchirp'] = params['dchirp']
+        else:
+            source_params['dchirp'] = self._dchirp_from_dist(params['distance'], params['mchirp'])
+        # Other params should be unalterred
+        source_params['mchirp'] = params['mchirp']
+        source_params['mass1'] = params['mass1']
+        source_params['mass2'] = params['mass2']
+        # Written as m2/m1. Different from PyCBC format of m1/m2. m1>m2 in both cases.
+        source_params['q'] = params['mass2']/params['mass1']
+        # Calculating the duration of the given signal
+        lf = self.data_cfg['signal_low_freq_cutoff']
+        source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * params['mchirp']**(-5./3.)
         
         ## Plotting
         if self.debug:
@@ -474,7 +491,7 @@ class MLMDC1(Dataset):
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
         
-        return (sample, all_targets)
+        return (sample, all_targets, source_params)
 
 
 
