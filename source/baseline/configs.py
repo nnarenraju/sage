@@ -205,6 +205,7 @@ class KaggleFirst:
     num_sample_save = 100
     early_stopping = False
     
+    weight_types = ['loss']
     # Saving weights
     save_best_option = 'loss'
     
@@ -486,9 +487,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Sept3"
+    name = "KaggleFirst_Sept21"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'Improve-Sensitivity-noiseEmphasis'
+    save_remarks = 'Improve-Sensitivity-'
     
     """ Dataset """
     dataset = MLMDC1
@@ -517,6 +518,15 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Save samples """
     num_sample_save = 100
+    
+    """ Weight Types """
+    weight_types = ['loss', 'accuracy', 'roc_auc', 'lmax_noise_stat', 'lmin_noise_stat',
+                    'hmax_signal_stat', 'hmin_signal_stat', 'best_noise_stat', 'best_signal_stat',
+                    'best_stat_compromise', 'best_overlap_area', 'best_signal_area', 'best_noise_area',
+                    'best_diff_distance']
+    
+    # Pick one of the above weights for best epoch save directory
+    save_best_option = 'loss'
     
     """ Parameter Estimation """
     parameter_estimation = ('norm_tc', 'norm_mchirp', 'norm_snr', )
@@ -563,11 +573,11 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     persistent_workers = True
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_32000"
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D1_seeded"
     injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
-    far_scaling_factor = 32000.0
+    far_scaling_factor = 64000.0
     
     test_foreground_dataset = "foreground.hdf"
     test_foreground_output = "testing_foutput.hdf"
