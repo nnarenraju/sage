@@ -108,7 +108,7 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
-    data_dir = "dataset_1e6_Aug24_D1"
+    data_dir = "dataset_1e6_Sept11_D1_seed42"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
