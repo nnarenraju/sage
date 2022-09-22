@@ -27,13 +27,9 @@ Documentation: NULL
 import os
 import gc
 import glob
-import h5py
 import torch
 import argparse
 import pytorch_lightning as pl
-import matplotlib.pyplot as plt
-# Font and plot parameters
-plt.rcParams.update({'font.size': 18})
 
 from torchsummary import summary
 from datetime import datetime
