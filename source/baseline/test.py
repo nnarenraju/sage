@@ -41,8 +41,6 @@ from evaluate import main as evaluator
 from data.prepare_data import DataModule as dat
 from data.multirate_sampling import get_sampling_rate_bins
 
-import matplotlib.pyplot as plt
-
 # Torch default datatype
 dtype = torch.float32
 
