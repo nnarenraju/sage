@@ -57,6 +57,76 @@ from data.mlmdc_noise_generator import NoiseGenerator
 # PSD file read has been moved to dataset object.
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
+def psd_to_asd(psd, start_time, end_time,
+               sample_rate=2048.,
+               low_frequency_cutoff=15.0,
+               filter_duration=128):
+    
+    psd = psd.copy()
+
+    flen = int(sample_rate / psd.delta_f) // 2 + 1
+    oldlen = len(psd)
+    psd.resize(flen)
+
+    # Want to avoid zeroes in PSD.
+    max_val = psd.max()
+    for i in range(len(psd)):
+        if i >= (oldlen-1):
+            psd.data[i] = psd[oldlen - 2]
+        if psd[i] == 0:
+            psd.data[i] = max_val
+
+    fil_len = int(filter_duration * sample_rate)
+    wn_dur = int(end_time - start_time) + 2 * filter_duration
+    if psd.delta_f >= 1. / (2.*filter_duration):
+        # If the PSD is short enough, this method is less memory intensive than
+        # resizing and then calling inverse_spectrum_truncation
+        psd = pycbc.psd.interpolate(psd, 1.0 / (2. * filter_duration))
+        # inverse_spectrum_truncation truncates the inverted PSD. To truncate
+        # the non-inverted PSD we give it the inverted PSD to truncate and then
+        # invert the output.
+        psd = 1. / pycbc.psd.inverse_spectrum_truncation(
+                                1./psd,
+                                fil_len,
+                                low_frequency_cutoff=low_frequency_cutoff,
+                                trunc_method='hann')
+        psd = psd.astype(complex_same_precision_as(psd))
+        # Zero-pad the time-domain PSD to desired length. Zeroes must be added
+        # in the middle, so some rolling between a resize is used.
+        psd = psd.to_timeseries()
+        psd.roll(fil_len)
+        psd.resize(int(wn_dur * sample_rate))
+        psd.roll(-fil_len)
+        # As time series is still mirrored the complex frequency components are
+        # 0. But convert to real by using abs as in inverse_spectrum_truncate
+        psd = psd.to_frequencyseries()
+
+    kmin = int(low_frequency_cutoff / psd.delta_f)
+    psd[:kmin].clear()
+    asd = (psd.squared_norm())**0.25
+    return asd
+
+# Save complex PSDs or ASDs as global variables
+# Since this is not within the multiprocessing block, it will not be counted towards shared RAM
+psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
+               'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
+# Iterate through all PSD files for detector and compute the median PSD
+complex_asds = {'H1': [], 'L1': []}
+detectors_abbr = ['H1', 'L1']
+for i, det in enumerate(detectors_abbr):
+    # Read all detector PSDs as frequency series with appropriate delta_f
+    for psd_det in psd_options[det]:
+        psd = load_frequencyseries(psd_det)
+        psd = interpolate(psd, 1.0/25.0)
+        # Convert PSD's to ASD's for colouring the white noise
+        foo = psd_to_asd(psd, 0.0, 25.0,
+                         sample_rate=2048.,
+                         low_frequency_cutoff=15.0,
+                         filter_duration=25.0)
+        complex_asds[det].append(foo)
+
+global asds
+asds = complex_asds
 
 
 class Normalise:
@@ -97,7 +167,8 @@ class GenerateData:
                  'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff',
                  'max_signal_length', 'ringdown_leeway', 'merger_leeway', 'start_freq_factor',
                  'fs_reduction_factor', 'fbin_reduction_factor', 'dbins', 'check_seeds',
-                 'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq']
+                 'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq',
+                 'complex_asds']
     
     
     def __init__(self, **kwargs):
@@ -161,7 +232,7 @@ class GenerateData:
                     # Convert PSD's to ASD's for colouring the white noise
                     foo = self.psd_to_asd(psd, 0.0, self.sample_length_in_s,
                                           sample_rate=self.sample_rate,
-                                          low_frequency_cutoff=self.low_frequency_cutoff,
+                                          low_frequency_cutoff=self.noise_low_freq_cutoff,
                                           filter_duration=1./self.delta_f)
                     
                     self.complex_asds[det].append(foo)
