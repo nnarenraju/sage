@@ -47,8 +47,8 @@ plt.rcParams.update({'font.size': 16})
 import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.detector
 
 from pycbc.psd import interpolate
-from pycbc.types import load_frequencyseries
 from pycbc.distributions.utils import draw_samples_from_config
+from pycbc.types import load_frequencyseries, complex_same_precision_as
 
 # LOCAL
 from data.mlmdc_noise_generator import NoiseGenerator
@@ -144,7 +144,27 @@ class GenerateData:
         if self.dataset == 1:
             self.noise_generator = pycbc.noise.gaussian.frequency_noise_from_psd
         else:
+            # Noise generator
             self.noise_generator = None
+            ## Save the median PSD from the PSD files provided
+            psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
+                           'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
+            # Iterate through all PSD files for detector and compute the median PSD
+            self.complex_psds = {'H1': [], 'L1': []}
+            self.complex_asds = {'H1': [], 'L1': []}
+            for i, det in enumerate(self.detectors_abbr):
+                # Read all detector PSDs as frequency series with appropriate delta_f
+                for psd_det in psd_options[det]:
+                    psd = load_frequencyseries(psd_det)
+                    psd = interpolate(psd, self.delta_f)
+                    self.complex_psds[det].append(psd)
+                    # Convert PSD's to ASD's for colouring the white noise
+                    foo = self.psd_to_asd(psd, 0.0, self.sample_length_in_s,
+                                          sample_rate=self.sample_rate,
+                                          low_frequency_cutoff=self.low_frequency_cutoff,
+                                          filter_duration=1./self.delta_f)
+                    
+                    self.complex_asds[det].append(foo)
         
         """ Generating signals """
         # Generate source parameters
@@ -223,7 +243,57 @@ class GenerateData:
             # Adding all relevant attributes
             fp.attrs['delta_f'] = self.delta_f
             fp.attrs['name'] = psd_name
-            
+    
+    
+    def psd_to_asd(self, psd, start_time, end_time,
+                   sample_rate=2048.,
+                   low_frequency_cutoff=15.0,
+                   filter_duration=128):
+        
+        psd = psd.copy()
+    
+        flen = int(sample_rate / psd.delta_f) // 2 + 1
+        oldlen = len(psd)
+        psd.resize(flen)
+    
+        # Want to avoid zeroes in PSD.
+        max_val = psd.max()
+        for i in range(len(psd)):
+            if i >= (oldlen-1):
+                psd.data[i] = psd[oldlen - 2]
+            if psd[i] == 0:
+                psd.data[i] = max_val
+    
+        fil_len = int(filter_duration * sample_rate)
+        wn_dur = int(end_time - start_time) + 2 * filter_duration
+        if psd.delta_f >= 1. / (2.*filter_duration):
+            # If the PSD is short enough, this method is less memory intensive than
+            # resizing and then calling inverse_spectrum_truncation
+            psd = pycbc.psd.interpolate(psd, 1.0 / (2. * filter_duration))
+            # inverse_spectrum_truncation truncates the inverted PSD. To truncate
+            # the non-inverted PSD we give it the inverted PSD to truncate and then
+            # invert the output.
+            psd = 1. / pycbc.psd.inverse_spectrum_truncation(
+                                    1./psd,
+                                    fil_len,
+                                    low_frequency_cutoff=low_frequency_cutoff,
+                                    trunc_method='hann')
+            psd = psd.astype(complex_same_precision_as(psd))
+            # Zero-pad the time-domain PSD to desired length. Zeroes must be added
+            # in the middle, so some rolling between a resize is used.
+            psd = psd.to_timeseries()
+            psd.roll(fil_len)
+            psd.resize(int(wn_dur * sample_rate))
+            psd.roll(-fil_len)
+            # As time series is still mirrored the complex frequency components are
+            # 0. But convert to real by using abs as in inverse_spectrum_truncate
+            psd = psd.to_frequencyseries()
+    
+        kmin = int(low_frequency_cutoff / psd.delta_f)
+        psd[:kmin].clear()
+        asd = (psd.squared_norm())**0.25
+        return asd
+        
     
     def save_PSD(self):
         # Saving the PSD file used for dataset/sample
@@ -383,9 +453,10 @@ class GenerateData:
                                                       delta_f=self.delta_f,
                                                       sample_rate=self.sample_rate,
                                                       low_frequency_cutoff=self.noise_low_freq_cutoff,
-                                                      detectors=self.detectors_abbr)
+                                                      detectors=self.detectors_abbr,
+                                                      asds=self.complex_asds)
                 
-                noise, _ = self.noise_generator(0.0, self.sample_length_in_s, None)
+                noise = self.noise_generator(0.0, self.sample_length_in_s, self.sample_length_in_s)
                 noise = [noise[det].numpy() for det in self.detectors_abbr]
                 assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
                 assert len(noise[1]) == self.sample_length_in_s * self.sample_rate

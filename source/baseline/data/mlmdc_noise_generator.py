@@ -29,21 +29,16 @@ import numpy as np
 from numpy.random import RandomState
 
 # PyCBC handling
-import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.distributions, pycbc.detector
-from pycbc.types import load_frequencyseries, TimeSeries, complex_same_precision_as
-from pycbc.psd import interpolate
+from pycbc.types import TimeSeries
 
 # This constant need to be constant to be able to recover identical results.
 BLOCK_SAMPLES = 1638400
 
 class NoiseGenerator(object):
     
-    psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
-                   'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
-    
     def __init__(self, dataset, seed=42, delta_f=0.04,
                  sample_rate=2048.0, low_frequency_cutoff=15,
-                 detectors=['H1', 'L1']):
+                 detectors=['H1', 'L1'], asds=None):
         
         if dataset not in [1, 2, 3]:
             raise ValueError('PSDGenerator is only defined for datasets 1, 2, and 3.')
@@ -52,11 +47,12 @@ class NoiseGenerator(object):
         self.sample_rate = sample_rate
         self.low_frequency_cutoff = low_frequency_cutoff
         self.detectors = detectors
-        self.fixed_psds = {det: None for det in self.detectors}
+        self.fixed_asds = {det: None for det in self.detectors}
         self.delta_f = delta_f
         self.plen = int(self.sample_rate / self.delta_f) // 2 + 1
         self.rs = np.random.RandomState(seed=seed)
         self.seed = list(self.rs.randint(0, 2**32, len(self.detectors)))
+        self.asd_options = asds
     
     
     def __call__(self, start, end, generate_duration=None):
@@ -75,81 +71,35 @@ class NoiseGenerator(object):
         elif self.dataset == 2:
             logging.debug('Called with dataset 2')
             for det in self.detectors:
-                if self.fixed_psds[det] is None:
-                    key = self.rs.randint(0, len(self.psd_options[det]))
-                    self.fixed_psds[det] = self.psd_options[det][key]
-                keys[det] = self.fixed_psds[det]
+                if self.fixed_asds[det] is None:
+                    key = self.rs.randint(0, len(self.asd_options[det]))
+                    self.fixed_asds[det] = self.asd_options[det][key]
+                keys[det] = self.fixed_asds[det]
                 
         elif self.dataset == 3:
             logging.debug('Called with dataset 3')
             for det in self.detectors:
-                key = self.rs.randint(0, len(self.psd_options[det]))
-                keys[det] = self.psd_options[det][key]
+                key = self.rs.randint(0, len(self.asd_options[det]))
+                keys[det] = self.asd_options[det][key]
         else:
             raise RuntimeError(f'Unkown dataset {self.dataset}.')
         
-        logging.debug(f'Generated keys {keys}')
         ret = {}
-        psds = []
-        for i, (det, key) in enumerate(keys.items()):
-            logging.debug(f'Starting generating process for detector {det} and key {key}')
+        for i, (det, asd) in enumerate(keys.items()):
+            tmp = self.colored_noise(asd,
+                                     start,
+                                     end,
+                                     seed=self.seed[i],
+                                     sample_rate=self.sample_rate,
+                                     filter_duration=1./self.delta_f)
             
-            # Try loading from frequency series
-            psd = load_frequencyseries(key)
-            psd = interpolate(psd, self.delta_f) 
-            
-            if generate_duration is None:
-                generate_duration = end - start
-                logging.debug('Generate duration was None')
-                
-            logging.debug(f'Generate duration set to {generate_duration}')
-            done_duration = 0
-            noise = None
-            #Generate time series noise in chunks
-            while done_duration < end - start:
-                logging.debug(f'Start of loop with done_duration: {done_duration}')
-                segstart = start + done_duration
-                segend = min(end, segstart + generate_duration)
-                logging.debug(f'Generation segment: {(segstart, segend)} of duration {segend - segstart}')
-                
-                #Workaround for sample-rate issues
-                pad = 0
-                duration = segend - segstart + 256
-                while 1 / (1 / (duration + pad)) != (duration + pad):
-                    pad += 1
-                
-                tmp = self.colored_noise(psd,
-                                         segstart,
-                                         segend+pad,
-                                         seed=self.seed[i],
-                                         sample_rate=self.sample_rate,
-                                         low_frequency_cutoff=self.low_frequency_cutoff,
-                                         filter_duration=1./self.delta_f)
-                
-                tmp = tmp[:len(tmp)-int(pad * tmp.sample_rate)]
-                #End of workaround for sample-rate issue
-                
-                psds.append(psd)
-
-                logging.debug('Succsessfully generated time domain noise')
-                if noise is None:
-                    noise = tmp
-                else:
-                    noise.append_zeros(len(tmp))
-                    noise.data[-len(tmp):] = tmp.data[:]
-                done_duration += segend - segstart
-                
-            logging.debug(f'Exited while loop with done_duration: {done_duration}')
-            ret[det] = noise
+            ret[det] = tmp
         
-        psds = [np.stack(psd) for psd in psds]
-        
-        return ret, psds
+        return ret
     
     
-    def colored_noise(self, psd, start_time, end_time,
-                  seed=42, sample_rate=16384,
-                  low_frequency_cutoff=1.0,
+    def colored_noise(self, asd, start_time, end_time,
+                  seed=42, sample_rate=2048.,
                   filter_duration=128):
         
         """ Create noise from a PSD
@@ -159,19 +109,17 @@ class NoiseGenerator(object):
     
         Parameters
         ----------
-        psd : pycbc.types.FrequencySeries
-            PSD to color the noise
+        asd : pycbc.types.FrequencySeries
+            ASD to color the noise
         start_time : int
             Start time in GPS seconds to generate noise
         end_time : int
-            End time in GPS seconds to generate nosie
+            End time in GPS seconds to generate noise
         seed : {None, int}
             The seed to generate the noise.
         sample_rate: {16384, float}
             The sample rate of the output data. Keep constant if you want to
             ensure continuity between disjoint time spans.
-        low_frequency_cutof : {1.0, float}
-            The low frequency cutoff to pass to the PSD generation.
         filter_duration : {128, float}
             The duration in seconds of the coloring filter
     
@@ -181,55 +129,12 @@ class NoiseGenerator(object):
             A TimeSeries containing gaussian noise colored by the given psd.
         """
         
-        psd = psd.copy()
-    
-        flen = int(sample_rate / psd.delta_f) // 2 + 1
-        oldlen = len(psd)
-        psd.resize(flen)
-    
-        # Want to avoid zeroes in PSD.
-        max_val = psd.max()
-        for i in range(len(psd)):
-            if i >= (oldlen-1):
-                psd.data[i] = psd[oldlen - 2]
-            if psd[i] == 0:
-                psd.data[i] = max_val
-    
-        fil_len = int(filter_duration * sample_rate)
-        wn_dur = int(end_time - start_time) + 2 * filter_duration
-        if psd.delta_f >= 1. / (2.*filter_duration):
-            # If the PSD is short enough, this method is less memory intensive than
-            # resizing and then calling inverse_spectrum_truncation
-            psd = pycbc.psd.interpolate(psd, 1.0 / (2. * filter_duration))
-            # inverse_spectrum_truncation truncates the inverted PSD. To truncate
-            # the non-inverted PSD we give it the inverted PSD to truncate and then
-            # invert the output.
-            psd = 1. / pycbc.psd.inverse_spectrum_truncation(
-                                    1./psd,
-                                    fil_len,
-                                    low_frequency_cutoff=low_frequency_cutoff,
-                                    trunc_method='hann')
-            psd = psd.astype(complex_same_precision_as(psd))
-            # Zero-pad the time-domain PSD to desired length. Zeroes must be added
-            # in the middle, so some rolling between a resize is used.
-            psd = psd.to_timeseries()
-            psd.roll(fil_len)
-            psd.resize(int(wn_dur * sample_rate))
-            psd.roll(-fil_len)
-            # As time series is still mirrored the complex frequency components are
-            # 0. But convert to real by using abs as in inverse_spectrum_truncate
-            psd = psd.to_frequencyseries()
-    
-        kmin = int(low_frequency_cutoff / psd.delta_f)
-        psd[:kmin].clear()
-        asd = (psd.squared_norm())**0.25
-        del psd
-    
         white_noise = self.normal(start_time - filter_duration,
-                             end_time + filter_duration,
-                             seed=seed,
-                             sample_rate=sample_rate)
+                                  end_time + filter_duration,
+                                  seed=seed,
+                                  sample_rate=sample_rate)
         white_noise = white_noise.to_frequencyseries()
+        
         # Here we color. Do not want to duplicate memory here though so use '*='
         white_noise *= asd
         del asd
@@ -238,7 +143,7 @@ class NoiseGenerator(object):
         return colored.time_slice(start_time, end_time)
     
     
-    def normal(self, start, end, sample_rate=16384, seed=0):
+    def normal(self, start, end, sample_rate=2048., seed=0):
         """ Generate data with a white Gaussian (normal) distribution
     
         Parameters
