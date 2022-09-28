@@ -57,6 +57,7 @@ from data.mlmdc_noise_generator import NoiseGenerator
 # PSD file read has been moved to dataset object.
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
+
 def psd_to_asd(psd, start_time, end_time,
                sample_rate=2048.,
                low_frequency_cutoff=15.0,
@@ -127,6 +128,7 @@ for i, det in enumerate(detectors_abbr):
 
 global asds
 asds = complex_asds
+
 
 
 class Normalise:
@@ -217,25 +219,6 @@ class GenerateData:
         else:
             # Noise generator
             self.noise_generator = None
-            ## Save the median PSD from the PSD files provided
-            psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
-                           'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
-            # Iterate through all PSD files for detector and compute the median PSD
-            self.complex_psds = {'H1': [], 'L1': []}
-            self.complex_asds = {'H1': [], 'L1': []}
-            for i, det in enumerate(self.detectors_abbr):
-                # Read all detector PSDs as frequency series with appropriate delta_f
-                for psd_det in psd_options[det]:
-                    psd = load_frequencyseries(psd_det)
-                    psd = interpolate(psd, self.delta_f)
-                    self.complex_psds[det].append(psd)
-                    # Convert PSD's to ASD's for colouring the white noise
-                    foo = self.psd_to_asd(psd, 0.0, self.sample_length_in_s,
-                                          sample_rate=self.sample_rate,
-                                          low_frequency_cutoff=self.noise_low_freq_cutoff,
-                                          filter_duration=1./self.delta_f)
-                    
-                    self.complex_asds[det].append(foo)
         
         """ Generating signals """
         # Generate source parameters
@@ -519,13 +502,14 @@ class GenerateData:
                 assert len(noise[1]) == maxlen
             
             else:
+                global asds
                 self.noise_generator = NoiseGenerator(self.dataset,
                                                       seed=int(idx+1),
                                                       delta_f=self.delta_f,
                                                       sample_rate=self.sample_rate,
                                                       low_frequency_cutoff=self.noise_low_freq_cutoff,
                                                       detectors=self.detectors_abbr,
-                                                      asds=self.complex_asds)
+                                                      asds=asds)
                 
                 noise = self.noise_generator(0.0, self.sample_length_in_s, self.sample_length_in_s)
                 noise = [noise[det].numpy() for det in self.detectors_abbr]
@@ -773,7 +757,6 @@ class GenerateData:
             # 3. Add all necessary attributes exactly once
             
             # Sampling rate groups
-            # TODO: We need to decimate the samples for each sample rate group
             for group in groups:
                     
                 if is_waveform:
