@@ -35,7 +35,7 @@ from data.multirate_sampling import multirate_sampling
 # from data.parallel_transforms import Parallelise
 
 # PyCBC
-from pycbc.psd import inverse_spectrum_truncation
+from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
 from pycbc.types import TimeSeries
 
 # Parallelisation of transforms
@@ -276,6 +276,22 @@ class Whiten(TransformWrapperPerChannel):
         # foo.args = (delta_f, psd, max_filter_len)
         # foo.name = 'Whitening'
         # white = foo.initiate()
+        
+        ### Estimate the PSD
+        # We'll choose 4 seconds PSD samples that are overlapped 50 %
+        # delta_t = 1.0/2048.
+        # seg_len = int(4 / delta_t)
+        # seg_stride = int(seg_len / 2)
+        # estimated_psd = welch(signal, seg_len=seg_len, seg_stride=seg_stride)
+        # estimated_psd = interpolate(estimated_psd, delta_f)
+
+        # plt.loglog(estimated_psd.sample_frequencies, estimated_psd, label='estimate')
+        # plt.loglog(psd.sample_frequencies, psd, linewidth=3, label='known psd')
+        # plt.xlim()
+        # plt.ylim(1e-48, 1e-45)
+        # plt.legend()
+        # plt.grid()
+        # plt.savefig('./compare_psds_{}.png'.format(time.time()))
         
         # Sequential mode for whitening
         white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
