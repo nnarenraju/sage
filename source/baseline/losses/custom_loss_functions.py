@@ -54,6 +54,7 @@ class BCEgw_MSEtc(LossWrapper):
                  fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.5,
                  overlap_loss=False, overlap_alpha=0.5, 
                  detectable_snr_loss=False, detectable_snr_thresh=8.0, detectable_snr_alpha=0.5,
+                 mchirp_loss=False, mchirp_thresh_percentage=0.7,
                  fp_signal_area_loss=False, fp_signal_area_alpha=0.5,
                  fp_noise_area_loss=False, fp_noise_area_percentage=None, fp_noise_area_alpha=0.5):
         
@@ -88,6 +89,9 @@ class BCEgw_MSEtc(LossWrapper):
         self.detectable_snr_loss = detectable_snr_loss
         self.detectable_snr_thresh = detectable_snr_thresh
         self.detectable_snr_alpha = detectable_snr_alpha
+        # Mchirp loss
+        self.mchirp_loss = mchirp_loss
+        self.mchirp_thresh_percentage = mchirp_thresh_percentage
         # FP Signal Area Loss
         self.fp_signal_area_loss = fp_signal_area_loss
         self.fp_signal_area_alpha = fp_signal_area_alpha
