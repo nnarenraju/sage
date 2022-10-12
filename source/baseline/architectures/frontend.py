@@ -526,6 +526,7 @@ class KappaModelPE(torch.nn.Module):
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
+        x = self.batchnorm(x)
         # Conv Backend
         cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
         # Timm Frontend
