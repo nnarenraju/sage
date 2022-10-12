@@ -252,6 +252,12 @@ class MLMDC1(Dataset):
             targets['norm_q'] = -1
             targets['norm_invq'] = -1
             targets['norm_tc'] = -1
+            # Dummy params
+            params['mass1'] = -1
+            params['mass2'] = -1
+            params['distance'] = -1
+            params['mchirp'] = -1
+            params['dchirp'] = -1
         else:
             ## Read signal data
             h_plus = np.array(group['h_plus'][didx])
@@ -464,11 +470,15 @@ class MLMDC1(Dataset):
         source_params['mchirp'] = params['mchirp']
         source_params['mass1'] = params['mass1']
         source_params['mass2'] = params['mass2']
-        # Written as m2/m1. Different from PyCBC format of m1/m2. m1>m2 in both cases.
-        source_params['q'] = params['mass2']/params['mass1']
-        # Calculating the duration of the given signal
-        lf = self.data_cfg['signal_low_freq_cutoff']
-        source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * params['mchirp']**(-5./3.)
+        if target_gw[0]:
+            # Written as m2/m1. Different from PyCBC format of m1/m2. m1>m2 in both cases.
+            source_params['q'] = params['mass2']/params['mass1']
+            # Calculating the duration of the given signal
+            lf = self.data_cfg.signal_low_freq_cutoff
+            source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * params['mchirp']**(-5./3.)
+        else:
+            source_params['q'] = -1
+            source_params['signal_duration'] = -1
         
         ## Plotting
         if self.debug:
