@@ -345,6 +345,10 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         ## Plotting the comparison plots (injections and found histogram) for all params 
         # cmap = cm.get_cmap('RdYlBu_r', 10)
         for param in injparams.keys():
+            param_dir = os.path.join(output_dir, '{}'.format(param))
+            if not os.path.exists(param):
+                os.makedirs(param_dir, exist_ok=False)
+                
             all_param = injparams[param]
             for key, value in far_found_idx.items():
                 found_param = all_param[value.astype(int)]
@@ -356,43 +360,114 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
                 plt.grid(True, which='both')
                 plt.xlabel('{}'.format(param))
                 plt.ylabel('Number of Occurences')
-                plt.savefig(os.path.join(output_dir, '{}-compare_FAR_1per{}.png'.format(param, key)))
+                plt.savefig(os.path.join(param_dir, '{}-compare_FAR_1per{}.png'.format(param, key)))
                 plt.close()
+        
+        vs_dir = os.path.join(output_dir, 'param_vs_param')
+        if not os.path.exists(param):
+            os.makedirs(vs_dir, exist_ok=False)
+        
+        # Plotting params
+        plot_mchirp = injparams['mchirp'][found_injections[0].astype(int)]
+        plot_distance = injparams['distance'][found_injections[0].astype(int)]
+        plot_q = injparams['q'][found_injections[0].astype(int)]
+        plot_dchirp = injparams['chirp_distance'][found_injections[0].astype(int)]
+        
+        # Signal duration
+        lf = 20.0 # Hz
+        G = 6.67e-11
+        c = 3.0e8
+        plot_signal_duration = 5. * (8.*np.pi*lf)**(-8./3.) * (plot_mchirp*1.989e30*G/c**3.)**(-5./3.)
         
         ## Other related plots
         plt.figure(figsize=(12.0, 12.0))
         plt.title('mchirp vs distance')
-        param_1 = injparams['mchirp'][found_injections[0].astype(int)]
-        param_2 = injparams['distance'][found_injections[0].astype(int)]
+        param_1 = plot_mchirp
+        param_2 = plot_distance
         plt.scatter(param_1, param_2, marker='.', s=100.0)
         plt.grid(True, which='both')
         plt.xlabel('Chirp Mass')
         plt.ylabel('Distance')
-        plt.savefig(os.path.join(output_dir, 'mchirp_vs_distance.png'))
+        plt.savefig(os.path.join(vs_dir, 'mchirp_vs_distance.png'))
         plt.close()
         
         plt.figure(figsize=(9.0, 9.0))
         plt.title('mchirp vs q')
-        param_1 = injparams['mchirp'][found_injections[0].astype(int)]
-        param_2 = injparams['q'][found_injections[0].astype(int)]
+        param_1 = plot_mchirp
+        param_2 = plot_q
         plt.scatter(param_1, param_2, marker='.', s=100.0)
         plt.grid(True, which='both')
         plt.xlabel('Chirp Mass')
         plt.ylabel('Mass Ratio (m1/m2)')
-        plt.savefig(os.path.join(output_dir, 'mchirp_vs_q.png'))
+        plt.savefig(os.path.join(vs_dir, 'mchirp_vs_q.png'))
         plt.close()
         
         plt.figure(figsize=(9.0, 9.0))
         plt.title('mchirp vs dchirp')
-        param_1 = injparams['mchirp'][found_injections[0].astype(int)]
-        param_2 = injparams['chirp_distance'][found_injections[0].astype(int)]
+        param_1 = plot_mchirp
+        param_2 = plot_dchirp
         plt.scatter(param_1, param_2, marker='.', s=100.0)
         plt.grid(True, which='both')
         plt.xlabel('Chirp Mass')
         plt.ylabel('Chirp Distance')
-        plt.savefig(os.path.join(output_dir, 'mchirp_vs_dchirp.png'))
+        plt.savefig(os.path.join(vs_dir, 'mchirp_vs_dchirp.png'))
         plt.close()
         
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('q vs dchirp')
+        param_1 = plot_q
+        param_2 = plot_dchirp
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('q (m1/m2)')
+        plt.ylabel('Chirp Distance')
+        plt.savefig(os.path.join(vs_dir, 'q_vs_dchirp.png'))
+        plt.close()
+        
+        # Signal duration plots
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('Tau_0 vs q')
+        param_1 = plot_signal_duration
+        param_2 = plot_q
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('Signal Duration [s]')
+        plt.ylabel('q (m1/m2)')
+        plt.savefig(os.path.join(vs_dir, 'tau0_vs_q.png'))
+        plt.close()
+        
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('Tau_0 vs mchirp')
+        param_1 = plot_signal_duration
+        param_2 = plot_mchirp
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('Signal Duration [s]')
+        plt.ylabel('Chirp Mass')
+        plt.savefig(os.path.join(vs_dir, 'tau0_vs_mchirp.png'))
+        plt.close()
+        
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('Tau_0 vs dchirp')
+        param_1 = plot_signal_duration
+        param_2 = plot_dchirp
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('Signal Duration [s]')
+        plt.ylabel('Chirp Distance')
+        plt.savefig(os.path.join(vs_dir, 'tau0_vs_dchirp.png'))
+        plt.close()
+        
+        plt.figure(figsize=(9.0, 9.0))
+        plt.title('Tau_0 vs distance')
+        param_1 = plot_signal_duration
+        param_2 = plot_distance
+        plt.scatter(param_1, param_2, marker='.', s=100.0)
+        plt.grid(True, which='both')
+        plt.xlabel('Signal Duration [s]')
+        plt.ylabel('Distance')
+        plt.savefig(os.path.join(vs_dir, 'tau0_vs_distance.png'))
+        plt.close()
         
         
     max_distance = dist.max()
@@ -410,6 +485,11 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
     nfound = len(found_injections[1]) - np.searchsorted(found_injections[1],
                                                         noise_stats,
                                                         side='right')
+    
+    learning_dir = os.path.join(output_dir, 'learning')
+    if not os.path.exists(param):
+        os.makedirs(learning_dir, exist_ok=False)
+    
     if chirp_distance:
         # Get found chirp-mass indices for given threshold
         fidxs = np.searchsorted(found_injections[1], noise_stats, side='right')
@@ -426,12 +506,15 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         # Making the parameter learning plots
         source_params = {key: injparams[key][found_injections[0].astype(int)] for key in injparams.keys()}
         lf = 20.0 # Hz
-        source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * source_params['mchirp']**(-5./3.)
+        G = 6.67e-11
+        c = 3.0e8
+        source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * (source_params['mchirp']*1.989e30*G/c**3.)**(-5./3.)
         predicted_outputs = found_injections[1]
         save_name='raw_value'
+        
         # Create overlapping bins for the source_params and get the average value of predicted outputs
-        bin_width = 1000 # samples
-        overlap = 100 # samples
+        bin_width = 500 # samples
+        overlap = 10 # samples
         for key in source_params.keys():
             # Sort the source_params for the particular key alongside the predicted outputs
             assert len(source_params[key]) == len(predicted_outputs)
@@ -445,8 +528,14 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
             ax, fig = figure(title="Learning {}".format(key))
             _plot(ax, x=plot[:,0], y=plot[:,1], xlabel="key", ylabel="save_name", ls='solid', 
                       label="", c='blue', yscale='linear', xscale='linear', histogram=False)
+            # Plotting FAR thresholds
+            min_x = min(plot[:,0])
+            max_x = max(plot[:,0])
+            ax.set_xlim(min_x, max_x)
+            for fthresh in far_thresholds:
+                ax.plot([min_x, max_x], [fthresh, fthresh])
             # Saving the plot in export_dir
-            save_path = 'learning_{}_{}.png'.format(save_name, key)
+            save_path = os.path.join(learning_dir, 'learning_{}_{}.png'.format(save_name, key))
             plt.savefig(save_path)
             plt.close()
         
@@ -472,7 +561,7 @@ def get_stats(fgevents, bgevents, injparams, duration=None,
         
     vol = prefactor * mc_sum
     print('Volumes found')
-    print('min err = {}, max err = {}, mean err = {}'.format(min(vol), max(vol), np.mean(vol)))
+    print('min vol = {}, max vol = {}, mean vol = {}'.format(min(vol), max(vol), np.mean(vol)))
     
     vol_err = prefactor * (Ninj * sample_variance) ** 0.5
     print('Volume error')
@@ -512,7 +601,7 @@ def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, wav
     return h_plus, h_cross
 
 
-def main(raw_args=None, cfg_far_scaling_factor=None):
+def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     
     parser = argparse.ArgumentParser(description='Testing phase evaluator')
     
@@ -539,6 +628,8 @@ def main(raw_args=None, cfg_far_scaling_factor=None):
                               "`generate_data.py --output-background-file`."))
     parser.add_argument("--far-scaling-factor", help="Rescale FAR when making sensitivity plot",
                         type=float, required=False, default=-1.0)
+    parser.add_argument("--dataset", help="dataset type",
+                        type=int, required=False, default=-1)
     parser.add_argument('--output-file', type=str, required=True,
                         help=("Path at which to store the output HDF5 "
                               "file. (Path must end in `.hdf`)"))
@@ -567,10 +658,19 @@ def main(raw_args=None, cfg_far_scaling_factor=None):
         raise IOError(f'The file {args.output_file} already exists. '
                       'Set the flag `force` to overwrite it.')
     
-    if args.far_scaling_factor == -1:
+    if args.far_scaling_factor == -1 and cfg_far_scaling_factor == None:
+        raise ValueError('FAR scaling factor not provided. Use the --far-scaling-factor argument when running.')
+    elif cfg_far_scaling_factor == None:
+         far_scaling_factor = args.far_scaling_factor
+    elif cfg_far_scaling_factor != None:
         far_scaling_factor = cfg_far_scaling_factor
-    else:
-        far_scaling_factor = args.far_scaling_factor
+
+    if args.dataset == -1 and dataset == None:
+        raise ValueError('Dataset type not provided. Use the --dataset argument when running.')
+    elif dataset == None:
+        dataset = args.dataset
+    elif dataset != None:
+        dataset = dataset
     
     # Find indices contained in foreground 
     print("\nRunning Testing Phase Evaluator")
@@ -642,15 +742,39 @@ def main(raw_args=None, cfg_far_scaling_factor=None):
         print('FAR values just before making sensitivity plot')
         print(far)
         sens = sens[sidxs][1:]
+    
+    # Month FAR factor
+    month = 30.0 * 24.0 * 60.0 * 60.0
         
     plt.figure(figsize=(18.0, 12.0))
-    plt.title('Sensitivity Measure for Dataset 1')
-    plt.plot(far, sens, color='m', linewidth=3.0, label='nnarenraju')
-    plt.plot([1000, 1], [2900, 2500], color='orange', linewidth=2.5, linestyle='dashed', label='PyCBC')
-    plt.plot([1000, 1], [2850, 2400], color='red', linewidth=2.5, linestyle='dashed', label='TPI FSU Jena')
-    plt.plot([1000, 1], [2750, 2200], color='blueviolet', linewidth=2.5, linestyle='dashed', label='Virgo-AUth')
-    plt.plot([600, 1], [1750, 1000], color='green', linewidth=2.5, linestyle='dashed', label='CNN-Coinc')
-    plt.plot([300, 1], [1750, 800], color='blue', linewidth=2.5, linestyle='dashed', label='MFCNN')
+    plt.title('Sensitivity Measure for Dataset {}'.format(args.dataset))
+    plt.plot(far*(month/dur), sens, color='m', linewidth=3.0, label='nnarenraju')
+
+    with h5py.File('/home/nnarenraju/Research/results/PyCBC/ds{}/eval.hdf'.format(args.dataset)) as fp:
+        sens_pycbc = np.array(fp['sensitive-distance'])
+        far_pycbc = np.array(fp['far'])
+    plt.plot(far_pycbc*month, sens_pycbc, color='orange', linewidth=2.5, linestyle='dashed', label='PyCBC')
+
+    with h5py.File('/home/nnarenraju/Research/results/TPI_FSU_Jena/ds{}/eval.hdf'.format(args.dataset)) as fp:
+        sens_fsu = np.array(fp['sensitive-distance'])
+        far_fsu = np.array(fp['far'])
+    plt.plot(far_fsu*month, sens_fsu, color='red', linewidth=2.5, linestyle='dashed', label='TPI FSU Jena')
+
+    with h5py.File('/home/nnarenraju/Research/results/Virgo-AUTh/ds{}/eval.hdf'.format(args.dataset)) as fp:
+        sens_virgo = np.array(fp['sensitive-distance'])
+        far_virgo = np.array(fp['far'])
+    plt.plot(far_virgo*month, sens_virgo, color='blueviolet', linewidth=2.5, linestyle='dashed', label='Virgo-AUTh')
+
+    with h5py.File('/home/nnarenraju/Research/results/CNN-Coinc/ds{}/eval.hdf'.format(args.dataset)) as fp:
+        sens_cnn = np.array(fp['sensitive-distance'])
+        far_cnn = np.array(fp['far'])
+    plt.plot(far_cnn*month, sens_cnn, color='green', linewidth=2.5, linestyle='dashed', label='CNN-Coinc')
+
+    with h5py.File('/home/nnarenraju/Research/results/MFCNN/ds{}/eval.hdf'.format(args.dataset)) as fp:
+        sens_mfcnn = np.array(fp['sensitive-distance'])
+        far_mfcnn = np.array(fp['far'])
+    plt.plot(far_mfcnn*month, sens_mfcnn, color='blue', linewidth=2.5, linestyle='dashed', label='MFCNN')
+    
     plt.grid(True, which='both')
     plt.xlim(1000, 1)
     plt.ylim(0, 3500)
