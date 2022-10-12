@@ -63,7 +63,7 @@ def figure(title=""):
 
 
 def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid', 
-          label="", c=None, yscale='linear', xscale='linear', histogram=False):
+          label="NULL", c=None, yscale='linear', xscale='linear', histogram=False):
     
     # Plotting type
     if histogram:
@@ -146,7 +146,7 @@ def prediction_raw(nep, output, labels, export_dir):
     boundary_diff = np.around(max(raw_tp) - max(raw_tn), 3)
     
     # Plotting routine
-    ax, _ = figure(title="Raw output at Epoch = {}, max signal stat - max noise stat = {}".format(nep, boundary_diff))
+    ax, _ = figure(title="Raw output at Epoch = {}".format(nep))
     # Log pred probs
     _plot(ax, y=raw_tp, label="Signals", c='red', 
           ylabel="log10 Number of Occurences", xlabel="Raw Output Values", 
@@ -177,7 +177,7 @@ def prediction_probability(nep, output, labels, export_dir):
     boundary_diff = np.around(max(pred_prob_tp) - max(pred_prob_tn), 3)
     
     # Plotting routine
-    ax, _ = figure(title="Pred prob output at Epoch = {}, max signal stat - max noise stat = {}".format(nep, boundary_diff))
+    ax, _ = figure(title="Pred prob output at Epoch = {}".format(nep))
     # Log pred probs
     _plot(ax, y=pred_prob_tp, label="Signals", c='red', 
           ylabel="log10 Number of Occurences", xlabel="Prediction Probabilities (Sigmoid)", 
@@ -191,19 +191,66 @@ def prediction_probability(nep, output, labels, export_dir):
     plt.close()
 
 
-def learning_parameter_prior(nep, source_params, predicted_outputs, save_name='unknown_output', export_dir=''):
+def efficiency_curves(nep, source_params, predicted_outputs, labels, save_name='unknown_output', export_dir=''):
     # Save directory
-    save_dir = os.path.join(export_dir, "LEARN_PARAMS")
+    save_dir = os.path.join(export_dir, "EFFICIENCY/epoch_{}".format(nep))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=False)
-        
+    
+    # Get pred probs from output
+    mx = np.ma.masked_array(predicted_outputs, mask=labels)
+    # For labels == signal, true positive
+    data_tp = mx[mx.mask == True].data
+    
     # Create overlapping bins for the source_params and get the average value of predicted outputs
-    bin_width = 1000 # samples
-    overlap = 100 # samples
+    bin_width = 100 # samples
+    overlap = 10 # samples
     for key in source_params.keys():
         # Sort the source_params for the particular key alongside the predicted outputs
-        assert len(source_params[key]) == len(predicted_outputs)
-        zipped = zip(source_params[key], predicted_outputs)
+        source_data = np.ma.masked_array(source_params[key])
+        source_data = source_data[mx.mask == True].data
+        assert len(source_data) == len(data_tp)
+        zipped = zip(source_data, data_tp)
+
+        zsorted = np.array(sorted(zipped, key=lambda x: x[0]))
+        # Get the plotting data by averaging output in overlapping bins
+        overlap_range = range(0, len(zsorted), overlap)
+        plot = []
+        for idx in overlap_range:
+            bdata = np.where((zsorted[:,0]>zsorted[:,1][idx]) & (zsorted[:,0]<zsorted[:,1][idx+bin_width]))[0]
+            plot.append(np.median(bdata), bin_width/len(bdata))
+        plot = np.array(plot)
+        # Plotting the above data for the given parameter
+        ax, fig = figure(title="Efficiency Curve for {}".format(key))
+        _plot(ax, x=plot[:,0], y=plot[:,1], xlabel=key, ylabel=save_name, ls='solid', 
+              label=key, c='k', yscale='linear', xscale='linear', histogram=False)
+        # Saving the plot in export_dir
+        save_path = os.path.join(save_dir, 'efficiency_{}_{}_{}.png'.format(save_name, key, nep))
+        plt.savefig(save_path)
+        plt.close()
+    
+
+def learning_parameter_prior(nep, source_params, predicted_outputs, labels, save_name='unknown_output', export_dir=''):
+    # Save directory
+    save_dir = os.path.join(export_dir, "LEARN_PARAMS/epoch_{}".format(nep))
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=False)
+    
+    # Get pred probs from output
+    mx = np.ma.masked_array(predicted_outputs, mask=labels)
+    # For labels == signal, true positive
+    data_tp = mx[mx.mask == True].data
+        
+    # Create overlapping bins for the source_params and get the average value of predicted outputs
+    bin_width = 500 # samples
+    overlap = 10 # samples
+    for key in source_params.keys():
+        # Sort the source_params for the particular key alongside the predicted outputs
+        source_data = np.ma.masked_array(source_params[key])
+        source_data = source_data[mx.mask == True].data
+        assert len(source_data) == len(data_tp)
+        zipped = zip(source_data, data_tp)
+
         zsorted = np.array(sorted(zipped, key=lambda x: x[0]))
         # Get the plotting data by averaging output in overlapping bins
         overlap_range = range(0, len(zsorted), overlap)
@@ -211,10 +258,20 @@ def learning_parameter_prior(nep, source_params, predicted_outputs, save_name='u
         plot = np.array(plot)
         # Plotting the above data for the given parameter
         ax, fig = figure(title="Learning {}".format(key))
-        _plot(ax, x=plot[:,0], y=plot[:,1], xlabel="key", ylabel="save_name", ls='solid', 
-                  label="", c='blue', yscale='linear', xscale='linear', histogram=False)
+        _plot(ax, x=plot[:,0], y=plot[:,1], xlabel=key, ylabel=save_name, ls='solid', 
+              label=key, c='blue', yscale='linear', xscale='linear', histogram=False)
+        # Plotting the percentiles
+        plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 5), 
+                         plot[:,1]+np.percentile(plot[:,1], 5), color='blue', 
+                         alpha = 0.3, label="5th percentile")
+        plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 50), 
+                         plot[:,1]+np.percentile(plot[:,1], 50), color='green', 
+                         alpha = 0.3, label="50th percentile")
+        plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 95), 
+                         plot[:,1]+np.percentile(plot[:,1], 95), color='red', 
+                         alpha = 0.3, label="95th percentile")
         # Saving the plot in export_dir
-        save_path = 'learning_{}_{}_{}.png'.format(save_name, key, nep)
+        save_path = os.path.join(save_dir, 'learning_{}_{}_{}.png'.format(save_name, key, nep))
         plt.savefig(save_path)
         plt.close()
 
@@ -640,16 +697,17 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     # Params for storing labels and outputs
                     if nep % cfg.save_freq == 0:
                         # Save SNRs for the validation phase (used in diagonal plots)
-                        validation_snrs.append(validation_labels['snr'].cpu())
+                        validation_snrs.append(source_params['snr'].cpu())
                         # Move labels from cuda to cpu
                         epoch_labels['gw'].append(validation_labels['gw'].cpu())
                         epoch_outputs['gw'].append(voutput['pred_prob'].cpu().detach().numpy())
                         raw_output['raw'].append(voutput['raw'].cpu().detach().numpy())
-                        if not nstep:
-                            sample_params.update(source_params.cpu().detach().numpy())
+                        if nstep == 0:
+                            for key in source_params.keys():  
+                                sample_params[key] = source_params[key].cpu().detach().numpy()
                         else:
                             for key in source_params.keys():
-                                sample_params[key] = np.append(sample_params[key], source_params[key])
+                                sample_params[key] = np.append(sample_params[key], source_params[key].cpu().detach().numpy())
                                 
                         # Add parameter estimation actual and observed values
                         for param in cfg.parameter_estimation:
@@ -675,8 +733,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     prediction_probability(nep, epoch_outputs['gw'], epoch_labels['gw'], cfg.export_dir)
                     
                     """ Source parameter vs prediction probabilities OR raw values """
-                    learning_parameter_prior(nep, sample_params, raw_output['raw'], 'raw_value', cfg.export_dir)
-                    learning_parameter_prior(nep, sample_params, epoch_outputs['gw'], 'pred_prob', cfg.export_dir)
+                    learning_parameter_prior(nep, sample_params, raw_output['raw'], epoch_labels['gw'], 'raw_value', cfg.export_dir)
+                    learning_parameter_prior(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], 'pred_prob', cfg.export_dir)
                     
                     """ Value VS Value Plots for PE """
                     diagonal_compare(nep, epoch_outputs, epoch_labels, validation_snrs, cfg.export_dir)
@@ -740,11 +798,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             
             """ Save the best weights (if global loss reduces) """
             split_weights_path = os.path.splitext(cfg.weights_path)
-            weights_root_name = split_weights_path[0]
+            weights_root_name = 'weights'
             weights_file_ext = split_weights_path[1]
             
             if epoch_validation_loss['tot'] < best_loss and 'loss' in cfg.weight_types:
-                weights_path = '{}_loss.{}'.format(weights_root_name, weights_file_ext)
+                weights_path = '{}_loss{}'.format(weights_root_name, weights_file_ext)
                 weights_save_path = os.path.join(cfg.export_dir, weights_path)
                 torch.save(Network.state_dict(), weights_save_path)
                 best_loss = epoch_validation_loss['tot']
@@ -752,7 +810,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     best_epoch = nep
             
             if avg_acc_valid > best_accuracy and 'accuracy' in cfg.weight_types:
-                weights_path = '{}_accuracy.{}'.format(weights_root_name, weights_file_ext)
+                weights_path = '{}_accuracy{}'.format(weights_root_name, weights_file_ext)
                 weights_save_path = os.path.join(cfg.export_dir, weights_path)
                 torch.save(Network.state_dict(), weights_save_path)
                 best_accuracy = avg_acc_valid
@@ -760,7 +818,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                     best_epoch = nep
             
             if roc_auc > best_roc_auc and 'roc_auc' in cfg.weight_types:
-                weights_path = '{}_roc_auc.{}'.format(weights_root_name, weights_file_ext)
+                weights_path = '{}_roc_auc{}'.format(weights_root_name, weights_file_ext)
                 weights_save_path = os.path.join(cfg.export_dir, weights_path)
                 torch.save(Network.state_dict(), weights_save_path)
                 best_roc_auc = roc_auc
@@ -782,8 +840,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             pred_prob_tn = mx2[mx2.mask == False].data
             
             # Histogram data for noise and signals
-            Hn = torch.histogram(raw_tn, bins=50, density=True)
-            Hs = torch.histogram(raw_tp, bins=50, density=True)
+            Hn = np.histogram(raw_tn, bins=50, density=True)
+            Hs = np.histogram(raw_tp, bins=50, density=True)
             
             if nep == 0:
                 lowest_max_noise_stat = max(raw_tn)
@@ -793,58 +851,59 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 best_noise_stats = min(pred_prob_tn) + max(pred_prob_tn)
                 best_signal_stats = min(pred_prob_tp) + max(pred_prob_tp)
                 best_stat_compromise = (best_noise_stats - 0.0)**2. + (best_signal_stats - 2.0)**2.
-                best_overlap_area = torch.sum(torch.min(Hn[0], Hs[0])) * (Hn[1][1:]-Hn[1][:-1])[0]
+                best_overlap_area = np.sum(np.minimum(Hn[0], Hs[0])) * (Hn[1][1:]-Hn[1][:-1])[0]
                 noise_argmax = np.argmax(Hn[1])
-                best_signal_area = torch.sum(Hs[0][Hs[1] > Hn[1][noise_argmax]]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                best_signal_area = np.sum(Hs[0][Hs[1][1:] > Hn[1][noise_argmax]]) * (Hn[1][1:]-Hn[1][:-1])[0]
                 # Get histogram values of noise above thresh value of noise
-                thresh_dist = 0.7 * (torch.max(Hn[1]) - torch.min(Hn[1]))
-                thresh = torch.min(Hn[1]) + thresh_dist
-                best_noise_area = torch.sum(Hn[0][Hn[1] > thresh]) * (Hn[1][1:]-Hn[1][:-1])[0]
-                best_diff_distance = max(raw_tp) - max(raw_tn)
+                thresh_dist = 0.7 * (np.max(Hn[1]) - np.min(Hn[1]))
+                thresh = np.min(Hn[1]) + thresh_dist
+                best_noise_area = np.sum(Hn[0][Hn[1][1:] > thresh]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                best_diff_distance = np.max(raw_tp) - np.max(raw_tn)
+
                 
             else:
                 if max(raw_tn) < lowest_max_noise_stat and 'lmax_noise_stat' in cfg.weight_types:
-                    weights_path = '{}_lmax_noise_stat.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_lmax_noise_stat{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
-                    lowest_max_noise_stat = max(raw_tn)
+                    lowest_max_noise_stat = np.max(raw_tn)
                     if cfg.save_best_option == 'lmax_noise_stat':
                         best_epoch = nep
                 
                 if min(raw_tn) < lowest_min_noise_stat and 'lmin_noise_stat' in cfg.weight_types:
-                    weights_path = '{}_lmin_noise_stat.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_lmin_noise_stat{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
-                    lowest_min_noise_stat = min(raw_tn)
+                    lowest_min_noise_stat = np.min(raw_tn)
                     if cfg.save_best_option == 'lmin_noise_stat':
                         best_epoch = nep
                 
                 if max(raw_tp) > highest_max_signal_stat and 'hmax_signal_stat' in cfg.weight_types:
-                    weights_path = '{}_hmax_signal_stat.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_hmax_signal_stat{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
-                    highest_max_signal_stat = max(raw_tp)
+                    highest_max_signal_stat = np.max(raw_tp)
                     if cfg.save_best_option == 'hmax_signal_stat':
                         best_epoch = nep
                 
                 if min(raw_tp) > highest_min_signal_stat and 'hmin_signal_stat' in cfg.weight_types:
-                    weights_path = '{}_hmin_signal_stat.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_hmin_signal_stat{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
-                    highest_min_signal_stat = min(raw_tp)
+                    highest_min_signal_stat = np.min(raw_tp)
                     if cfg.save_best_option == 'hmin_signal_stat':
                         best_epoch = nep
                 
                 if min(pred_prob_tn) + max(pred_prob_tn) < best_noise_stats and 'best_noise_stat' in cfg.weight_types:
-                    weights_path = '{}_best_noise_stat.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_best_noise_stat{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
-                    best_noise_stats = min(pred_prob_tn) + max(pred_prob_tn)
+                    best_noise_stats = np.min(pred_prob_tn) + np.max(pred_prob_tn)
                     if cfg.save_best_option == 'best_noise_stat':
                         best_epoch = nep
                 
                 if min(pred_prob_tp) + max(pred_prob_tp) > best_signal_stats and 'best_signal_stat' in cfg.weight_types:
-                    weights_path = '{}_best_signal_stat.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_best_signal_stat{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
                     best_signal_stats = min(pred_prob_tp) + max(pred_prob_tp)
@@ -852,7 +911,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         best_epoch = nep
                 
                 if (best_noise_stats - 0.0)**2. + (best_signal_stats - 2.0)**2. < best_stat_compromise and 'best_stat_compromise' in cfg.weight_types:
-                    weights_path = '{}_best_stat_compromise.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_best_stat_compromise{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
                     best_stat_compromise = (best_noise_stats - 0.0)**2. + (best_signal_stats - 2.0)**2.
@@ -861,7 +920,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 ### Overlap area between signal and noise stats on normalised histograms
                 # Calculate normalised area of overlap [0, 1] +/- epsilon
-                overlap_area = torch.sum(torch.min(Hn[0], Hs[0])) * (Hn[1][1:]-Hn[1][:-1])[0]
+                overlap_area = np.sum(np.minimum(Hn[0], Hs[0])) * (Hn[1][1:]-Hn[1][:-1])[0]
                 if overlap_area > best_overlap_area and 'best_overlap_area' in cfg.weight_types:
                     weights_path = '{}_best_overlap_area.{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
@@ -873,9 +932,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 ### Area of normalised histogram to the right of max noise stat
                 # Get histogram values of signal above max value of noise
                 noise_argmax = np.argmax(Hn[1])
-                fp_signal_area = torch.sum(Hs[0][Hs[1] > Hn[1][noise_argmax]]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                fp_signal_area = np.sum(Hs[0][Hs[1][1:] > Hn[1][noise_argmax]]) * (Hn[1][1:]-Hn[1][:-1])[0]
                 if fp_signal_area > best_signal_area and 'best_signal_area' in cfg.weight_types:
-                    weights_path = '{}_best_signal_area.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_best_signal_area{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
                     best_signal_area = fp_signal_area
@@ -884,11 +943,11 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 ### Area of normalised noise histogram above threshold
                 # Get histogram values of noise above thresh value of noise
-                thresh_dist = 0.7 * (torch.max(Hn[1]) - torch.min(Hn[1]))
-                thresh = torch.min(Hn[1]) + thresh_dist
-                fp_noise_area = torch.sum(Hn[0][Hn[1] > thresh]) * (Hn[1][1:]-Hn[1][:-1])[0]
+                thresh_dist = 0.7 * (np.max(Hn[1]) - np.min(Hn[1]))
+                thresh = np.min(Hn[1]) + thresh_dist
+                fp_noise_area = np.sum(Hn[0][Hn[1][1:] > thresh]) * (Hn[1][1:]-Hn[1][:-1])[0]
                 if fp_noise_area > best_noise_area and 'best_noise_area' in cfg.weight_types:
-                    weights_path = '{}_best_noise_area.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_best_noise_area{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
                     best_signal_area = fp_noise_area
@@ -896,9 +955,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         best_epoch = nep
             
                 ### Distance between maximum raw values of noise and signal stats
-                diff_distance = max(raw_tp) - max(raw_tn)
+                diff_distance = np.max(raw_tp) - np.max(raw_tn)
                 if diff_distance > best_diff_distance and 'best_diff_distance' in cfg.weight_types:
-                    weights_path = '{}_best_diff_distance.{}'.format(weights_root_name, weights_file_ext)
+                    weights_path = '{}_best_diff_distance{}'.format(weights_root_name, weights_file_ext)
                     weights_save_path = os.path.join(cfg.export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
                     best_diff_distance = diff_distance
@@ -997,7 +1056,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     
     # Return the trained network with the best possible weights
     # This step is mandatory before the inference/testing module
-    Network.load_state_dict(torch.load(os.path.join(best_dir, cfg.weights_path)))
+    weights_path = '{}_{}{}'.format(weights_root_name, cfg.save_best_option, weights_file_ext)
+    Network.load_state_dict(torch.load(os.path.join(best_dir, weights_path)))
     return Network
     
     
