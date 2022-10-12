@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-Filename        = Foobar.py
-Description     = Lorem ipsum dolor sit amet
+Filename        = test_multirate_sampling.py
+Description     = Standalone code to test multi-rate sampling on GW signals
 
 Created on Wed Mar 30 05:58:43 2022
 
 __author__      = nnarenraju
-__copyright__   = Copyright 2022, ProjectName
+__copyright__   = Copyright 2022, MLGWSC-1
 __credits__     = nnarenraju
 __license__     = MIT Licence
 __version__     = 0.0.1
 __maintainer__  = nnarenraju
 __email__       = nnarenraju@gmail.com
-__status__      = ['inProgress', 'Archived', 'inUsage', 'Debugging']
+__status__      = Archived
 
 
 Github Repository: NULL
@@ -188,7 +188,7 @@ def get_sampling_rate_bins(low_mass=10.0, max_signal_length=22.0, signal_low_fre
     
     # Get check frequencies
     f_edge = f_ISCO
-    f_hqual = 750.0
+    f_hqual = 750.0 # high-quality
     f_bad = 50.0
     bad_chunk = True
     hqual_chunk = True
@@ -318,6 +318,7 @@ def multirate_sampling(path, tc_inject_lower, tc_inject_upper):
     # These intervals are stitched together to for a sample with MRsampling
     # Reading the signal
     signals, m1, m2, signal_low_freq_cutoff, sample_rate = read(path)
+    # Removing chunk manually here. In pipeline, whitening will remove this as corrupt region.
     signals = [signal[int(2.5*2048.):int(len(signal)-2.5*2048.)] for signal in signals]
     # Get the sampling rates and their bins idx
     dbins = get_sampling_rate_bins(signal_low_freq_cutoff=signal_low_freq_cutoff, 
