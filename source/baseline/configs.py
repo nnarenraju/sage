@@ -205,8 +205,13 @@ class KaggleFirst:
     num_sample_save = 100
     early_stopping = False
     
-    weight_types = ['loss']
-    # Saving weights
+    """ Weight Types """
+    weight_types = ['loss', 'accuracy', 'roc_auc', 'lmax_noise_stat', 'lmin_noise_stat',
+                    'hmax_signal_stat', 'hmin_signal_stat', 'best_noise_stat', 'best_signal_stat',
+                    'best_stat_compromise', 'best_overlap_area', 'best_signal_area', 'best_noise_area',
+                    'best_diff_distance']
+    
+    # Pick one of the above weights for best epoch save directory
     save_best_option = 'loss'
     
     """ Dataloader params """
@@ -487,9 +492,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Sept21"
+    name = "KaggleFirst_Oct5"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'Improve-Sensitivity-'
+    save_remarks = 'Improve-lowFAR-sensitivity-'
     
     """ Dataset """
     dataset = MLMDC1
@@ -520,16 +525,16 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     num_sample_save = 100
     
     """ Weight Types """
-    weight_types = ['loss', 'accuracy', 'roc_auc', 'lmax_noise_stat', 'lmin_noise_stat',
-                    'hmax_signal_stat', 'hmin_signal_stat', 'best_noise_stat', 'best_signal_stat',
-                    'best_stat_compromise', 'best_overlap_area', 'best_signal_area', 'best_noise_area',
-                    'best_diff_distance']
+    weight_types = ['loss', 'accuracy', 'roc_auc', 'lmin_noise_stat', 'best_signal_area']
     
     # Pick one of the above weights for best epoch save directory
     save_best_option = 'loss'
     
+    pretrained = False
+    weights_path = 'weights.pt'
+    
     """ Parameter Estimation """
-    parameter_estimation = ('norm_tc', 'norm_mchirp', 'norm_snr', )
+    parameter_estimation = ('norm_tc', 'norm_mchirp', )
     
     """ Storage Devices """
     store_device = 'cuda:0'
@@ -537,7 +542,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Optimizer """
     optimizer = optim.SGD
-    optimizer_params = dict(lr=1e-4, momentum=0.9, weight_decay=1e-6)
+    optimizer_params = dict(lr=1e-3, momentum=0.9, weight_decay=1e-6)
     
     """ Scheduler """
     scheduler = LambdaLR
@@ -550,17 +555,18 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     loss_function = BCEgw_MSEtc(gw_criterion=None,
                                 network_snr_for_noise=False, mse_alpha=5.0,
                                 emphasis_threshold=0.5, noise_emphasis=True, signal_emphasis=True, 
-                                emphasis_alpha=0.6, emphasis_type='pred_prob',
+                                emphasis_alpha=1.0, emphasis_type='pred_prob',
                                 fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.2,
-                                overlap_loss=False, overlap_alpha=0.5, 
+                                overlap_loss=False, overlap_alpha=0.5,
+                                mchirp_loss=True, mchirp_thresh_percentage=0.7,
                                 detectable_snr_loss=False, detectable_snr_thresh=8.0, detectable_snr_alpha=0.5,
                                 fp_signal_area_loss=False, fp_signal_area_alpha=0.5,
                                 fp_noise_area_loss=False, fp_noise_area_percentage=None, fp_noise_area_alpha=0.5)
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
-    rescaled_snr_lower = 1.0
-    rescaled_snr_upper = 15.0
+    rescaled_snr_lower = 7.0
+    rescaled_snr_upper = 20.0
     
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
@@ -573,7 +579,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     persistent_workers = True
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D1_seeded"
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D2_seeded"
     injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
