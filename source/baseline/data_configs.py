@@ -184,6 +184,15 @@ class Default:
     # NOTE: Verified to produce correct results for 1.0 s and 20.0 s signals (March 30th, 2022)
     psd_len = int(int(sample_length_in_num+0.5) / 2 + 1)
     
+    """ Real O3a noise (Dataset 4) """
+    request_real_noise_hours = None
+    psd_est_segment_length = None
+    psd_est_segment_stride = None
+    num_real_noise_segment_len_in_s = None
+    
+    """ PSD bad band blacking out for Datasets 2,3,4 """
+    blackout_max_ratio = 2.0
+    
     """ generate_data.py Noise Params (if used) """
     # Only used in dataset 2 and 3
     # TODO: Not implemented yet. Do not use.
