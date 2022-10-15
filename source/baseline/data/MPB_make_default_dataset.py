@@ -46,7 +46,7 @@ plt.rcParams.update({'font.size': 16})
 # PyCBC handling
 import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.detector
 
-from pycbc.psd import interpolate
+from pycbc.psd import interpolate, welch
 from pycbc.distributions.utils import draw_samples_from_config
 from pycbc.types import load_frequencyseries, complex_same_precision_as
 
@@ -107,27 +107,33 @@ def psd_to_asd(psd, start_time, end_time,
     asd = (psd.squared_norm())**0.25
     return asd
 
-# Save complex PSDs or ASDs as global variables
-# Since this is not within the multiprocessing block, it will not be counted towards shared RAM
-psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
-               'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
-# Iterate through all PSD files for detector and compute the median PSD
-complex_asds = {'H1': [], 'L1': []}
-detectors_abbr = ['H1', 'L1']
-for i, det in enumerate(detectors_abbr):
-    # Read all detector PSDs as frequency series with appropriate delta_f
-    for psd_det in psd_options[det]:
-        psd = load_frequencyseries(psd_det)
-        psd = interpolate(psd, 1.0/25.0)
-        # Convert PSD's to ASD's for colouring the white noise
-        foo = psd_to_asd(psd, 0.0, 25.0,
-                         sample_rate=2048.,
-                         low_frequency_cutoff=15.0,
-                         filter_duration=25.0)
-        complex_asds[det].append(foo)
 
+def get_complex_asds():
+    # Save complex PSDs or ASDs as global variables
+    # Since this is not within the multiprocessing block, it will not be counted towards shared RAM
+    psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
+                   'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
+    # Iterate through all PSD files for detector and compute the median PSD
+    complex_asds = {'H1': [], 'L1': []}
+    detectors_abbr = ['H1', 'L1']
+    for i, det in enumerate(detectors_abbr):
+        # Read all detector PSDs as frequency series with appropriate delta_f
+        for psd_det in psd_options[det]:
+            psd = load_frequencyseries(psd_det)
+            psd = interpolate(psd, 1.0/25.0)
+            # Convert PSD's to ASD's for colouring the white noise
+            foo = psd_to_asd(psd, 0.0, 25.0,
+                             sample_rate=2048.,
+                             low_frequency_cutoff=15.0,
+                             filter_duration=25.0)
+            complex_asds[det].append(foo)
+    
+    return complex_asds
+
+
+# Get complex asds
 global asds
-asds = complex_asds
+asds = get_complex_asds()
 
 
 
@@ -170,7 +176,8 @@ class GenerateData:
                  'max_signal_length', 'ringdown_leeway', 'merger_leeway', 'start_freq_factor',
                  'fs_reduction_factor', 'fbin_reduction_factor', 'dbins', 'check_seeds',
                  'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq',
-                 'complex_asds']
+                 'complex_asds', 'request_real_noise_hours', 'psd_est_segment_length', 
+                 'psd_est_segment_stride', 'num_real_noise_segment_len_in_s', 'blackout_max_ratio']
     
     
     def __init__(self, **kwargs):
@@ -297,56 +304,6 @@ class GenerateData:
             # Adding all relevant attributes
             fp.attrs['delta_f'] = self.delta_f
             fp.attrs['name'] = psd_name
-    
-    
-    def psd_to_asd(self, psd, start_time, end_time,
-                   sample_rate=2048.,
-                   low_frequency_cutoff=15.0,
-                   filter_duration=128):
-        
-        psd = psd.copy()
-    
-        flen = int(sample_rate / psd.delta_f) // 2 + 1
-        oldlen = len(psd)
-        psd.resize(flen)
-    
-        # Want to avoid zeroes in PSD.
-        max_val = psd.max()
-        for i in range(len(psd)):
-            if i >= (oldlen-1):
-                psd.data[i] = psd[oldlen - 2]
-            if psd[i] == 0:
-                psd.data[i] = max_val
-    
-        fil_len = int(filter_duration * sample_rate)
-        wn_dur = int(end_time - start_time) + 2 * filter_duration
-        if psd.delta_f >= 1. / (2.*filter_duration):
-            # If the PSD is short enough, this method is less memory intensive than
-            # resizing and then calling inverse_spectrum_truncation
-            psd = pycbc.psd.interpolate(psd, 1.0 / (2. * filter_duration))
-            # inverse_spectrum_truncation truncates the inverted PSD. To truncate
-            # the non-inverted PSD we give it the inverted PSD to truncate and then
-            # invert the output.
-            psd = 1. / pycbc.psd.inverse_spectrum_truncation(
-                                    1./psd,
-                                    fil_len,
-                                    low_frequency_cutoff=low_frequency_cutoff,
-                                    trunc_method='hann')
-            psd = psd.astype(complex_same_precision_as(psd))
-            # Zero-pad the time-domain PSD to desired length. Zeroes must be added
-            # in the middle, so some rolling between a resize is used.
-            psd = psd.to_timeseries()
-            psd.roll(fil_len)
-            psd.resize(int(wn_dur * sample_rate))
-            psd.roll(-fil_len)
-            # As time series is still mirrored the complex frequency components are
-            # 0. But convert to real by using abs as in inverse_spectrum_truncate
-            psd = psd.to_frequencyseries()
-    
-        kmin = int(low_frequency_cutoff / psd.delta_f)
-        psd[:kmin].clear()
-        asd = (psd.squared_norm())**0.25
-        return asd
         
     
     def save_PSD(self):
@@ -356,10 +313,17 @@ class GenerateData:
             psd_data = self.psds[0].numpy()
             psd_name = 'aLIGOZeroDetHighPower'
             self._save_(save_name, psd_data, psd_name)
-        else:
+            
+        elif self.dataset in [2, 3]:
             ## Save the median PSD from the PSD files provided
             psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
                            'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
+            # Frequencies in the PSD
+            f = np.linspace(self.noise_low_freq_cutoff, self.noise_high_freq_cutoff, self.psd_len)
+
+            # Plotting
+            plt.figure(figsize=(32.0, 12.0))
+            
             # Iterate through all PSD files for detector and compute the median PSD
             for det in self.detectors_abbr:
                 # Read all detector PSDs as frequency series with appropriate delta_f
@@ -367,15 +331,124 @@ class GenerateData:
                 for psd_det in psd_options[det]:
                     psd = load_frequencyseries(psd_det)
                     psd = interpolate(psd, self.delta_f)
-                    det_psds.append(psd.numpy())
+                    psd = psd.numpy()
+                    det_psds.append(psd)
+                    plt.plot(f, psd, linewidth=2.0, color='red')
+                    
                 # Compute the median of all PSDs along axis=0
-                psd_data = np.median(det_psds, axis=0)
+                median_psd = np.median(det_psds, axis=0)
+                max_psd = np.maximum.reduce(det_psds)
+
+                # Remove large variation regions from the median PSD when compared to max PSD
+                ratio_psd = max_psd / median_psd
+                # Black out all regions where the ratio is greater than threshold
+                blackout_idxs = np.argwhere(ratio_psd > self.blackout_max_ratio).flatten()
+                # Ratio is freq bins blacked out
+                del_ratio = len(blackout_idxs)/len(ratio_psd)
+                print('Percentage of deleted bins while blacking out (D2,D3) = {}%'.format(del_ratio*100))
+                # Create blacked PSD
+                median_psd[blackout_idxs] = 999_999_999_999.0 # sqrt is about 1e6
+                blacked_psd = median_psd
+                
+                ### Plotting
+                plt.title('PSDs and their median for detector {} (removed = {}%)'.format(det, round(del_ratio*100.0, 3)))
+                plt.yscale('log')
+                plt.xlabel('Frequency (Hz)')
+                plt.ylabel('PSD Magnitude')
+                plt.grid(True)
+                plt.plot(f, median_psd, linewidth=3.0, label='{} median PSD'.format(det), color='k')
+                for idx in blackout_idxs:
+                    plt.plot([f[idx], f[idx]], [1e-49, 1e-38], linewidth=1.0, color='gray')
+                plt.ylim(1e-49, 1e-38)
+                plt.legend()
+                save_png = os.path.join(self.dirs['parent'], 'median_PSDs_{}_full.png'.format(det))
+                plt.savefig(save_png)
+                plt.close()
+                
                 # Save the PSD in HDF5 format
                 save_name = 'psd-median-{}.hdf'.format(det)
                 psd_name = 'median_det{}'.format(1 if det=='H1' else 2)
-                self._save_(save_name, psd_data, psd_name)
+                self._save_(save_name, blacked_psd, psd_name)
                 
-    
+        elif self.dataset == 4:
+            ## Estimation of PSD for dataset 4
+            # Calculate the PSD for each day of the 81 days of real O3a noise data
+            # It is necessary that we use only 51 days of this noise that we DO NOT use for testing
+            O3a_real_noise = None
+            # Split the 51 day testing data into segments of n days each
+            sample_rate = None
+            # Hours to seconds conversion
+            h2s = lambda hours: hours * 60.0 * 60.0
+            
+            # Sanity check before splitting the data (do we have enough data for requested hours?)
+            assert h2s(self.request_real_noise_hours) * sample_rate <= len(O3a_real_noise), 'Too much O3a real noise requested!'
+            # Sanity check: If real data has an integer number of hours present in it
+            assert (len(O3a_real_noise) / (h2s(1.)*sample_rate)) % 1.0 ==0, 'Integer number of hours required for O3a real noise!'
+            # Use the segment length in seconds to split the real noise into equally sized segments
+            assert self.num_real_noise_segment_len_in_s <= h2s(self.request_real_noise_hours)
+            
+            # Get requested length (in hours) from real noise data
+            O3a_requested_noise = O3a_real_noise[:h2s(self.request_real_noise_hours)*sample_rate]
+            # Calculate number of splits to be applied to real data
+            num_seconds_in_data = len(O3a_requested_noise)/sample_rate
+            num_splits = int(num_seconds_in_data / self.num_real_noise_segment_len_in_s)
+            # Data Splitting
+            O3a_real_noise_splits = np.split(O3a_real_noise, num_splits)
+            
+            # Frequencies in the PSD
+            f = np.linspace(self.noise_low_freq_cutoff, self.noise_high_freq_cutoff, self.psd_len)
+            # Plotting
+            plt.figure(figsize=(32.0, 12.0))
+            
+            # The median of all the PSDs alongside a blacking out of bad frequencies
+            all_psds = []
+            for O3a_real_noise_split in O3a_real_noise_splits:
+                # PSD estimation using the welch's method
+                delta_t = 1.0/sample_rate
+                seg_len = int(self.psd_est_segment_length / delta_t)
+                seg_stride = int(seg_len * self.psd_est_segment_stride)
+                estimated_psd = welch(O3a_real_noise_split, seg_len=seg_len, seg_stride=seg_stride)
+                estimated_psd = interpolate(estimated_psd, self.delta_f)
+                all_psds.append(estimated_psd)
+                plt.plot(f, estimated_psd, linewidth=2.0, color='red')
+            
+            # Compute the median of all PSDs along axis=0
+            median_psd = np.median(all_psds, axis=0)
+            max_psd = np.maximum.reduce(all_psds)
+            
+            # Blacking out of unwanted bands in the frequency spectrum
+            # Remove large variation regions from the median PSD when compared to max PSD
+            ratio_psd = max_psd / median_psd
+            # Black out all regions where the ratio is greater than threshold
+            blackout_idxs = np.argwhere(ratio_psd > self.blackout_max_ratio).flatten()
+            # Ratio is freq bins blacked out
+            del_ratio = len(blackout_idxs)/len(ratio_psd)
+            print('Percentage of deleted bins while blacking out (D4) = {}%'.format(del_ratio*100))
+            # Create blacked PSD
+            median_psd[blackout_idxs] = 999_999_999_999.0 # sqrt is about 1e6
+            blacked_psd = median_psd
+            
+            ### Plotting
+            plt.title('PSDs and their median for detector {} (removed = {}%)'.format(det, round(del_ratio*100.0, 3)))
+            plt.yscale('log')
+            plt.xlabel('Frequency (Hz)')
+            plt.ylabel('PSD Magnitude')
+            plt.grid(True)
+            plt.plot(f, median_psd, linewidth=3.0, label='{} median PSD'.format(det), color='k')
+            for idx in blackout_idxs:
+                plt.plot([f[idx], f[idx]], [1e-49, 1e-38], linewidth=1.0, color='gray')
+            plt.ylim(1e-49, 1e-38)
+            plt.legend()
+            save_png = os.path.join(self.dirs['parent'], 'median_PSDs_{}_full.png'.format(det))
+            plt.savefig(save_png)
+            plt.close()
+            
+            # Save the PSD in HDF5 format
+            save_name = 'psd-median-{}.hdf'.format(det)
+            psd_name = 'median_det{}'.format(1 if det=='H1' else 2)
+            self._save_(save_name, blacked_psd, psd_name)
+                
+            
     def distance_from_chirp_distance(self, chirp_distance, mchirp, ref_mass=1.4):
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
         # Returns the luminosity distance given a chirp distance and chirp mass.
@@ -426,12 +499,13 @@ class GenerateData:
         self.norm_dchirp = Normalise(min_val=self.prior_low_chirp_dist, max_val=self.prior_high_chirp_dist)
         
         # Normalise mass ratio (m1/m2 is mass ratio 'q')
+        # This is as per PyCBC definition
         # m2 is always less than m1, and as an approx. we keep min ratio as m/m=1.0
         # max ratio will just be (mu/ml) --> max ratio = 50/7 ~ 7 
         # The range can be written as --> (min_val, max_val]
         self.norm_q = Normalise(min_val=1.0, max_val=mu/ml)
         
-        # Define inv_q as well (m2/m1) --> as per PyCBC definition
+        # Define inv_q as well (m2/m1)
         self.norm_invq = Normalise(min_val=0.0, max_val=1.0)
         
         ## End normalisation ##
