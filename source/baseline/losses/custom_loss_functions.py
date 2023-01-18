@@ -104,7 +104,7 @@ class BCEgw_MSEtc(LossWrapper):
     def histogram(self, xs, bins, density=False):
         # Like torch.histogram, but works with cuda
         _min, _max = xs.min().item(), xs.max().item()
-        cuda0 = torch.device('cuda:0')
+        cuda0 = torch.device('cuda:1')
         xs = xs.to(cuda0, torch.float32)
         n = torch.histc(xs, bins, min=_min, max=_max)
         bin_edges = torch.linspace(_min, _max, bins + 1)
@@ -218,10 +218,13 @@ class BCEgw_MSEtc(LossWrapper):
                 dmchirp_loss = 0.0
                 if self.mchirp_loss:
                     mc_mask = torch.gt(targets['norm_mchirp'], self.mchirp_thresh_percentage)
+                    # Sanity check (if no chirp masses above threshold)
                     detectable_mc_masked_output = torch.masked_select(outputs['raw'], mc_mask)
                     detectable_mc_masked_targets = torch.masked_select(targets['gw'], mc_mask)
-                    dmchirp_loss = self.gw_criterion(detectable_mc_masked_output, detectable_mc_masked_targets)
-                    dmchirp_loss = dmchirp_loss * 1.0
+                    if len(detectable_mc_masked_targets) != 0:
+                        dmchirp_loss = self.gw_criterion(detectable_mc_masked_output, detectable_mc_masked_targets)
+                        dmchirp_loss = dmchirp_loss * 1.0
+
                 
                 ### Area of signal histogram above max value of noise must increase
                 fp_signal_area_loss = 0.0
@@ -290,7 +293,11 @@ class BCEgw_MSEtc(LossWrapper):
             # Calculating the individual PE MSE loss
             if key == 'norm_snr' and self.network_snr_for_noise:
                 # All samples are included in the prediction of SNR (noise and signals)
-                pe_loss = self.mse_alpha * torch.mean((targets[key]-outputs[key])**2)
+                smask = torch.ge(outputs['pred_prob'], 0.5)
+                fmask = mask.logical_or(smask)
+                smasked_target = torch.masked_select(targets[key], fmask)
+                smasked_output = torch.masked_select(outputs[key], fmask)
+                pe_loss = self.mse_alpha * torch.mean((smasked_target-smasked_output)**2)
             else:
                 pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
             # Store losses
