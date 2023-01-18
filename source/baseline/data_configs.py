@@ -108,13 +108,13 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
-    data_dir = "dataset_1e6_Sept11_D1_seed42"
+    data_dir = "dataset_1e6_Jan8_D3_seed42"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
     # Type of dataset (1, 2, 3 or 4)
     # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
-    dataset = 1
+    dataset = 3
     # Random seed provided to generate_data script
     # This seed is used to generate the priors
     seed = 42
@@ -165,7 +165,7 @@ class Default:
     signal_approximant = 'IMRPhenomXPHM'
     reference_freq = 20.0 # Hz
     
-    prior_low_mass = 10.0 # Msun
+    prior_low_mass = 7.0 # Msun
     prior_high_mass = 50.0 # Msun
     prior_low_chirp_dist = 130.0
     prior_high_chirp_dist = 350.0
@@ -214,9 +214,9 @@ class Default:
     max_signal_length = 20.0 # s
     # Conservative value for max length of ringdown in seconds
     # This ringdown section will be sampled at max possible sample rate
-    ringdown_leeway = 0.5 # s
+    ringdown_leeway = 0.1 # s
     # Seconds before merger to include in max possible sample rate
-    merger_leeway=0.05 # s
+    merger_leeway=0.2 # s
     # f_ISCO is multiplied by this factor and used a starting sample freq. at merger
     # If this factor == 2.0, the sampling freq. will be at Nyquist limit
     start_freq_factor=2.5
