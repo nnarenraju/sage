@@ -546,12 +546,14 @@ class KappaModelPE(torch.nn.Module):
         dist = self.flatten_d0(self.sigmoid(self.distance(x)))
         q = self.flatten_d0(self.sigmoid(self.mass_ratio(x)))
         invq = self.flatten_d0(self.sigmoid(self.inv_mass_ratio(x)))
-        snr = self.flatten_d0(self.sigmoid(self.snr(x)))
+        raw_snr = self.flatten_d0(self.snr(x))
+        snr = self.sigmoid(raw_snr)
         
         # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
         return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,
-                'norm_dist': dist, 'norm_q': q, 'norm_invq': invq, 'norm_snr': snr}
+                'norm_dist': dist, 'norm_q': q, 'norm_invq': invq, 'norm_snr': snr,
+                'raw_snr': raw_snr}
 
 
 class KappaModelSimplified(torch.nn.Module):
