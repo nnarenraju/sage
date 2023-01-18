@@ -33,11 +33,14 @@ import math
 import time
 import random
 import logging
+import requests
 import itertools
 import tracemalloc
 import numpy as np
-from tqdm import tqdm
 import multiprocessing as mp
+
+# Prettification
+from tqdm import tqdm
 
 # Plotting
 import matplotlib.pyplot as plt
@@ -54,7 +57,9 @@ from pycbc.types import load_frequencyseries, complex_same_precision_as
 from data.mlmdc_noise_generator import NoiseGenerator
 
 # Addressing HDF5 error with file locking (used to address PSD file read error)
-# PSD file read has been moved to dataset object.
+# Issue (October 1st, 2022): File locking takes place with MP even with this option
+# Fix (October 5th, 2022): Reading all PSD files and storing data as global var (so as to not mess up MP)
+# Deprecation (October 17th, 2022): This option is no longer being used within MPB datagen.
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
@@ -265,7 +270,7 @@ class GenerateData:
     
     
     def __str__(self):
-        return 'MP based Batch Data Generation (avg rate: 117.5 per second on PC)'
+        return 'MP based Batch Data Generation'
     
     
     def make_data_dir(self):
@@ -320,7 +325,7 @@ class GenerateData:
                            'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
             # Frequencies in the PSD
             f = np.linspace(self.noise_low_freq_cutoff, self.noise_high_freq_cutoff, self.psd_len)
-
+            
             # Plotting
             plt.figure(figsize=(32.0, 12.0))
             
@@ -529,6 +534,64 @@ class GenerateData:
                     fp.create_dataset('data', data=priors, 
                                       compression='gzip', compression_opts=9, 
                                       shuffle=True)
+    
+    
+    def download_data(self, resume=True):
+        """
+        Download noise data from the central server.
+        
+        Arguments
+        ---------
+        path : {str or None, None}
+            Path at which to store the file. Must end in `.hdf`. If set to
+            None a default path will be used.
+        resume : {bool, True}
+            Resume the file download if it was interrupted.
+            
+        """
+        
+        # Setting the default path for real noise data to be stored
+        # Do not store this within data_dir. We do not want to download this multiple times.
+        path = os.path.join(self.parent_dir, 'O3a_real_noise.hdf')
+        # Sanity check
+        if os.path.exists(path):
+            print('O3a real noise file already exists! Your WiFi thanks you.')
+            return
+        else:
+            # Issue a warning before downloading the large file (~96 GB)
+            print('\nWARNING: About to download ~96 GB of real O3a noise.')
+            print("WARNING (contd.): Hide yo wives and get yo knives, a thicc boi is comin to town.")
+        
+        assert os.path.splitext(path)[1] == '.hdf'
+        url = 'https://www.atlas.aei.uni-hannover.de/work/marlin.schaefer/MDC/real_noise_file.hdf'
+        header = {}
+        resume_size = 0
+        if os.path.isfile(path) and resume:
+            mode = 'ab'
+            resume_size = os.path.getsize(path)
+            header['Range'] = f'bytes={resume_size}-'
+        else:
+            mode = 'wb'
+        with open(path, mode) as fp:
+            response = requests.get(url, stream=True, headers=header)
+            total_size = response.headers.get('content-length')
+
+            if total_size is None:
+                print("No file length found")
+                fp.write(response.content)
+            else:
+                total_size = int(total_size)
+                desc = f"Downloading real_noise_file.hdf to {path}"
+                print(desc)
+                with tqdm.tqdm(total=int(total_size),
+                               unit='B',
+                               unit_scale=True,
+                               dynamic_ncols=True,
+                               desc="Progress: ",
+                               initial=resume_size) as progbar:
+                    for data in response.iter_content(chunk_size=4000):
+                        fp.write(data)
+                        progbar.update(4000)
         
     
     def optimise_fmin(self, h_pol):
@@ -575,7 +638,7 @@ class GenerateData:
                 assert len(noise[0]) == maxlen
                 assert len(noise[1]) == maxlen
             
-            else:
+            elif self.dataset in [2, 3]:
                 global asds
                 self.noise_generator = NoiseGenerator(self.dataset,
                                                       seed=int(idx+1),
@@ -589,6 +652,11 @@ class GenerateData:
                 noise = [noise[det].numpy() for det in self.detectors_abbr]
                 assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
                 assert len(noise[1]) == self.sample_length_in_s * self.sample_rate
+            
+            elif self.dataset == 4:
+                # We don't have to colour the noise ourselves, so they would not fill up RAM memory
+                # Function to return self.sample_length_in_s of real noise with a random start time
+                pass
             
             # Saving noise params for storage
             sample['noise_1'] = noise[0]
@@ -1255,6 +1323,24 @@ def make(slots_magic_params, export_dir):
     gd.make_data_dir()
     # Setting up the export directory
     gd.export_dir = export_dir
+    
+    # Get the O3a real noise data (if using dataset 4)
+    if gd.dataset == 4:
+        gd.download_data()
+        # Sometimes the above command claims to be completed but
+        # the file may still not be written to disk completely
+        # Sanity check
+        while True:
+            check_path = os.path.join(gd.parent_dir, 'O3a_real_noise.hdf')
+            try:
+                with h5py.File(check_path, 'r') as fp:
+                    _ = fp.attrs
+                # If it works, we can leave the loop
+                break
+            except:
+                # If not, we resume download
+                gd.download_data(check_path, resume=True)
+                
     # Save PSDs required for dataset
     gd.save_PSD()
     # Get priors for entire dataset
