@@ -1052,13 +1052,9 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     # Remake loss curve and accuracy curve with best epoch marked
     loss_and_accuracy_curves(cfg, loss_filepath, best_dir, best_epoch=best_epoch)
     
-    print('\nFIN')
-    
     # Return the trained network with the best possible weights
     # This step is mandatory before the inference/testing module
     weights_path = '{}_{}{}'.format(weights_root_name, cfg.save_best_option, weights_file_ext)
     Network.load_state_dict(torch.load(os.path.join(best_dir, weights_path)))
+    
     return Network
-    
-    
-    
