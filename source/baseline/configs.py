@@ -492,9 +492,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Oct5"
+    name = "KaggleFirst_Jan08_SRD3_noSampler_Shuffled"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'Improve-lowFAR-sensitivity-'
+    save_remarks = 'Check-D3'
     
     """ Dataset """
     dataset = MLMDC1
@@ -505,7 +505,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     model_params = dict(
         # Kaggle frontend+backend
-        # This model is ridiculously slow on cpu, use cuda:0
+        # This model is ridiculously slow on cpu, use cuda
         model_name = 'KaggleFirstPEJun9', 
         filter_size = 32,
         kernel_size = 64,
@@ -513,39 +513,40 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
                         'pretrained': True, 
                         'in_chans': 2, 
                         'drop_rate': 0.25},
-        store_device = 'cuda:0',
+        store_device = 'cuda:1',
     )
     
     """ Epochs and Batches """
-    num_epochs = 10
-    batch_size = 1000
+    num_epochs = 50
+    batch_size = 32
     save_freq = 1
     
     """ Save samples """
     num_sample_save = 100
     
     """ Weight Types """
-    weight_types = ['loss', 'accuracy', 'roc_auc', 'lmin_noise_stat', 'best_signal_area']
+    weight_types = ['loss', 'accuracy', 'roc_auc']
     
     # Pick one of the above weights for best epoch save directory
     save_best_option = 'loss'
     
     pretrained = False
-    weights_path = 'weights.pt'
+    weights_path = 'weights_loss.pt'
     
     """ Parameter Estimation """
     parameter_estimation = ('norm_tc', 'norm_mchirp', )
     
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
     
     """ Optimizer """
     optimizer = optim.SGD
     optimizer_params = dict(lr=1e-3, momentum=0.9, weight_decay=1e-6)
     
     """ Scheduler """
-    scheduler = LambdaLR
+    # Default option: scheduler = LambdaLR
+    scheduler = None
     lambda1 = lambda epoch: 0.95 ** epoch
     scheduler_params = dict(lr_lambda=lambda1)
     
@@ -554,26 +555,26 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # All parameter estimation is done only using MSE loss at the moment
     loss_function = BCEgw_MSEtc(gw_criterion=None,
                                 network_snr_for_noise=False, mse_alpha=5.0,
-                                emphasis_threshold=0.5, noise_emphasis=True, signal_emphasis=True, 
+                                emphasis_threshold=0.5, noise_emphasis=False, signal_emphasis=False, 
                                 emphasis_alpha=1.0, emphasis_type='pred_prob',
                                 fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.2,
                                 overlap_loss=False, overlap_alpha=0.5,
-                                mchirp_loss=True, mchirp_thresh_percentage=0.7,
+                                mchirp_loss=False, mchirp_thresh_percentage=0.7,
                                 detectable_snr_loss=False, detectable_snr_thresh=8.0, detectable_snr_alpha=0.5,
                                 fp_signal_area_loss=False, fp_signal_area_alpha=0.5,
                                 fp_noise_area_loss=False, fp_noise_area_percentage=None, fp_noise_area_alpha=0.5)
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
-    rescaled_snr_lower = 7.0
-    rescaled_snr_upper = 20.0
+    rescaled_snr_lower = 5.0
+    rescaled_snr_upper = 15.0
     
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
     network_snr_for_noise = False
     
     """ Dataloader params """
-    num_workers = 16
+    num_workers = 64
     pin_memory = True
     prefetch_factor = 100
     persistent_workers = True
@@ -583,6 +584,8 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
+    # Short: far_scaling_factor = 64000.0
+    # Month: far_scaling_factor = 2592000.0
     far_scaling_factor = 64000.0
     
     test_foreground_dataset = "foreground.hdf"
@@ -597,14 +600,14 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # Based on prediction probabilities in best epoch
     trigger_threshold = 0.0
     # Time shift the signal by multiple of step_size and check pred probs
-    cluster_threshold = 0.35
+    cluster_threshold = 0.1
     # Run device for testing phase
-    testing_device = 'cuda:0'
+    testing_device = 'cuda:1'
     
     # When debug is False the following plots are not made
     # SAMPLES, DEBUG, CNN_OUTPUT
     debug = False
-    debug_size = 10000
+    debug_size = 8000
     
     verbose = True
 
