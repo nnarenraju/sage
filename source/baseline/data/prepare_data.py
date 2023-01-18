@@ -348,14 +348,15 @@ class DataModule:
         # Temporary fix (suppresses the error, but does not fix the underlying issue)
         os.environ["OMP_NUM_THREADS"] = "1"
         
+        # NOTE: Use of tsampler and vsampler has been deprecated as of: January 18th, 2023
         train_loader = D.DataLoader(
             train_data, batch_size=batch_size,
-            num_workers=num_workers, pin_memory=pin_memory, sampler=tsampler,
+            num_workers=num_workers, pin_memory=pin_memory, shuffle=True,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
         valid_loader = D.DataLoader(
             valid_data, batch_size=batch_size,
-            num_workers=num_workers, pin_memory=pin_memory, sampler=vsampler,
+            num_workers=num_workers, pin_memory=pin_memory, shuffle=False,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers)
         
         return (train_loader, valid_loader)
