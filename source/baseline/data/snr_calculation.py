@@ -60,12 +60,12 @@ def get_network_snr(signals, psds_data, params, save_dir, debug):
     
     """ Save the SNRs for plotting prior distribution """
     if debug:
-        # NOTE: Using newline='' is backward incompatible between python2 and python3
         save_dir = os.path.join(save_dir, 'SNR')
         if not os.path.exists(save_dir):
             os.makedirs(save_dir, exist_ok=False)
-            
+        
         save_path = os.path.join(save_dir, 'snr_priors.csv')
+        # NOTE: Using newline='' is backward incompatible between python2 and python3
         with open(save_path, 'a', newline='') as fp:
             writer = csv.writer(fp)
             writer.writerow([network_snr])
