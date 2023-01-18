@@ -251,18 +251,18 @@ def run_trainer():
                          batch_size = cfg.batch_size,
                          device=cfg.testing_device, verbose=cfg.verbose)
         
-        # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
-        raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
-        raw_args += ['--foreground-events', os.path.join(output_testing_dir, cfg.test_foreground_output)]
-        raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
-        raw_args += ['--background-events', os.path.join(output_testing_dir, cfg.test_background_output)]
-        out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
-        raw_args += ['--output-file', out_eval]
-        raw_args += ['--output-dir', output_testing_dir]
-        raw_args += ['--verbose']
-        
-        # Running the evaluator to obtain output triggers (with clustering)
-        evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor))
+            # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
+            raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
+            raw_args += ['--foreground-events', os.path.join(output_testing_dir, cfg.test_foreground_output)]
+            raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
+            raw_args += ['--background-events', os.path.join(output_testing_dir, cfg.test_background_output)]
+            out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
+            raw_args += ['--output-file', out_eval]
+            raw_args += ['--output-dir', output_testing_dir]
+            raw_args += ['--verbose']
+            
+            # Running the evaluator to obtain output triggers (with clustering)
+            evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
         
         
         
@@ -270,5 +270,5 @@ def run_trainer():
 if __name__ == "__main__":
     
     run_trainer()
-    
+    print('\nFIN')
     
