@@ -29,7 +29,6 @@ import re
 import h5py
 import glob
 import torch
-import shutil
 import random
 import numpy as np
 from torch.utils.data import Dataset
@@ -303,6 +302,7 @@ class MLMDC1(Dataset):
         ## Convert the signal from h_plus and h_cross to h_t and augment
         # Get augmented values if they affect the parameter estimation labels
         augmented_labels = {}
+        
         if target and self.signal_only_transforms:
             aug_sample = self.signal_only_transforms(sample, self.detectors, self.distrs, self.debug_dir, **params)
             sample = aug_sample['signal']
@@ -314,7 +314,7 @@ class MLMDC1(Dataset):
                 # Generalise this to include all params
                 if augkey == 'dist':
                     params['distance'] = aug_sample[augkey]
-                
+        
         elif not target and self.noise_only_transforms:
             sample = self.noise_only_transforms(sample, self.debug_dir)
         
@@ -349,6 +349,7 @@ class MLMDC1(Dataset):
             
             """ Adding noise to signals """
             if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):
+                # TODO: Add SNR rescaling to transforms module
                 if self.cfg.rescale_snr:
                     # Rescaling the SNR to a uniform distribution within a given range
                     target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
@@ -451,6 +452,7 @@ class MLMDC1(Dataset):
         # Storing target as dictionaries
         all_targets = {}
         all_targets['norm_snr'] = norm_snr
+        all_targets['network_snr'] = network_snr
         all_targets.update(targets)
         
         # Update parameter labels if augmentation changed them
@@ -466,10 +468,12 @@ class MLMDC1(Dataset):
             source_params['dchirp'] = params['dchirp']
         else:
             source_params['dchirp'] = self._dchirp_from_dist(params['distance'], params['mchirp'])
+            
         # Other params should be unalterred
         source_params['mchirp'] = params['mchirp']
         source_params['mass1'] = params['mass1']
         source_params['mass2'] = params['mass2']
+        
         if target_gw[0]:
             # Written as m2/m1. Different from PyCBC format of m1/m2. m1>m2 in both cases.
             source_params['q'] = params['mass2']/params['mass1']
