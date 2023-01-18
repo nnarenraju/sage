@@ -476,10 +476,23 @@ if __name__ == "__main__":
         raise IOError('Export directory does not exist. Cannot write testing output files.')
     
     print('\nApplying best weights from the {} run to Network'.format(cfg.export_dir))
-    best_dir = os.path.join(cfg.export_dir, 'BEST')
-    weights_path = os.path.join(best_dir, cfg.weights_path)
+    check_dir = os.path.join(cfg.export_dir, 'BEST')
+    # Sanity Check - check for early testing (BEST dir does not exist yet)
+    if not os.path.exists(check_dir):
+        check_dir = cfg.export_dir
+    
+    # Set the optimal weights to network
+    weights_path = os.path.join(check_dir, cfg.weights_path)
     Network = cfg.model(**cfg.model_params)
-    Network.load_state_dict(torch.load(weights_path))
+    ## Error (unsolved): CUDA out of memory when loading weights 
+    ## Work-around: mapping weights to CPU before loading into GPU
+    # Refer: https://discuss.pytorch.org/t/cuda-error-out-of-memory-when-load-models/38011/3
+    Network.load_state_dict(torch.load(weights_path, map_location='cpu'))
+    
+    """ WARNING """
+    # Causes a lot of trouble if not included before testing phase
+    # Weights are essentially allowed to change during the testing phase
+    # Since there are more noise samples than signals, this will skew the results significantly
     Network.eval()
     
     testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
@@ -510,4 +523,4 @@ if __name__ == "__main__":
     raw_args += ['--verbose']
     
     # Running the evaluator to obtain output triggers (with clustering)
-    evaluator(raw_args, far_scaling_factor=float(cfg.far_scaling_factor))
+    evaluator(raw_args, far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
