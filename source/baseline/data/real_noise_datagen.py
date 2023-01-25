@@ -49,7 +49,7 @@ from pycbc.types import TimeSeries
 from segments import OverlapSegment
 
 # LOCAL
-from test import Slicer
+from data.testdata_slicer import Slicer
 
 
 class RealNoiseGenerator:
