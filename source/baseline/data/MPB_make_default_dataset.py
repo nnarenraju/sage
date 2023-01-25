@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #!/usr/bin/env python
 
 """
@@ -54,7 +53,9 @@ from pycbc.distributions.utils import draw_samples_from_config
 from pycbc.types import load_frequencyseries, complex_same_precision_as
 
 # LOCAL
+from test import Slicer
 from data.mlmdc_noise_generator import NoiseGenerator
+from data.real_noise_datagen import RealNoiseGenerator
 
 # Addressing HDF5 error with file locking (used to address PSD file read error)
 # Issue (October 1st, 2022): File locking takes place with MP even with this option
@@ -181,8 +182,7 @@ class GenerateData:
                  'max_signal_length', 'ringdown_leeway', 'merger_leeway', 'start_freq_factor',
                  'fs_reduction_factor', 'fbin_reduction_factor', 'dbins', 'check_seeds',
                  'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq',
-                 'complex_asds', 'request_real_noise_hours', 'psd_est_segment_length', 
-                 'psd_est_segment_stride', 'num_real_noise_segment_len_in_s', 'blackout_max_ratio']
+                 'complex_asds', 'psd_est_segment_length', 'psd_est_segment_stride', 'blackout_max_ratio']
     
     
     def __init__(self, **kwargs):
@@ -219,7 +219,7 @@ class GenerateData:
             self.psd_names = ['aLIGOZeroDetHighPower', 'aLIGOZeroDetHighPower']
             self.psds = [psd_fun(self.psd_len, self.delta_f, self.noise_low_freq_cutoff)
                          for _ in range(len(self.detectors_abbr))]
-        else:
+        elif self.dataset in [2, 3, 4]:
             # Here, we should pick two PSDs randomly and read the files
             # PSDs are obtained from the noise generator
             self.psds = []
@@ -228,8 +228,7 @@ class GenerateData:
         # Fixed parameter options for iteration
         if self.dataset == 1:
             self.noise_generator = pycbc.noise.gaussian.frequency_noise_from_psd
-        else:
-            # Noise generator
+        elif self.dataset in [2, 3, 4]:
             self.noise_generator = None
         
         """ Generating signals """
@@ -379,26 +378,29 @@ class GenerateData:
             ## Estimation of PSD for dataset 4
             # Calculate the PSD for each day of the 81 days of real O3a noise data
             # It is necessary that we use only 51 days of this noise that we DO NOT use for testing
-            O3a_real_noise = None
-            # Split the 51 day testing data into segments of n days each
-            sample_rate = None
-            # Hours to seconds conversion
-            h2s = lambda hours: hours * 60.0 * 60.0
+            noise_dir = os.path.join(self.parent_dir, 'O3a_real_noise')
+            training_real_noise_file = os.path.join(noise_dir, 'training_real_noise.hdf')
+            # Get the required attributes from real noise file
+            with h5py.File(training_real_noise_file, 'r') as fp:
+                assert fp.attrs['dataset'] == 4, "Wrong dataset accessed for D4 PSD calculation!"
+                assert fp.attrs['mode'] == 'training', "Data Leakage: File accessed is not in training mode!"
+                sample_rate = fp.attrs['sample_rate']
+                training_duration = fp.attrs['duration']
+                
+            step_size = (1.*60.*60.) * sample_rate # 1 hour (hours * minutes * seconds)
+            assert step_size <= training_duration
+            # Initialise Slicer object and create noise generator
+            # In the following, peak_offset is just an arbitrary value that works. We don't need it here.
+            # If slice_length == step_size, there is no overlap between sample
+            kwargs = dict(infile=training_real_noise_file, 
+                          step_size=step_size, 
+                          peak_offset=18.0,
+                          slice_length=step_size)
             
-            # Sanity check before splitting the data (do we have enough data for requested hours?)
-            assert h2s(self.request_real_noise_hours) * sample_rate <= len(O3a_real_noise), 'Too much O3a real noise requested!'
-            # Sanity check: If real data has an integer number of hours present in it
-            assert (len(O3a_real_noise) / (h2s(1.)*sample_rate)) % 1.0 ==0, 'Integer number of hours required for O3a real noise!'
-            # Use the segment length in seconds to split the real noise into equally sized segments
-            assert self.num_real_noise_segment_len_in_s <= h2s(self.request_real_noise_hours)
-            
-            # Get requested length (in hours) from real noise data
-            O3a_requested_noise = O3a_real_noise[:h2s(self.request_real_noise_hours)*sample_rate]
-            # Calculate number of splits to be applied to real data
-            num_seconds_in_data = len(O3a_requested_noise)/sample_rate
-            num_splits = int(num_seconds_in_data / self.num_real_noise_segment_len_in_s)
-            # Data Splitting
-            O3a_real_noise_splits = np.split(O3a_real_noise, num_splits)
+            # The slicer object can take an index and return the required training data sample
+            slicer = Slicer(**kwargs)
+            # Use this to iterate over slicer using sequential idx
+            slicer_length = len(slicer)
             
             # Frequencies in the PSD
             f = np.linspace(self.noise_low_freq_cutoff, self.noise_high_freq_cutoff, self.psd_len)
@@ -407,7 +409,9 @@ class GenerateData:
             
             # The median of all the PSDs alongside a blacking out of bad frequencies
             all_psds = []
-            for O3a_real_noise_split in O3a_real_noise_splits:
+            for idx in range(slicer_length):
+                # Get slicer data for an hour
+                O3a_real_noise_split, _ = slicer.__getitem__(idx)
                 # PSD estimation using the welch's method
                 delta_t = 1.0/sample_rate
                 seg_len = int(self.psd_est_segment_length / delta_t)
@@ -452,7 +456,7 @@ class GenerateData:
             save_name = 'psd-median-{}.hdf'.format(det)
             psd_name = 'median_det{}'.format(1 if det=='H1' else 2)
             self._save_(save_name, blacked_psd, psd_name)
-                
+            
             
     def distance_from_chirp_distance(self, chirp_distance, mchirp, ref_mass=1.4):
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
@@ -536,7 +540,7 @@ class GenerateData:
                                       shuffle=True)
     
     
-    def download_data(self, resume=True):
+    def download_data(self, path, resume=True):
         """
         Download noise data from the central server.
         
@@ -550,9 +554,6 @@ class GenerateData:
             
         """
         
-        # Setting the default path for real noise data to be stored
-        # Do not store this within data_dir. We do not want to download this multiple times.
-        path = os.path.join(self.parent_dir, 'O3a_real_noise.hdf')
         # Sanity check
         if os.path.exists(path):
             print('O3a real noise file already exists! Your WiFi thanks you.')
@@ -655,8 +656,11 @@ class GenerateData:
             
             elif self.dataset == 4:
                 # We don't have to colour the noise ourselves, so they would not fill up RAM memory
-                # Function to return self.sample_length_in_s of real noise with a random start time
-                pass
+                # All idx values will now offset to [0, num_noises]
+                index = idx - self.num_waveforms
+                noise, _ = self.noise_generator.__getitem__(index)
+                assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
+                assert len(noise[1]) == self.sample_length_in_s * self.sample_rate
             
             # Saving noise params for storage
             sample['noise_1'] = noise[0]
@@ -1301,6 +1305,8 @@ class GenerateData:
         print("make_elink_lookup: ExternalLink lookup table created successfully!")
 
 
+
+
 def make(slots_magic_params, export_dir):
     """
 
@@ -1326,21 +1332,50 @@ def make(slots_magic_params, export_dir):
     
     # Get the O3a real noise data (if using dataset 4)
     if gd.dataset == 4:
-        gd.download_data()
+        noise_dir = os.path.join(gd.parent_dir, 'O3a_real_noise')
+        noise_file = os.path.join(noise_dir, 'O3a_real_noise.hdf')
+        # Download real noise (if not already present, checked inside download_data)
+        gd.download_data(noise_file)
         # Sometimes the above command claims to be completed but
         # the file may still not be written to disk completely
         # Sanity check
         while True:
-            check_path = os.path.join(gd.parent_dir, 'O3a_real_noise.hdf')
             try:
-                with h5py.File(check_path, 'r') as fp:
+                with h5py.File(noise_file, 'r') as fp:
                     _ = fp.attrs
                 # If it works, we can leave the loop
                 break
             except:
                 # If not, we resume download
-                gd.download_data(check_path, resume=True)
-                
+                gd.download_data(noise_file, resume=True)
+        
+        # If using dataset 4, split the O3a real noise into training and testing segments
+        # Testing segments should consist of 30 days. Whatever is left will be used for training.
+        # During testing phase, call the testing noise .hdf file that we create here
+        store_output = {'training': os.path.join(noise_dir, 'training_real_noise.hdf'),
+                        'testing': os.path.join(noise_dir, 'testing_real_noise.hdf')}
+        noise_seed = {'training': gd.seed,
+                      'testing': 2_514_409_456}
+        # We produce 1 month of data (30 days) using the seed provided in the MLGWSC-1 paper (for testing)
+        # NOTE: This seed is only used for OverlapSegment class to get noise data for two detectors
+        # This should not affect the training in any manner.
+        # Just in case: I might not understand the OverlapSegment fully. Will choose a different seed for training.
+        # TODO: Add all options below within the data_config class
+        real_noise_kwargs = dict(real_noise_path = noise_file,
+                                 start_offset = 0.0,
+                                 duration = 2592000.0,
+                                 slide_buffer = 240,
+                                 min_segment_duration = 7200,
+                                 detectors = ['H1', 'L1'],
+                                 store_output = store_output,
+                                 seed = noise_seed,
+                                 sample_length_in_num = gd.sample_length_in_num,
+                                 num_noises = gd.num_noises)
+        
+        # Run the RealNoiseGenerator to retrieve training and testing dataset
+        rng = RealNoiseGenerator(real_noise_kwargs)
+        gd.noise_generator = rng.get_real_noise_generator()
+    
     # Save PSDs required for dataset
     gd.save_PSD()
     # Get priors for entire dataset
