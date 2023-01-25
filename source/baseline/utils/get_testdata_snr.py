@@ -203,7 +203,7 @@ def get_snrs(injection_file, data_cfg, dataset_dir):
     # Create kwargs for input to the signal generation code
     injparams['snr'] = []
     for n in range(len(injparams['tc'])):
-        injection_values = {param:value[n] for param, value in injparams}
+        injection_values = {param:value[n] for param, value in injparams.items()}
         injparams['snr'].append(get_injection_snr(injection_values, data_cfg))
     
     # Save all SNRs within the dataset directory as a .hdf file
