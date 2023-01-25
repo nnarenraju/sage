@@ -31,6 +31,15 @@ Documentation:
     --output-dir ./ \
     --verbose
 
+    python3 evaluate.py --injection-file /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/injections.hdf 
+    --foreground-events /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/testing_foutput.hdf 
+    --foreground-files /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/foreground.hdf 
+    --background-events /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/testing_boutput.hdf 
+    --far-scaling-factor 64000 --dataset 3 --output-file ./TESTING_64000_D3/evaluation.hdf 
+    --output-dir ./TESTING_64000_D3 
+    --team1 ORChiD --team2 PyCBC 
+    --verbose
+
 The options mean the following
 
     --injection-file specifies the injections that were used to create the foreground data. 
