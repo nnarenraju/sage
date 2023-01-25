@@ -84,6 +84,8 @@ from utils.get_testdata_snr import get_snrs
 
 # Plotting
 from matplotlib import colors
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 import matplotlib.pyplot as plt
 # Font and plot parameters
 plt.rcParams.update({'font.size': 18})
@@ -212,11 +214,13 @@ def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid',
     ax.grid(True, which='both')
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.legend()
+    if label != "" or label != None:
+        ax.legend()
+
     
     if save_file != "":
         plt.savefig(save_file)
-        plt.closer()
+        plt.close()
 
 
 def param_vs_param(output_dir, injparams, found_injections):
@@ -301,11 +305,12 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
             plt.grid(True, which='both')
             plt.xlabel('{}'.format(param))
             plt.ylabel('Number of Occurences')
+            plt.legend()
             plt.savefig(os.path.join(param_dir, '{}-compare_FAR_{}.png'.format(param, key)))
             plt.close()
             
 
-def network_output(found_injections, noise_stats, output_dir):
+def network_output(found_injections, noise_stats, output_dir, team_name):
     # Plotting the noise and signals stats for found samples
     plt.figure(figsize=(12.0, 12.0))
     plt.hist(found_injections[1], label='found_injections', bins=100, alpha=0.8)
@@ -313,7 +318,7 @@ def network_output(found_injections, noise_stats, output_dir):
     plt.yscale('log')
     plt.grid(True, which='both')
     plt.legend()
-    plt.savefig(os.path.join(output_dir, 'compare_fidxs.png'))
+    plt.savefig(os.path.join(output_dir, 'network_output_{}.png'.format(team_name)))
     plt.close()
 
 
@@ -346,7 +351,7 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
         max_x = max(source_params[key])
         ax.set_xlim(min_x, max_x)
         for fthresh, nthresh in zip(far_thresholds, thresh_names):
-            ax.plot([min_x, max_x], [fthresh, fthresh], label=nthresh)
+            ax.plot([min_x, max_x], [fthresh, fthresh], label=nthresh, linewidth=2.0)
         # Saving the plot in export_dir
         save_path = os.path.join(learning_dir, 'learning_{}_{}.png'.format(save_name, key))
         plt.legend()
@@ -354,7 +359,7 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
         plt.close()
 
 
-def read_data(teams, args, idxs):
+def read_data(args, idxs):
     # Read injection parameters
     logging.info(f'Reading injections from {args.injection_file}')
     
@@ -367,22 +372,21 @@ def read_data(teams, args, idxs):
             
         use_chirp_distance = 'chirp_distance' in params
     
-    team_1 = {'name': args.team_1}
-    team_2 = {'name': args.team_2}
+    team_1 = {'name': args.team1}
+    team_2 = {'name': args.team2}
     other_results = "/home/nnarenraju/Research/results"
     other_teams = os.listdir(other_results)
-    other_results = os.path.join(other_results, "ds{}".format(args.dataset))
-    if args.team_1 in other_teams:
-        team_1['fgpath'] = os.path.join(other_results, "fg.hdf")
-        team_1['bgpath'] = os.path.join(other_results, "bg.hdf")
-    elif args.team_1 == "ORChiD":
+    if args.team1 in other_teams:
+        team_1['fgpath'] = [os.path.join(other_results, "{}/ds{}/fg.hdf".format(team_1['name'], args.dataset))]
+        team_1['bgpath'] = [os.path.join(other_results, "{}/ds{}/bg.hdf".format(team_1['name'], args.dataset))]
+    elif args.team1 == "ORChiD":
         team_1['fgpath'] = args.foreground_events
         team_1['bgpath'] = args.background_events
         
-    if args.team_2 in other_teams:
-        team_2['fgpath'] = os.path.join(other_results, "fg.hdf")
-        team_2['bgpath'] = os.path.join(other_results, "bg.hdf")
-    elif args.team_2 == "ORChiD":
+    if args.team2 in other_teams:
+        team_2['fgpath'] = [os.path.join(other_results, "{}/ds{}/fg.hdf".format(team_2['name'], args.dataset))]
+        team_2['bgpath'] = [os.path.join(other_results, "{}/ds{}/bg.hdf".format(team_2['name'], args.dataset))]
+    elif args.team2 == "ORChiD":
         team_2['fgpath'] = args.foreground_events
         team_2['bgpath'] = args.background_events
     
@@ -390,17 +394,17 @@ def read_data(teams, args, idxs):
     for nteam in [1, 2]:
         team = locals()["team_{}".format(nteam)]
         # Read foreground events
-        logging.info(f'Reading foreground events from {args.foreground_events}')
+        logging.info(f'Reading foreground events from {team["fgpath"]}')
         fg_events = []
-        for fpath in args.foreground_events:
+        for fpath in team['fgpath']:
             with h5py.File(fpath, 'r') as fp:
                 fg_events.append(np.vstack([fp['time'], fp['stat'], fp['var']]))
         team['fgevents'] = np.concatenate(fg_events, axis=-1)
         
         # Read background events
-        logging.info(f'Reading background events from {args.background_events}')
+        logging.info(f'Reading background events from {team["bgpath"]}')
         bg_events = []
-        for fpath in args.background_events:
+        for fpath in team['bgpath']:
             with h5py.File(fpath, 'r') as fp:
                 bg_events.append(np.vstack([fp['time'], fp['stat'], fp['var']]))
         team['bgevents'] = np.concatenate(bg_events, axis=-1)
@@ -423,17 +427,18 @@ def compare_plot_1(team_1, team_2, save_dir):
     
     for thresh_name in thresh_names:
         # Subplotting
-        fig, ax = plt.subplots(nrows, ncols, figsize=(6.0*ncols, 3.0*nrows))
+        fig, ax = plt.subplots(nrows, ncols, figsize=(8.0*ncols, 6.0*nrows))
         # Histogram kwargs
-        kwargs = dict(histtype='stepfilled', alpha=0.3, normed=True, bins=100)
+        kwargs = dict(histtype='stepfilled', alpha=0.5, density=True, bins=40)
         
         pidxs = list(itertools.product(range(nrows), range(ncols)))
         num_fin = 0
         for param, (i, j)  in zip(params, pidxs):
-            ax[i][j].hist(team_1[param][team_1[thresh_name]], label=team_1['name'], **kwargs)
-            ax[i][j].hist(team_2[param][team_2[thresh_name]], label=team_2['name'], **kwargs)
+            ax[i][j].hist(team_1[param][team_1[thresh_name]], label=team_1['name'], color='blue', **kwargs)
+            ax[i][j].hist(team_2[param][team_2[thresh_name]], label=team_2['name'], color='red', **kwargs)
             ax[i][j].set_title(param)
             ax[i][j].grid(True)
+            ax[i][j].legend()
             num_fin+=1
         
         for i, j in pidxs[num_fin:]:
@@ -472,9 +477,8 @@ def compare_plot_2(team_1, team_2, save_dir):
     
     for thresh_name in thresh_names:
         # Subplotting
-        fig, ax = plt.subplots(nrows, ncols, figsize=(6.0*ncols, 3.0*nrows))
-        # Histogram kwargs
-        kwargs = dict(histtype='stepfilled', alpha=0.3, normed=True, bins=100)
+        fig, ax = plt.subplots(nrows, ncols, figsize=(8.0*ncols, 5.0*nrows))
+        kwargs = {}
         
         pidxs = list(itertools.product(range(nrows), range(ncols)))
         num_fin = 0
@@ -482,21 +486,24 @@ def compare_plot_2(team_1, team_2, save_dir):
             # Team 1
             x = team_1[param_1][team_1[thresh_name]]
             y = team_1[param_2][team_1[thresh_name]]
-            team1_set = set(zip(x, y)) # TODO: What if two values are the same?
+            team1_set = set(zip(x, y)) 
+            # Sanity check: What if two values are the same?
+            assert len(list(team1_set)) == len(x)
             # Team 2
             x = team_2[param_1][team_2[thresh_name]]
             y = team_2[param_2][team_2[thresh_name]]
             team2_set = set(zip(x, y)) # TODO: What if two values are the same?
+            assert len(list(team2_set)) == len(x)
             # Plots: A-B, B-A, A&B
             unique_team1 = np.array(list(team1_set - team2_set))
             unique_team2 = np.array(list(team2_set - team1_set))
             found_both = np.array(list(team1_set.intersection(team2_set)))
             # Scatter plotting
-            kwargs.update({'color': 'blue', 's': 100.0, 'label': 'Unique {}'.format(team_1['name'])})
+            kwargs.update({'color': 'blue', 's': 100.0, 'label': 'Unique {}'.format(team_1['name']), 'alpha': 0.7})
             ax[i][j].scatter(unique_team1[:,0], unique_team1[:,1], **kwargs)
-            kwargs.update({'color': 'red', 's': 100.0, 'label': 'Unique {}'.format(team_2['name'])})
+            kwargs.update({'color': 'red', 's': 100.0, 'label': 'Unique {}'.format(team_2['name']), 'alpha': 0.7})
             ax[i][j].scatter(unique_team2[:,0], unique_team2[:,1], **kwargs)
-            kwargs.update({'color': 'darkgrey', 's': 50.0, 'label': 'Found by Both'})
+            kwargs.update({'color': 'darkgrey', 's': 30.0, 'label': 'Found by Both', 'alpha': 0.3})
             ax[i][j].scatter(found_both[:,0], found_both[:,1], **kwargs)
             
             ax[i][j].set_xlabel(param_1)
@@ -507,7 +514,7 @@ def compare_plot_2(team_1, team_2, save_dir):
         for i, j in pidxs[num_fin:]:
             ax[i][j].set_visible(False)
         
-        plt.tight_layout()
+        fig.suptitle('{} = Blue, {} = Red, Found by Both = Grey'.format(team_1['name'], team_2['name']))
         save_name = "param_vs_param_{}_and_{}-{}.png".format(team_1['name'], team_2['name'], thresh_name)
         save_path = os.path.join(save_dir, save_name)
         plt.savefig(save_path)
@@ -537,9 +544,7 @@ def compare_plot_3(team_1, team_2, save_dir):
     
     for thresh_name in thresh_names:
         # Subplotting
-        fig, ax = plt.subplots(nrows, ncols, figsize=(8.0*ncols, 3.0*nrows))
-        # Histogram kwargs
-        kwargs = dict(histtype='stepfilled', alpha=0.3, normed=True, bins=100)
+        fig, ax = plt.subplots(nrows, ncols, figsize=(5.0*ncols, 3.0*nrows))
         
         pidxs = list(itertools.product(range(nrows), range(ncols)))
         num_fin = 0
@@ -550,25 +555,34 @@ def compare_plot_3(team_1, team_2, save_dir):
             unique_team1 = np.array(list(team1_set - team2_set))
             unique_team2 = np.array(list(team2_set - team1_set))
             # Binning the two arrays before caluclating the ratio
-            bins = np.linspace(min(team_1[param]), max(team_1[param]), 20, dtype=int, endpoint=True)
+            bins = np.linspace(min(team_1[param]), max(team_1[param]), 40, dtype=int, endpoint=True)
             team1_counts, _ = np.histogram(unique_team1, bins=bins)
             team2_counts, _ = np.histogram(unique_team2, bins=bins)
             # Calculate the ratio using the counts obtained
+            # Sanity check
+            team1_counts = team1_counts.astype(np.float32)
+            team2_counts = team2_counts.astype(np.float32)
+            team1_counts += 1e-3
+            team2_counts += 1e-3
+            
             ratio = team1_counts/team2_counts
+            
             # Making the color strip plot
-            height = 15
-            divnorm = colors.TwoSlopeNorm(vmin=0.0, vcenter=1.0, vmax=max(ratio))
+            height = 25
+            divnorm = colors.TwoSlopeNorm(vmin=0.5, vcenter=1.0, vmax=1.5)
             kwargs = dict(cmap='seismic', norm=divnorm)
-            ax[i][j].imshow(np.repeat(ratio, height).reshape(-1, height).T, **kwargs)
+            axes = ax[i][j]
+            cstr = ax[i][j].imshow(np.repeat(ratio, height).reshape(-1, height).T, **kwargs)
             ax[i][j].set_title(param)
             ax[i][j].set_yticks([])
-            ax[i][j].colorbar()
+            divider = make_axes_locatable(axes)
+            cax = divider.append_axes('right', size='5%', pad=0.05)
+            fig.colorbar(cstr, cax=cax, orientation='vertical')
             num_fin+=1
         
         for i, j in pidxs[num_fin:]:
             ax[i][j].set_visible(False)
         
-        plt.tight_layout()
         fig.suptitle('Ratio = N_unique_{}/N_unique_{}'.format(team_1['name'], team_2['name']))
         save_name = "colour_strip_{}_and_{}-{}.png".format(team_1['name'], team_2['name'], thresh_name)
         save_path = os.path.join(save_dir, save_name)
@@ -590,7 +604,7 @@ def compare_plot_4(team_1, team_2, save_dir):
     # Refer: https://matplotlib.org/stable/gallery/lines_bars_and_markers/linestyles.html
     linestyles = ['solid', 'dotted', 'dashed', 'dashdot', (0, (3, 1, 1, 1, 1, 1))]
     for n, thresh_name in enumerate(thresh_names):
-        plt.figure(figsize=(9.0, 9.0))
+        plt.figure(figsize=(12.0, 9.0))
         # Plotting the efficiency curve for each FAR threshold
         team1_data = team_1['snr'][team_1[thresh_name]]
         team2_data = team_2['snr'][team_2[thresh_name]]
@@ -600,19 +614,20 @@ def compare_plot_4(team_1, team_2, save_dir):
         team1_counts, _ = np.histogram(team1_data, bins=bins)
         team2_counts, _ = np.histogram(team2_data, bins=bins)
         # Plotting
+        xbins = (bins[1:] + bins[:-1])/2.
         kwargs = dict(marker='o', markersize=12, fillstyle='none', linestyle=linestyles[n])
-        plt.plot(bins, team1_counts/all_counts, markerfacecolor='blue', color='blue', 
+        plt.plot(xbins, team1_counts/all_counts, markerfacecolor='blue', color='blue', 
                  label="{}, {}".format(team_1['name'], thresh_name), **kwargs)
-        plt.plot(bins, team2_counts/all_counts, markerfacecolor='red', color='red', 
-                 label="{}, {}".format(team_1['name'], thresh_name), **kwargs)
+        plt.plot(xbins, team2_counts/all_counts, markerfacecolor='red', color='red', 
+                 label="{}, {}".format(team_2['name'], thresh_name), **kwargs)
         
-        plt.tight_layout()
         plt.grid(True, which='both')
         plt.xlabel("Optimal SNR")
         plt.ylabel("True Alarm Probability")
         plt.title('Efficiency Curves ({} and {})'.format(team_1['name'], team_2['name']))
         save_name = "efficiency_curves_{}_and_{}-{}.png".format(team_1['name'], team_2['name'], thresh_name)
         save_path = os.path.join(save_dir, save_name)
+        plt.legend()
         plt.savefig(save_path)
         plt.close()
 
@@ -723,16 +738,17 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         fpevents = fgevents.T[fpidxs].T
         
         ## Update the returns dictionary
-        ret['fg-events'] = fgevents
-        ret['found-indices'] = np.arange(len(injtimes))[idxs]
-        ret['missed-indices'] = np.setdiff1d(np.arange(len(injtimes)), ret['found-indices'])
-        ret['true-positive-event-indices'] = tpidxs
-        ret['false-positive-event-indices'] = fpidxs
-        ret['sorting-indices'] = sidxs
-        ret['true-positive-diffs'] = diff[tpidxs]
-        ret['false-positive-diffs'] = diff[fpidxs]
-        ret['true-positives'] = tpevents
-        ret['false-positives'] = fpevents
+        if team['name'] == "ORChiD":
+            ret['fg-events'] = fgevents
+            ret['found-indices'] = np.arange(len(injtimes))[idxs]
+            ret['missed-indices'] = np.setdiff1d(np.arange(len(injtimes)), ret['found-indices'])
+            ret['true-positive-event-indices'] = tpidxs
+            ret['false-positive-event-indices'] = fpidxs
+            ret['sorting-indices'] = sidxs
+            ret['true-positive-diffs'] = diff[tpidxs]
+            ret['false-positive-diffs'] = diff[fpidxs]
+            ret['true-positives'] = tpevents
+            ret['false-positives'] = fpevents
         
         # Calculate foreground FAR
         logging.info('Calculating foreground FAR')
@@ -740,7 +756,8 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         noise_stats_fg.sort()
         fgfar = len(noise_stats_fg) - np.arange(len(noise_stats_fg)) - 1
         fgfar = fgfar / duration
-        ret['fg-far'] = fgfar
+        if team['name'] == "ORChiD":
+            ret['fg-far'] = fgfar
         
         # Calculate background FAR
         logging.info('Calculating background FAR')
@@ -748,7 +765,8 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         noise_stats.sort()
         far = len(noise_stats) - np.arange(len(noise_stats)) - 1
         far = far / duration
-        ret['far'] = far
+        if team['name'] == "ORChiD":
+            ret['far'] = far
         
         # Find best true-positive for each injection
         found_injections = []
@@ -784,11 +802,11 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             mchirp_max = massc.max()
             # print('found_mchirp_total is the chirp mass of all found injections')
             # print('max = {}, min = {}, mean={}, median = {}'.format(max(found_mchirp_total), min(found_mchirp_total), np.mean(found_mchirp_total), np.median(found_mchirp_total)))
-            
-            # Histogram of found injections vs all injections in 1-month testing dataset
-            found_param_plots(noise_stats, output_dir, injparams, found_injections)
-            # Plotting all param vs param
-            param_vs_param(output_dir, injparams, found_injections)
+            if team['name'] == "ORChiD":
+                # Histogram of found injections vs all injections in 1-month testing dataset
+                found_param_plots(noise_stats, output_dir, injparams, found_injections)
+                # Plotting all param vs param
+                param_vs_param(output_dir, injparams, found_injections)
             
         max_distance = dist.max()
         # print('Maximum distance given by injections = {}'.format(max_distance))
@@ -813,8 +831,9 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             fidxs = np.searchsorted(found_injections[1], noise_stats, side='right')
             # Plotting the network output
             network_output(found_injections, noise_stats, output_dir)
-            # Parameter learning
-            parameter_learning(injparams, noise_stats, found_injections, output_dir)
+            if team['name'] == "ORChiD":
+                # Parameter learning
+                parameter_learning(injparams, noise_stats, found_injections, output_dir)
             
             found_mchirp_total = np.flip(found_mchirp_total)
             
@@ -839,13 +858,14 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         vol = prefactor * mc_sum
         vol_err = prefactor * (Ninj * sample_variance) ** 0.5
         rad = (3 * vol / (4 * np.pi))**(1. / 3.)
-        print('Radius or sensitive distance as calculated from the volume obtained')
+        print('Radius or sensitive distance as calculated from the volume obtained ({})'.format(team['name']))
         print('min rad = {}, max rad = {}'.format(min(rad), max(rad)))
         
-        ret['sensitive-volume'] = vol
-        ret['sensitive-distance'] = rad
-        ret['sensitive-volume-error'] = vol_err
-        ret['sensitive-fraction'] = nfound / Ninj
+        if team['name'] == "ORChiD":
+            ret['sensitive-volume'] = vol
+            ret['sensitive-distance'] = rad
+            ret['sensitive-volume-error'] = vol_err
+            ret['sensitive-fraction'] = nfound / Ninj
         
         # Update plotting params for each group
         team['found_idx'] = found_injections[0].astype(int)
@@ -947,7 +967,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     dataset_dir = Path(args.injection_file).parent.absolute()
     snrs_path = os.path.join(dataset_dir, "snr.hdf")
     if os.path.exists(snrs_path):
-        with h5py.File(args.output_file, 'r') as fp:
+        with h5py.File(snrs_path, 'r') as fp:
             snrs = fp['snr'][()]
     else:
         snrs = get_snrs(args.injection_file, data_cfg, dataset_dir)
@@ -985,8 +1005,6 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         sens = fp['sensitive-distance'][()]
         sidxs = far.argsort()
         far = far[sidxs][1:] * far_scaling_factor
-        print('FAR values just before making sensitivity plot')
-        print(far)
         sens = sens[sidxs][1:]
     
     # Month FAR factor
@@ -1028,7 +1046,26 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     plt.xlabel('False Alarm Rate (FAR) per month')
     plt.ylabel('Sensitive Distance [MPc]')
     plt.legend()
-    plt.savefig(os.path.join(args.output_dir, 'sensitivity.png'))
+    plt.savefig(os.path.join(args.output_dir, 'sensitivity_all_teams.png'))
+    plt.close()
+    
+    plt.figure(figsize=(18.0, 12.0))
+    plt.title('Sensitivity Measure for Dataset {}'.format(dataset))
+    plt.plot(far*(month/dur), sens, color='m', linewidth=3.0, label='nnarenraju')
+
+    with h5py.File('/home/nnarenraju/Research/results/{}/ds{}/eval.hdf'.format(args.team2, dataset)) as fp:
+        sens_team2 = np.array(fp['sensitive-distance'])
+        far_team2 = np.array(fp['far'])
+        plt.plot(far_team2*month, sens_team2, color='orange', linewidth=2.5, linestyle='dashed', label='{}'.format(args.team2))
+    
+    plt.grid(True, which='both')
+    plt.xlim(1000, 1)
+    plt.ylim(1500, 2100)
+    plt.xscale('log')
+    plt.xlabel('False Alarm Rate (FAR) per month')
+    plt.ylabel('Sensitive Distance [MPc]')
+    plt.legend()
+    plt.savefig(os.path.join(args.output_dir, 'sensitivity_compare_teams.png'))
     plt.close()
 
 
