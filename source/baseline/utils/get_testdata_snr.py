@@ -28,11 +28,15 @@ import os
 import glob
 import h5py
 import numpy as np
+import multiprocessing as mp
 
 # PyCBC modules
 import pycbc.waveform, pycbc.detector
 from pycbc.filter.matchedfilter import sigmasq
 from pycbc.types import TimeSeries, FrequencySeries
+
+# Prettification
+from tqdm import tqdm
 
 
 def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, waveform_kwargs):
@@ -57,8 +61,9 @@ def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, wav
     return h_plus, h_cross
 
 
-def get_injection_snr(injection_values, data_cfg):
+def get_injection_snr(args):
     ## Generate the full waveform
+    injection_values, data_cfg = args
     # LAL Detector Objects (used in project_wave)
     # Detector objects (these are lal objects and may present problems when parallelising)
     # Create the detectors (TODO: generalise this!!!)
@@ -89,7 +94,7 @@ def get_injection_snr(injection_values, data_cfg):
     # If the signal is smaller than 20s, we change fmin such that it is atleast 20s
     if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] < signal_length:
         # Pass h_plus or h_cross
-        h_plus, h_cross = optimise_fmin(h_plus)
+        h_plus, h_cross = optimise_fmin(h_plus, signal_length, signal_low_freq_cutoff, sample_rate, waveform_kwargs)
     
     if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] > signal_length:
         new_end = h_plus.get_sample_times()[-1]
@@ -162,7 +167,7 @@ def get_injection_snr(injection_values, data_cfg):
     strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle, method='constant') for det in dets]
     time_interval = (start_interval, end_interval)
     # Put both strains together
-    pure_sample = np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
+    pure_sample = [strain.time_slice(*time_interval, mode='nearest') for strain in strains]
     
     # Calculate the SNR of the given pure sample with the appropriate PSD
     # NOTE: PSD realisation is given as optional within the sigmasq pycbc module
@@ -200,14 +205,29 @@ def get_snrs(injection_file, data_cfg, dataset_dir):
         for param in params:
             injparams[param] = fp[param][()]
     
-    # Create kwargs for input to the signal generation code
-    injparams['snr'] = []
-    for n in range(len(injparams['tc'])):
-        injection_values = {param:value[n] for param, value in injparams.items()}
-        injparams['snr'].append(get_injection_snr(injection_values, data_cfg))
+    injlen = len(injparams['tc'])
+    # Add injection times into injparams
+    injparams['injection_time'] = injparams['tc']
+    injparams['tc'] = np.random.uniform(18.0, 18.2, injlen)
+
+    snrs = []
+    # Multiprocessing SNR calculation
+    print("Starting MP based SNR Calculation")
     
+    # Create kwargs for input to the signal generation code
+    injection_values = lambda n: {param:value[n] for param, value in injparams.items()}
+    with mp.Pool(processes=64) as pool:
+        with tqdm(total=injlen) as pbar:
+            pbar.set_description("MP-SNR Calculation")
+            for snr in pool.imap_unordered(get_injection_snr, [(injection_values(n), data_cfg) for n in range(injlen)]):
+                snrs.append(snr)
+                pbar.update()
+
+    # Update injparams with the SNR values
+    injparams['snr'] = snrs
+   
     # Save all SNRs within the dataset directory as a .hdf file
-    with h5py.File(os.pat.join(dataset_dir, "snr.hdf"), 'a') as ds:
-        ds.create_dataset('snr', data=injparams['snr'], compression='gzip', compression_opts=9, shuffle=True)
+    with h5py.File(os.path.join(dataset_dir, "snr.hdf"), 'a') as ds:
+        ds.create_dataset('snr', data=injparams['snr'])
     
     return injparams['snr']
