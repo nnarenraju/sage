@@ -185,10 +185,9 @@ class Default:
     psd_len = int(int(sample_length_in_num+0.5) / 2 + 1)
     
     """ Real O3a noise (Dataset 4) """
-    request_real_noise_hours = None
-    psd_est_segment_length = None
-    psd_est_segment_stride = None
-    num_real_noise_segment_len_in_s = None
+    # We probably need to experiment with this a little
+    psd_est_segment_length = 36. * sample_rate
+    psd_est_segment_stride = 18. * sample_rate
     
     """ PSD bad band blacking out for Datasets 2,3,4 """
     blackout_max_ratio = 2.0
