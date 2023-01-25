@@ -53,7 +53,7 @@ from pycbc.distributions.utils import draw_samples_from_config
 from pycbc.types import load_frequencyseries, complex_same_precision_as
 
 # LOCAL
-from test import Slicer
+from data.testdata_slicer import Slicer
 from data.mlmdc_noise_generator import NoiseGenerator
 from data.real_noise_datagen import RealNoiseGenerator
 
