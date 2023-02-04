@@ -67,18 +67,26 @@ class RealNoiseGenerator:
         
         ## TESTING DATASET
         mode = 'testing'
-        self.testing_segments = []
-        self.testing_buffer = 8.0 # seconds
-        self.get_real_noise(mode=mode)
+        if not os.path.exists(self.store_output[mode]):
+            self.testing_segments = []
+            self.testing_buffer = 8.0 # seconds
+            self.get_real_noise(mode=mode)
+        with h5py.File(self.store_output[mode], 'r') as infile:
+            self.duration = infile.attrs['duration']
+        print("Testing dataset read. Contains {} days of noise".format(self.duration/(3600.*24.)))
         
         ## TRAINING DATASET
         mode = 'training'
-        self.duration = 999_999_999_999 # impossibly large duration
-        self.available_training_duration = 0.0
-        self.training_buffer = 8.0 # seconds
-        self.get_real_noise(mode=mode)
-        
+        if not os.path.exists(self.store_output[mode]):
+            self.duration = 999_999_999_999 # impossibly large duration
+            self.available_training_duration = 0.0
+            self.training_buffer = 8.0 # seconds
+            self.get_real_noise(mode=mode)
+        with h5py.File(self.store_output[mode], 'r') as infile:
+            self.duration = infile.attrs['duration']
+        print("Training dataset read. Contains {} days of noise".format(self.duration/(3600.*24.)))
     
+
     def load_segments(self):
         tmp_dir = "./tmp"
         if not os.path.exists(tmp_dir):
@@ -134,7 +142,6 @@ class RealNoiseGenerator:
         segments = self.load_segments()
         # Change the segments for training based on testing end time
         
-
         past_duration = 0
         ret = ligo.segments.segmentlist([])
         for seg in segments:
@@ -177,10 +184,10 @@ class RealNoiseGenerator:
                 if start == self.testing_segments[-1][0] and end != self.testing_segments[-1][1]:
                     available_buffer = end - self.testing_segments[-1][1]
                     if available_buffer > self.training_buffer:
-                        start = self.testing_segments[-1][1] + self.training_buffer
+                        start = int(self.testing_segments[-1][1] + self.training_buffer)
                     else:
                         continue
-                    
+            
             ret.append(ligo.segments.segment([start, end]))
             past_duration += segduration - self.slide_buffer
         
@@ -189,21 +196,18 @@ class RealNoiseGenerator:
             if mode == 'training':
                 # All leftover data is returned, warning not required
                 self.available_training_duration = past_duration - self.training_buffer
+                self.duration = self.available_training_duration
                 return ret
             warnings.warn("Not enough segments to generate the entire requested duration.")
-        
-        # Reset duration to available training duration (only for training)
-        # This will be written as an attribute which we can later access
-        if mode == 'training':
-            self.duration = self.available_training_duration
         
         return ret
     
     
     def get_real_noise(self, mode):
+        print("Running O3aRNG for {} dataset (seed = {})".format(mode, self.seed[mode]))
         # Load and restrict segments depending on training or testing mode
         raw_segments = self.load_segments()
-        segments = self.restrict_segments()
+        segments = self.restrict_segments(mode=mode)
         
         load_times = {}
         for seg in segments:
@@ -264,19 +268,22 @@ class RealNoiseGenerator:
         ## After __init__ has completed creating training and testing datasets
         ## Call the Slicer function in the testing module and return this as noise generator
         ## Passing an index will be sufficient to obtain samples from Slicer
-        # Calculate the step size required to obtain the number of noise samples
-        step_size = (self.available_training_duration - self.sample_length_in_num)/self.num_noises
         # Initialise Slicer object and create noise generator
         # In the following, peak_offset is just an arbitrary value that works. We don't need it here.
-        kwargs = dict(infile=self.store_output['training'], 
-                      step_size=step_size, 
-                      peak_offset=18.0,
-                      slice_length=self.sample_length_in_num)
-        
-        # The slicer object can take an index and return the required training data sample
-        slicer = Slicer(**kwargs)
-        # Sanity check the length of slicer
-        assert len(slicer) >= self.num_noises, "Insufficient number of samples in slicer object!"
+        with h5py.File(self.store_output['training'], 'r') as infile:
+            # Calculate the step size required to obtain the number of noise samples
+            step_size = (infile.attrs['duration'] - self.sample_length_in_num)/self.num_noises
+            kwargs = dict(infile=infile, 
+                          step_size=step_size, 
+                          peak_offset=18.0,
+                          whiten_padding=5.0,
+                          slice_length=self.sample_length_in_num)
+       
+            print("Creating a slicer object using real O3a noise for training dataset")
+            # The slicer object can take an index and return the required training data sample
+            slicer = Slicer(**kwargs)
+            # Sanity check the length of slicer
+            assert len(slicer) >= self.num_noises, "Insufficient number ({}/{}) of samples in slicer object!".format(len(slicer), self.num_noises)
         
         return slicer
         
