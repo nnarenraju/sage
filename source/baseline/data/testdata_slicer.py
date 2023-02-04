@@ -50,7 +50,7 @@ class Slicer(object):
         
     """
     
-    def __init__(self, infile, step_size, peak_offset, slice_length, detectors=None,
+    def __init__(self, infile, step_size, peak_offset, whiten_padding, slice_length, detectors=None,
                  transforms=None, psds_data=None, data_cfg=None):
         
         # Data params
@@ -60,7 +60,8 @@ class Slicer(object):
         self.step_size = step_size
         self.peak_offset = peak_offset
         self.slice_length = slice_length
-        self.data_cfg = data_cfg
+        self.whiten_padding = whiten_padding
+        self.sample_rate = 2048. # Hz
         
         # Detectors
         self.detectors = detectors
@@ -81,7 +82,7 @@ class Slicer(object):
             dt = ds.attrs['delta_t'] # eg. 1./2048.
             index_step_size = int(self.step_size / dt) # eg. int(0.1 * 2048.) = 204
             # Number of steps taken -> eg. (32000 * 2048 - 40960 - 10240) // 204 = 321003 segments
-            nsteps = int((len(ds) - self.slice_length - (self.data_cfg.whiten_padding * self.data_cfg.sample_rate)) // index_step_size)
+            nsteps = int((len(ds) - self.slice_length - (self.whiten_padding * self.sample_rate)) // index_step_size)
             # Dictionary containing params of how to slice large segment
             # We can slice the data when needed using these params
             self.n_slices[ds_key] = {'start': start,
@@ -116,21 +117,22 @@ class Slicer(object):
         index_step_size = int(self.step_size / dt)
         # Create start and end indices from slice dict
         sidx = (index.start - self.n_slices[key]['start']) * index_step_size
-        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length + int(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
+        eidx = (index.stop - self.n_slices[key]['start']) * index_step_size + self.slice_length + int(self.whiten_padding * self.sample_rate)
         # Slice raw data using above indices
         if not isinstance(sidx, int) or not isinstance(eidx, int):
             sidx = int(sidx)
             eidx = int(eidx)
+        
         rawdata = [det[key][sidx:eidx] for det in self.detectors]
         # Get times offset by average peak 'tc' value
         times = (self.detectors[0][key].attrs['start_time'] + sidx * dt) + index_step_size * dt * np.arange(index.stop - index.start) + self.peak_offset
         
         # Get segment data
-        data = np.zeros((index.stop - index.start, len(rawdata), self.slice_length+int(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)))
+        data = np.zeros((index.stop - index.start, len(rawdata), self.slice_length+int(self.whiten_padding * self.sample_rate)))
         for detnum, rawdat in enumerate(rawdata):
             for i in range(index.stop - index.start):
                 sidx = i * index_step_size
-                eidx = sidx + self.slice_length + int(self.data_cfg.whiten_padding * self.data_cfg.sample_rate)
+                eidx = sidx + self.slice_length + int(self.whiten_padding * self.sample_rate)
                 ts = pycbc.types.TimeSeries(rawdat[sidx:eidx], delta_t=dt)
                 data[i, detnum, :] = ts.numpy()
         
@@ -144,7 +146,7 @@ class Slicer(object):
             if index < 0:
                 index = len(self) + index
             index = slice(index, index+1)
-            
+        
         access_slices = self._generate_access_indices(index)
         
         data = []
