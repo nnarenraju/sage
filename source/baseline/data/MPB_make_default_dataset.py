@@ -182,7 +182,8 @@ class GenerateData:
                  'max_signal_length', 'ringdown_leeway', 'merger_leeway', 'start_freq_factor',
                  'fs_reduction_factor', 'fbin_reduction_factor', 'dbins', 'check_seeds',
                  'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq',
-                 'complex_asds', 'psd_est_segment_length', 'psd_est_segment_stride', 'blackout_max_ratio']
+                 'complex_asds', 'psd_est_segment_length', 'psd_est_segment_stride', 'blackout_max_ratio',
+                 'globtmp']
     
     
     def __init__(self, **kwargs):
@@ -266,6 +267,9 @@ class GenerateData:
         # Create datasets for each field that needs to be saved
         self.max_nsamp_signal = int(self.chunk_size[0]/self.num_queues_datasave)
         self.max_nsamp_noise = int(self.chunk_size[1]/self.num_queues_datasave)
+
+        # Global tmp
+        self.globtmp = None
     
     
     def __str__(self):
@@ -308,7 +312,19 @@ class GenerateData:
             # Adding all relevant attributes
             fp.attrs['delta_f'] = self.delta_f
             fp.attrs['name'] = psd_name
-        
+    
+
+    def _MP_PSD_D4_(self, idx, slicer, sample_rate, ndet):
+        # Get slicer data for an hour
+        O3a_real_noise_split, _ = slicer.__getitem__(idx)
+        delta_t = 1.0/sample_rate
+        O3a_real_noise_split = pycbc.types.TimeSeries(O3a_real_noise_split[ndet], delta_t=delta_t)
+        # PSD estimation using the welch's method
+        seg_len = int(self.psd_est_segment_length / delta_t)
+        seg_stride = int(seg_len * self.psd_est_segment_stride)
+        estimated_psd = welch(O3a_real_noise_split, seg_len=seg_len, seg_stride=seg_stride)
+        estimated_psd = interpolate(estimated_psd, self.delta_f)
+        return estimated_psd
     
     def save_PSD(self):
         # Saving the PSD file used for dataset/sample
@@ -387,75 +403,86 @@ class GenerateData:
                 sample_rate = fp.attrs['sample_rate']
                 training_duration = fp.attrs['duration']
                 
-            step_size = (1.*60.*60.) * sample_rate # 1 hour (hours * minutes * seconds)
-            assert step_size <= training_duration
+            step_size = 3600.0 # seconds (1 hour)
+            slice_length = 3600.0 # seconds (1 hour)
+            assert step_size <= training_duration, "Step size chosen is larger than total O3a real noise training dataset!"
             # Initialise Slicer object and create noise generator
             # In the following, peak_offset is just an arbitrary value that works. We don't need it here.
             # If slice_length == step_size, there is no overlap between sample
-            kwargs = dict(infile=training_real_noise_file, 
-                          step_size=step_size, 
-                          peak_offset=18.0,
-                          slice_length=step_size)
+            with h5py.File(training_real_noise_file, 'r') as infile:
+                kwargs = dict(infile=infile, 
+                              step_size=step_size, 
+                              peak_offset=18.0,
+                              whiten_padding=0.0,
+                              slice_length=int(slice_length*self.sample_rate))
             
-            # The slicer object can take an index and return the required training data sample
-            slicer = Slicer(**kwargs)
-            # Use this to iterate over slicer using sequential idx
-            slicer_length = len(slicer)
+                # The slicer object can take an index and return the required training data sample
+                slicer = Slicer(**kwargs)
             
-            # Frequencies in the PSD
-            f = np.linspace(self.noise_low_freq_cutoff, self.noise_high_freq_cutoff, self.psd_len)
-            # Plotting
-            plt.figure(figsize=(32.0, 12.0))
+                # Use this to iterate over slicer using sequential idx
+                slicer_length = len(slicer)
             
-            # The median of all the PSDs alongside a blacking out of bad frequencies
-            all_psds = []
-            for idx in range(slicer_length):
-                # Get slicer data for an hour
-                O3a_real_noise_split, _ = slicer.__getitem__(idx)
-                # PSD estimation using the welch's method
-                delta_t = 1.0/sample_rate
-                seg_len = int(self.psd_est_segment_length / delta_t)
-                seg_stride = int(seg_len * self.psd_est_segment_stride)
-                estimated_psd = welch(O3a_real_noise_split, seg_len=seg_len, seg_stride=seg_stride)
-                estimated_psd = interpolate(estimated_psd, self.delta_f)
-                all_psds.append(estimated_psd)
-                plt.plot(f, estimated_psd, linewidth=2.0, color='red')
+                # Frequencies in the PSD
+                f = np.linspace(self.noise_low_freq_cutoff, self.noise_high_freq_cutoff, self.psd_len)
+                
+                for ndet, det in enumerate(self.detectors_abbr):
+                    # Plotting
+                    fig = plt.figure(figsize=(32.0, 12.0))
+                    ax = fig.add_subplot(111)
             
-            # Compute the median of all PSDs along axis=0
-            median_psd = np.median(all_psds, axis=0)
-            max_psd = np.maximum.reduce(all_psds)
+                    # The median of all the PSDs alongside a blacking out of bad frequencies
+                    all_psds = []
+
+                    print("Estimating PSD for real O3a noise using training dataset")
+                    pbar = tqdm(range(slicer_length))
+                    worst_psd = [0.0]
+                    for idx in pbar:
+                        pbar.set_description("D4 PSD Estimation")
+                        estimated_psd = self._MP_PSD_D4_(idx, slicer, sample_rate, ndet)
+                        all_psds.append(estimated_psd)
+                        # ax.plot(f, estimated_psd, linewidth=1.0, alpha=0.3)
+                        if max(estimated_psd) > max(worst_psd):
+                            worst_psd = estimated_psd
             
-            # Blacking out of unwanted bands in the frequency spectrum
-            # Remove large variation regions from the median PSD when compared to max PSD
-            ratio_psd = max_psd / median_psd
-            # Black out all regions where the ratio is greater than threshold
-            blackout_idxs = np.argwhere(ratio_psd > self.blackout_max_ratio).flatten()
-            # Ratio is freq bins blacked out
-            del_ratio = len(blackout_idxs)/len(ratio_psd)
-            print('Percentage of deleted bins while blacking out (D4) = {}%'.format(del_ratio*100))
-            # Create blacked PSD
-            median_psd[blackout_idxs] = 999_999_999_999.0 # sqrt is about 1e6
-            blacked_psd = median_psd
+                    # Compute the median of all PSDs along axis=0
+                    median_psds = np.median(all_psds, axis=0)
+                    max_psds = np.maximum.reduce(all_psds)
             
-            ### Plotting
-            plt.title('PSDs and their median for detector {} (removed = {}%)'.format(det, round(del_ratio*100.0, 3)))
-            plt.yscale('log')
-            plt.xlabel('Frequency (Hz)')
-            plt.ylabel('PSD Magnitude')
-            plt.grid(True)
-            plt.plot(f, median_psd, linewidth=3.0, label='{} median PSD'.format(det), color='k')
-            for idx in blackout_idxs:
-                plt.plot([f[idx], f[idx]], [1e-49, 1e-38], linewidth=1.0, color='gray')
-            plt.ylim(1e-49, 1e-38)
-            plt.legend()
-            save_png = os.path.join(self.dirs['parent'], 'median_PSDs_{}_full.png'.format(det))
-            plt.savefig(save_png)
-            plt.close()
+                    # Blacking out of unwanted bands in the frequency spectrum
+                    # Remove large variation regions from the median PSD when compared to max PSD
+                    ratio_psds = max_psds / median_psds
+                    # Black out all regions where the ratio is greater than threshold
+                    blackout_idxss = np.argwhere(ratio_psds > self.blackout_max_ratio).flatten()
+                    # Ratio is freq bins blacked out
+                    del_ratios = len(blackout_idxss)/len(ratio_psds)
+                    print('Percentage of deleted bins while blacking out (D4 - detector {}) = {}%'.format(det, del_ratios*100))
+
+                    # Create blacked PSD
+                    blacked_psds = np.copy(median_psds)
+                    blacked_psds[blackout_idxss] = 999_999_999_999.0 # sqrt is about 1e6
             
-            # Save the PSD in HDF5 format
-            save_name = 'psd-median-{}.hdf'.format(det)
-            psd_name = 'median_det{}'.format(1 if det=='H1' else 2)
-            self._save_(save_name, blacked_psd, psd_name)
+                    ### Plotting
+                    plt.title('PSDs and their median for detector {} (removed = {}%)'.format(det, round(del_ratios*100.0, 3)))
+                    plt.yscale('log')
+                    plt.xlabel('Frequency (Hz)')
+                    plt.ylabel('PSD Magnitude')
+                    plt.grid(True)
+                    # plt.plot(f, median_psds, linewidth=2.0, label='{} median PSD'.format(det), color='k')
+                    plt.plot(f, worst_psd, linewidth=1.0, label='{} worst PSD'.format(det), color='k')
+                    for idx in blackout_idxss:
+                        pass
+                        #plt.plot([f[idx], f[idx]], [1e-49, 1e-38], linewidth=1.0, color='gray', alpha=0.2)
+                    plt.ylim(1e-49, 1e-38)
+                    plt.legend()
+                    save_png = os.path.join(self.dirs['parent'], 'median_PSDs_{}_full.png'.format(det))
+                    plt.savefig(save_png)
+                    plt.close()
+            
+                    # Save the PSD in HDF5 format
+                    save_name = 'psd-median-{}.hdf'.format(det)
+                    psd_name = 'median_det{}'.format(ndet+1)
+                    # self._save_(save_name, blacked_psds, psd_name)
+                    self._save_(save_name, worst_psd, psd_name)
             
             
     def distance_from_chirp_distance(self, chirp_distance, mchirp, ref_mass=1.4):
@@ -657,10 +684,10 @@ class GenerateData:
             elif self.dataset == 4:
                 # We don't have to colour the noise ourselves, so they would not fill up RAM memory
                 # All idx values will now offset to [0, num_noises]
-                index = idx - self.num_waveforms
-                noise, _ = self.noise_generator.__getitem__(index)
-                assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
-                assert len(noise[1]) == self.sample_length_in_s * self.sample_rate
+                index = int(idx - self.num_waveforms)
+                noise, _ = noigen_slicer.__getitem__(index)
+                assert len(noise[0]) == self.sample_length_in_s * self.sample_rate, "Sample Length Error: Expected={}, Observed={}".format(self.sample_length_in_s * self.sample_rate, len(noise[0]))
+                assert len(noise[1]) == self.sample_length_in_s * self.sample_rate, "Sample Length Error: Expected={}, Observed={}".format(self.sample_length_in_s * self.sample_rate, len(noise[1]))
             
             # Saving noise params for storage
             sample['noise_1'] = noise[0]
@@ -675,6 +702,7 @@ class GenerateData:
             # Iterate through injection parmas using idx and set params to waveform_kwargs
             # prior values as created by get_priors is a np.record object
             prior_values = self.priors[idx-self.idx_offset]
+
             # Convert np.record object to dict and append to waveform_kwargs dict
             self.waveform_kwargs.update(dict(zip(prior_values.dtype.names, prior_values)))
             
@@ -1373,14 +1401,32 @@ def make(slots_magic_params, export_dir):
                                  num_noises = gd.num_noises)
         
         # Run the RealNoiseGenerator to retrieve training and testing dataset
-        rng = RealNoiseGenerator(real_noise_kwargs)
-        gd.noise_generator = rng.get_real_noise_generator()
-    
+        rng = RealNoiseGenerator(**real_noise_kwargs)
+        infile = h5py.File(store_output['training'], 'r')
+        # Calculate the step size required to obtain the number of noise samples
+        step_size = (infile.attrs['duration'] - gd.sample_length_in_num)/gd.num_noises
+        step_size = 2.0
+        kwargs = dict(infile=infile,
+                      step_size=step_size,
+                      peak_offset=18.0,
+                      whiten_padding=5.0,
+                      slice_length=int(gd.signal_length*gd.sample_rate))
+
+        print("Creating a slicer object using real O3a noise for training dataset")
+        # The slicer object can take an index and return the required training data sample
+        slicer = Slicer(**kwargs)
+        # Sanity check the length of slicer
+        assert len(slicer) >= gd.num_noises, "Insufficient number ({}/{}) of samples in slicer object!".format(len(slicer), gd.num_noises)
+        global noigen_slicer
+        noigen_slicer = slicer
+   
     # Save PSDs required for dataset
     gd.save_PSD()
+    raise
+
     # Get priors for entire dataset
     gd.get_priors()
-    
+
     ## Generate the dataset
     # Split the iterable into nchunks
     waveform_iterable = np.arange(gd.num_waveforms)
@@ -1427,3 +1473,7 @@ def make(slots_magic_params, export_dir):
     gd.make_elink_lookup()
     # Making the prior distribution plots
     gd.plot_priors(gd.dirs['parent'])
+
+    # Closing any unnecessary files
+    if gd.dataset == 4:
+        infile.close()
