@@ -492,9 +492,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Jan08_SRD3_noSampler_Shuffled"
+    name = "KaggleFirst_Feb02_TRD4"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'Check-D3'
+    save_remarks = 'TestRun-D4'
     
     """ Dataset """
     dataset = MLMDC1
@@ -580,13 +580,13 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     persistent_workers = True
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D2_seeded"
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
     injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
     # Short: far_scaling_factor = 64000.0
     # Month: far_scaling_factor = 2592000.0
-    far_scaling_factor = 64000.0
+    far_scaling_factor = 2592000.0
     
     test_foreground_dataset = "foreground.hdf"
     test_foreground_output = "testing_foutput.hdf"
