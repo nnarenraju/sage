@@ -108,13 +108,14 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
-    data_dir = "dataset_1e6_Jan8_D3_seed42"
+    data_dir = "dataset_1e6_Jan27_D4_seed42"
+    # data_dir = "buffer_datadir"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
     # Type of dataset (1, 2, 3 or 4)
     # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
-    dataset = 3
+    dataset = 4
     # Random seed provided to generate_data script
     # This seed is used to generate the priors
     seed = 42
@@ -186,11 +187,11 @@ class Default:
     
     """ Real O3a noise (Dataset 4) """
     # We probably need to experiment with this a little
-    psd_est_segment_length = 36. * sample_rate
-    psd_est_segment_stride = 18. * sample_rate
+    psd_est_segment_length = 36. # in seconds
+    psd_est_segment_stride = 18. # in seconds
     
     """ PSD bad band blacking out for Datasets 2,3,4 """
-    blackout_max_ratio = 2.0
+    blackout_max_ratio = 5.0
     
     """ generate_data.py Noise Params (if used) """
     # Only used in dataset 2 and 3
