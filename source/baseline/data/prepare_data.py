@@ -159,7 +159,7 @@ class DataModule:
             raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
             
     
-    def get_metadata(cfg):
+    def get_metadata(cfg, data_cfg):
         """
         Retrieve dataset metadata
         
@@ -188,6 +188,7 @@ class DataModule:
             ids = np.array(fp['id'][:])
             paths = np.array([foo.decode('utf-8') for foo in fp['path']])
             targets = np.array(fp['target'][:])
+            dstype = np.array([foo.decode('utf-8') for foo in fp['type']])
         
         # Chunk the entire lookup table for BatchLoader method used within MLMDC1 dataset object
         # The independant BatchLoader Method has been deprecated as of May 24th, 2022
@@ -206,8 +207,8 @@ class DataModule:
         """
         
         # Create a consolidated lookup date as a Pandas Dataframe
-        lookup = list(zip(ids, paths, targets))
-        train = pd.DataFrame(lookup, columns=['id', 'path', 'target'])
+        lookup = list(zip(ids, paths, targets, dstype))
+        train = pd.DataFrame(lookup, columns=['id', 'path', 'target', 'dstype'])
         
         # if debug, use a data subset
         if cfg.debug:
@@ -219,10 +220,21 @@ class DataModule:
                 prop = cfg.debug_size/len(train)
             else:
                 raise ValueError('cfg.debug_size > full dataset size!')
+            
+            if data_cfg.dataset in [1, 2, 3]:
+                _, X, _, y = train_test_split(idxs, all_targets, test_size=prop, 
+                                              random_state=42, stratify=all_targets)
+                train = train.iloc[X]
                 
-            _, X, _, y = train_test_split(idxs, all_targets, test_size=prop, 
-                                          random_state=42, stratify=all_targets)
-            train = train.iloc[X]
+            elif data_cfg.dataset == 4:
+                num_training = int(0.8*cfg.debug_size)
+                num_validation = int(0.2*cfg.debug_size)
+                training_data = train.loc[train['dstype'] == 'training'].head(num_training)
+                validation_data = train.loc[train['dstype'] == 'validation'].head(num_validation)
+                # Get the required number of samples from each
+                folds = [(training_data['id'].values, validation_data['id'].values)]
+                return (train, folds)
+                
         
         ## Splitting
         if cfg.splitter is not None:
@@ -235,10 +247,18 @@ class DataModule:
             # Use idxs as training data together with targets to stratify into train and test set
             # This ensures a class balanced training and testing dataset
             all_targets = train['target'].values
-            X_train, X_valid, _, _ = train_test_split(idxs, all_targets, test_size=0.2, 
-                                                      random_state=42, stratify=all_targets)
-            # Save as folds for training and validation            
-            folds = [(X_train, X_valid)]
+            
+            if data_cfg.dataset in [1, 2, 3]:
+                X_train, X_valid, _, _ = train_test_split(idxs, all_targets, test_size=0.2, 
+                                                          random_state=42, stratify=all_targets)
+                # Save as folds for training and validation            
+                folds = [(X_train, X_valid)]
+            
+            elif data_cfg.dataset == 4:
+                training_data = train.loc[train['dstype'] == 'training']
+                validation_data = train.loc[train['dstype'] == 'validation']
+                # Get the required number of samples from each
+                folds = [(training_data['id'].values, validation_data['id'].values)]
         
         return (train, folds)
     
