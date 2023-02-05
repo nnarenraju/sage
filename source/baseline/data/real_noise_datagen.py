@@ -262,28 +262,3 @@ class RealNoiseGenerator:
             fp.attrs['real_noise_path'] = self.real_noise_path if self.real_noise_path is not None else 'None'
             fp.attrs['slide_buffer'] = self.slide_buffer
             fp.attrs['detectors'] = self.detectors
-    
-    
-    def get_real_noise_generator(self):
-        ## After __init__ has completed creating training and testing datasets
-        ## Call the Slicer function in the testing module and return this as noise generator
-        ## Passing an index will be sufficient to obtain samples from Slicer
-        # Initialise Slicer object and create noise generator
-        # In the following, peak_offset is just an arbitrary value that works. We don't need it here.
-        with h5py.File(self.store_output['training'], 'r') as infile:
-            # Calculate the step size required to obtain the number of noise samples
-            step_size = (infile.attrs['duration'] - self.sample_length_in_num)/self.num_noises
-            kwargs = dict(infile=infile, 
-                          step_size=step_size, 
-                          peak_offset=18.0,
-                          whiten_padding=5.0,
-                          slice_length=self.sample_length_in_num)
-       
-            print("Creating a slicer object using real O3a noise for training dataset")
-            # The slicer object can take an index and return the required training data sample
-            slicer = Slicer(**kwargs)
-            # Sanity check the length of slicer
-            assert len(slicer) >= self.num_noises, "Insufficient number ({}/{}) of samples in slicer object!".format(len(slicer), self.num_noises)
-        
-        return slicer
-        
