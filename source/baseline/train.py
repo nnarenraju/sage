@@ -86,7 +86,7 @@ def run_trainer():
     
     # Prepare dataset (read, split and return fold idx)
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
-    train, folds = dat.get_metadata(cfg)
+    train, folds = dat.get_metadata(cfg, data_cfg)
 
     """ Training """
     # Folds are obtained only by splitting the training dataset
