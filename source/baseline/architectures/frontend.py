@@ -30,7 +30,9 @@ Or use a fixed t-f representation
 # IN-BUILT
 import timm
 import torch
+import numpy as np
 from torch import nn
+from scipy import signal
 
 # Importing architecture snippets from zoo
 from architectures.zoo.kaggle import ConvBlock, _initialize_weights, ConvBlock_Apr21
@@ -529,8 +531,30 @@ class KappaModelPE(torch.nn.Module):
         x = self.batchnorm(x)
         # Conv Backend
         cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
+        
+        # TODO: Experimental cwt input
+        # Get the CWT of the input sample and attach it to the cnn_output before resnet section
+        # cnn_output is (32, 2, 128, 182)
+        widths = np.arange(1, cnn_output[0][0].shape[0]+1)
+        
+        cwt_output = []
+        for n, sample in enumerate(x):
+            det1, det2 = sample
+            det1 = det1.detach().cpu().numpy()
+            det2 = det2.detach().cpu().numpy()
+            cwt_H1 = torch.from_numpy(signal.cwt(det1, signal.ricker, widths))
+            cwt_L1 = torch.from_numpy(signal.cwt(det2, signal.ricker, widths))
+            cwt_H1 = cwt_H1.to(torch.device('cuda:1'), dtype=torch.float32)
+            cwt_L1 = cwt_L1.to(torch.device('cuda:1'), dtype=torch.float32)
+            cwt_output_tmp = torch.stack((cwt_H1, cwt_L1))
+            cwt_output.append(cwt_output_tmp)
+
+        cwt_output = torch.stack(cwt_output)
+        cwt_output.to(torch.device('cuda:1'), dtype=torch.float32)
+        cwt_cnn_output = torch.cat([cnn_output, cwt_output], dim=3)
+        
         # Timm Frontend
-        x = self.frontend(cnn_output) # (100, 1000) by default
+        x = self.frontend(cwt_cnn_output) # (100, 1000) by default
         ## Manipulate encoder output to get params
         # Global Pool
         x = self.flatten_d1(self.avg_pool_1d(x))
@@ -622,3 +646,115 @@ class KappaModelSimplified(torch.nn.Module):
         pred_prob = self.softmax(x)
         # Return ouptut params pred_prob
         return {'pred_prob': pred_prob}
+
+
+class DeltaModelPE(torch.nn.Module):
+    """
+    Delta-type Model PE Architecture
+    
+    Description - consists of a 2-channel Timm model frontend
+    
+    Parameters
+    ----------
+    model_name  = 'simple' : string
+        Simple NN model name for Frontend. Save model with this name as attribute.
+    pretrained  = False : Bool
+        Pretrained option for saved models
+        If True, weights are stored under the model_name in saved_models dir
+        If model name already exists, throws an error (safety)
+    in_channels = 2 : int
+        Number of input channels (number of detectors)
+    out_channels = 2 : int
+        Number of output channels (signal, noise)
+    store_device = 'cpu' : str
+        Storage device for network (NOTE: make sure data is also stored in the same device)
+    weights_path = '' : str
+        Absolute path to the weights.pt file. Used when pretrained == True
+        
+    """
+
+    def __init__(self, 
+                 model_name='trainable', 
+                 timm_params: dict = {'model_name': 'resnet34', 'pretrained': True, 'in_chans': 2, 'drop_rate': 0.25},
+                 store_device: str = 'cpu',
+                 **kwargs):
+        
+        super().__init__()
+        
+        self.model_name = model_name
+        self.store_device = store_device
+        self.timm_params = timm_params
+        
+        """ Frontend """
+        # resnet34 --> 21 Mil. trainable params trainable frontend
+        self.frontend = timm.create_model(**timm_params)
+        
+        """ Mods """
+        # Primary outputs
+        self.signal_or_noise = nn.Linear(self.frontend.num_features, 1)
+        self.coalescence_time = nn.Linear(self.frontend.num_features, 1)
+        self.chirp_distance = nn.Linear(self.frontend.num_features, 1)
+        self.chirp_mass = nn.Linear(self.frontend.num_features, 1)
+        self.distance = nn.Linear(self.frontend.num_features, 1)
+        self.mass_ratio = nn.Linear(self.frontend.num_features, 1)
+        self.inv_mass_ratio = nn.Linear(self.frontend.num_features, 1)
+        self.snr = nn.Linear(self.frontend.num_features, 1)
+        # Manipulation layers
+        self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
+        self.batchnorm = nn.BatchNorm1d(2)
+        self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
+        self.flatten_d1 = nn.Flatten(start_dim=1)
+        self.flatten_d0 = nn.Flatten(start_dim=0)
+        self.dropout = nn.Dropout(0.25)
+        self.sigmoid = torch.nn.Sigmoid()
+        self.softmax = torch.nn.Softmax(dim=1)
+        self.ReLU = nn.ReLU()
+        
+        ## Convert network into given dtype and store in proper device
+        # Manipulation layers
+        self.batchnorm.to(dtype=data_type, device=self.store_device)
+        # Mod layers
+        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
+        self.coalescence_time.to(dtype=data_type, device=self.store_device)
+        self.chirp_distance.to(dtype=data_type, device=self.store_device)
+        self.chirp_mass.to(dtype=data_type, device=self.store_device)
+        self.distance.to(dtype=data_type, device=self.store_device)
+        self.mass_ratio.to(dtype=data_type, device=self.store_device)
+        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
+        self.snr.to(dtype=data_type, device=self.store_device)
+        # Main layers
+        self._det1.to(dtype=data_type, device=self.store_device)
+        self._det2.to(dtype=data_type, device=self.store_device)
+        self.frontend.to(dtype=data_type, device=self.store_device)
+    
+    # x.shape: (batch size, wave channel, length of wave)
+    def forward(self, x):
+        # batch_size, channel, signal_length = s.shape
+        x = self.batchnorm(x)
+        # Buffer input
+        x = torch.cat([x[:, 0:1], x[:, 1:2]], dim=1)
+        
+        # Timm Frontend
+        x = self.frontend(x) # (100, 1000) by default
+        ## Manipulate encoder output to get params
+        # Global Pool
+        x = self.flatten_d1(self.avg_pool_1d(x))
+        # In the Kaggle architecture a dropout is added at this point
+        # I see no reason to include at this stage. But we can experiment.
+        ## Output necessary params
+        raw = self.flatten_d0(self.signal_or_noise(x))
+        pred_prob = self.sigmoid(raw)
+        # Parameter Estimation
+        tc = self.flatten_d0(self.sigmoid(self.coalescence_time(x)))
+        dchirp = self.flatten_d0(self.sigmoid(self.chirp_distance(x)))
+        mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(x)))
+        dist = self.flatten_d0(self.sigmoid(self.distance(x)))
+        q = self.flatten_d0(self.sigmoid(self.mass_ratio(x)))
+        invq = self.flatten_d0(self.sigmoid(self.inv_mass_ratio(x)))
+        raw_snr = self.flatten_d0(self.snr(x))
+        snr = self.sigmoid(raw_snr)
+        
+        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
+        return {'raw': raw, 'pred_prob': pred_prob, 'norm_tc': tc, 'norm_dchirp': dchirp, 
+                'norm_mchirp': mchirp, 'norm_dist': dist, 'norm_q': q, 'norm_invq': invq, 
+                'norm_snr': snr, 'raw_snr': raw_snr}
