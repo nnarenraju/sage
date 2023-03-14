@@ -26,14 +26,10 @@ Documentation: NULL
 # IN-BUILT
 import os
 import gc
-import glob
 import torch
 import argparse
-import pytorch_lightning as pl
 
 from torchsummary import summary
-from datetime import datetime
-from distutils.dir_util import copy_tree
 
 # Warnings
 import warnings
@@ -41,11 +37,10 @@ warnings.filterwarnings("ignore")
 
 # LOCAL
 from test import run_test
-from lightning import simple
+from save_online import save
 from evaluate import main as evaluator
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
-from utils.plotter import debug_plotter, snr_plotter, overlay_plotter
 
 # Tensorboard
 from torch.utils.tensorboard import SummaryWriter
@@ -61,8 +56,6 @@ def run_trainer():
                         help="Creates or uses a particular dataset as provided in data_configs.py")
     parser.add_argument("--inference", action='store_true',
                         help="Running the inference module using trained model")
-    parser.add_argument("--lightning", action='store_true',
-                        help="Running the pipeline using PyTorch Lightning")
     parser.add_argument("--manual", action='store_true',
                         help="Running the pipeline using manual PyTorch")
     parser.add_argument("--summary", action='store_true',
@@ -125,7 +118,7 @@ def run_trainer():
         # Model Summary (frontend + backend)
         if opts.summary:
             # Using TorchSummary to get # trainable params and general overview
-            summary(ModelClass, (2, 3072), batch_size=cfg.batch_size)
+            summary(ModelClass, (2, 5838), batch_size=cfg.batch_size)
             print("")
             # Using TensorBoard summary writer to create detailed graph of ModelClass
             tb = SummaryWriter()
@@ -153,79 +146,11 @@ def run_trainer():
         if opts.manual:
             # Running the manual pipeline version using pure PyTorch
             # Initialise the trainer
-            Network = manual_train(cfg, data_cfg, ModelClass, optimizer, scheduler, loss_function, 
+            Network = manual_train(cfg, data_cfg, train_data, val_data, ModelClass, optimizer, scheduler, loss_function,
                                    train_loader, val_loader, verbose=cfg.verbose)
         
-        ## LIGHTNING
-        if opts.lightning:
-            # Get Lightning Classifier from lightning.py
-            raise NotImplementedError('Lightning module under construction!')
-            model = simple(ModelClass, optimizer, scheduler, loss_function)
-            
-            # Initialise the trainer
-            trainer = pl.Trainer(max_steps=cfg.num_steps, max_epochs=cfg.num_epochs)
-            
-            """ Fit """
-            trainer.fit(model, train_loader, val_loader)
-            
-        
-        """ Saving results and moving to online workspace """
-        # Debug method plotting
-        if cfg.debug:
-            # Debug directory and plots
-            debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
-            debug_plotter(debug_dir)
-            # Plotting the SNR histogram
-            snr_dir = os.path.join(cfg.export_dir, 'SNR')
-            snr_plotter(snr_dir, cfg.num_epochs)
-        
-        # Move export dir for current run to online workspace
-        file_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
-        if cfg.debug:
-            run_type = 'DEBUG'
-        else:
-            run_type = 'RUN'
-        www_dir = '{}-{}-D{}-{}-{}'.format(run_type, file_time, data_cfg.dataset, cfg.model_params['model_name'], cfg.save_remarks)
-        copy_tree(cfg.export_dir, os.path.join(cfg.online_workspace, www_dir))
-        
-        ## Making an overlay plot of all runs in the online workspace
-        # All runs that are in DEBUG mode are ignored for the overlay plots
-        overview_paths = []
-        roc_paths = []
-        run_names = []
-        roc_aucs = []
-        flag_1 = False
-        flag_2 = False
-        flag_3 = False
-        for run_dir in glob.glob(os.path.join(cfg.online_workspace, 'RUN-*')):
-            # Get the loss, accuracy and ROC curve data from the best file (if present)
-            overview_path = os.path.join(run_dir, 'losses.txt')
-            if os.path.exists(overview_path):
-                flag_1 = True
-            roc_path = os.path.join(run_dir, 'BEST/roc_best.npy')
-            if os.path.exists(roc_path):
-                flag_2 = True
-            roc_auc_path = os.path.join(run_dir, 'BEST/roc_auc_best.npy')
-            if os.path.exists(roc_auc_path):
-                flag_3 = True
-            if flag_1 and flag_2 and flag_3:
-                run_names.append(os.path.split(run_dir)[-1])
-                overview_paths.append(overview_path)
-                roc_paths.append(roc_path)
-                roc_aucs.append(roc_auc_path)
-            flag_1 = False
-            flag_2 = False
-            flag_3 = False
-        
-        save_dir = os.path.join(cfg.online_workspace, 'ALL_OVERLAY')
-        if not os.path.isdir(save_dir):
-            os.makedirs(save_dir, exist_ok=False)
-        if run_names != []:
-            overlay_plotter(overview_paths, roc_paths, roc_aucs, save_dir, run_names)
-        
-        # Save a copy of the entire code used to run this config into the RUN/DEBUG directory
-        # The GIT file size may be too large. Storing it each time within online_workspace may be overkill.
-        # shutil.make_archive(os.path.join(cfg.online_workspace, www_dir), 'zip', src)
+        # Save run in online workspace
+        save(cfg, data_cfg)
         
         
         """ TESTING """
@@ -265,10 +190,8 @@ def run_trainer():
             evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
 
         
-        
 
 if __name__ == "__main__":
     
     run_trainer()
-    print('\nFIN')
-    
+    print('\nFIN')    
