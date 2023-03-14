@@ -30,7 +30,7 @@ from scipy.signal import decimate
 from operator import itemgetter
 
 # Parallelisation of transforms
-import data.parallel as parallel
+# import data.parallel as parallel
 
 
 def prime_factors(n):
@@ -186,8 +186,8 @@ def get_sampling_rate_bins(data_cfg):
     check_f = np.array(check_f)
     
     # Add the bins and sampling frequency for the pure noise chunks
-    bad_bin = [[bins[0], bins[1], 64.0]] # using low sampling freq for bad bin
-    hqual_bin = [[bins[1], bins[2], sample_rate]] # using highest sampling freq for ringdown+merger pahse
+    bad_bin = [[bins[0], bins[1], 128.0]] # using low sampling freq for bad bin
+    hqual_bin = [[bins[1], bins[2], sample_rate]] # using highest sampling freq for ringdown+merger phase
     # Starting freq. at time of merger is given based on f_ISCO
     # We use a sampling freq. a factor of 4 higher than f_ISCO
     if start_freq_factor < 2.0:
@@ -265,7 +265,7 @@ def multirate_sampling(signal, data_cfg):
             # Sanity check
             if decimation_factor > 13:
                 # tmp_signals = signals[:] # --> many signals
-                tmp_signal = signal[:]
+                tmp_signal = np.copy(signal)
                 
                 # The decimation factor should always be of type 2**n
                 # So factorisation should be quite straight-forward (depricated on April 1st, 2022)
@@ -310,6 +310,13 @@ def multirate_sampling(signal, data_cfg):
             
             # Slice the decimated signals using the start and end decimated idx
             chunk = decimated_signal[sidx_dec:eidx_dec]
+            # Rescale the decimated chunk using a mean based factor
+            # Change in mean^2 amplitude
+            func = np.mean
+            mean_sample = np.sqrt(func(signal**2.))
+            mean_decimated = np.sqrt(func(decimated_signal**2.))
+            factor = mean_sample/mean_decimated
+            chunk = chunk * factor
         else:
             # No decimation done, original sample rate is used
             chunk = signal[int(start_idx):int(end_idx)]
@@ -322,6 +329,16 @@ def multirate_sampling(signal, data_cfg):
     # Now properly concatenate all the decimated chunks together using numpy
     # --> many signals
     # multirate_signals = np.column_stack(tuple(multirate_chunks))
+    # Get the idxs of each chunk edge for glitch veto
+    start = 0
+    # Save the start and end idx of chunks
+    save_idxs = []
+    for chunk in multirate_chunks:
+        save_idxs.append((start, start+len(chunk)))
+        start = start + len(chunk)
+    
     multirate_signal = np.concatenate(tuple(multirate_chunks))
+    # Remove regions corrupted by high decimation (if required)
+    multirate_signal = multirate_signal[:]
     
     return multirate_signal
