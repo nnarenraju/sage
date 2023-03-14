@@ -32,11 +32,11 @@ import matplotlib.pyplot as plt
 # Font and plot parameters
 plt.rcParams.update({'font.size': 22})
 
-def figure(title=""):
+def figure(title="", nrows=-1):
     plt.rc('font', family='serif')
     plt.rc('xtick', labelsize='medium')
     plt.rc('ytick', labelsize='medium')
-    fig, axs = plt.subplots(4, 2, figsize=(26.0, 30.0))
+    fig, axs = plt.subplots(nrows, 2, figsize=(26.0, 30.0))
     fig.suptitle(title, fontsize=28, y=0.92)
     return axs
 
@@ -56,7 +56,7 @@ def plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_no
     mass_1 = np.around(mass_1, 3)
     mass_2 = np.around(mass_2, 3)
     network_snr = np.around(network_snr, 3)
-    ax = figure(title="{}: m1={}, m2={}, snr={}".format(data_dir, mass_1, mass_2, network_snr))
+    ax = figure(title="{}: m1={}, m2={}, snr={}".format(data_dir, mass_1, mass_2, network_snr), nrows=3+len(list(trans_noisy_signal.keys())))
     
     """ Pure Signal """
     # Plotting each sample variety
@@ -89,17 +89,20 @@ def plot_unit(pure_signal, pure_noise, noisy_signal, trans_pure_signal, trans_no
     
     
     """ Transformed Noisy Signal and Transformed Pure Signal """
-    assert len(list(set([len(signal) for signal in trans_noisy_signal]))) == 1
-    end_time = len(trans_noisy_signal[0])/sample_rate
-    time_axis = np.linspace(0.0, end_time, len(trans_noisy_signal[0]))
-    _plot(ax[3][0], time_axis, trans_noisy_signal[0], c='k', xlabel="Time [s]", ylabel="Strain", label="Transformed Noisy Signal H1")
-    _plot(ax[3][1], time_axis, trans_noisy_signal[1], c='k', xlabel="Time [s]", ylabel="Strain", label="Transformed Noisy Signal L1")
+    for n, key in enumerate(list(trans_noisy_signal.keys())):
+        assert len(list(set([len(signal) for signal in trans_noisy_signal[key]]))) == 1
+        end_time = len(trans_noisy_signal[key][0])/sample_rate
+        time_axis = np.linspace(0.0, end_time, len(trans_noisy_signal[key][0]))
+        label = '{} H1'.format(key)
+        _plot(ax[n+3][0], time_axis, trans_noisy_signal[key][0], c='k', xlabel="Time [s]", ylabel="Strain", label=label)
+        label = '{} L1'.format(key)
+        _plot(ax[n+3][1], time_axis, trans_noisy_signal[key][1], c='k', xlabel="Time [s]", ylabel="Strain", label=label)
     
-    assert len(list(set([len(signal) for signal in trans_pure_signal]))) == 1
-    end_time = len(trans_pure_signal[0])/sample_rate
-    time_axis = np.linspace(0.0, end_time, len(trans_pure_signal[0]))
-    _plot(ax[3][0], time_axis, trans_pure_signal[0], c='r', xlabel="Time [s]", ylabel="Strain")
-    _plot(ax[3][1], time_axis, trans_pure_signal[1], c='b', xlabel="Time [s]", ylabel="Strain")    
+        assert len(list(set([len(signal) for signal in trans_pure_signal[key]]))) == 1
+        end_time = len(trans_pure_signal[key][0])/sample_rate
+        time_axis = np.linspace(0.0, end_time, len(trans_pure_signal[key][0]))
+        _plot(ax[n+3][0], time_axis, trans_pure_signal[key][0], c='r', xlabel="Time [s]", ylabel="Strain")
+        _plot(ax[n+3][1], time_axis, trans_pure_signal[key][1], c='b', xlabel="Time [s]", ylabel="Strain")
 
     
     # Saving plots
