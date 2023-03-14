@@ -144,13 +144,8 @@ class DataModule:
         check_dir = os.path.join(dc_attrs['parent_dir'], dc_attrs['data_dir'])
         if os.path.isdir(check_dir):
             # Lookup table formats
-            check_file = os.path.join(check_dir, "training.hdf")
             elink_file = os.path.join(check_dir, "extlinks.hdf")
             # Copy lookup tables to export_dir
-            if os.path.isfile(check_file):
-                # Move the training.hdf to export_dir for pipeline
-                move_location = os.path.join(export_dir, 'training.hdf')
-                shutil.copy(check_file, move_location)
             if os.path.isfile(elink_file):
                 # Move the extlinks.hdf to export_dir for pipeline
                 move_location = os.path.join(export_dir, 'extlinks.hdf')
@@ -232,9 +227,9 @@ class DataModule:
                 training_data = train.loc[train['dstype'] == 'training'].head(num_training)
                 validation_data = train.loc[train['dstype'] == 'validation'].head(num_validation)
                 # Get the required number of samples from each
-                folds = [(training_data['id'].values, validation_data['id'].values)]
+                train = pd.concat([training_data, validation_data])
+                folds = [(np.arange(len(training_data)), np.arange(len(training_data), len(training_data)+len(validation_data)))]
                 return (train, folds)
-                
         
         ## Splitting
         if cfg.splitter is not None:
@@ -302,7 +297,7 @@ class DataModule:
             weights = np.array([weight[t] for t in ttargets])
             tsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
         else:
-            raise ValueError('Encountered a class imbalanced training dataset!')
+            raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) training dataset!'.format(check_class_balance))
         
         # Create the training and validation dataset objects
         train_dataset = cfg.dataset(
@@ -322,7 +317,7 @@ class DataModule:
             weights = np.array([weight[t] for t in vtargets])
             vsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
         else:
-            raise ValueError('Encountered a class imbalanced validation dataset!')
+            raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) validation dataset!'.format(check_class_balance))
         
         valid_dataset = cfg.dataset(
                 data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
