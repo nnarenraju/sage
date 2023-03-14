@@ -25,7 +25,6 @@ Documentation: NULL
 
 # BUILT-IN
 import os
-import time
 import random
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
@@ -37,9 +36,6 @@ from data.multirate_sampling import multirate_sampling
 # PyCBC
 from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
 from pycbc.types import TimeSeries
-
-# Parallelisation of transforms
-import data.parallel as parallel
 
 # Addressing HDF5 error with file locking (used to address PSD file read error)
 # PSD file read has been moved to dataset object. (DEPRECATED)
@@ -54,9 +50,13 @@ class Unify:
         self.transforms = transforms
 
     def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
+        transforms = {}
         for transform in self.transforms:
+            name = transform.__class__.__name__
             y = transform(y, psds, data_cfg)
-        return y
+            transforms[name] = y
+        transforms['sample'] = y
+        return transforms
 
 
 class UnifySignal:
@@ -280,9 +280,9 @@ class Whiten(TransformWrapperPerChannel):
         ### Estimate the PSD
         # We'll choose 4 seconds PSD samples that are overlapped 50 %
         # delta_t = 1.0/2048.
-        # seg_len = int(4 / delta_t)
+        # seg_len = int(4. / delta_t)
         # seg_stride = int(seg_len / 2)
-        # estimated_psd = welch(signal, seg_len=seg_len, seg_stride=seg_stride)
+        # estimated_psd = welch(signal[:int(8.*2048.)], seg_len=seg_len, seg_stride=seg_stride)
         # estimated_psd = interpolate(estimated_psd, delta_f)
 
         # plt.loglog(estimated_psd.sample_frequencies, estimated_psd, label='estimate')
@@ -295,6 +295,7 @@ class Whiten(TransformWrapperPerChannel):
         
         # Sequential mode for whitening
         white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
+        # white = (signal.to_frequencyseries(delta_f=delta_f) / estimated_psd**0.5).to_timeseries()
         
         if self.remove_corrupted:
             white = white[int(max_filter_len/2):int(len(white)-max_filter_len/2)]
@@ -443,15 +444,28 @@ class CyclicShift(NoiseWrapper):
         super().__init__(always_apply)
 
     def apply(self, y: np.ndarray, debug=''):
-        # Cyclic shifting noise is possible for fake and real noise
+        # Cyclic shifting noise is possible for artificial and real noise
         num_roll = [random.randint(0, y.shape[1]), random.randint(0, y.shape[1])]
-        
-        if debug != '':
-            with open(os.path.join(debug, 'save_augment_noise_shift_1.txt'), 'a') as fp:
-                string = "{} ".format(num_roll[0])
-                fp.write(string)
-            with open(os.path.join(debug, 'save_augment_noise_shift_2.txt'), 'a') as fp:
-                string = "{} ".format(num_roll[1])
-                fp.write(string)
-        
         return np.array([np.roll(foo, num_roll[n]) for n, foo in enumerate(y)])
+
+
+class AugmentPhase(NoiseWrapper):
+    """ Used to augment the phase of noise (can be applied to real noise as well) """
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+
+    def apply(self, y: np.ndarray, debug=''):
+        # Phase augmentation of noise is possible for artificial and real noise
+        dt = [random.randint(0, y.shape[1])/2048., random.randint(0, y.shape[1])/2048.]
+        dphi = np.random.uniform(0.0, 2.0*np.pi, 1)[0]
+        # Apply the phase augmentation and time shift in frequency domain
+        noise_fft = [np.fft.rfft(foo) for foo in y]
+        # TODO: Assuming sampling frequency here. Generalise this.
+        df = 1./(y.shape[1]/2048.)
+        f = np.arange(len(noise_fft[0])) * df
+        #augmented_noise_fft = [foo*np.exp(2j*np.pi*f*dt[n] + 1j*dphi) for n, foo in enumerate(noise_fft)]
+        augmented_noise_fft = [foo * np.exp(1j*dphi) for n, foo in enumerate(noise_fft)]
+        # Go back to time domain and we should have augmented noise
+        augmented_noise = np.array([np.fft.irfft(foo) for foo in augmented_noise_fft])
+
+        return augmented_noise
