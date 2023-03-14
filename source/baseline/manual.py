@@ -36,6 +36,7 @@ import pandas as pd
 import sklearn.metrics as metrics
 
 from tqdm import tqdm
+from scipy import signal
 from distutils.dir_util import copy_tree
 
 # Turning off Torch debugging
@@ -359,7 +360,7 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
     for n, (output, label, feature, snr) in enumerate(zip(outputs, training_labels, features, network_snr)):
         # Plotting CNN frontend output feature
         det_features = feature.cpu().detach().numpy()
-        fig, ax = plt.subplots(1, 2, figsize=(6.0*2, 6.0*1))
+        fig, ax = plt.subplots(1, 2, figsize=(12.0*2, 8.0*1))
         output = np.around(output.cpu().detach().numpy(), 3)
         label = label.cpu().detach().numpy()
         snr = np.around(snr.cpu().detach().numpy(), 3)
@@ -374,6 +375,65 @@ def plot_cnn_output(cfg, training_output, training_labels, network_snr, epoch):
             save_path = os.path.join(save_dir, 'debug_cnn_feature_noise_{}.png'.format(n))
             
         plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+
+
+def plot_normed_output(cfg, whitened, training_output, training_labels, epoch):
+    # Plotting the normed output of any layer used (provide non MR sample as input)
+    save_dir = os.path.join(cfg.export_dir, 'NORM_OUTPUT/epoch_{}'.format(epoch))
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir, exist_ok=False)
+
+    # Outputs to be plotted
+    inputs = whitened
+    normed = training_output['normed']
+    network_input = training_output['input']
+    raws = training_output['raw']
+    pred_probs = training_output['pred_prob']
+    # gates = training_output['gate']
+    cnn_output = training_output['cnn_output']
+
+    for n, data in enumerate(zip(inputs, training_labels, raws, pred_probs, normed, network_input, cnn_output)):
+        ## Analysing normed output of the pipeline
+        # Convert all tensors to numpy arrays
+        inpt, label, raw, pred_prob, norm, netinpt, cnnopt = [foo.cpu().detach().numpy() for foo in data]
+        # Checking for the effect of normalisation layers used
+        fig, ax = plt.subplots(5, 2, figsize=(12.0*2, 8.0*5))
+        raw = np.around(raw, 3)
+        pred_prob = np.around(pred_prob, 3)
+        # gate_H1, gate_L1 = gate
+        # gate_H1 = np.around(gate_H1, 3)[0]
+        # gate_L1 = np.around(gate_L1, 3)[0]
+        gate_H1 = 0.0
+        gate_L1 = 0.0
+        plt.suptitle('raw={}, pred_prob={}, label={}, H1 Gate={}, L1 Gate={}'.format(raw, pred_prob, label, gate_H1, gate_L1))
+        for i in range(2):
+            # Input data without MR sampling
+            ax[0][i].plot(inpt[i], label='Input')
+            ax[0][i].grid()
+            ax[0][i].legend()
+            # Spectrogram of input sample
+            f, t, Sxx = signal.spectrogram(inpt[i], 2048.)
+            ax[1][i].pcolormesh(t, f, Sxx, shading='gouraud')
+            ax[1][i].set_ylabel('Frequency [Hz]')
+            ax[1][i].set_xlabel('Time [sec]')
+            ax[1][i].grid()
+            # Network input (after MR sampling)
+            ax[2][i].plot(netinpt[i], label='Network input')
+            ax[2][i].grid()   
+            ax[2][i].legend() 
+            # Normed output of the sample
+            ax[3][i].plot(norm[i], label='Normed output')
+            ax[3][i].grid()
+            ax[3][i].legend()
+            # CNN output
+            ax[4][i].imshow(cnnopt[i])
+            ax[4][i].grid()
+
+        name = "noise" if label == 0.0 else "signal"
+        save_path = os.path.join(save_dir, 'verify_normed_{}_{}.png'.format(name, n))
+        fig.subplots_adjust(top=0.95)
         plt.savefig(save_path)
         plt.close()
 
@@ -447,22 +507,23 @@ def consolidated_display(train_time, total_time):
     print('Total time taken = {}s'.format(np.around(total_time, 3)))
     print('----------------------------------------------------------------------')
 
-def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_samples, training_labels, params):
+def training_phase(cfg, data_cfg, Network, optimizer, scheduler, loss_function, training_samples, training_labels, params):
     # Optimizer step on a single batch of training data
     # Set zero_grad to apply None values instead of zeroes
     optimizer.zero_grad(set_to_none = True)
     
     with torch.cuda.amp.autocast():
         # Obtain training output from network
-        training_output = Network(training_samples)
+        training_output = Network(training_samples, data_cfg)
         # Get necessary output params from dict output
         pred_prob = training_output['pred_prob']
         
         # Plotting cnn_output in debug mode
         permitted_models = ['KappaModel', 'KappaModelPE']
-        if cfg.debug and params['cnn_output'] and cfg.model.__name__ in permitted_models:
-            plot_cnn_output(cfg, training_output, training_labels['gw'], params['network_snr'], params['epoch'])
-            params['cnn_output'] = False
+        # Plotting the normed outputs
+        if params['normed_output'] and cfg.model.__name__ in permitted_models:
+            plot_normed_output(cfg, params['whitened'], training_output, training_labels['gw'], params['epoch'])
+            params['normed_output'] = False
            
         # Loss calculation
         all_losses = loss_function(training_output, training_labels, cfg.parameter_estimation)
@@ -483,13 +544,13 @@ def training_phase(cfg, Network, optimizer, scheduler, loss_function, training_s
     return (all_losses, accuracy)
 
 
-def validation_phase(cfg, Network, loss_function, validation_samples, validation_labels):
+def validation_phase(cfg, data_cfg, Network, loss_function, validation_samples, validation_labels):
     # Evaluation of a single validation batch
     with torch.cuda.amp.autocast():
         # Gradient evaluation is not required for validation and testing
         # Make sure that we don't do a .backward() function anywhere inside this scope
         with torch.no_grad():
-            validation_output = Network(validation_samples)
+            validation_output = Network(validation_samples, data_cfg)
             # Calculate validation loss with params if required
             all_losses = loss_function(validation_output, validation_labels, cfg.parameter_estimation)
     
@@ -499,7 +560,7 @@ def validation_phase(cfg, Network, loss_function, validation_samples, validation
     return (all_losses, accuracy, validation_output)
 
 
-def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
+def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
     
     """
     Train a network on given data.
@@ -557,6 +618,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
         
         for nep in range(cfg.num_epochs):
             
+            td.epoch = nep
+            vd.epoch = nep
+            td.kill_firstbatch_tasks = False
+            
             epoch_string = "\n" + "="*65 + " Epoch {} ".format(nep) + "="*65
             print(epoch_string)
             
@@ -585,16 +650,45 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
             start = time.time()
             train_times = []
             
-            if cfg.debug:
-                params['cnn_output'] = True
-                params['epoch'] = nep
+            params['normed_output'] = True
+            params['cnn_output'] = True
+            params['epoch'] = nep
             
             
-            for nstep, (training_samples, training_labels, source_params) in enumerate(pbar):
+            for nstep, (training_samples, training_labels, source_params, whitened) in enumerate(pbar):
+                
+                """
+                # Shuffle the samples between detectors (ONLY FOR PURE NOISE)
+                # This procedure should **NOT** be done for signal samples
+                noise_idx = np.argwhere(training_labels['gw'].numpy() == 0).flatten()
+                assert len(noise_idx) > 0, "No noise samples found in this batch! Looks a bit sus."
+                det1 = np.copy(noise_idx)
+                det2 = np.copy(noise_idx)
+                ii64 = np.iinfo(np.int64)
+                np.random.seed(np.random.randint(0, 1e6))
+                np.random.shuffle(det1)
+                np.random.seed(np.random.randint(0, 1e6))
+                np.random.shuffle(det2)
+                # assert det1 != det2, "Noise idx does not seem to be shuffled properly!"
+                shuffler = {foo: (d1, d2) for foo, d1, d2 in zip(noise_idx, det1, det2)}
+                # Shuffle the noise samples within a given detector
+                shuffled_training_samples = []
+                for bidx in range(training_samples.shape[0]):
+                    if bidx in noise_idx:
+                        d1, d2 = shuffler[bidx]
+                        shuffled_training_samples.append([training_samples[d1][0].numpy(), training_samples[d2][1].numpy()])
+                    else:
+                        shuffled_training_samples.append([training_samples[bidx][0].numpy(), training_samples[bidx][1].numpy()])
+                
+                # Convert the entire batch back to tensors
+                shuffled_training_samples = np.array(shuffled_training_samples)
+                training_samples = torch.from_numpy(shuffled_training_samples)
+                """
                 
                 # Update params
                 params['scheduler_step'] = nep + nstep / num_train_batches
                 params['network_snr'] = source_params['snr']
+                params['whitened'] = whitened
                 
                 # Record time taken for training
                 start_train = time.time()
@@ -615,7 +709,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 
                 """ Call Training Phase """
                 # Run training phase and get loss and accuracy
-                training_loss, accuracy = training_phase(cfg, Network, optimizer, scheduler,
+                training_loss, accuracy = training_phase(cfg, data_cfg, Network, optimizer, scheduler,
                                                          loss_function, 
                                                          training_samples, training_labels,
                                                          params)
@@ -627,6 +721,8 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                                                                                        accuracy))
                 # Updating similar things (same same but different, but still same)
                 training_batches += 1
+                # Stop all first batch processes
+                td.kill_firstbatch_tasks = True
                 # Update losses and accuracy
                 for key in training_running_loss.keys():
                     training_running_loss[key] += training_loss[key].clone().cpu().item()
@@ -664,7 +760,7 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                 validation_snrs = []
                 
                 pbar = tqdm(validDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}')
-                for nstep, (validation_samples, validation_labels, source_params) in enumerate(pbar):
+                for nstep, (validation_samples, validation_labels, source_params, _) in enumerate(pbar):
                     
                     ## Class balance assertions
                     # batch_labels = validation_labels['gw'].numpy()
@@ -678,10 +774,10 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
                         
                     """ Call Validation Phase """
                     # Run training phase and get loss and accuracy
-                    validation_loss, accuracy, voutput = validation_phase(cfg, Network, 
-                                                                        loss_function, 
-                                                                        validation_samples, 
-                                                                        validation_labels)
+                    validation_loss, accuracy, voutput = validation_phase(cfg, data_cfg, Network, 
+                                                                          loss_function, 
+                                                                          validation_samples, 
+                                                                          validation_labels)
                     
                     # Display stuff
                     loss = np.around(validation_loss['total_loss'].clone().cpu().item(), 4)
@@ -1048,6 +1144,13 @@ def train(cfg, data_cfg, Network, optimizer, scheduler, loss_function, trainDL, 
     src_best_diagonals = os.path.join(cfg.export_dir, 'DIAGONAL/epoch_{}'.format(best_epoch))
     dst_best_diagonals = os.path.join(best_dir, 'diagonal_epoch_{}'.format(best_epoch))
     copy_tree(src_best_diagonals, dst_best_diagonals)
+    
+    # Move the config file to the BEST directory
+    try:
+        copy_tree("./config.py", os.path.join(best_dir, 'config.py'))
+        copy_tree("./data_config.py", os.path.join(best_dir, 'data_config.py'))
+    except:
+        pass
     
     # Remake loss curve and accuracy curve with best epoch marked
     loss_and_accuracy_curves(cfg, loss_filepath, best_dir, best_epoch=best_epoch)
