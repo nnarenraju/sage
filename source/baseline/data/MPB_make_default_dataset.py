@@ -50,7 +50,7 @@ import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.detector
 
 from pycbc.psd import interpolate, welch
 from pycbc.distributions.utils import draw_samples_from_config
-from pycbc.types import load_frequencyseries, complex_same_precision_as
+from pycbc.types import load_frequencyseries, complex_same_precision_as, FrequencySeries
 
 # LOCAL
 from data.testdata_slicer import Slicer
@@ -326,6 +326,7 @@ class GenerateData:
         estimated_psd = interpolate(estimated_psd, self.delta_f)
         return estimated_psd
     
+    
     def save_PSD(self):
         # Saving the PSD file used for dataset/sample
         if self.dataset == 1:
@@ -439,8 +440,27 @@ class GenerateData:
                     for idx in pbar:
                         pbar.set_description("D4 PSD Estimation")
                         estimated_psd = self._MP_PSD_D4_(idx, slicer, sample_rate, ndet)
+                        # Save the estimated PSDs for D4
+                        d4_psds = os.path.join(noise_dir, 'd4_psds')
+                        if not os.path.exists(d4_psds):
+                            os.makedirs(d4_psds)
+                        save_name = "real_psd_{}_{}.hdf".format(det, idx)
+                        save_path = os.path.join(d4_psds, save_name)
+                        psd_file_path = os.path.abspath(save_path)
+                        # Remove and rewrite if the PSD file already exists
+                        if os.path.exists(psd_file_path):
+                            os.remove(psd_file_path)
+                        # Write PSD in HDF5 format
+                        with h5py.File(psd_file_path, 'a') as fp:
+                            data = estimated_psd
+                            key = 'data'
+                            fp.create_dataset(key, data=data, compression='gzip',
+                                              compression_opts=9, shuffle=True)
+                            # Adding all relevant attributes
+                            fp.attrs['delta_f'] = self.delta_f
+                        
                         all_psds.append(estimated_psd)
-                        # ax.plot(f, estimated_psd, linewidth=1.0, alpha=0.3)
+                        ax.plot(f, estimated_psd, linewidth=1.0, alpha=0.3)
                         if max(estimated_psd) > max(worst_psd):
                             worst_psd = estimated_psd
             
@@ -467,11 +487,7 @@ class GenerateData:
                     plt.xlabel('Frequency (Hz)')
                     plt.ylabel('PSD Magnitude')
                     plt.grid(True)
-                    # plt.plot(f, median_psds, linewidth=2.0, label='{} median PSD'.format(det), color='k')
-                    plt.plot(f, worst_psd, linewidth=1.0, label='{} worst PSD'.format(det), color='k')
-                    for idx in blackout_idxss:
-                        pass
-                        #plt.plot([f[idx], f[idx]], [1e-49, 1e-38], linewidth=1.0, color='gray', alpha=0.2)
+                    plt.plot(f, median_psds, linewidth=2.0, label='{} median PSD'.format(det), color='k')
                     plt.ylim(1e-49, 1e-38)
                     plt.legend()
                     save_png = os.path.join(self.dirs['parent'], 'median_PSDs_{}_full.png'.format(det))
@@ -479,10 +495,14 @@ class GenerateData:
                     plt.close()
             
                     # Save the PSD in HDF5 format
+                    save_name = 'psd-worst-{}.hdf'.format(det)
+                    psd_name = 'median_det{}'.format(ndet+1)
+                    self._save_(save_name, worst_psd, psd_name)
+                    
+                    # Save the PSD in HDF5 format
                     save_name = 'psd-median-{}.hdf'.format(det)
                     psd_name = 'median_det{}'.format(ndet+1)
-                    # self._save_(save_name, blacked_psds, psd_name)
-                    self._save_(save_name, worst_psd, psd_name)
+                    self._save_(save_name, blacked_psds, psd_name)
             
             
     def distance_from_chirp_distance(self, chirp_distance, mchirp, ref_mass=1.4):
@@ -658,13 +678,10 @@ class GenerateData:
         
         if not is_waveform:
             ## Generate noise
+            maxlen = round(self.sample_length_in_num)
             if self.dataset == 1:
-                maxlen = round(self.sample_length_in_num)
                 noise = [self.noise_generator(psd).to_timeseries()[:maxlen]
                           for psd in self.psds]
-                
-                assert len(noise[0]) == maxlen
-                assert len(noise[1]) == maxlen
             
             elif self.dataset in [2, 3]:
                 global asds
@@ -678,17 +695,35 @@ class GenerateData:
                 
                 noise = self.noise_generator(0.0, self.sample_length_in_s, self.sample_length_in_s)
                 noise = [noise[det].numpy() for det in self.detectors_abbr]
-                assert len(noise[0]) == self.sample_length_in_s * self.sample_rate
-                assert len(noise[1]) == self.sample_length_in_s * self.sample_rate
             
             elif self.dataset == 4:
                 # We don't have to colour the noise ourselves, so they would not fill up RAM memory
                 # idx values will now offset to [0, 0.8*num_noises] for training
                 # idx values will now offset to [0.8*num_noises, num_noises] for validation
                 index = int(idx - self.num_waveforms + self.globtmp)
-                noise, _ = noigen_slicer.__getitem__(index)
-                assert len(noise[0]) == self.sample_length_in_s * self.sample_rate, "Sample Length Error: Expected={}, Observed={}".format(self.sample_length_in_s * self.sample_rate, len(noise[0]))
-                assert len(noise[1]) == self.sample_length_in_s * self.sample_rate, "Sample Length Error: Expected={}, Observed={}".format(self.sample_length_in_s * self.sample_rate, len(noise[1]))
+                
+                # O3a noise: Slicer has items with ids [0-250_000]
+                # Artificial noise: Seeds must be unique
+                # Training: [0-200_000] O3a noise, [200_000-400_000] artificial noise
+                # Validation: [0-50_000] O3a noise (globtmp=200_000), [50_000-100_000] artificial noise 
+                if index < 0.5*self.num_noises:
+                    noise, _ = noigen_slicer.__getitem__(index)
+                else:
+                    # Make sure the seeds are unique
+                    index = index - self.globtmp
+                    self.noise_generator = NoiseGenerator(self.dataset,
+                                                          seed=int(index+1),
+                                                          delta_f=self.delta_f,
+                                                          sample_rate=self.sample_rate,
+                                                          low_frequency_cutoff=self.noise_low_freq_cutoff,
+                                                          detectors=self.detectors_abbr,
+                                                          asds=d4_asds)
+                    
+                    noise = self.noise_generator(0.0, self.sample_length_in_s, self.sample_length_in_s)
+                    noise = [noise[det].numpy() for det in self.detectors_abbr]
+
+            assert len(noise[0]) == self.sample_length_in_num, "Sample Length Error: Expected={}, Observed={}".format(self.sample_length_in_num, len(noise[0]))
+            assert len(noise[1]) == self.sample_length_in_num, "Sample Length Error: Expected={}, Observed={}".format(self.sample_length_in_num, len(noise[1]))
             
             # Saving noise params for storage
             sample['noise_1'] = noise[0]
@@ -703,7 +738,7 @@ class GenerateData:
             # Iterate through injection parmas using idx and set params to waveform_kwargs
             # prior values as created by get_priors is a np.record object
             prior_values = self.priors[idx-self.idx_offset]
-
+            
             # Convert np.record object to dict and append to waveform_kwargs dict
             self.waveform_kwargs.update(dict(zip(prior_values.dtype.names, prior_values)))
             
@@ -774,7 +809,6 @@ class GenerateData:
             h_plus.start_time = start_interval - self.error_padding_in_s
             h_cross.start_time = start_interval - self.error_padding_in_s
             
-            
             # h_plus and h_cross is stored for augmentation purposes
             sample['h_plus'] = h_plus
             sample['h_cross'] = h_cross
@@ -793,7 +827,6 @@ class GenerateData:
             # waveform_kwargs will contain all prior values and additional attrs.
             sample.update(self.waveform_kwargs)
             ## norm SNR will be added to attributes after converting h_pols into h_t
-        
         
         # Pass data onto Queue to be stored in a file
         data = {}
@@ -947,7 +980,6 @@ class GenerateData:
                     # Check whether save_idx receives the same value 
                     _group[name][save_idx] = data
         
-        
         ## Add all necessary one time attributes (hdf5 file still open)
         # Dataset params
         
@@ -1044,7 +1076,6 @@ class GenerateData:
         # End the pool processes
         pool.close()
         pool.join()
-        
         
         """ Make consolidated chunk dataset """
         # Combine all pool chunk files into one dataset
@@ -1152,51 +1183,6 @@ class GenerateData:
             print("{}: {}".format(key, val))
         """
         self.hdf5_tree.append(name)
-        
-    
-    def make_training_lookup(self, mode=""):
-        # Make a lookup table with (id, path, target) for each training data
-        # Should have an equal ratio, shuffled, of both classes (signal and noise)
-        paths = []
-        ids = []
-        targets = []
-        # Save the dataset paths alongside the target and ids as hdf5
-        if mode == None:
-            mode = 'training'
-        self.dirs['lookup'] = os.path.join(self.dirs['parent'], "{}.hdf".format(mode))
-        # All other params for parameter estimation are stored within the sample files
-        chunks = os.path.join(self.dirs['dataset'], "*.hdf")
-        for cidx, chunk_file in enumerate(glob.glob(chunks)):
-            ## Each of these chunk files has an equal number of signals and noise
-            ids.append(cidx)
-            paths.append(chunk_file)
-            targets.append(-1)
-        
-        ## Create lookup using zip
-        # Explicitly check for length inconsistancies. zip doesn't raise error.
-        assert len(ids) == len(paths)
-        assert len(paths) == len(targets)
-        lookup = list(zip(ids, paths, targets))
-        # Shuffle the column stack (signal and noise are not shuffled)
-        # NumPy: "Multi-dimensional arrays are only shuffled along the first axis"
-        random.shuffle(lookup)
-        # Separate out the tuples for ids, paths and targets
-        ids, paths, targets = zip(*lookup)
-        
-        # Write required fields as datasets in HDF5 training.hdf file
-        with h5py.File(self.dirs['lookup'], 'a') as ds:
-            """
-            Shuffle Filter for HDF5:
-                Block-oriented compressors like GZIP or LZF work better when presented with 
-                runs of similar values. Enabling the shuffle filter rearranges the bytes in 
-                the chunk and may improve compression ratio. No significant speed penalty, 
-                lossless.
-            """
-            ds.create_dataset('id', data=ids, compression='gzip', compression_opts=9, shuffle=True)
-            ds.create_dataset('path', data=paths, compression='gzip', compression_opts=9, shuffle=True)
-            ds.create_dataset('target', data=targets, compression='gzip', compression_opts=9, shuffle=True)
-        
-        print("make_training_lookup: Lookup table created successfully!")
     
     
     def make_elink_lookup(self):
@@ -1208,7 +1194,7 @@ class GenerateData:
         else:
             dsetdirs = ['dataset']
         
-        all_data = {'id': [], 'path': [], 'target': []}
+        all_data = {'id': [], 'path': [], 'target': [], 'type': []}
         
         self.dirs['lookup'] = os.path.join(self.dirs['parent'], 'extlinks.hdf')
         # Save this data in the hdf5 format as training.hdf
@@ -1216,6 +1202,7 @@ class GenerateData:
         
         idx = 0
         # Iterate through the available dataset dirs
+        ref_nfile = 0
         for dsetdir in dsetdirs:
             # tmp vars
             paths = []
@@ -1241,6 +1228,11 @@ class GenerateData:
                     
                     for grp in gtree:
                         # Get sample length of each dataset
+                        if dsetdir == 'dataset':
+                            ref_nfile = nfile
+                        elif dsetdir == 'validation_dataset':
+                            nfile += ref_nfile + 1
+                        
                         _branch = f"{nfile:03}" + '/' + grp
                         if bool(re.search('signal', grp)):
                             mode = 1
@@ -1272,31 +1264,6 @@ class GenerateData:
                         for key, value in attrs_save.items():
                             main.attrs[key] = value
                         add_attrs = False
-                        
-                    """
-                    ## Adding ExternalLink using visititems() method
-                    # Clean self.hdf5_tree
-                    self.hdf5_tree = []
-                    # Get all sampling rate datasets within file
-                    groups = list(h5f.keys())
-                    # Obtain tree structure under groups
-                    h5f.visititems(self.get_keys)
-                    # Remove the group directory from the tree structure
-                    self.hdf5_tree = [foo for foo in self.hdf5_tree if foo not in groups]
-                    # Remove the sample idx directory from the tree structure
-                    sample_idxs = list(h5f[groups[0]])
-                    rm_sample_dirs = [foo+'/'+bar for foo, bar in itertools.product(groups, sample_idxs)]
-                    self.hdf5_tree = [foo for foo in self.hdf5_tree if foo not in rm_sample_dirs]
-                    
-                    # Add attributes from chunk files once to main ExternalLink File
-                    attrs_save = dict(h5f.attrs)
-                    if not len(attrs_save.keys() & attrs_main.keys()):
-                        for key, value in attrs_save.items():
-                            main.attrs[key] = value
-                    """
-            
-            # Close file explicitly, or use with instead
-            main.close()
         
             # Sanity check
             """ 
@@ -1308,20 +1275,11 @@ class GenerateData:
             raise
             """
             
+            # NOTE: On using visititems() method in h5py
             # visititems does not show h_plus, h_cross or noise datasets for some reason
             # If we add an extra /lorem to the linked dataset name, this shows up
             # However, this is not a phantom name. It will actually exist. 
             # Probably an issue with visititems method.
-            """
-            with h5py.File(self.dirs['lookup'], 'r') as h5f:
-                self.hdf5_tree = []
-                h5f.visititems(self.get_keys)
-                for i in self.hdf5_tree:
-                    print(i)
-                
-                print(np.array(h5f['2048/1500/noise_1']))
-                
-            """
             
             ## Create lookup using zip
             # Explicitly check for length inconsistancies. zip doesn't raise error.
@@ -1334,14 +1292,17 @@ class GenerateData:
             ids, paths, targets = zip(*lookup)
             
             # Append all samples from current file to all_data
-            all_data['id'].append(ids)
-            all_data['path'].append(paths)
-            all_data['target'].append(targets)
+            all_data['id'].extend(ids)
+            all_data['path'].extend(paths)
+            all_data['target'].extend(targets)
             if dsetdir == 'dataset':
                 dstype = ['training']*len(ids)
             elif dsetdir == 'validation_dataset':
                 dstype = ['validation']*len(ids)
-            all_data['type'].append(dstype)
+            all_data['type'].extend(dstype)
+        
+        # Close file explicitly, or use with instead
+        main.close()
         
         # Write required fields as datasets in HDF5 training.hdf file
         with h5py.File(self.dirs['lookup'], 'a') as ds:
@@ -1363,17 +1324,21 @@ class GenerateData:
 def _gen_(gd, mode=None, default_nums=None):
     ## Generate the dataset
     # mode is set only for D4
+    print("Running _gen_ in {} mode for D4".format(mode))
     if mode == 'training' or mode == None:
         start = 0
         if mode == 'training':
-            gd.num_waveforms = 0.8*default_nums[0]
-            gd.num_noises = 0.8*default_nums[1]
+            gd.num_waveforms = int(0.8*default_nums[0])
+            gd.num_noises = int(0.8*default_nums[1])
             gd.globtmp = 0
     elif mode == 'validation':
-        start = 0.8*default_nums[0]
-        gd.num_waveforms = 0.2*default_nums[0]
-        gd.num_noises = 0.2*default_nums[1]
-        gd.globtmp = 0.8*default_nums[1] + 1000
+        start = int(0.8*default_nums[0])
+        gd.num_waveforms = int(0.2*default_nums[0])
+        gd.num_noises = int(0.2*default_nums[1])
+        gd.globtmp = int(0.5*0.8*default_nums[1] + 1000)
+        gd.dirs['dataset'] = os.path.join(gd.dirs['parent'], "validation_dataset")
+        if not os.path.exists(gd.dirs['dataset']):
+            os.makedirs(gd.dirs['dataset'], exist_ok=False)
         
     # Split the iterable into nchunks
     waveform_iterable = np.arange(gd.num_waveforms)
@@ -1390,7 +1355,7 @@ def _gen_(gd, mode=None, default_nums=None):
     
     for nchunk, chunk in enumerate(global_iterables):
         
-        start = time.time()
+        start_time = time.time()
         # Generate chunk 'n' of dataset
         gd.iterable = chunk
         # Get prior values of chosen waveform idxs
@@ -1411,9 +1376,109 @@ def _gen_(gd, mode=None, default_nums=None):
         gc.collect()
         
         # Display time taken for chunk generation
-        finish = time.time() - start
+        finish = time.time() - start_time
         print("Time taken for chunk data generation = {} minutes".format(finish/60.))
 
+
+def get_D4_noise(gd):
+    # Get the O3a real noise data (if using dataset 4)
+    noise_dir = os.path.join(gd.parent_dir, 'O3a_real_noise')
+    noise_file = os.path.join(noise_dir, 'O3a_real_noise.hdf')
+    # Download real noise (if not already present, checked inside download_data)
+    gd.download_data(noise_file)
+    # Sometimes the above command claims to be completed but
+    # the file may still not be written to disk completely
+    # Sanity check
+    while True:
+        try:
+            with h5py.File(noise_file, 'r') as fp:
+                _ = fp.attrs
+            # If it works, we can leave the loop
+            break
+        except:
+            # If not, we resume download
+            gd.download_data(noise_file, resume=True)
+    
+    # If using dataset 4, split the O3a real noise into training and testing segments
+    # Testing segments should consist of 30 days. Whatever is left will be used for training.
+    # During testing phase, call the testing noise .hdf file that we create here
+    store_output = {'training': os.path.join(noise_dir, 'training_real_noise.hdf'),
+                    'testing': os.path.join(noise_dir, 'testing_real_noise.hdf')}
+    noise_seed = {'training': gd.seed,
+                  'testing': 2_514_409_456}
+    # We produce 1 month of data (30 days) using the seed provided in the MLGWSC-1 paper (for testing)
+    # NOTE: This seed is only used for OverlapSegment class to get noise data for two detectors
+    # This should not affect the training in any manner.
+    # Just in case: I might not understand the OverlapSegment fully. Will choose a different seed for training.
+    # TODO: Add all options below within the data_config class
+    real_noise_kwargs = dict(real_noise_path = noise_file,
+                             start_offset = 0.0,
+                             duration = 2592000.0,
+                             slide_buffer = 240,
+                             min_segment_duration = 7200,
+                             detectors = ['H1', 'L1'],
+                             store_output = store_output,
+                             seed = noise_seed,
+                             sample_length_in_num = gd.sample_length_in_num,
+                             num_noises = gd.num_noises)
+    
+    # Run the RealNoiseGenerator to retrieve training and testing dataset
+    _ = RealNoiseGenerator(**real_noise_kwargs)
+    infile = h5py.File(store_output['training'], 'r')
+    # Calculate the step size required to obtain the number of noise samples
+    # We add an extra 1000 samples as buffer, we forgo these samples so training and validation
+    # does not have any overlap between them.
+    # We get 0.5*num_noises as real noise from the data. The rest of the noise samples will be
+    # Gaussian noise coloured using D4 PSDs.
+    step_size = (infile.attrs['duration'] - gd.sample_length_in_num)/(0.5*gd.num_noises + 2000)
+
+    kwargs = dict(infile=infile,
+                  step_size=step_size,
+                  peak_offset=18.0,
+                  whiten_padding=5.0,
+                  slice_length=int(gd.signal_length*gd.sample_rate))
+
+    print("Creating a slicer object using real O3a noise for training dataset")
+    # The slicer object can take an index and return the required training data sample
+    slicer = Slicer(**kwargs)
+    # Sanity check the length of slicer
+    assert len(slicer) >= 0.5*gd.num_noises, "Insufficient number ({}/{}) of samples in slicer object!".format(len(slicer), 0.5*gd.num_noises)
+    global noigen_slicer
+    noigen_slicer = slicer
+    
+    return infile
+
+
+def get_D4_psds(gd):
+    print("Gathering the estimated PSDs for D4 into a global variable")
+    noise_dir = os.path.join(gd.parent_dir, 'O3a_real_noise')
+    d4_psds = os.path.join(noise_dir, 'd4_psds')
+    # Get required real PSD files
+    h1_psd_files = glob.glob(os.path.join(d4_psds, "real_psd_H1_*.hdf"))
+    h1_psd_files.sort()
+    l1_psd_files = glob.glob(os.path.join(d4_psds, "real_psd_L1_*.hdf"))
+    l1_psd_files.sort()
+    psd_options = {'H1': h1_psd_files, 'L1':l1_psd_files}
+    
+    complex_asds = {'H1': [], 'L1': []}
+    detectors_abbr = ['H1', 'L1']
+    for i, det in enumerate(detectors_abbr):
+        # Read all detector PSDs as frequency series with appropriate delta_f
+        for psd_det in psd_options[det]:
+            with h5py.File(psd_det, 'r') as fp:
+                data = np.array(fp['data'])
+                delta_f = fp.attrs['delta_f']
+            psd = FrequencySeries(data, delta_f=delta_f)
+            # Convert PSD's to ASD's for colouring the white noise
+            foo = psd_to_asd(psd, 0.0, 25.0,
+                             sample_rate=2048.,
+                             low_frequency_cutoff=15.0,
+                             filter_duration=25.0)
+            complex_asds[det].append(foo)
+
+    global d4_asds
+    d4_asds = complex_asds
+    
 
 def make(slots_magic_params, export_dir):
     """
@@ -1438,71 +1503,14 @@ def make(slots_magic_params, export_dir):
     # Setting up the export directory
     gd.export_dir = export_dir
     
-    # Get the O3a real noise data (if using dataset 4)
     if gd.dataset == 4:
-        noise_dir = os.path.join(gd.parent_dir, 'O3a_real_noise')
-        noise_file = os.path.join(noise_dir, 'O3a_real_noise.hdf')
-        # Download real noise (if not already present, checked inside download_data)
-        gd.download_data(noise_file)
-        # Sometimes the above command claims to be completed but
-        # the file may still not be written to disk completely
-        # Sanity check
-        while True:
-            try:
-                with h5py.File(noise_file, 'r') as fp:
-                    _ = fp.attrs
-                # If it works, we can leave the loop
-                break
-            except:
-                # If not, we resume download
-                gd.download_data(noise_file, resume=True)
-        
-        # If using dataset 4, split the O3a real noise into training and testing segments
-        # Testing segments should consist of 30 days. Whatever is left will be used for training.
-        # During testing phase, call the testing noise .hdf file that we create here
-        store_output = {'training': os.path.join(noise_dir, 'training_real_noise.hdf'),
-                        'testing': os.path.join(noise_dir, 'testing_real_noise.hdf')}
-        noise_seed = {'training': gd.seed,
-                      'testing': 2_514_409_456}
-        # We produce 1 month of data (30 days) using the seed provided in the MLGWSC-1 paper (for testing)
-        # NOTE: This seed is only used for OverlapSegment class to get noise data for two detectors
-        # This should not affect the training in any manner.
-        # Just in case: I might not understand the OverlapSegment fully. Will choose a different seed for training.
-        # TODO: Add all options below within the data_config class
-        real_noise_kwargs = dict(real_noise_path = noise_file,
-                                 start_offset = 0.0,
-                                 duration = 2592000.0,
-                                 slide_buffer = 240,
-                                 min_segment_duration = 7200,
-                                 detectors = ['H1', 'L1'],
-                                 store_output = store_output,
-                                 seed = noise_seed,
-                                 sample_length_in_num = gd.sample_length_in_num,
-                                 num_noises = gd.num_noises)
-        
-        # Run the RealNoiseGenerator to retrieve training and testing dataset
-        _ = RealNoiseGenerator(**real_noise_kwargs)
-        infile = h5py.File(store_output['training'], 'r')
-        # Calculate the step size required to obtain the number of noise samples
-        # We add an extra 1000 samples as buffer, we forgo these samples so training and validation
-        # does not have any overlap between them.
-        step_size = (infile.attrs['duration'] - gd.sample_length_in_num)/(gd.num_noises + 2000)
-        kwargs = dict(infile=infile,
-                      step_size=step_size,
-                      peak_offset=18.0,
-                      whiten_padding=5.0,
-                      slice_length=int(gd.signal_length*gd.sample_rate))
-
-        print("Creating a slicer object using real O3a noise for training dataset")
-        # The slicer object can take an index and return the required training data sample
-        slicer = Slicer(**kwargs)
-        # Sanity check the length of slicer
-        assert len(slicer) >= gd.num_noises, "Insufficient number ({}/{}) of samples in slicer object!".format(len(slicer), gd.num_noises)
-        global noigen_slicer
-        noigen_slicer = slicer
+        infile = get_D4_noise(gd)
     
     # Save PSDs required for dataset
     gd.save_PSD()
+    
+    if gd.dataset == 4:
+        get_D4_psds(gd)
 
     # Get priors for entire dataset
     gd.get_priors()
@@ -1515,10 +1523,8 @@ def make(slots_magic_params, export_dir):
             # We take care of the splits here for D4
             _gen_(gd, mode=mode, default_nums=nums)
 
-    # Make dataset lookup table (doesn't work with D4 validation dset)
-    gd.make_training_lookup(mode=mode)
     # Make elink dataset lookup table
-    gd.make_elink_lookup(mode=mode)
+    gd.make_elink_lookup()
     # Making the prior distribution plots
     gd.plot_priors(gd.dirs['parent'])
 
