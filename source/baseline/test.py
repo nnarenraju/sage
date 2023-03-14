@@ -196,7 +196,8 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
         if len(next_slice[0]) != exp_length or len(next_slice[1]) != exp_length:
             raise ValueError('Length error in next_slice. Expected = {}, observed = {}'.format(self.data_cfg.sample_length_in_num, len(next_slice[0])))
             
-        sample = self.transforms(next_slice, self.psds_data, self.data_cfg)
+        sample_transforms = self.transforms(next_slice, self.psds_data, self.data_cfg)
+        sample = sample_transforms['sample']
         return torch.from_numpy(sample), torch.tensor(next_time)
 
 
