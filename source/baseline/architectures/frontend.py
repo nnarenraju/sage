@@ -35,6 +35,7 @@ from torch import nn
 from scipy import signal
 
 # Importing architecture snippets from zoo
+from architectures.zoo.dain import DAIN_Layer
 from architectures.zoo.kaggle import ConvBlock, _initialize_weights, ConvBlock_Apr21
 
 # Datatype for storage
@@ -451,6 +452,7 @@ class KappaModelPE(torch.nn.Module):
                  filter_size: int = 32,
                  kernel_size: int = 64,
                  timm_params: dict = {'model_name': 'resnet34', 'pretrained': True, 'in_chans': 2, 'drop_rate': 0.25},
+                 norm_layer: str = 'layernorm',
                  store_device: str = 'cpu',
                  **kwargs):
         
@@ -461,6 +463,7 @@ class KappaModelPE(torch.nn.Module):
         self.timm_params = timm_params
         self.filter_size = filter_size
         self.kernel_size = kernel_size
+        self.norm_layer = norm_layer
         
         """ Backend """
         # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
@@ -499,6 +502,9 @@ class KappaModelPE(torch.nn.Module):
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.batchnorm = nn.BatchNorm1d(2)
+        self.dain = DAIN_Layer(mode='full', input_dim=2)
+        self.layernorm = nn.LayerNorm([2, 4830])
+        self.layernorm_cnn = nn.LayerNorm([2, 128, 150])
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
         self.flatten_d1 = nn.Flatten(start_dim=1)
         self.flatten_d0 = nn.Flatten(start_dim=0)
@@ -510,6 +516,9 @@ class KappaModelPE(torch.nn.Module):
         ## Convert network into given dtype and store in proper device
         # Manipulation layers
         self.batchnorm.to(dtype=data_type, device=self.store_device)
+        self.dain.to(dtype=data_type, device=self.store_device)
+        self.layernorm.to(dtype=data_type, device=self.store_device)
+        self.layernorm_cnn.to(dtype=data_type, device=self.store_device)
         # Mod layers
         self.signal_or_noise.to(dtype=data_type, device=self.store_device)
         self.coalescence_time.to(dtype=data_type, device=self.store_device)
@@ -528,10 +537,59 @@ class KappaModelPE(torch.nn.Module):
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
-        x = self.batchnorm(x)
-        # Conv Backend
-        cnn_output = torch.cat([self.backend['det1'](x[:, 0:1]), self.backend['det2'](x[:, 1:2])], dim=1)
+        if self.norm_layer == 'batchnorm':
+            normed = self.batchnorm(x)
+        elif self.norm_layer == 'dain':
+            normed, gate = self.dain(x)
+        elif self.norm_layer == 'layernorm':
+            normed = self.layernorm(x)
         
+        # Data quality flag and veto of bad segments
+        # [(0, 3342), (3342, 4485), (4485, 4705), (4705, 5729), (5729, 5838)]
+        # ref = normed[:, :, 3697: -128]
+
+        """
+        segments = [(0, 1000), (1000, 2000), (2000, 3000), (3000, 4000), (4000, 4697), (-100, -1)]
+        for n, (sidx, eidx) in enumerate(segments):
+            # Each chunk should be of a different sampling rate
+            # Alpha should vary as [0.0, 1.0]
+            # We don't use the hqual chunk as alpha = 1.0 in that chunk always
+            chunk = normed[:, :, sidx: eidx]
+            cmin = ref.min(dim=2).values.reshape(32, 2, 1)
+            cmax = ref.max(dim=2).values.reshape(32, 2, 1)
+            chunk = (chunk - cmin) / (cmax - cmin)
+            mean = torch.mean(chunk, dim=2)
+            mean = torch.reshape(mean, (32, 2, 1))
+            diffs = chunk - mean # (32, 2, 1000)
+            var = torch.mean(torch.pow(diffs, 2.0), dim=2)
+            var = torch.reshape(var, (32, 2, 1))
+            std = torch.pow(var, 0.5)
+            zscores = diffs / std
+            kurtoses = torch.mean(torch.pow(zscores, 4.0), dim=2) - 3.0
+            # veto = self.glitch_veto_simple[n](chunk)
+            # veto = self.glitch_veto_kurtosis(kurtosis)
+            for n, kurt in enumerate(kurtoses):
+                if abs(kurt[0] - kurt[1]) > 1.0:
+                    normed[n, :, sidx: eidx] = torch.tanh(normed[n, :, sidx: eidx])
+
+            # alpha = torch.reshape(veto['pred_prob'], (32, 2, 1))
+            # This is meant to downplay any chunks that impede with classification
+            # normed[:, :, sidx: eidx] *= alpha
+        """
+
+        # Applying a tanh function to the normed input
+        # cmin = ref.min(dim=2).values.reshape(32, 2, 1)
+        # cmax = ref.max(dim=2).values.reshape(32, 2, 1)
+        # normed = (normed - cmin) / (cmax - cmin)
+        # normed = torch.tanh(normed)
+        # normed = self.layernorm(normed)
+        
+        # Conv Backend
+        cnn_output = torch.cat([self.backend['det1'](normed[:, 0:1]), self.backend['det2'](normed[:, 1:2])], dim=1)
+        # Apply LayerNorm to CNN output before passing to ResNet
+        cnn_output = self.layernorm_cnn(cnn_output)
+        
+        """
         # TODO: Experimental cwt input
         # Get the CWT of the input sample and attach it to the cnn_output before resnet section
         # cnn_output is (32, 2, 128, 182)
@@ -552,32 +610,33 @@ class KappaModelPE(torch.nn.Module):
         cwt_output = torch.stack(cwt_output)
         cwt_output.to(torch.device('cuda:1'), dtype=torch.float32)
         cwt_cnn_output = torch.cat([cnn_output, cwt_output], dim=3)
+        """ 
         
         # Timm Frontend
-        x = self.frontend(cwt_cnn_output) # (100, 1000) by default
+        out = self.frontend(cnn_output) # (batch_size, 1000) by default
         ## Manipulate encoder output to get params
         # Global Pool
-        x = self.flatten_d1(self.avg_pool_1d(x))
+        out = self.flatten_d1(self.avg_pool_1d(out))
         # In the Kaggle architecture a dropout is added at this point
         # I see no reason to include at this stage. But we can experiment.
         ## Output necessary params
-        raw = self.flatten_d0(self.signal_or_noise(x))
+        raw = self.flatten_d0(self.signal_or_noise(out))
         pred_prob = self.sigmoid(raw)
         # Parameter Estimation
-        tc = self.flatten_d0(self.sigmoid(self.coalescence_time(x)))
-        dchirp = self.flatten_d0(self.sigmoid(self.chirp_distance(x)))
-        mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(x)))
-        dist = self.flatten_d0(self.sigmoid(self.distance(x)))
-        q = self.flatten_d0(self.sigmoid(self.mass_ratio(x)))
-        invq = self.flatten_d0(self.sigmoid(self.inv_mass_ratio(x)))
-        raw_snr = self.flatten_d0(self.snr(x))
+        tc = self.flatten_d0(self.sigmoid(self.coalescence_time(out)))
+        dchirp = self.flatten_d0(self.sigmoid(self.chirp_distance(out)))
+        mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(out)))
+        dist = self.flatten_d0(self.sigmoid(self.distance(out)))
+        q = self.flatten_d0(self.sigmoid(self.mass_ratio(out)))
+        invq = self.flatten_d0(self.sigmoid(self.inv_mass_ratio(out)))
+        raw_snr = self.flatten_d0(self.snr(out))
         snr = self.sigmoid(raw_snr)
         
         # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
         return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,
                 'norm_dist': dist, 'norm_q': q, 'norm_invq': invq, 'norm_snr': snr,
-                'raw_snr': raw_snr}
+                'raw_snr': raw_snr, 'input': x, 'normed': normed}
 
 
 class KappaModelSimplified(torch.nn.Module):
@@ -702,6 +761,7 @@ class DeltaModelPE(torch.nn.Module):
         # Manipulation layers
         self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
         self.batchnorm = nn.BatchNorm1d(2)
+        self.batchnorm2d = nn.BatchNorm2d(2)
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
         self.flatten_d1 = nn.Flatten(start_dim=1)
         self.flatten_d0 = nn.Flatten(start_dim=0)
@@ -713,6 +773,7 @@ class DeltaModelPE(torch.nn.Module):
         ## Convert network into given dtype and store in proper device
         # Manipulation layers
         self.batchnorm.to(dtype=data_type, device=self.store_device)
+        self.batchnorm2d.to(dtype=data_type, device=self.store_device)
         # Mod layers
         self.signal_or_noise.to(dtype=data_type, device=self.store_device)
         self.coalescence_time.to(dtype=data_type, device=self.store_device)
@@ -723,16 +784,13 @@ class DeltaModelPE(torch.nn.Module):
         self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
         self.snr.to(dtype=data_type, device=self.store_device)
         # Main layers
-        self._det1.to(dtype=data_type, device=self.store_device)
-        self._det2.to(dtype=data_type, device=self.store_device)
         self.frontend.to(dtype=data_type, device=self.store_device)
     
     # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
         # batch_size, channel, signal_length = s.shape
-        x = self.batchnorm(x)
-        # Buffer input
-        x = torch.cat([x[:, 0:1], x[:, 1:2]], dim=1)
+        x = self.batchnorm2d(x)
+        # x = torch.reshape(x, (32, 2, 1, 5838))
         
         # Timm Frontend
         x = self.frontend(x) # (100, 1000) by default
