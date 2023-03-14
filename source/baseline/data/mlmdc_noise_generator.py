@@ -39,9 +39,6 @@ class NoiseGenerator(object):
     def __init__(self, dataset, seed=42, delta_f=0.04,
                  sample_rate=2048.0, low_frequency_cutoff=15,
                  detectors=['H1', 'L1'], asds=None):
-        
-        if dataset not in [1, 2, 3]:
-            raise ValueError('PSDGenerator is only defined for datasets 1, 2, and 3.')
             
         self.dataset = dataset
         self.sample_rate = sample_rate
@@ -68,16 +65,8 @@ class NoiseGenerator(object):
             for det in self.detectors:
                 keys[det] = 'aLIGOZeroDetHighPower'
                 
-        elif self.dataset == 2:
-            logging.debug('Called with dataset 2')
-            for det in self.detectors:
-                if self.fixed_asds[det] is None:
-                    key = self.rs.randint(0, len(self.asd_options[det]))
-                    self.fixed_asds[det] = self.asd_options[det][key]
-                keys[det] = self.fixed_asds[det]
-                
-        elif self.dataset == 3:
-            logging.debug('Called with dataset 3')
+        elif self.dataset in [2, 3, 4]:
+            logging.debug('Called with dataset {}'.format(self.dataset))
             for det in self.detectors:
                 key = self.rs.randint(0, len(self.asd_options[det]))
                 keys[det] = self.asd_options[det][key]
