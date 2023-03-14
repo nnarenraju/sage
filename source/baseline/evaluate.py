@@ -31,13 +31,13 @@ Documentation:
     --output-dir ./ \
     --verbose
 
-    python3 evaluate.py --injection-file /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/injections.hdf 
-    --foreground-events /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/testing_foutput.hdf 
-    --foreground-files /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/foreground.hdf 
-    --background-events /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/testing_boutput.hdf 
-    --far-scaling-factor 64000 --dataset 3 --output-file ./TESTING_64000_D3/evaluation.hdf 
-    --output-dir ./TESTING_64000_D3 
-    --team1 ORChiD --team2 PyCBC 
+    python3 evaluate.py --injection-file /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/injections.hdf \
+    --foreground-events /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/testing_foutput.hdf \
+    --foreground-files /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/foreground.hdf \
+    --background-events /local/scratch/igr/nnarenraju/testing_64000_D3_seeded/testing_boutput.hdf \
+    --far-scaling-factor 64000 --dataset 3 --output-file ./TESTING_64000_D3/evaluation.hdf \
+    --output-dir ./TESTING_64000_D3 \
+    --team1 ORChiD --team2 PyCBC \
     --verbose
 
 The options mean the following
@@ -313,7 +313,10 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
 def network_output(found_injections, noise_stats, output_dir, team_name):
     # Plotting the noise and signals stats for found samples
     plt.figure(figsize=(12.0, 12.0))
-    plt.hist(found_injections[1], label='found_injections', bins=100, alpha=0.8)
+    lower_threshold = 0.9999
+    foo = found_injections[1][found_injections[1] > lower_threshold]
+    plt.hist(foo, label='found_injections', bins=100, alpha=0.8)
+    noise_stats = noise_stats[noise_stats > lower_threshold]
     plt.hist(noise_stats, label='noise', bins=100, alpha=0.8)
     plt.yscale('log')
     plt.grid(True, which='both')
@@ -500,11 +503,13 @@ def compare_plot_2(team_1, team_2, save_dir):
             found_both = np.array(list(team1_set.intersection(team2_set)))
             # Scatter plotting
             kwargs.update({'color': 'blue', 's': 100.0, 'label': 'Unique {}'.format(team_1['name']), 'alpha': 0.7})
-            ax[i][j].scatter(unique_team1[:,0], unique_team1[:,1], **kwargs)
+            if len(unique_team1) != 0:
+                ax[i][j].scatter(unique_team1[:,0], unique_team1[:,1], **kwargs)
             kwargs.update({'color': 'red', 's': 100.0, 'label': 'Unique {}'.format(team_2['name']), 'alpha': 0.7})
             ax[i][j].scatter(unique_team2[:,0], unique_team2[:,1], **kwargs)
             kwargs.update({'color': 'darkgrey', 's': 30.0, 'label': 'Found by Both', 'alpha': 0.3})
-            ax[i][j].scatter(found_both[:,0], found_both[:,1], **kwargs)
+            if len(found_both) != 0:
+                ax[i][j].scatter(found_both[:,0], found_both[:,1], **kwargs)
             
             ax[i][j].set_xlabel(param_1)
             ax[i][j].set_ylabel(param_2)
@@ -830,7 +835,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             # Get found chirp-mass indices for given threshold
             fidxs = np.searchsorted(found_injections[1], noise_stats, side='right')
             # Plotting the network output
-            network_output(found_injections, noise_stats, output_dir)
+            network_output(found_injections, noise_stats, output_dir, team['name'])
             if team['name'] == "ORChiD":
                 # Parameter learning
                 parameter_learning(injparams, noise_stats, found_injections, output_dir)
@@ -866,6 +871,10 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             ret['sensitive-distance'] = rad
             ret['sensitive-volume-error'] = vol_err
             ret['sensitive-fraction'] = nfound / Ninj
+        
+        if team['name'] == "PyCBC":
+            ret['sensitive-distance-pycbc'] = rad
+            ret['far-pycbc'] = far
         
         # Update plotting params for each group
         team['found_idx'] = found_injections[0].astype(int)
@@ -1006,6 +1015,14 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         sidxs = far.argsort()
         far = far[sidxs][1:] * far_scaling_factor
         sens = sens[sidxs][1:]
+        
+        far_pycbc = fp['far-pycbc'][()]
+        sidxs_pycbc = far_pycbc.argsort()
+        far_pycbc_chk = far_pycbc[sidxs_pycbc] * far_scaling_factor
+        sens_pycbc_check = fp['sensitive-distance-pycbc'][()]
+        sens_pycbc_check = sens_pycbc_check[sidxs_pycbc]
+
+        print(len(far_pycbc), len(sens_pycbc_check))
     
     # Month FAR factor
     month = 30.0 * 24.0 * 60.0 * 60.0
