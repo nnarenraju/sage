@@ -31,7 +31,10 @@ import glob
 import torch
 import random
 import numpy as np
+
 from torch.utils.data import Dataset
+from statsmodels.tsa.stattools import adfuller
+
 
 # LOCAL
 from data.snr_calculation import get_network_snr
@@ -41,7 +44,9 @@ from data.multirate_sampling import get_sampling_rate_bins
 # PyCBC
 import pycbc
 from pycbc import distributions
+from pycbc.types import TimeSeries
 from pycbc.types import FrequencySeries
+from pycbc.psd import welch, interpolate
 
 # Datatype for storage
 tensor_dtype=torch.float32
@@ -90,6 +95,8 @@ class MLMDC1(Dataset):
         self.cfg = cfg
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
+        self.epoch = -1
+        self.kill_firstbatch_tasks = False
         
         self.training = training
         
@@ -329,20 +336,16 @@ class MLMDC1(Dataset):
         if self.cfg.add_random_noise_realisation and target:
             # Pick a random noise realisation to add to the signal
             random_noise_idx = random.choice(self.noise_idx)
-            if self.debug:
-                debug_idx = np.argwhere(self.noise_idx == random_noise_idx).flatten()
-                if self.training:
-                    filename = 'save_augment_train_random_noise_idx.txt'
-                else:
-                    filename = 'save_augment_valid_random_noise_idx.txt'
-                with open(os.path.join(self.debug_dir, filename), 'a') as fp:
-                    string = "{} ".format(self.noise_norm_idx[debug_idx][0])
-                    fp.write(string)
-                    
             random_noise_data_path = self.data_paths[random_noise_idx]
             
             # Read the noise data
-            pure_noise, _, _ = self._read_(random_noise_data_path)
+            pure_noise, targets_noise, params_noise = self._read_(random_noise_data_path)
+            target_noise = targets_noise['gw']
+            # BugFix (Feb 2023): Data Leakage - Artifacts introduced in noise augmentation will not be present
+            # in noise added to signals without augmenting this noise as well. 
+            # Bug fixes to noise augmentation completed. Artifacts should now not be introduced to noise.
+            # Solution: Whitening has to be done before cyclic shift of noise. 
+            pure_noise, _, _ = self._augmentation_(pure_noise, target_noise, params_noise, self.debug)
             
             """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
             prelim_network_snr = get_network_snr(sample, self.psds_data, params, self.cfg.export_dir, self.debug)
@@ -352,10 +355,26 @@ class MLMDC1(Dataset):
                 # TODO: Add SNR rescaling to transforms module
                 if self.cfg.rescale_snr:
                     # Rescaling the SNR to a uniform distribution within a given range
-                    target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
+                    # target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
+                    target_snr = np.random.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
+                    
                     rescaling_factor = target_snr/prelim_network_snr
                     # Add noise to rescaled signal
                     noisy_signal = pure_noise + (sample * rescaling_factor)
+                    """
+                    # Calculate the MF-SNR for the rescaled signal
+                    mfsnr = self.snr_calculation(sample, noisy_signal)
+                    if mfsnr >= 5.0:
+                        break
+                    elif mfsnr > 0.0:
+                        target_snr = np.random.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
+                        # target_snr = self.np_gen.uniform(lsnr, usnr)
+                        rescaling_factor = target_snr/mfsnr
+                        # Add noise to rescaled signal
+                        noisy_signal = pure_noise + (sample * rescaling_factor)
+                        break
+                    """
+                    
                     # Adjust distance parameter for signal according to the new rescaled SNR
                     rescaled_distance = params['distance'] / rescaling_factor
                     rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
@@ -386,7 +405,7 @@ class MLMDC1(Dataset):
         else:
             # If the sample is pure noise
             noisy_signal = sample
-            pure_noise = None
+            pure_noise = sample
             # For pure noise sample, we could calculate the matched filter SNR and set a target
             # This value will be very low, but could help improve FAR
             if self.cfg.network_snr_for_noise:
@@ -404,14 +423,14 @@ class MLMDC1(Dataset):
         """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
-            sample = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
+            sample_transforms = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
         else:
-            sample = noisy_sample
+            sample_transforms = noisy_sample
             
         if self.target_transforms:
             target = self.target_transforms(target)
         
-        return (sample, target)
+        return (sample_transforms, target)
     
     
     def _plotting_(self, pure_sample, pure_noise, noisy_sample, trans_noisy_sample, network_snr, idx, params):
@@ -430,7 +449,38 @@ class MLMDC1(Dataset):
                   save_path, data_dir, idx)
     
     
+    def snr_calculation(self, sample, stilde):
+        # Handling the noise sample
+        stilde = [TimeSeries(noi, delta_t=1./self.sample_rate) for noi in stilde]
+        # Handing the signal sample
+        det1 = TimeSeries(sample[0], delta_t=1./self.sample_rate)
+        #det1.resize(len(stilde[0]))
+        det2 = TimeSeries(sample[1], delta_t=1./self.sample_rate)
+        #det2.resize(len(stilde[1]))
+        ### Estimate the PSD
+        # We'll choose 4 seconds PSD samples that are overlapped 50 %
+        delta_t = 1.0/2048.
+        seg_len = int(4. / delta_t)
+        seg_stride = int(seg_len / 2.)
+        estimated_psd1 = welch(stilde[0], seg_len=seg_len, seg_stride=seg_stride)
+        estimated_psd1 = interpolate(estimated_psd1, self.data_cfg.delta_f)
+        estimated_psd2 = welch(stilde[1], seg_len=seg_len, seg_stride=seg_stride)
+        estimated_psd2 = interpolate(estimated_psd2, self.data_cfg.delta_f)
+        # SNR calculation
+        mfsnr_H1 = pycbc.filter.matched_filter(det1, stilde[0], psd=estimated_psd1, low_frequency_cutoff=self.data_cfg.noise_low_freq_cutoff)
+        mfsnr_H1 = mfsnr_H1[512: len(mfsnr_H1)-512]
+        snrts_H1 = max(abs(mfsnr_H1))
+        mfsnr_L1 = pycbc.filter.matched_filter(det2, stilde[1], psd=estimated_psd2, low_frequency_cutoff=self.data_cfg.noise_low_freq_cutoff)
+        mfsnr_L1 = mfsnr_L1[512: len(mfsnr_L1)-512]
+        snrts_L1 = max(abs(mfsnr_L1))
+        matched_filter_snr = np.sqrt(sum([snrts_H1, snrts_L1]))
+        return matched_filter_snr
+    
+    
     def __getitem__(self, idx):
+        
+        # Setting the seed for given sample
+        np.random.seed(idx+1)
         
         data_path = self.data_paths[idx]
         
@@ -447,7 +497,29 @@ class MLMDC1(Dataset):
         target_gw = np.array([target_gw])
         
         ## Transforms
-        sample, target_gw = self._transforms_(noisy_sample, target_gw)
+        sample_transforms, target_gw = self._transforms_(noisy_sample, target_gw)
+        sample = sample_transforms['sample']
+
+        """
+        # Test the non-stationarity of the sample
+        test_results_H1 = adfuller(sample[0])
+        print(f"ADF test statistic: {test_results_H1[0]}")
+        print(f"p-value: {test_results_H1[1]}")
+        print("Critical thresholds:")
+
+        for key, value in test_results_H1[4].items():
+            print(f"\t{key}: {value}")
+
+        test_results_L1 = adfuller(sample[1])
+        print(f"ADF test statistic: {test_results_L1[0]}")
+        print(f"p-value: {test_results_L1[1]}")
+        print("Critical thresholds:")
+
+        for key, value in test_results_L1[4].items():
+            print(f"\t{key}: {value}")
+
+        print("\n\n\n")
+        """
         
         # Storing target as dictionaries
         all_targets = {}
@@ -494,7 +566,7 @@ class MLMDC1(Dataset):
                 num_created = 0
                 
             if target_gw[0] and num_created < self.cfg.num_sample_save:
-                self._plotting_(pure_sample, pure_noise, noisy_sample, sample, network_snr, idx, params)
+                self._plotting_(pure_sample, pure_noise, noisy_sample, sample_transforms, network_snr, idx, params)
         
         
         """ Reducing memory footprint """
@@ -505,12 +577,13 @@ class MLMDC1(Dataset):
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
         
-        return (sample, all_targets, source_params)
-
-
-
-""" Testing Dataloaders """
-
+        # First batch processes
+        if self.kill_firstbatch_tasks:
+            whitened = []
+        else:
+            whitened = sample_transforms['Whiten']
+        
+        return (sample, all_targets, source_params, whitened)
 
 
 
