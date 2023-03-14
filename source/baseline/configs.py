@@ -24,17 +24,16 @@ Documentation: NULL
 """
 
 # IN-BUILT
-import json
 from pathlib import Path
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 
 # LOCAL
 from data.datasets import MLMDC1
-from architectures.frontend import GammaModel, KappaModel, KappaModelPE
+from architectures.frontend import GammaModel, KappaModel, KappaModelPE, DeltaModelPE
 from data.transforms import Unify, UnifySignal, UnifyNoise
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling
-from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift
+from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
 
 
@@ -492,9 +491,9 @@ class KaggleFirst_Jun9(KaggleFirst):
 class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     """ Data storage """
-    name = "KaggleFirst_Feb02_TRD4"
+    name = "KaggleFirst_Mar13_TRD4"
     export_dir = Path("/home/nnarenraju/Research") / name
-    save_remarks = 'TestRun-D4'
+    save_remarks = 'Training-D4'
     
     """ Dataset """
     dataset = MLMDC1
@@ -513,7 +512,7 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
                         'pretrained': True, 
                         'in_chans': 2, 
                         'drop_rate': 0.25},
-        store_device = 'cuda:1',
+        store_device = 'cuda:0',
     )
     
     """ Epochs and Batches """
@@ -537,8 +536,8 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     parameter_estimation = ('norm_tc', 'norm_mchirp', )
     
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
     
     """ Optimizer """
     optimizer = optim.SGD
@@ -566,18 +565,39 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
-    rescaled_snr_lower = 5.0
-    rescaled_snr_upper = 15.0
+    rescaled_snr_lower = 6.0
+    rescaled_snr_upper = 16.0
     
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
     network_snr_for_noise = False
     
     """ Dataloader params """
-    num_workers = 64
+    num_workers = 32
     pin_memory = True
     prefetch_factor = 100
     persistent_workers = True
+
+    """ Transforms """    
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentPolSky(),
+                    AugmentDistance(),
+                ]),
+        noise=None,
+        train=Unify([
+                    HighPass(lower=20.0, fs=2048., order=6),
+                    Whiten(trunc_method='hann', remove_corrupted=True),
+                    MultirateSampling(),
+                ]),
+        test=Unify([
+                    HighPass(lower=20.0, fs=2048., order=6),
+                    Whiten(trunc_method='hann', remove_corrupted=True),
+                    MultirateSampling(),
+                ]),
+        target=None
+    )
+
     
     """ Testing Phase """
     testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
@@ -610,59 +630,3 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     debug_size = 8000
     
     verbose = True
-
-
-
-""" Load config file into class """
-
-class Imported:
-    
-    def __init__(self, imported_config):
-        with open(imported_config) as fp:
-            cfg = json.load(fp)
-        
-        """ Data storage """
-        self.name = cfg['name']
-        self.export_dir = Path(cfg['export_dir'])
-        
-        """ Dataset Splitting """
-        self.n_splits = 2
-        self.seed = 42
-        self.splitter = None
-        
-        """ Dataset """
-        self.dataset = MLMDC1
-        self.dataset_params = dict()
-        
-        raise NotImplementedError('Imported class under construction!')
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
