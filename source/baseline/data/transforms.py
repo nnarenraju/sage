@@ -211,10 +211,11 @@ class HighPass(TransformWrapper):
 
 class Whiten(TransformWrapperPerChannel):
     # PSDs can be different between the channels, so we use perChannel method
-    def __init__(self, always_apply=True, trunc_method='hann', remove_corrupted=True):
+    def __init__(self, always_apply=True, trunc_method='hann', remove_corrupted=True, estimated=False):
         super().__init__(always_apply)
         self.trunc_method = trunc_method
         self.remove_corrupted = remove_corrupted
+        self.estimated = estimated
         
     def whiten(self, signal, psd, data_cfg):
         """
@@ -259,52 +260,33 @@ class Whiten(TransformWrapperPerChannel):
         # Calculating delta_f of signal and providing that to the PSD interpolation method
         delta_f = data_cfg.delta_f
         # Interpolate the PSD to the required delta_f
+        # NOTe: This may or may not be required (enable if there is a discrepancy in delta_f)
         # psd = interpolate(psd, delta_f)
-        
-        # Interpolate and smooth to the desired corruption length
-        psd = inverse_spectrum_truncation(psd,
-                                          max_filter_len=max_filter_len,
-                                          low_frequency_cutoff=data_cfg.noise_low_freq_cutoff,
-                                          trunc_method=self.trunc_method)
         
         """ Whitening """
         # Whiten the data by the asd
-        
-        # MP mode for whitening
-        # pglobal = parallel.SetGlobals(signals, self.process)
-        # foo = parallel.Parallelise(pglobal.set_data, pglobal.set_func)
-        # foo.args = (delta_f, psd, max_filter_len)
-        # foo.name = 'Whitening'
-        # white = foo.initiate()
-        
-        ### Estimate the PSD
-        # We'll choose 4 seconds PSD samples that are overlapped 50 %
-        # delta_t = 1.0/2048.
-        # seg_len = int(4. / delta_t)
-        # seg_stride = int(seg_len / 2)
-        # estimated_psd = welch(signal[:int(8.*2048.)], seg_len=seg_len, seg_stride=seg_stride)
-        # estimated_psd = interpolate(estimated_psd, delta_f)
+        if self.estimated:
+            ### Estimate the PSD
+            # We'll choose 4 seconds PSD samples that are overlapped 50 %
+            delta_t = 1.0/2048.
+            seg_len = int(4. / delta_t)
+            seg_stride = int(seg_len / 2)
+            psd = welch(signal[:int(8.*2048.)], seg_len=seg_len, seg_stride=seg_stride)
+            psd = interpolate(psd, delta_f)
 
-        # plt.loglog(estimated_psd.sample_frequencies, estimated_psd, label='estimate')
-        # plt.loglog(psd.sample_frequencies, psd, linewidth=3, label='known psd')
-        # plt.xlim()
-        # plt.ylim(1e-48, 1e-45)
-        # plt.legend()
-        # plt.grid()
-        # plt.savefig('./compare_psds_{}.png'.format(time.time()))
+        else:
+            # Interpolate and smooth to the desired corruption length
+            psd = inverse_spectrum_truncation(psd,
+                                              max_filter_len=max_filter_len,
+                                              low_frequency_cutoff=data_cfg.noise_low_freq_cutoff,
+                                              trunc_method=self.trunc_method)    
         
-        # Sequential mode for whitening
         white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
-        # white = (signal.to_frequencyseries(delta_f=delta_f) / estimated_psd**0.5).to_timeseries()
         
         if self.remove_corrupted:
             white = white[int(max_filter_len/2):int(len(white)-max_filter_len/2)]
             
         return white
-    
-    def process(self, signal, delta_f, psd, max_filter_len):
-        white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
-        return white[int(max_filter_len/2):int(len(white)-max_filter_len/2)]
     
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Convert signal to TimeSeries object
@@ -322,7 +304,7 @@ class MultirateSampling(TransformWrapperPerChannel):
 
     def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
         # Call multi-rate sampling module for usage
-        # This is kept separate since further experimentation might be required
+        # This module is kept separate since further experimentation might be required
         return multirate_sampling(y, data_cfg)
     
 
@@ -463,7 +445,8 @@ class AugmentPhase(NoiseWrapper):
         # TODO: Assuming sampling frequency here. Generalise this.
         df = 1./(y.shape[1]/2048.)
         f = np.arange(len(noise_fft[0])) * df
-        #augmented_noise_fft = [foo*np.exp(2j*np.pi*f*dt[n] + 1j*dphi) for n, foo in enumerate(noise_fft)]
+        # We have turned off shift in time until properly debugged (March 16th, 2023)
+        # augmented_noise_fft = [foo*np.exp(2j*np.pi*f*dt[n] + 1j*dphi) for n, foo in enumerate(noise_fft)]
         augmented_noise_fft = [foo * np.exp(1j*dphi) for n, foo in enumerate(noise_fft)]
         # Go back to time domain and we should have augmented noise
         augmented_noise = np.array([np.fft.irfft(foo) for foo in augmented_noise_fft])
