@@ -24,8 +24,10 @@ Documentation: NULL
 """
 
 # IN-BUILT
-from pathlib import Path
+import numpy as np
 import torch.optim as optim
+
+from pathlib import Path
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
 
 # LOCAL
@@ -35,6 +37,12 @@ from data.transforms import Unify, UnifySignal, UnifyNoise
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling
 from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
+
+# RayTune
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+
 
 
 """ DEFAULT (Lightning Baseline)"""
@@ -495,6 +503,39 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     export_dir = Path("/home/nnarenraju/Research") / name
     save_remarks = 'Training-D4'
     
+    """ RayTune """
+    # Placed before initialising any relevant tunable parameter
+    rtune_optimise = True
+    
+    rtune_params = dict(
+        # RayTune Tunable Parameters
+        config = {
+            "l1": tune.sample_from(lambda _: 2**np.random.randint(2, 9)),
+            "l2": tune.sample_from(lambda _: 2**np.random.randint(2, 9)),
+            "lr": tune.loguniform(1e-4, 1e-1),
+            "batch_size": tune.choice([2, 4, 8, 16])
+        },
+        # Scheduler (ASHA has intelligent early stoppping)
+        scheduler = ASHAScheduler,
+        # NOTE: max_t is maximum number of epochs Tune is allowed to run
+        scheduler_params = dict(
+            metric = "loss",
+            mode = "min",
+            max_t = 10,
+            grace_period = 1,
+            reduction_factor = 2    
+        ),
+        # Reporter
+        reporter = CLIReporter,
+        reporter_params = dict(
+            # parameter_columns=["l1", "l2", "lr", "batch_size"],
+            metric_columns=["loss", "accuracy", "training_iteration"]
+        ),
+        # To sample multiple times/run multiple trials
+        # Samples from config num_samples number of times
+        num_samples = 10
+    )
+    
     """ Dataset """
     dataset = MLMDC1
     dataset_params = dict()
@@ -549,19 +590,18 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     lambda1 = lambda epoch: 0.95 ** epoch
     scheduler_params = dict(lr_lambda=lambda1)
     
+    """ Gradient Clipping """
+    clip_norm = 100
+    
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(gw_criterion=None,
-                                network_snr_for_noise=False, mse_alpha=5.0,
-                                emphasis_threshold=0.5, noise_emphasis=False, signal_emphasis=False, 
-                                emphasis_alpha=1.0, emphasis_type='pred_prob',
-                                fp_boundary_loss=False, fn_boundary_loss=False, boundary_loss_alpha=0.2,
-                                overlap_loss=False, overlap_alpha=0.5,
-                                mchirp_loss=False, mchirp_thresh_percentage=0.7,
-                                detectable_snr_loss=False, detectable_snr_thresh=8.0, detectable_snr_alpha=0.5,
-                                fp_signal_area_loss=False, fp_signal_area_alpha=0.5,
-                                fp_noise_area_loss=False, fp_noise_area_percentage=None, fp_noise_area_alpha=0.5)
+    loss_function = BCEgw_MSEtc(gw_criterion=None, mse_alpha=5.0,
+                                emphasis_threshold=0.7, emphasis_operator=None, 
+                                noise_emphasis=False, signal_emphasis=False, 
+                                emphasis_alpha=0.2, emphasis_type='pred_prob', 
+                                snr_loss=False, snr_low=8.0, snr_high=15.0, snr_alpha=0.2,
+                                mchirp_loss=False, mchirp_operator=None, mchirp_thresh=0.7, mchirp_alpha=0.2)
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
@@ -573,9 +613,9 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     network_snr_for_noise = False
     
     """ Dataloader params """
-    num_workers = 32
+    num_workers = 16
     pin_memory = True
-    prefetch_factor = 100
+    prefetch_factor = 2
     persistent_workers = True
 
     """ Transforms """    
@@ -597,7 +637,16 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
                 ]),
         target=None
     )
-
+    
+    batchshuffle_noise = True
+    
+    """ Optional things to do during training """
+    # Plots the input to the network (including transformations) 
+    # and output from the network
+    network_io = True
+    # Testing on a small 32000s dataset at the end of each epoch
+    epoch_testing = True
+    epoch_testing_dir = "/local/scratch/igr/nnarenraju/testing_32000_D4_seeded"
     
     """ Testing Phase """
     testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
