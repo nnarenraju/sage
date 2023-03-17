@@ -29,6 +29,7 @@ import gc
 import torch
 import argparse
 
+from functools import partial
 from torchsummary import summary
 
 # Warnings
@@ -44,6 +45,77 @@ from data.prepare_data import DataModule as dat
 
 # Tensorboard
 from torch.utils.tensorboard import SummaryWriter
+
+# RayTune
+from ray import tune
+
+
+def trainer(rtune=None, checkpoint_dir=None, args=None):
+    
+    cfg, data_cfg, opts, train_fold, val_fold = *args
+    # Get the dataset objects for training and validation
+    train_data, val_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
+    
+    # Get the Pytorch DataLoader objects of train and valid data
+    train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
+    
+    # Initialise chosen model architecture (Backend + Frontend)
+    # Equivalent to the "Network" variable in manual mode without weights
+    Network = cfg.model(**cfg.model_params)
+    
+    # Load weights snapshot
+    if cfg.pretrained and cfg.weights_path!='':
+        if os.path.exists(cfg.weights_path):
+            weights = torch.load(cfg.weights_path, cfg.store_device)
+            Network.load_state_dict(weights)
+            del weights; gc.collect()
+        else:
+            raise ValueError("train.py: cfg.weights_path does not exist!")
+    elif cfg.pretrained and cfg.weights_path=='':
+        raise ValueError("CFG: pretrained==True, but no weights path provided!")
+    
+    # Model Summary (frontend + backend)
+    if opts.summary:
+        # Using TorchSummary to get # trainable params and general overview
+        summary(Network, (2, 5838), batch_size=cfg.batch_size)
+        print("")
+        # Using TensorBoard summary writer to create detailed graph of ModelClass
+        tb = SummaryWriter()
+        samples, labels = next(iter(train_loader))
+        tb.add_graph(Network, samples)
+        tb.close()
+    
+    # Optimizer and Scheduler (Set to None if unused)
+    if cfg.optimizer is not None:
+        optimizer = cfg.optimizer(Network.parameters(), **cfg.optimizer_params)
+    else:
+        optimizer = None
+        
+    if cfg.scheduler is not None:
+        scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
+    else:
+        scheduler = None
+    
+    # Loss function used
+    loss_function = cfg.loss_function
+    
+    """ RayTune Checkpointing """
+    if checkpoint_dir:
+        model_state, optimizer_state = torch.load(
+            os.path.join(checkpoint_dir, "checkpoint"))
+        Network.load_state_dict(model_state)
+        optimizer.load_state_dict(optimizer_state)
+    
+    """ Training and Validation Methods """
+    ## MANUAL
+    if opts.manual:
+        # Running the manual pipeline version using pure PyTorch
+        # Initialise the trainer
+        Network = manual_train(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
+                               train_loader, val_loader, verbose=cfg.verbose)
+    
+    if rtune == None:
+        return Network
 
 
 def run_trainer():
@@ -94,64 +166,59 @@ def run_trainer():
         train_fold = train.iloc[train_idx]
         val_fold = train.iloc[val_idx]
         
-        # Get the dataset objects for training and validation
-        train_data, val_data, tsamp, vsamp = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
-        
-        # Get the Pytorch DataLoader objects of train and valid data
-        train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data, tsamp, vsamp)
-        
-        # Initialise chosen model architecture (Backend + Frontend)
-        # Equivalent to the "Network" variable in manual mode without weights
-        ModelClass = cfg.model(**cfg.model_params)
-        
-        # Load weights snapshot
-        if cfg.pretrained and cfg.weights_path!='':
-            if os.path.exists(cfg.weights_path):
-                weights = torch.load(cfg.weights_path, cfg.store_device)
-                ModelClass.load_state_dict(weights)
-                del weights; gc.collect()
-            else:
-                raise ValueError("train.py: cfg.weights_path does not exist!")
-        elif cfg.pretrained and cfg.weights_path=='':
-            raise ValueError("CFG: pretrained==True, but no weights path provided!")
-        
-        # Model Summary (frontend + backend)
-        if opts.summary:
-            # Using TorchSummary to get # trainable params and general overview
-            summary(ModelClass, (2, 5838), batch_size=cfg.batch_size)
-            print("")
-            # Using TensorBoard summary writer to create detailed graph of ModelClass
-            tb = SummaryWriter()
-            samples, labels = next(iter(train_loader))
-            tb.add_graph(ModelClass, samples)
-            tb.close()
-        
-        # Optimizer and Scheduler (Set to None if unused)
-        if cfg.optimizer is not None:
-            optimizer = cfg.optimizer(ModelClass.parameters(), **cfg.optimizer_params)
-        else:
-            optimizer = None
+        if cfg.rtune_optimise:
+            ### RayTune needs to optimise parameter from this point forward
+            ### All code before inference section must be wrapped into a train function
+            rtune = cfg.rtune_params
+            # Get RayTune configs
+            rtune_config = rtune['config']
+            rtune_scheduler = rtune['scheduler'](**rtune['scheduler_params'])
+            rtune_reporter = rtune['reporter'](**rtune['reporter_params'])
             
-        if cfg.scheduler is not None:
-            scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
+            # Constant args to be passed to trainer
+            const = (cfg, data_cfg, opts, train_fold, val_fold, )
+            
+            # Run RayTune with given config options
+            result = tune.run(
+                partial(trainer, args=const),
+                name = "raytune_optimisation",
+                local_dir = os.path.join(cfg.export_dir, "raytune"),
+                resources_per_trial = {"cpu": 32, "gpu": 1},
+                config = rtune_config,
+                num_samples = rtune['num_samples'],
+                scheduler = rtune_scheduler,
+                progress_reporter = rtune_reporter
+            )
+            
+            # Getting the best trial
+            # Syntax: get_best_trial(metric, mode, scope)
+            # Usage: esult.get_best_trial("loss", "min", "last")
+            # Meaning: Get the trial that has minimum validation loss
+            best_trial = result.get_best_trial("loss", "min", "last")
+            print("Best trial config: {}".format(best_trial.config))
+            print("Best trial final validation loss: {}".format(
+                best_trial.last_result["loss"]))
+            
+            # Best trained Network
+            best_checkpoint_dir = best_trial.checkpoint.value
+            model_state, optimizer_state = torch.load(os.path.join(best_checkpoint_dir, "checkpoint"))
+            # Loading the network the best weights
+            Network = cfg.model(**cfg.model_params)
+            Network.load_state_dict(model_state)
+            
+            ### RayTune Optimisation ends ###
+        
         else:
-            scheduler = None
-        
-        # Loss function used
-        loss_function = cfg.loss_function
-        
-        
-        """ Training and Validation Methods """
-        ## MANUAL
-        if opts.manual:
-            # Running the manual pipeline version using pure PyTorch
-            # Initialise the trainer
-            Network = manual_train(cfg, data_cfg, train_data, val_data, ModelClass, optimizer, scheduler, loss_function,
-                                   train_loader, val_loader, verbose=cfg.verbose)
+            # Running the pipeline without RayTune optimisation
+            args = (cfg, data_cfg, opts, train_fold, val_fold, )
+            Network = trainer(args=args)
         
         # Save run in online workspace
         save(cfg, data_cfg)
         
+        # Sanity check for Network load
+        if Network == None:
+            return
         
         """ TESTING """
         if opts.inference:
