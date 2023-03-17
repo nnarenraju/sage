@@ -291,12 +291,7 @@ class DataModule:
         # class '0' count is 3, and class '1' count is 2 So weights vector is [1/3, 1/2, 1/3, 1/3, 1/2].
         ttargets = train_fold['target'].values
         check_class_balance = len(ttargets[ttargets == 1])/len(ttargets)
-        if check_class_balance == 0.5:
-            class_sample_count = np.array([len(np.where(ttargets == t)[0]) for t in np.unique(ttargets)])
-            weight = 1.0 / class_sample_count
-            weights = np.array([weight[t] for t in ttargets])
-            tsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
-        else:
+        if check_class_balance != 0.5:
             raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) training dataset!'.format(check_class_balance))
         
         # Create the training and validation dataset objects
@@ -311,12 +306,7 @@ class DataModule:
         # Validation dataset
         vtargets = valid_fold['target'].values
         check_class_balance = len(vtargets[vtargets == 1])/len(vtargets)
-        if check_class_balance == 0.5:
-            class_sample_count = np.array([len(np.where(vtargets == t)[0]) for t in np.unique(vtargets)])
-            weight = 1.0 / class_sample_count
-            weights = np.array([weight[t] for t in vtargets])
-            vsampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
-        else:
+        if check_class_balance != 0.5:
             raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) validation dataset!'.format(check_class_balance))
         
         valid_dataset = cfg.dataset(
@@ -327,10 +317,10 @@ class DataModule:
                 training=False, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
         
-        return (train_dataset, valid_dataset, tsampler, vsampler)
+        return (train_dataset, valid_dataset)
     
     
-    def get_dataloader(cfg, train_data, valid_data, tsampler, vsampler):
+    def get_dataloader(cfg, train_data, valid_data):
         """
         Create Pytorch DataLoader objects
         
