@@ -96,7 +96,8 @@ class MLMDC1(Dataset):
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         self.epoch = -1
-        self.kill_firstbatch_tasks = False
+        self.plot_on_first_batch = True
+        self.nplot_on_first_batch = 0
         
         self.training = training
         
@@ -134,9 +135,9 @@ class MLMDC1(Dataset):
         """ LAL Detector Objects (used in project_wave - AugPolSky) """
         # Detector objects (these are lal objects and may present problems when parallelising)
         # Create the detectors (TODO: generalise this!!!)
-        detectors_abbr = ('H1', 'L1')
+        self.detectors_abbr = ('H1', 'L1')
         self.detectors = []
-        for det_abbr in detectors_abbr:
+        for det_abbr in self.detectors_abbr:
             self.detectors.append(pycbc.detector.Detector(det_abbr))
         
         
@@ -328,12 +329,12 @@ class MLMDC1(Dataset):
         return sample, augmented_labels, params
     
     
-    def _noise_realisation_(self, sample, target, params):
+    def _noise_realisation_(self, sample, targets, params):
         """ Finding random noise realisation for signal """
         # Random noise realisation is the only procedure available
         # Fixed noise realisation was deprecated
         
-        if self.cfg.add_random_noise_realisation and target:
+        if self.cfg.add_random_noise_realisation and targets['gw']:
             # Pick a random noise realisation to add to the signal
             random_noise_idx = random.choice(self.noise_idx)
             random_noise_data_path = self.data_paths[random_noise_idx]
@@ -361,19 +362,6 @@ class MLMDC1(Dataset):
                     rescaling_factor = target_snr/prelim_network_snr
                     # Add noise to rescaled signal
                     noisy_signal = pure_noise + (sample * rescaling_factor)
-                    """
-                    # Calculate the MF-SNR for the rescaled signal
-                    mfsnr = self.snr_calculation(sample, noisy_signal)
-                    if mfsnr >= 5.0:
-                        break
-                    elif mfsnr > 0.0:
-                        target_snr = np.random.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
-                        # target_snr = self.np_gen.uniform(lsnr, usnr)
-                        rescaling_factor = target_snr/mfsnr
-                        # Add noise to rescaled signal
-                        noisy_signal = pure_noise + (sample * rescaling_factor)
-                        break
-                    """
                     
                     # Adjust distance parameter for signal according to the new rescaled SNR
                     rescaled_distance = params['distance'] / rescaling_factor
@@ -398,7 +386,7 @@ class MLMDC1(Dataset):
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
             
-        elif not self.cfg.add_random_noise_realisation and target:
+        elif not self.cfg.add_random_noise_realisation and targets['gw']:
             # Fixed noise realisation to add to the signal
             raise DeprecationWarning('Fixed noise realisation feature deprecated on June 8th, 2022')
             
@@ -416,24 +404,25 @@ class MLMDC1(Dataset):
                 network_snr = -1
                 norm_snr = -1
         
-        return (noisy_signal, pure_noise, network_snr, norm_snr, params)
+        # Update target and params
+        targets['norm_snr'] = norm_snr
+        params['network_snr'] = network_snr
+        
+        return (noisy_signal, pure_noise, targets, params)
     
     
-    def _transforms_(self, noisy_sample, target):
+    def _transforms_(self, noisy_sample):
         """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
             sample_transforms = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
         else:
             sample_transforms = noisy_sample
-            
-        if self.target_transforms:
-            target = self.target_transforms(target)
         
-        return (sample_transforms, target)
+        return sample_transforms
     
     
-    def _plotting_(self, pure_sample, pure_noise, noisy_sample, trans_noisy_sample, network_snr, idx, params):
+    def _plotting_(self, idx, pure_sample, pure_noise, noisy_sample, trans_noisy_sample, params):
         """ Plotting idx data (if flag is set to True) """
         # Input parameters
         if self.transforms:
@@ -445,11 +434,11 @@ class MLMDC1(Dataset):
         data_dir = os.path.normpath(self.data_loc).split(os.path.sep)[-1]
         # Plotting unit data
         plot_unit(pure_sample, pure_noise, noisy_sample, trans_pure_signal, trans_noisy_sample, 
-                  params['mass1'], params['mass2'], network_snr, params['sample_rate'],
+                  params['mass1'], params['mass2'], params['network_snr'], params['sample_rate'],
                   save_path, data_dir, idx)
     
     
-    def snr_calculation(self, sample, stilde):
+    def mfsnr_calculation(self, sample, stilde):
         # Handling the noise sample
         stilde = [TimeSeries(noi, delta_t=1./self.sample_rate) for noi in stilde]
         # Handing the signal sample
@@ -477,63 +466,47 @@ class MLMDC1(Dataset):
         return matched_filter_snr
     
     
-    def __getitem__(self, idx):
-        
-        # Setting the seed for given sample
-        np.random.seed(idx+1)
-        
-        data_path = self.data_paths[idx]
-        
-        ## Read the sample(s)
-        sample, targets, params = self._read_(data_path)
-        target_gw = targets['gw']
-        
-        ## Signal and Noise Augmentation
-        pure_sample, aug_labels, params = self._augmentation_(sample, target_gw, params, self.debug)
-        ## Add noise realisation to the signals
-        noisy_sample, pure_noise, network_snr, norm_snr, params = self._noise_realisation_(pure_sample, target_gw, params)
-        
-        ## Target handling
-        target_gw = np.array([target_gw])
-        
-        ## Transforms
-        sample_transforms, target_gw = self._transforms_(noisy_sample, target_gw)
-        sample = sample_transforms['sample']
-
-        """
-        # Test the non-stationarity of the sample
-        test_results_H1 = adfuller(sample[0])
-        print(f"ADF test statistic: {test_results_H1[0]}")
-        print(f"p-value: {test_results_H1[1]}")
-        print("Critical thresholds:")
-
-        for key, value in test_results_H1[4].items():
-            print(f"\t{key}: {value}")
-
-        test_results_L1 = adfuller(sample[1])
-        print(f"ADF test statistic: {test_results_L1[0]}")
-        print(f"p-value: {test_results_L1[1]}")
-        print("Critical thresholds:")
-
-        for key, value in test_results_L1[4].items():
-            print(f"\t{key}: {value}")
-
-        print("\n\n\n")
-        """
-        
-        # Storing target as dictionaries
+    def adfuller_test(self, sample):
+        # Test for non-stationarity of data (D4 noise in particular)
+        # Augmented Dickey Fuller Test for non-stationarity
+        # Link: https://en.wikipedia.org/wiki/Augmented_Dickey%E2%80%93Fuller_test
+        # Null Hypothesis (H0): If failed to be rejected, it suggests the time series 
+        # has a unit root, meaning it is non-stationary. It has some time dependent structure.
+        # If p-value > 0.05 we fail to reject the null hypothesis (H0), 
+        # the data has a unit root and is non-stationary.
+        # If p-value <= 0.05, reject the null hypothesis (H0), the data does not have 
+        # a unit root and is stationary.
+        for detdata, det in zip(sample, self.detectors_abbr):
+            test_results_det = adfuller(detdata)
+            p_value = test_results_det[1]
+            if p_value > 0.05:
+                adf_test_statistic = test_results_det[0]
+                print("ADF Test Statistic = {}".format(adf_test_statistic))
+                # Critical thresholds at 1%, 5% and 10% confidence intervals
+                print("Critical Values:")
+                for key, value in test_results_det[4].items():
+                    print('\t%s: %.3f' % (key, value))
+                    
+                raise ValueError("FAILED: ADF Test for non-stationary - \
+                                 p-value ({}) greater than 0.05 and NULL hypothesis \
+                                 H0 cannot be rejected. Sample is non-stationary.".format(p_value))
+                
+    
+    def target_handling(self, targets, aug_targets, params):
+        # Gather up all parameters required for training and validation
+        """ Targets """
+        ## Storing targets as dictionary
         all_targets = {}
-        all_targets['norm_snr'] = norm_snr
-        all_targets['network_snr'] = network_snr
+        # targets contain all other norm values for PE
         all_targets.update(targets)
-        
         # Update parameter labels if augmentation changed them
         # aug_labels must have the same keys as targets dict
-        all_targets.update(aug_labels)
+        all_targets.update(aug_targets)
         
-        # Add sample params to all_targets variable
+        """ Source Parameters """
+        ## Add sample params to all_targets variable
         source_params = {}
-        source_params['snr'] = network_snr
+        source_params['snr'] = params['network_snr']
         # Distance and dchirp could have been alterred when rescaling SNR
         source_params['distance'] = params['distance']
         if 'dchirp' in params.keys():
@@ -541,12 +514,12 @@ class MLMDC1(Dataset):
         else:
             source_params['dchirp'] = self._dchirp_from_dist(params['distance'], params['mchirp'])
             
-        # Other params should be unalterred
+        ## Other params should be unalterred
         source_params['mchirp'] = params['mchirp']
         source_params['mass1'] = params['mass1']
         source_params['mass2'] = params['mass2']
         
-        if target_gw[0]:
+        if targets['gw']:
             # Written as m2/m1. Different from PyCBC format of m1/m2. m1>m2 in both cases.
             source_params['q'] = params['mass2']/params['mass1']
             # Calculating the duration of the given signal
@@ -556,34 +529,79 @@ class MLMDC1(Dataset):
             source_params['q'] = -1
             source_params['signal_duration'] = -1
         
-        ## Plotting
+        return all_targets, source_params
+    
+    
+    def squash_bugs(self, idx, pure_sample, pure_noise, noisy_sample, sample_transforms, targets, params):
+        check_dir = os.path.join(self.cfg.export_dir, 'SAMPLES')
+        if os.path.isdir(check_dir):
+            check_path = os.path.join(check_dir, '*.png')
+            num_created = len(glob.glob(check_path))
+        else:
+            num_created = 0
+            
+        if targets['gw'] and num_created < self.cfg.num_sample_save:
+            self._plotting_(idx, pure_sample, pure_noise, noisy_sample, sample_transforms, params)
+        
+        ## Test for non-stationarity of sample
+        self.adfuller_test(sample_transforms['sample'])
+        
+    
+    def __getitem__(self, idx):
+        
+        # Setting the unique seed for given sample
+        np.random.seed(idx+1)
+        # Get data paths for external link
+        data_path = self.data_paths[idx]
+        
+        ## Read the sample(s)
+        sample, targets, params = self._read_(data_path)
+        
+        ## Signal and Noise Augmentation
+        pure_sample, aug_targets, params = self._augmentation_(sample, targets['gw'], params, self.debug)
+        ## Add noise realisation to the signals
+        noisy_sample, pure_noise, targets, params = self._noise_realisation_(pure_sample, targets, params)
+        
+        ## Transforms
+        sample_transforms = self._transforms_(noisy_sample)
+        
+        ## Targets and Parameters Handling
+        all_targets, source_params = self.target_handling(targets, aug_targets, params)
+        
+        ## DEBUG Modules
         if self.debug:
-            check_dir = os.path.join(self.cfg.export_dir, 'SAMPLES')
-            if os.path.isdir(check_dir):
-                check_path = os.path.join(check_dir, '*.png')
-                num_created = len(glob.glob(check_path))
-            else:
-                num_created = 0
-                
-            if target_gw[0] and num_created < self.cfg.num_sample_save:
-                self._plotting_(pure_sample, pure_noise, noisy_sample, sample_transforms, network_snr, idx, params)
+            args = (idx,)
+            # Pure samples
+            args += (pure_sample, pure_noise)
+            # Transformed samples
+            args += (noisy_sample, sample_transforms)
+            # Targets and source parameters
+            args += (targets, params)
+            self.squash_bugs(*args)
         
-        
-        """ Reducing memory footprint """
+        # Reducing memory footprint
         # This can only be performed after transforms and augmentation
-        sample = np.array(sample, dtype=np.float32)
+        sample = np.array(sample_transforms['sample'], dtype=np.float32)
         
-        """ Tensorification """
+        # Tensorification
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
         
         # First batch processes
-        if self.kill_firstbatch_tasks:
-            whitened = []
+        plot_batch = []
+        if self.plot_on_first_batch:
+            plot_batch += [noisy_sample/max(abs(noisy_sample)), ]
+            plot_batch += [sample_transforms['HighPass']/max(abs(sample_transforms['HighPass'])), ]
+            plot_batch += [sample_transforms['Whiten'], ]
+            plot_batch += [sample_transforms['MultirateSampling'], ]
+            # Convert all samples into float16 for the sake of saving memory
+            # Also use .copy() for some arrays as PyTorch does not support data with negative stride
+            plot_batch = [np.array(foo, dtype=np.float16).copy() for foo in plot_batch]
+            self.nplot_on_first_batch = len(plot_batch)
         else:
-            whitened = sample_transforms['Whiten']
+            plot_batch = [None] * self.nplot_on_first_batch
         
-        return (sample, all_targets, source_params, whitened)
+        return (sample, all_targets, source_params, plot_batch)
 
 
 
