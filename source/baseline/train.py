@@ -52,15 +52,18 @@ from ray import tune
 
 def trainer(rtune=None, checkpoint_dir=None, args=None):
     
-    cfg, data_cfg, opts, train_fold, val_fold = *args
+    cfg, data_cfg, opts, train_fold, val_fold, balance_params = args
     # Get the dataset objects for training and validation
     train_data, val_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
     
     # Get the Pytorch DataLoader objects of train and valid data
-    train_loader, val_loader = dat.get_dataloader(cfg, train_data, val_data)
+    train_loader, val_loader, nepoch = dat.get_dataloader(cfg, train_data, val_data, balance_params)
     
     # Initialise chosen model architecture (Backend + Frontend)
     # Equivalent to the "Network" variable in manual mode without weights
+    cfg.model_params.update(dict(_input_length=data_cfg.network_sample_length,
+                                 _decimated_bins=data_cfg._decimated_bins))
+    # Init Network
     Network = cfg.model(**cfg.model_params)
     
     # Load weights snapshot
@@ -74,10 +77,13 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
     elif cfg.pretrained and cfg.weights_path=='':
         raise ValueError("CFG: pretrained==True, but no weights path provided!")
     
+    ## Display
+    print("Sample length for training and testing = {}".format(data_cfg.network_sample_length))
+
     # Model Summary (frontend + backend)
     if opts.summary:
         # Using TorchSummary to get # trainable params and general overview
-        summary(Network, (2, 5838), batch_size=cfg.batch_size)
+        summary(Network, (2, data_cfg.network_sample_length), batch_size=cfg.batch_size)
         print("")
         # Using TensorBoard summary writer to create detailed graph of ModelClass
         tb = SummaryWriter()
@@ -112,7 +118,7 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
         # Running the manual pipeline version using pure PyTorch
         # Initialise the trainer
         Network = manual_train(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
-                               train_loader, val_loader, verbose=cfg.verbose)
+                               train_loader, val_loader, nepoch, verbose=cfg.verbose)
     
     if rtune == None:
         return Network
@@ -141,6 +147,10 @@ def run_trainer():
     cfg = dat.configure_pipeline(opts)
     # Get data creation/usage configuration
     data_cfg = dat.configure_dataset(opts)
+
+    # Get input data length
+    # Used in torch summary and to initialise norm layers
+    dat.input_sample_length(data_cfg)
     
     # Make export dir
     dat.make_export_dir(cfg)
@@ -151,7 +161,7 @@ def run_trainer():
     
     # Prepare dataset (read, split and return fold idx)
     # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
-    train, folds = dat.get_metadata(cfg, data_cfg)
+    train, folds, balance_params = dat.get_metadata(cfg, data_cfg)
 
     """ Training """
     # Folds are obtained only by splitting the training dataset
@@ -176,14 +186,15 @@ def run_trainer():
             rtune_reporter = rtune['reporter'](**rtune['reporter_params'])
             
             # Constant args to be passed to trainer
-            const = (cfg, data_cfg, opts, train_fold, val_fold, )
+            const = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
             
             # Run RayTune with given config options
             result = tune.run(
                 partial(trainer, args=const),
                 name = "raytune_optimisation",
                 local_dir = os.path.join(cfg.export_dir, "raytune"),
-                resources_per_trial = {"cpu": 32, "gpu": 1},
+                resources_per_trial = {"cpu": 1, "gpu": 1},
+                max_concurrent_trials=1,
                 config = rtune_config,
                 num_samples = rtune['num_samples'],
                 scheduler = rtune_scheduler,
@@ -210,11 +221,11 @@ def run_trainer():
         
         else:
             # Running the pipeline without RayTune optimisation
-            args = (cfg, data_cfg, opts, train_fold, val_fold, )
+            args = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
             Network = trainer(args=args)
         
         # Save run in online workspace
-        save(cfg, data_cfg)
+        # save(cfg, data_cfg)
         
         # Sanity check for Network load
         if Network == None:
