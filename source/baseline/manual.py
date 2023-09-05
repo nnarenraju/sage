@@ -25,12 +25,15 @@ Documentation: NULL
 
 # BUILT-IN
 import os
+import sys
 import time
 import glob
 import torch
+import errno
 import random
 import shutil
 import operator
+import itertools
 import traceback
 import numpy as np
 import pandas as pd
@@ -57,6 +60,7 @@ torch.backends.cudnn.benchmark = True
 # Clear PyTorch Cache before init
 torch.cuda.empty_cache()
 
+import pygtc
 from matplotlib import cm
 import matplotlib.pyplot as plt
 # Font and plot parameters
@@ -92,7 +96,6 @@ def _plot(ax, x=None, y=None, xlabel="x-axis", ylabel="y-axis", ls='solid',
     ax.grid(True, which='both')
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.legend()
 
 
 def display_outputs(training_output, training_labels):
@@ -137,6 +140,7 @@ def roc_curve(nep, output, labels, export_dir):
           ylabel="True Positive Rate", xlabel="False Positive Rate", 
           ls="dashed", yscale='log', xscale='log')
     
+    plt.legend()
     save_path = os.path.join(save_dir, "roc_curve_{}.png".format(nep))
     plt.savefig(save_path)
     plt.close()
@@ -150,29 +154,50 @@ def prediction_raw(nep, output, labels, export_dir):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=False)
     
-    # Get pred probs from output
-    mx = np.ma.masked_array(output, mask=labels)
-    # For labels == signal, true positive
-    raw_tp = mx[mx.mask == True].data
-    # For labels == noise, true negative
-    raw_tn = mx[mx.mask == False].data
-    
-    # Diffference between noise and signal stats
-    boundary_diff = np.around(max(raw_tp) - max(raw_tn), 3)
+    # Get raw values from output  
+    foo = np.ma.masked_where(labels == 1.0, labels)
+    noise_mask = ~foo.mask
+    signal_mask = foo.mask
+    raw_tn = output[noise_mask]
+    raw_tp = output[signal_mask]
     
     # Plotting routine
-    ax, _ = figure(title="Raw output at Epoch = {}".format(nep))
+    fig, ax = plt.subplots(1, 2, figsize=(12.0*2, 8.0*1))
+    plt.suptitle('Raw Output at Epoch = {}'.format(nep))
     # Log pred probs
-    _plot(ax, y=raw_tp, label="Signals", c='red', 
+    _plot(ax[0], y=raw_tp, label="Signals",
           ylabel="log10 Number of Occurences", xlabel="Raw Output Values", 
           yscale='log', histogram=True)
-    _plot(ax, y=raw_tn, label="Noise", c='blue', 
+    _plot(ax[0], y=raw_tn, label="Noise",
           ylabel="log10 Number of Occurences", xlabel="Raw Output Values", 
           yscale='log', histogram=True)
     
+    # FAR counts
+    sorted_noise_stats = np.sort(raw_tn)
+    count_curve = []
+    # Goes from biggest noise stat to smallest
+    for thresh in sorted_noise_stats[::-1]:
+        count_curve.append([thresh, len(raw_tp[raw_tp>thresh])/len(raw_tp)])
+    # convert to numpy
+    count_curve = np.array(count_curve)
+
+    _plot(ax[1], x=count_curve[:,0], y=count_curve[:,1], xlabel="Noise Stat Threshold", 
+          ylabel="Frac Signals Detected above Threshold", ls='solid', c='red', yscale='linear', 
+          xscale='linear', histogram=False, label='1FAR/x = {}/{}'.format(int(count_curve[:,1][0]*len(raw_tp)), len(raw_tp)))
+    
+    plt.legend()
+    # Add secondary axis and limits
+    convert = lambda frac: frac * len(raw_tp)
+    inverse = lambda length: length / len(raw_tp)
+    secay = ax[1].secondary_yaxis('right', functions=(convert, inverse))
+    secay.set_ylabel("Num Signals Detected above Threshold")
+    ax[1].set_xlim(min(count_curve[:,0]), max(count_curve[:,0]))
+
     save_path = os.path.join(save_dir, "log_raw_output_{}.png".format(nep))
     plt.savefig(save_path)
     plt.close()
+
+    return count_curve[:,1][0]*len(raw_tp)
 
 
 def prediction_probability(nep, output, labels, export_dir):
@@ -201,6 +226,7 @@ def prediction_probability(nep, output, labels, export_dir):
           ylabel="log10 Number of Occurences", xlabel="Prediction Probabilities (Sigmoid)", 
           yscale='log', histogram=True)
     
+    plt.legend()
     save_path = os.path.join(save_dir, "log_pred_prob_output_{}.png".format(nep))
     plt.savefig(save_path)
     plt.close()
@@ -218,7 +244,7 @@ def efficiency_curves(nep, source_params, predicted_outputs, labels, save_name='
     data_tp = mx[mx.mask == True].data
     
     # Create overlapping bins for the source_params and get the average value of predicted outputs
-    bin_width = 100 # samples
+    bin_width = 500 # samples
     overlap = 10 # samples
     for key in source_params.keys():
         # Sort the source_params for the particular key alongside the predicted outputs
@@ -239,6 +265,7 @@ def efficiency_curves(nep, source_params, predicted_outputs, labels, save_name='
         ax, fig = figure(title="Efficiency Curve for {}".format(key))
         _plot(ax, x=plot[:,0], y=plot[:,1], xlabel=key, ylabel=save_name, ls='solid', 
               label=key, c='k', yscale='linear', xscale='linear', histogram=False)
+        plt.legend()
         # Saving the plot in export_dir
         save_path = os.path.join(save_dir, 'efficiency_{}_{}_{}.png'.format(save_name, key, nep))
         plt.savefig(save_path)
@@ -276,15 +303,17 @@ def learning_parameter_prior(nep, source_params, predicted_outputs, labels, save
         _plot(ax, x=plot[:,0], y=plot[:,1], xlabel=key, ylabel=save_name, ls='solid', 
               label=key, c='blue', yscale='linear', xscale='linear', histogram=False)
         # Plotting the percentiles
+        plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 95),
+                         plot[:,1]+np.percentile(plot[:,1], 95), color='red',
+                         alpha = 0.3, label="95th percentile")
+        plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 50),
+                         plot[:,1]+np.percentile(plot[:,1], 50), color='green',
+                         alpha = 0.3, label="50th percentile")
         plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 5), 
                          plot[:,1]+np.percentile(plot[:,1], 5), color='blue', 
                          alpha = 0.3, label="5th percentile")
-        plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 50), 
-                         plot[:,1]+np.percentile(plot[:,1], 50), color='green', 
-                         alpha = 0.3, label="50th percentile")
-        plt.fill_between(plot[:,0], plot[:,1]-np.percentile(plot[:,1], 95), 
-                         plot[:,1]+np.percentile(plot[:,1], 95), color='red', 
-                         alpha = 0.3, label="95th percentile")
+        plt.legend()
+        plt.xlim(min(plot[:,0]), max(plot[:,0]))
         # Saving the plot in export_dir
         save_path = os.path.join(save_dir, 'learning_{}_{}_{}.png'.format(save_name, key, nep))
         plt.savefig(save_path)
@@ -354,6 +383,7 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
                   ylabel='Actual Value [{}]'.format(param), 
                   xlabel='Observed Value [{}]'.format(param), ls="dashed")
         
+        plt.legend()
         # Saving the plots
         save_path = os.path.join(save_dir, "diagonal_{}_{}.png".format(param, nep))
         save_path_gt8 = os.path.join(save_dir, "diagonal_snr_gt8_{}_{}.png".format(param, nep))
@@ -363,63 +393,266 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         plt.close(fig_gt8)
 
 
-def plot_network_io(cfg, export_dir, whitened, training_output, training_labels, epoch):
-    # Plotting the normed output of any layer used (provide non MR sample as input)
-    save_dir = os.path.join(export_dir, 'NETWORK_IO/epoch_{}'.format(epoch))
+def plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels, epoch, mode, extremes_io=False):
+    # Plotting the network io of any layer used (provide non MR sample as input)
+    dir_name = 'EXTREMES_IO' if extremes_io else 'NETWORK_IO'
+    parent_dir = os.path.join(export_dir, dir_name)
+    if not os.path.isdir(parent_dir):
+        os.makedirs(parent_dir, exist_ok=False)
+    # Training and validation dir
+    save_dir = os.path.join(parent_dir, '{}/epoch_{}'.format(mode, epoch))
     if not os.path.isdir(save_dir):
         os.makedirs(save_dir, exist_ok=False)
 
     # Outputs to be plotted
-    inputs = whitened
     normed = training_output['normed']
     network_input = training_output['input']
     raws = training_output['raw']
     pred_probs = training_output['pred_prob']
-    # gates = training_output['gate']
     cnn_output = training_output['cnn_output']
 
-    for n, data in enumerate(zip(inputs, training_labels, raws, pred_probs, normed, network_input, cnn_output)):
+    
+    for n, data in enumerate(zip(training_labels, raws, pred_probs, normed, network_input, cnn_output)):
         ## Analysing normed output of the pipeline
         # Convert all tensors to numpy arrays
-        inpt, label, raw, pred_prob, norm, netinpt, cnnopt = [foo.cpu().detach().numpy() for foo in data]
+        label, raw, pred_prob, norm, netinpt, cnnopt = [foo.cpu().detach().numpy() for foo in data]
         # Checking for the effect of normalisation layers used
-        fig, ax = plt.subplots(5, 2, figsize=(12.0*2, 8.0*5))
+        nrows = 4 + len(plot_batch)
+        pblen = len(plot_batch)
+        fig, ax = plt.subplots(nrows, 2, figsize=(12.0*2, 8.0*nrows))
         raw = np.around(raw, 3)
         pred_prob = np.around(pred_prob, 3)
-        # gate_H1, gate_L1 = gate
-        # gate_H1 = np.around(gate_H1, 3)[0]
-        # gate_L1 = np.around(gate_L1, 3)[0]
-        gate_H1 = 0.0
-        gate_L1 = 0.0
-        plt.suptitle('raw={}, pred_prob={}, label={}, H1 Gate={}, L1 Gate={}'.format(raw, pred_prob, label, gate_H1, gate_L1))
-        for i in range(2):
+        
+        plt.suptitle('raw={}, pred_prob={}, label={}'.format(raw, pred_prob, label))
+        ndet = 2
+        pbdat = [plot_batch[i][n] for i in range(pblen)]
+        for i in range(ndet):
             # Input data without MR sampling
-            ax[0][i].plot(inpt[i], label='Input')
-            ax[0][i].grid()
-            ax[0][i].legend()
+            for npb, pbi in enumerate(pbdat):
+                ax[npb][i].plot(pbi[i], label='Transform {}'.format(npb))
+                ax[npb][i].grid()
+                ax[npb][i].legend()
+            ## All plots after plot_batch
             # Spectrogram of input sample
-            f, t, Sxx = signal.spectrogram(inpt[i], 2048.)
-            ax[1][i].pcolormesh(t, f, Sxx, shading='gouraud')
-            ax[1][i].set_ylabel('Frequency [Hz]')
-            ax[1][i].set_xlabel('Time [sec]')
-            ax[1][i].grid()
+            f, t, Sxx = signal.spectrogram(pbdat[2][i], 2048.)
+            ax[pblen][i].pcolormesh(t, f, Sxx, shading='gouraud')
+            ax[pblen][i].set_ylabel('Frequency [Hz]')
+            ax[pblen][i].set_xlabel('Time [sec]')
+            ax[pblen][i].grid()
             # Network input (after MR sampling)
-            ax[2][i].plot(netinpt[i], label='Network input')
-            ax[2][i].grid()   
-            ax[2][i].legend() 
+            ax[pblen+1][i].plot(netinpt[i], label='Network input')
+            ax[pblen+1][i].grid()   
+            ax[pblen+1][i].legend() 
             # Normed output of the sample
-            ax[3][i].plot(norm[i], label='Normed output')
-            ax[3][i].grid()
-            ax[3][i].legend()
+            ax[pblen+2][i].plot(norm[i], label='Normed output')
+            ax[pblen+2][i].grid()
+            ax[pblen+2][i].legend()
             # CNN output
-            ax[4][i].imshow(cnnopt[i])
-            ax[4][i].grid()
-
+            ax[pblen+3][i].imshow(cnnopt[i])
+            ax[pblen+3][i].grid()
+        
         name = "noise" if label == 0.0 else "signal"
-        save_path = os.path.join(save_dir, 'verify_normed_{}_{}.png'.format(name, n))
+        savefile_name = 'extremes_io' if extremes_io else 'network_io'
+        save_path = os.path.join(save_dir, '{}_{}_{}.png'.format(savefile_name, name, n))
         fig.subplots_adjust(top=0.95)
         plt.savefig(save_path)
         plt.close()
+
+
+def outputbin_param_distribution(cfg, export_dir, network_output, labels, sample_params, epoch):
+    ## Distribution of bin of network output, compared to entire distribution
+    parent_dir = os.path.join(export_dir, 'OUTBIN_PARAM_DISTR')
+    if not os.path.isdir(parent_dir):
+        os.makedirs(parent_dir, exist_ok=False)
+    save_dir = os.path.join(parent_dir, 'epoch_{}'.format(epoch))
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir, exist_ok=False)
+
+    ## Split the network output distribution for signals into n bins
+    foo = np.ma.masked_where(labels == 1.0, labels)
+    noise_mask = ~foo.mask
+    signal_mask = foo.mask
+    noise_stats = network_output[noise_mask]
+    signal_stats = network_output[signal_mask]
+    # NOTE: Assuming that the distributions have overlap and min_signal < max_noise
+    # NOTE: Expects raw values from network, not sigmoid
+    # These are custom bin edges chosen for experimentation
+    bin_ranges = [(min(signal_stats), 0.0), (min(signal_stats), max(noise_stats)), 
+                 (0.0, max(noise_stats)), (max(noise_stats), max(signal_stats)),
+                 (max(noise_stats), np.median(signal_stats[signal_stats>max(noise_stats)])),
+                 (np.median(signal_stats[signal_stats>max(noise_stats)]), max(signal_stats)),
+                 (0.0, max(signal_stats))]
+    bin_names = ['(min signal stat to 0.0)', '(min signal stat to max noise stat)',
+                 '(0.0 to max noise stat)', '(max noise stat to max signal stat)',
+                 '(max noise stat to median signal stat above worst noise)',
+                 '(median signal stat above worst noise to max signal stat)',
+                 '(0.0 to max signal stat)']
+    ## Using the indices of each bin, get the sample_params for each bin
+    # Histogram kwargs
+    kwargs = dict(histtype='stepfilled', alpha=0.5, bins=100)
+    for n, bin_range in enumerate(bin_ranges):
+        outdir = os.path.join(save_dir, 'bin_range_{}'.format(n))
+        os.makedirs(outdir, exist_ok=False)
+        idxs = np.argwhere((signal_stats > bin_range[0]) & (signal_stats < bin_range[1])).flatten()
+        # Histogram details
+        params = sample_params.keys()
+        ncols = 3
+        nrows = len(params)//ncols + int(len(params)%ncols or False)
+        # Plotting
+        fig, ax = plt.subplots(nrows, ncols, figsize=(8.0*ncols, 6.0*nrows))
+        pidxs = list(itertools.product(range(nrows), range(ncols)))
+        num_fin = 0
+        for (param, distr), (i, j) in zip(sample_params.items(), pidxs):
+            ## Plot the distribution of each param for given bin
+            masked_distr = distr[signal_mask]
+            ax[i][j].hist(masked_distr[idxs], label='binned', color='blue', **kwargs)
+            ax[i][j].hist(masked_distr, label='all', color='red', **kwargs)
+            ax[i][j].set_title(param)
+            ax[i][j].grid(True)
+            ax[i][j].legend()
+            num_fin+=1
+            
+        for i, j in pidxs[num_fin:]:
+            ax[i][j].set_visible(False)
+        
+        plt.tight_layout()
+        save_name = "outbin_distr.png"
+        save_path = os.path.join(outdir, save_name)
+        plt.savefig(save_path)
+        plt.close()
+
+        ## Save a plot of the network output with the bin range highlighted
+        ax, _ = figure(title="{}".format(bin_names[n]))
+        # Signal raw
+        _plot(ax, y=signal_stats, label="Signals",
+              ylabel="log10 Number of Occurences", xlabel="Network Raw Output Values", 
+              yscale='log', histogram=True)
+        # Shade the required region
+        plt.axvline(x=bin_range[0], color='k', ls=':', lw=3, label='lower bin edge = {}'.format(np.round(bin_range[0], 2)))
+        plt.axvline(x=bin_range[1], color='k', ls='--', lw=3, label='upper bin edge = {}'.format(np.round(bin_range[1], 2)))
+        # Save
+        plt.legend()
+        save_path = os.path.join(outdir, "binned_network_output.png")
+        plt.savefig(save_path)
+        plt.close()
+        
+        """
+        ## Save the corner plot version of the above plot for each bin range
+        chainLabels = ["Binned"]
+        samples_binned = []
+        samples_all = []
+        names = []
+        flag = 0
+        for (param, distr) in sample_params.items():
+            names.append(param)
+            masked_distr = distr[signal_mask]
+            samples_binned.append(masked_distr[idxs])
+            samples_all.append(masked_distr)
+            if len(masked_distr[idxs]) == 0:
+                flag = 1
+        
+        if flag:
+            continue
+        # Make the corner plot and save
+        samples_binned = np.stack(samples_binned, axis=0).T
+        samples_all = np.stack(samples_all, axis=0).T
+        names = np.array(names)
+
+        save_path = os.path.join(outdir, "outbin_corner_plot.pdf")
+        GTC = pygtc.plotGTC(chains=[samples_binned],
+                            paramNames=names,
+                            chainLabels=chainLabels,
+                            figureSize='MNRAS_page',
+                            plotName=save_path)
+        """
+
+
+def paramfrac_detected_above_thresh(cfg, export_dir, network_output, labels, sample_params, epoch):
+    ## Fraction detected in bin of network param above a given noise threshold
+    parent_dir = os.path.join(export_dir, 'PARAMFRAC_ABOVE_THRESH')
+    if not os.path.isdir(parent_dir):
+        os.makedirs(parent_dir, exist_ok=False)
+    save_dir = os.path.join(parent_dir, 'epoch_{}'.format(epoch))
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir, exist_ok=False)
+
+    ## Get noise and signal masks 
+    foo = np.ma.masked_where(labels == 1.0, labels)
+    noise_mask = ~foo.mask
+    signal_mask = foo.mask
+    noise_stats = network_output[noise_mask]
+    sorted_noise_stats = np.sort(noise_stats)
+    signal_stats = network_output[signal_mask]
+    ## Make n bins of parameter space for each parameter
+    # We need to ignore all values of -1
+    for param, distr in sample_params.items():
+        # Dir handling
+        out_dir = os.path.join(save_dir, param)
+        os.makedirs(out_dir, exist_ok=False)
+        # Plotting routine
+        fig, ax = plt.subplots(1, 2, figsize=(12.0*2, 8.0*1))
+        plt.suptitle('Epoch {}: Fraction of binned {} above noise thresholds'.format(epoch, param))
+        # Binned parameter distribution
+        _plot(ax[0], y=distr[signal_mask], label="Signals",
+              ylabel="Number of Occurences", xlabel="{} (epoch {})".format(param, epoch), 
+              yscale='linear', histogram=True)
+
+        # Get signal distr (remove -1's from noise)
+        masked_distr = distr[signal_mask]
+        # nbins is arbitrary
+        count, bin_edges = np.histogram(masked_distr, bins=4)
+        # Shade based on bin edges
+        fill_count, _ = np.histogram(masked_distr, bins=100)
+        border = 8
+        y_min, y_max = 0.0, max(fill_count) + border
+        # Random colours we like, woooo
+        # Shoutout to ORChiD. woooo
+        # ...Why am I like this?
+        colours = ['gold', 'forestgreen', 'orchid', 'royalblue', 'orangered', 'gray']
+
+        for n in range(len(bin_edges)-1):
+            bin_range = (bin_edges[n], bin_edges[n+1])
+            idxs = np.argwhere((masked_distr > bin_range[0]) & (masked_distr < bin_range[1])).flatten()
+            ## Mapping to masked and binned network output
+            binmasked_stats = signal_stats[idxs]
+            binmasked_distr = masked_distr[idxs]
+            # Sanity check
+            if len(binmasked_stats) == 0:
+                continue
+            ## Find local fraction of signals above a given noise threshold
+            count_curve = []
+            # Goes from biggest noise stat to smallest
+            for thresh in sorted_noise_stats[::-1]:
+                count_curve.append([thresh, len(binmasked_stats[binmasked_stats>thresh])/len(binmasked_stats)])
+            # convert to numpy
+            count_curve = np.array(count_curve)
+            # Shading the edges
+            low = bin_range[0]
+            up = bin_range[1]
+            ax[0].fill([low, low, up, up], [y_min, y_max, y_max, y_min], color = colours[n], alpha = 0.3)
+            ax[0].set_ylim(y_min, y_max)
+            # Making the count plot
+            _plot(ax[1], x=count_curve[:,0], y=count_curve[:,1], xlabel="Noise Stat Threshold", 
+                  ylabel="Frac Signals Detected above Threshold", ls='solid', c=colours[n], yscale='linear', 
+                  xscale='linear', histogram=False, label="{} to {}, 1FAR/x = {}/{}".format(np.round(bin_range[0], 2), np.round(bin_range[1], 2), 
+                  int(count_curve[:,1][0]*len(binmasked_distr)), len(binmasked_distr)))
+
+            # limits
+            ax[1].set_xlim(min(count_curve[:,0]), max(count_curve[:,0]))
+
+        # Saving plots
+        plt.legend()
+        save_path = os.path.join(out_dir, "paramfrac_{}.png".format(param))
+        plt.savefig(save_path)
+        plt.close()
+
+
+def learning_rate_curve():
+    pass
+
+
+def worst_noise_diagnosis():
+    pass
 
 
 def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
@@ -443,6 +676,7 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     if best_epoch != -1:
         ax.scatter(epochs[best_epoch], training_loss[best_epoch], marker='*', s=200.0, c='k')
         ax.scatter(epochs[best_epoch], validation_loss[best_epoch], marker='*', s=200.0, c='k')
+    plt.legend()
     save_path = os.path.join(export_dir, "loss_curves.png")
     plt.savefig(save_path)
     plt.close()
@@ -462,7 +696,8 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
         if best_epoch != -1:
             ax.scatter(epochs[best_epoch], data[tsearch_name][best_epoch], marker='*', s=300.0, c='k')
             ax.scatter(epochs[best_epoch], data[vsearch_name][best_epoch], marker='*', s=300.0, c='k')
-            
+    
+    plt.legend()
     save_path = os.path.join(export_dir, "pe_loss_curves.png")
     plt.savefig(save_path)
     plt.close()
@@ -475,40 +710,43 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     if best_epoch != -1:
         ax.scatter(epochs[best_epoch], training_accuracy[best_epoch], marker='*', s=300.0, c='k')
         ax.scatter(epochs[best_epoch], validation_accuracy[best_epoch], marker='*', s=300.0, c='k')
+    plt.legend()
     save_path = os.path.join(export_dir, "accuracy_curves.png")
     plt.savefig(save_path)
     plt.close()
 
 
-def batchshuffle_noise(training_labels, training_samples):
+def batchshuffle_noise(training_labels, training_samples, nbatch, nep): 
     # Shuffle the samples between detectors (ONLY FOR PURE NOISE)
     # This procedure should **NOT** be done for signal samples
     noise_idx = np.argwhere(training_labels['gw'].numpy() == 0).flatten()
-    assert len(noise_idx) > 0, "No noise samples found in this batch! Looks a bit sus."
-    det1 = np.copy(noise_idx)
-    det2 = np.copy(noise_idx)
-    # We can use this as upper limit instead of 1e6
-    # Value depends on machine
-    # ii64 = np.iinfo(np.int64)
-    np.random.seed(np.random.randint(0, 1e6))
-    np.random.shuffle(det1)
-    np.random.seed(np.random.randint(0, 1e6))
-    np.random.shuffle(det2)
-    assert det1 != det2, "Noise idx does not seem to be shuffled properly!"
-    shuffler = {foo: (d1, d2) for foo, d1, d2 in zip(noise_idx, det1, det2)}
-    # Shuffle the noise samples within a given detector
-    shuffled_training_samples = []
-    for bidx in range(training_samples.shape[0]):
-        if bidx in noise_idx:
-            d1, d2 = shuffler[bidx]
-            shuffled_training_samples.append([training_samples[d1][0].numpy(), training_samples[d2][1].numpy()])
-        else:
-            shuffled_training_samples.append([training_samples[bidx][0].numpy(), training_samples[bidx][1].numpy()])
-    
-    # Convert the entire batch back to tensors
-    shuffled_training_samples = np.array(shuffled_training_samples)
-    shuffled_training_samples = torch.from_numpy(shuffled_training_samples)
-    return shuffled_training_samples
+    if len(noise_idx) > 0:
+        # assert len(noise_idx) > 0, "No noise samples found in this batch! Looks a bit sus."
+        det1 = np.copy(noise_idx)
+        det2 = np.copy(noise_idx)
+        seed1 = int((nep+1)*1e6 + nbatch + 1)
+        np.random.seed(seed1)
+        np.random.shuffle(det1)
+        seed2 = int((nep+1)*1e6 + nbatch)
+        np.random.seed(seed2)
+        np.random.shuffle(det2)
+        assert seed1 != seed2, "Noise idx have not been shuffled properly. Seeds are the same for detectors!"
+        shuffler = {foo: (d1, d2) for foo, d1, d2 in zip(noise_idx, det1, det2)}
+        # Shuffle the noise samples within a given detector
+        shuffled_training_samples = []
+        for bidx in range(training_samples.shape[0]):
+            if bidx in noise_idx:
+                d1, d2 = shuffler[bidx]
+                shuffled_training_samples.append([training_samples[d1][0].numpy(), training_samples[d2][1].numpy()])
+            else:
+                shuffled_training_samples.append([training_samples[bidx][0].numpy(), training_samples[bidx][1].numpy()])
+                    
+        # Convert the entire batch back to tensors
+        shuffled_training_samples = np.array(shuffled_training_samples)
+        shuffled_training_samples = torch.from_numpy(shuffled_training_samples)
+        return shuffled_training_samples
+    else:
+        return training_samples
 
 
 def consolidated_display(train_time, total_time):
@@ -522,6 +760,12 @@ def consolidated_display(train_time, total_time):
     print('Total time taken = {}s'.format(np.around(total_time, 3)))
     print('----------------------------------------------------------------------')
 
+def pairwise(iterable):
+    # pairwise('ABCDEFG') --> AB BC CD DE EF FG
+    a, b = itertools.tee(iterable)
+    next(b, None)
+    return zip(a, b)
+
 def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_step, 
                    loss_function, training_samples, training_labels, source_params,
                    optional, plot_batch, export_dir):
@@ -529,19 +773,20 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
     # Set zero_grad to apply None values instead of zeroes
     optimizer.zero_grad(set_to_none = True)
     
-    with torch.cuda.amp.autocast():
+    # with torch.cuda.amp.autocast():
+    if True:
         # Obtain training output from network
-        training_output = Network(training_samples, data_cfg)
+        training_output = Network(training_samples)
         
         # Plotting cnn_output in debug mode
         permitted_models = ['KappaModel', 'KappaModelPE']
         # Plotting the normed outputs
         if optional['network_io'] and cfg.model.__name__ in permitted_models:
-            plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels['gw'], nep)
+            plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels['gw'], nep, 'training')
             optional['network_io'] = False
            
         # Loss calculation
-        all_losses = loss_function(training_output, training_labels, cfg.parameter_estimation)
+        all_losses = loss_function(training_output, training_labels, source_params, cfg.parameter_estimation)
         # Backward propogation using loss_function
         training_loss = all_losses['total_loss']
         training_loss.backward()
@@ -553,21 +798,27 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
     # Make the actual optimizer step and save the batch loss
     optimizer.step()
     # Scheduler step
-    if scheduler:
+    if scheduler and False:
         scheduler.step(scheduler_step)
     
     return (all_losses, accuracy)
 
 
-def validation_phase(cfg, data_cfg, Network, loss_function, validation_samples, validation_labels):
+def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samples, validation_labels,
+                     source_params, optional, plot_batch, export_dir):
     # Evaluation of a single validation batch
     with torch.cuda.amp.autocast():
         # Gradient evaluation is not required for validation and testing
         # Make sure that we don't do a .backward() function anywhere inside this scope
         with torch.no_grad():
-            validation_output = Network(validation_samples, data_cfg)
+            validation_output = Network(validation_samples)
+            # Plotting the normed outputs
+            permitted_models = ['KappaModel', 'KappaModelPE']
+            if optional['network_io'] and cfg.model.__name__ in permitted_models:
+                plot_network_io(cfg, export_dir, plot_batch, validation_output, validation_labels['gw'], nep, 'validation')
+                optional['network_io'] = False
             # Calculate validation loss with params if required
-            all_losses = loss_function(validation_output, validation_labels, cfg.parameter_estimation)
+            all_losses = loss_function(validation_output, validation_labels, source_params, cfg.parameter_estimation)
     
     # Accuracy calculation
     accuracy = calculate_accuracy(validation_output['pred_prob'], validation_labels['gw'], cfg.accuracy_thresh)
@@ -575,7 +826,7 @@ def validation_phase(cfg, data_cfg, Network, loss_function, validation_samples, 
     return (all_losses, accuracy, validation_output)
 
 
-def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, trainDL, validDL, verbose=False):
+def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, trainDL, validDL, nepoch, verbose=False):
     
     """
     Train a network on given data.
@@ -606,11 +857,16 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
     """
     
     # Set up sanity check for raytune
-    if cfg.rtune_optimisation:
+    if cfg.rtune_optimise:
         run_id = time.strftime("%d%m%Y_%H-%M-%S")
         export_dir = os.path.join(cfg.export_dir, "run_{}".format(run_id))
     else:
         export_dir = cfg.export_dir
+
+    # Save the run config
+    # Move the config file to the BEST directory
+    # shutil.copy("./configs.py", os.path.join(export_dir, 'configs.py'))
+    # shutil.copy("./data_configs.py", os.path.join(export_dir, 'data_configs.py'))
     
     try:
         """ Training and Validation """
@@ -618,6 +874,9 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
         best_loss = 1.e10 # impossibly bad value
         best_accuracy = 0.0 # bad value
         best_roc_auc = 0.0 # bad value
+        best_low_far_nsignals = 0 # bad value
+        # Best params for weights
+        best_params = {'loss': best_loss, 'accuracy': best_accuracy, 'roc_auc': best_roc_auc, 'low_far_nsignals': best_low_far_nsignals}
         
         # Other
         best_epoch = 0
@@ -633,8 +892,9 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
         for nep in range(cfg.num_epochs):
             
             # Update epoch number in dataset object for training and validation
-            td.epoch = nep
-            vd.epoch = nep
+            nepoch.value = nep
+            # td.get_priors_for_epoch(nep)
+
             # Update first batch plotting tasks toggler
             # TODO: Use this for validation phase as well
             td.plot_on_first_batch = True
@@ -648,7 +908,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             
             # Necessary save and update params
             training_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
-            training_running_loss.update({'tot': 0.0, 'gw': 0.0})
+            training_running_loss.update({'total_loss': 0.0, 'gw': 0.0})
             training_batches = 0
             # Store accuracy params
             acc_train = []
@@ -660,7 +920,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 [1] Do gradient clipping. Set value in cfg.
             """
             print("\nTraining Phase Initiated")
-            pbar = tqdm(trainDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}')
+            pbar = tqdm(trainDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
             
             # Total Number of batches
             num_train_batches = len(trainDL)
@@ -670,17 +930,22 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             
             # Optional things to do during training
             optional['network_io'] = cfg.network_io
-            
+            # Sanity check
+            if cfg.network_io:
+                assert cfg.network_io and td.plot_on_first_batch, "NETWORK_IO option does not work without plot_on_first_batch (training)"
+                assert cfg.network_io and vd.plot_on_first_batch, "NETWORK_IO option does not work without plot_on_first_batch (validation)"
             
             for nbatch, (training_samples, training_labels, source_params, plot_batch) in enumerate(pbar):
                 
                 # BatchShuffle Noise samples for an extra dimension of augmentation
                 if cfg.batchshuffle_noise:
-                    training_samples = batchshuffle_noise(training_labels, training_samples)
+                    training_samples = batchshuffle_noise(training_labels, training_samples, nbatch, nep)
                 
                 # Update params
                 if scheduler:
                     scheduler_step = nep + nbatch / num_train_batches
+                else:
+                    scheduler_step = None
                 
                 # Record time taken for training
                 start_train = time.time()
@@ -741,6 +1006,15 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             # Evaluation on the validation dataset
             Network.eval()
             with torch.no_grad():
+
+                # Optional things to do during training
+                optional['network_io'] = cfg.network_io
+                optional['extremes_io'] = cfg.extremes_io
+
+                # Extremes IO
+                if optional['extremes_io']:
+                    best_epoch_samples = {'signal': {'stat': torch.tensor(-999_999.0)}, 'noise': {'stat': torch.tensor(999_999.0)}}
+                    worst_epoch_samples = {'signal': {'stat': torch.tensor(999_999.0)}, 'noise': {'stat': torch.tensor(-999_999.0)}}
                 
                 # Update validation loss dict
                 validation_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
@@ -755,7 +1029,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 sample_params = None
                 raw_output = np.array([])
                 
-                pbar = tqdm(validDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}')
+                pbar = tqdm(validDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
                 for nbatch, (validation_samples, validation_labels, source_params, plot_batch) in enumerate(pbar):
                     
                     """ Set the device and dtype """
@@ -765,11 +1039,12 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                         
                     """ Call Validation Phase """
                     # Run training phase and get loss and accuracy
-                    validation_loss, accuracy, voutput = validation_phase(cfg, data_cfg, Network, 
-                                                                          loss_function, 
+                    validation_loss, accuracy, voutput = validation_phase(nep, cfg, data_cfg, Network, 
+                                                                          loss_function,
                                                                           validation_samples, 
-                                                                          validation_labels)
-                    
+                                                                          validation_labels, source_params,
+                                                                          optional, plot_batch, export_dir)
+
                     # Display stuff
                     loss = np.around(validation_loss['total_loss'].clone().cpu().item(), 4)
                     pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, validation_batches, loss))
@@ -780,6 +1055,50 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     for key in validation_running_loss.keys():
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
                     
+                    ## Update extremes
+                    if optional['extremes_io']:
+                        enum = validation_labels['gw'].new_tensor(np.arange(len(validation_labels['gw'])))
+                        noise_mask = torch.eq(validation_labels['gw'], 0.0)
+                        signal_mask = torch.eq(validation_labels['gw'], 1.0)
+                        noise_stats = torch.masked_select(voutput['raw'], noise_mask)
+                        signal_stats = torch.masked_select(voutput['raw'], signal_mask)
+                        ## Signal stats
+                        if len(signal_stats)!=0:
+                            # Save signal stats
+                            if torch.max(signal_stats) > best_epoch_samples['signal']['stat']:
+                                maxarg = int(torch.masked_select(enum, signal_mask)[torch.argmax(signal_stats)].item())
+                                best_epoch_samples['signal']['stat'] = torch.max(signal_stats)
+                                best_epoch_samples['signal']['plot_batch'] = [foo[maxarg:maxarg+1] for foo in plot_batch]
+                                best_epoch_samples['signal']['vout_slice'] = slice(maxarg, maxarg+1)
+                                best_epoch_samples['signal']['vlabels'] = validation_labels['gw'][maxarg:maxarg+1]
+                            
+                            if torch.min(signal_stats) < worst_epoch_samples['signal']['stat']:
+                                minarg = int(torch.masked_select(enum, signal_mask)[torch.argmin(signal_stats)].item())
+                                worst_epoch_samples['signal']['stat'] = torch.min(signal_stats)
+                                worst_epoch_samples['signal']['plot_batch'] = [foo[minarg:minarg+1] for foo in plot_batch]
+                                worst_epoch_samples['signal']['vout_slice'] = slice(minarg, minarg+1)
+                                worst_epoch_samples['signal']['vlabels'] = validation_labels['gw'][minarg:minarg+1]
+
+                        ## Noise stats
+                        # Possible error: RuntimeError: min(): Expected reduction dim to be specified for input.numel() == 0. 
+                        # Specify the reduction dim with the 'dim' argument.
+                        # This error means that the argument to min or max is empty.
+                        if len(noise_stats)!=0:
+                            if torch.min(noise_stats) < best_epoch_samples['noise']['stat']: 
+                                minarg = int(torch.masked_select(enum, noise_mask)[torch.argmin(noise_stats)].item())
+                                best_epoch_samples['noise']['stat'] = torch.min(noise_stats)
+                                best_epoch_samples['noise']['plot_batch'] = [foo[minarg:minarg+1] for foo in plot_batch]
+                                best_epoch_samples['noise']['vout_slice'] = slice(minarg, minarg+1)
+                                best_epoch_samples['noise']['vlabels'] = validation_labels['gw'][minarg:minarg+1]
+
+                            if torch.max(noise_stats) > worst_epoch_samples['noise']['stat']: 
+                                maxarg = int(torch.masked_select(enum, noise_mask)[torch.argmax(noise_stats)].item())
+                                worst_epoch_samples['noise']['stat'] = torch.max(noise_stats)
+                                worst_epoch_samples['noise']['plot_batch'] = [foo[maxarg:maxarg+1] for foo in plot_batch]
+                                worst_epoch_samples['noise']['vout_slice'] = slice(maxarg, maxarg+1)
+                                worst_epoch_samples['noise']['vlabels'] = validation_labels['gw'][maxarg:maxarg+1]
+
+
                     # Params for storing labels and outputs
                     if nep % cfg.save_freq == 0:
                         
@@ -787,38 +1106,76 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                         # Detach to remove gradient information from tensors (is this required?)
                         raw_output = np.concatenate([raw_output, voutput['raw'].cpu()])
                         epoch_labels['gw'] = np.concatenate([epoch_labels['gw'], validation_labels['gw'].cpu()])
-                        epoch_outputs['gw'] = np.concatenate([epoch_outputs['gw'], voutput['gw'].cpu()])
+                        epoch_outputs['gw'] = np.concatenate([epoch_outputs['gw'], voutput['pred_prob'].cpu()])
                         
                         # Update source params
-                        # Sicne the keys of source_params are not deterministic
+                        # Since the keys of source_params are not deterministic
                         for key in source_params.keys():
                             dd[key].append(source_params[key].cpu())
-                        sample_params = dict((key, np.concatenate(tuple(val))) for key, val in dd.items())
                         
                         # Add parameter estimation actual and observed values
                         for param in cfg.parameter_estimation:
-                            epoch_labels[param] = np.concatenate(epoch_labels[param], validation_labels[param].cpu())
-                            epoch_outputs[param] = np.concatenate(epoch_outputs[param], voutput[param].cpu())
-                            
+                            epoch_labels[param] = np.concatenate([epoch_labels[param], validation_labels[param].cpu()])
+                            epoch_outputs[param] = np.concatenate([epoch_outputs[param], voutput[param].cpu()])
                 
+                # Convert source params into dictionary of np.ndarray
+                sample_params = dict((key, np.concatenate(tuple(val))) for key, val in dd.items()) 
+                
+                # Update ReduceLronPlateau Scheduler
+                scheduler.step(loss)
+
                 if nep % cfg.save_freq == 0:
-                    
+
                     """ ROC Curve save data """
                     roc_auc, fpr, tpr = roc_curve(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
                     
+                    """ Confusion Matrix and FPR,TPR,FNR,TNR Evolution """
+                    # Confusion matrix and rate evolution plots have been deprecated as of June 10, 2022
+                    # Confusion matrix and rate evolution plots have been reinstated as of May 09, 2023
+
                     """ Prediction Probabilitiy OR Raw Value histograms  """
-                    # Confusion matrix has been deprecated as of June 10, 2022
-                    prediction_raw(nep, raw_output['raw'], epoch_labels['gw'], export_dir)
+                    low_far_nsignals = prediction_raw(nep, raw_output, epoch_labels['gw'], export_dir)
                     prediction_probability(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
                     
                     """ Source parameter vs prediction probabilities OR raw values """
-                    learning_parameter_prior(nep, sample_params, raw_output['raw'], epoch_labels['gw'], 'raw_value', export_dir)
+                    learning_parameter_prior(nep, sample_params, raw_output, epoch_labels['gw'], 'raw_value', export_dir)
                     learning_parameter_prior(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], 'pred_prob', export_dir)
                     
                     """ Value VS Value Plots for PE """
-                    diagonal_compare(nep, epoch_outputs, epoch_labels, source_params['snr'], export_dir)
+                    diagonal_compare(nep, epoch_outputs, epoch_labels, sample_params['network_snr'], export_dir)
+
+                    """ Extremes IO """
+                    if optional['extremes_io']:
+                        tmp = {'best_signal': {}, 'best_noise': {}, 'worst_signal': {}, 'worst_noise': {}}
+                        # Used to store voutput dictionary at specific idx
+                        for key, value in voutput.items():
+                            tmp['best_signal'][key] = value[best_epoch_samples['signal']['vout_slice']]
+                            tmp['best_noise'][key] = value[best_epoch_samples['noise']['vout_slice']]
+                            tmp['worst_signal'][key] = value[worst_epoch_samples['signal']['vout_slice']]
+                            tmp['worst_noise'][key] = value[worst_epoch_samples['noise']['vout_slice']]
+                        
+                        # BEST
+                        plot_network_io(cfg, export_dir, best_epoch_samples['signal']['plot_batch'], tmp['best_signal'], 
+                                        best_epoch_samples['signal']['vlabels'], nep, 'best_signal', extremes_io=True)
+                        plot_network_io(cfg, export_dir, best_epoch_samples['noise']['plot_batch'], tmp['best_noise'], 
+                                        best_epoch_samples['noise']['vlabels'], nep, 'best_noise', extremes_io=True)
+                        # WORST
+                        plot_network_io(cfg, export_dir, worst_epoch_samples['signal']['plot_batch'], tmp['worst_signal'], 
+                                        worst_epoch_samples['signal']['vlabels'], nep, 'worst_signal', extremes_io=True)
+                        plot_network_io(cfg, export_dir, worst_epoch_samples['noise']['plot_batch'], tmp['worst_noise'], 
+                                        worst_epoch_samples['noise']['vlabels'], nep, 'worst_noise', extremes_io=True)
                     
+                    """ Param distribution of network raw output bins """
+                    outputbin_param_distribution(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
+                    
+                    """ Param Fraction Plot """
+                    paramfrac_detected_above_thresh(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
+                    
+                    """ Efficiency Curves """
+                    # efficiency_curves(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], save_name='efficiency_validation', export_dir=export_dir)
+
             
+
             """
             PHASE 3 - TESTING
                 [1] Run the network using the epoch weights on a small testing dataset
@@ -826,6 +1183,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             """
             # Testing the network with the current epoch weights
             if cfg.epoch_testing:
+                print("\nEpoch-Testing Phase Initiated")
                 # Make epoch testing dir
                 epoch_testing_dir = os.path.join(cfg.export_dir, 'EPOCH_TESTING')
                 if not os.path.exists(epoch_testing_dir):
@@ -845,7 +1203,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                         testfile = os.path.join(cfg.epoch_testing_dir, cfg.test_background_dataset)
                         evalfile = os.path.join(output_testing_dir, cfg.test_background_output)
                         
-                    print('\nRunning the testing phase on {} data'.format(job))
+                    print('\nRunning epoch testing on {} data'.format(job))
                     run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
                              step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
                              trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
@@ -877,8 +1235,9 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             epoch_validation_loss = {}
             epoch_training_loss = {}
             for key in training_running_loss.keys():
-                epoch_validation_loss[key] = np.around(validation_running_loss[key]/validation_batches, 4)
-                epoch_training_loss[key] = np.around(training_running_loss[key]/training_batches, 4)
+                _key = "tot" if key == "total_loss" else key
+                epoch_validation_loss[_key] = np.around(validation_running_loss[key]/validation_batches, 4)
+                epoch_training_loss[_key] = np.around(training_running_loss[key]/training_batches, 4)
             
             avg_acc_valid = np.around(sum(acc_valid)/len(acc_valid), 4)
             avg_acc_train = np.around(sum(acc_train)/len(acc_train), 4)
@@ -921,30 +1280,49 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             split_weights_path = os.path.splitext(cfg.weights_path)
             weights_root_name = 'weights'
             weights_file_ext = split_weights_path[1]
-            # Best params for weights
-            best_params = {'loss': best_loss, 'accuracy': best_accuracy, 'roc_auc': best_roc_auc}
-            epoch_params = {'loss': epoch_validation_loss['gw'], 'accuracy': avg_acc_valid, 'roc_auc': roc_auc}
-            param_operator = {'loss': operator.lt, 'accuracy': operator.gt, 'roc_auc': operator.gt}
+            # NOTE: Best loss is considered to be when the GW classification loss is lowest
+            epoch_params = {'loss': epoch_validation_loss['gw'], 'accuracy': avg_acc_valid, 'roc_auc': roc_auc, 'low_far_nsignals': low_far_nsignals}
+            param_operator = {'loss': operator.lt, 'accuracy': operator.gt, 'roc_auc': operator.gt, 'low_far_nsignals': operator.gt}
             
             for wtype in cfg.weight_types:
-                if param_operator(epoch_params[wtype], best_params[wtype]) and wtype in cfg.weight_types:
+                if param_operator[wtype](epoch_params[wtype], best_params[wtype]) and wtype in cfg.weight_types:
                     weights_path = '{}_{}{}'.format(weights_root_name, wtype, weights_file_ext)
                     weights_save_path = os.path.join(export_dir, weights_path)
                     torch.save(Network.state_dict(), weights_save_path)
-                    best_loss = epoch_params[wtype]
                     if cfg.save_best_option == wtype:
                         best_epoch = nep
             
+            # If we want to save the weights at a particular epoch
+            if nep in cfg.save_epoch_weight:
+                weights_path = '{}_{}_{}{}'.format(weights_root_name, wtype, nep, weights_file_ext)
+                weights_save_path = os.path.join(export_dir, weights_path)
+                torch.save(Network.state_dict(), weights_save_path)
+
+            # Update best params irrespective of chosen weight types
+            if epoch_params['loss'] < best_params['loss']:
+                best_params['loss'] = epoch_params['loss']
+            if epoch_params['accuracy'] > best_params['accuracy']:
+                best_params['accuracy'] = epoch_params['accuracy']
+            if epoch_params['roc_auc'] > best_params['roc_auc']:
+                best_params['roc_auc'] = epoch_params['roc_auc']
+            if epoch_params['low_far_nsignals'] > best_params['low_far_nsignals']:
+                best_params['low_far_nsignals'] = epoch_params['low_far_nsignals']
+
+            """ Update Scheduler """
+            # ReduceLRonPlateau requires scheduler to be updated with epoch validation loss
+            scheduler.step(epoch_params['loss'])
+
             """ RayTune Logging """
-            with tune.checkpoint_dir(nep) as checkpoint_dir:
-                path = os.path.join(checkpoint_dir, "checkpoint")
-                torch.save((Network.state_dict(), optimizer.state_dict()), path)
+            if cfg.rtune_optimise: 
+                with tune.checkpoint_dir(nep) as checkpoint_dir:
+                    path = os.path.join(checkpoint_dir, "checkpoint")
+                    torch.save((Network.state_dict(), optimizer.state_dict()), path)
             
-            tune.report(loss=epoch_validation_loss['gw'], accuracy=avg_acc_valid)
+                tune.report(loss=epoch_validation_loss['gw'], accuracy=avg_acc_valid)
             
             
             """ Epoch Display """
-            print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_loss))
+            print("\nBest Validation Loss (wrt all past epochs) = {}".format(best_params['loss']))
             
             print('\n----------------------------------------------------------------------')
             print("Average losses in Validation Phase:")
@@ -972,6 +1350,13 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 if overfitting_check > 3:
                     print("\nThe current model may be overfitting! Terminating.")
                     break
+
+            """ Stop run if stop folder made in export directory """
+            stop_dir = os.path.join(export_dir, 'stop')
+            if os.path.exists(stop_dir):
+                print('\nTerminating pipeline: Logs and outputs will be moved to the export dir.')
+                os.remove(stop_dir)
+                break
     
     
     except KeyboardInterrupt:
@@ -981,23 +1366,22 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
         
     print("\n==========================================================================\n")
     print("Training Complete!")
-    print("Best validation loss = {}".format(best_loss))
-    print("Best validation accuracy = {}".format(best_accuracy))
-    
-    # Saving best epoch results
-    best_dir = os.path.join(export_dir, 'BEST')
-    if not os.path.isdir(best_dir):
-        os.makedirs(best_dir, exist_ok=False)
+    print("Best validation loss = {}".format(best_params['loss']))
+    print("Best validation accuracy = {}".format(best_params['accuracy']))
+    print("Best ROC AUC = {}".format(best_params['roc_auc']))
+    print()
     
     try:
+        # Saving best epoch results
+        best_dir = os.path.join(export_dir, 'BEST')
+        if not os.path.isdir(best_dir):
+            os.makedirs(best_dir, exist_ok=False)
+        
         # Move premade plots
         roc_dir = 'ROC'
         roc_file = "roc_curve_{}.png".format(best_epoch)
         roc_path = os.path.join(export_dir, os.path.join(roc_dir, roc_file))
         shutil.copy(roc_path, os.path.join(best_dir, roc_file))
-        # Save best ROC curve raw data
-        np.save(os.path.join(best_dir, 'roc_best.npy'), np.stack(best_roc_data[:2], axis=0))
-        np.save(os.path.join(best_dir, 'roc_auc_best.npy'), np.array(best_roc_data[2]))
         
         # Best prediction probabilities
         pred_dir = 'PRED_RAW'
@@ -1017,36 +1401,49 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             src_best_features = os.path.join(export_dir, 'CNN_OUTPUT/epoch_{}'.format(best_epoch))
             dst_best_features = os.path.join(best_dir, 'CNN_features_epoch_{}'.format(best_epoch))
             copy_tree(src_best_features, dst_best_features)
+        
         # Move best diagonal plots
         src_best_diagonals = os.path.join(export_dir, 'DIAGONAL/epoch_{}'.format(best_epoch))
         dst_best_diagonals = os.path.join(best_dir, 'diagonal_epoch_{}'.format(best_epoch))
         copy_tree(src_best_diagonals, dst_best_diagonals)
+        # Move network_io and learn params
+        if cfg.network_io:
+            src_best_networkio = os.path.join(export_dir, 'NETWORK_IO/training/epoch_{}'.format(best_epoch))
+            dst_best_networkio = os.path.join(best_dir, 'network_io/training/epoch_{}'.format(best_epoch))
+            copy_tree(src_best_networkio, dst_best_networkio)
+            src_best_networkio = os.path.join(export_dir, 'NETWORK_IO/validation/epoch_{}'.format(best_epoch))
+            dst_best_networkio = os.path.join(best_dir, 'network_io/validation/epoch_{}'.format(best_epoch))
+            copy_tree(src_best_networkio, dst_best_networkio)
+        # Learn params
+        src_best_learn = os.path.join(export_dir, 'LEARN_PARAMS/epoch_{}'.format(best_epoch))
+        dst_best_learn = os.path.join(best_dir, 'learn_params_epoch_{}'.format(best_epoch))
+        copy_tree(src_best_learn, dst_best_learn)
         
         # Remake loss curve and accuracy curve with best epoch marked
         loss_and_accuracy_curves(cfg, loss_filepath, best_dir, best_epoch=best_epoch)
-    
-    except:
-        pass
-    
-    # Move the config file to the BEST directory
-    copy_tree("./configs.py", os.path.join(best_dir, 'configs.py'))
-    copy_tree("./data_configs.py", os.path.join(best_dir, 'data_configs.py'))
-            
-    # Move weights to BEST dir
-    weights_save_paths = glob.glob(os.path.join(export_dir, '*.pt'))
-    for wpath in weights_save_paths:
-        if os.path.exists(wpath):
-            foo = os.path.split(wpath)
-            shutil.move(wpath, os.path.join(best_dir, foo[1]))
+        
+        # Move weights to BEST dir
+        weights_save_paths = glob.glob(os.path.join(export_dir, '*.pt'))
+        for wpath in weights_save_paths:
+            if os.path.exists(wpath):
+                foo = os.path.split(wpath)
+                shutil.move(wpath, os.path.join(best_dir, foo[1]))
+            else:
+                pass
+                
+        # Return the trained network with the best possible weights
+        # This step is mandatory before the inference/testing module
+        split_weights_path = os.path.splitext(cfg.weights_path)
+        weights_root_name = 'weights'
+        weights_file_ext = split_weights_path[1]
+        weights_path = '{}_{}{}'.format(weights_root_name, cfg.save_best_option, weights_file_ext)
+        if os.path.exists(weights_path):
+            Network.load_state_dict(torch.load(os.path.join(best_dir, weights_path)))
         else:
-            pass
-            
-    # Return the trained network with the best possible weights
-    # This step is mandatory before the inference/testing module
-    weights_path = '{}_{}{}'.format(weights_root_name, cfg.save_best_option, weights_file_ext)
-    if os.path.exists(weights_path):
-        Network.load_state_dict(torch.load(os.path.join(best_dir, weights_path)))
-    else:
-        Network = None
+            Network = None
+
+    except Exception as e:
+        foo = traceback.format_exception(*sys.exc_info())
+        print("Received a {} error while saving data in BEST directory.".format(e))
     
     return Network
