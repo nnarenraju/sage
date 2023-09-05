@@ -315,6 +315,8 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
         
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
         iterable = tqdm(data_loader, desc="Testing Dataset") if verbose else data_loader
+        # Prettification with max trigger
+        max_trigger = torch.tensor(-999)
         
         for slice_batch, slice_times in iterable:
             
@@ -333,9 +335,15 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                 for slice_time, trigger_bool, output_value in zip(slice_times, trigger_bools, raw_values):
                     if trigger_bool.clone().cpu().item():
                         triggers.append([slice_time.clone().cpu().item(), output_value.clone().cpu().item()])
+                
+                # Prettification
+                max_trigger = torch.max(max_trigger, torch.max(raw_values))
+                iterable.set_description("Max Trigger = {}".format(max_trigger.cpu().detach().item()))
         
         print("A total of {} slices have exceeded the threshold of {}".format(len(triggers), trigger_threshold))
         _triggers = np.array(triggers)
+        if len(_triggers) == 0:
+            raise ValueError("No triggers found when searching for events!")
         print('raw values of output: max = {}, min = {}'.format(max(_triggers[:,1]), min(_triggers[:,1])))
     
     return triggers
@@ -524,4 +532,4 @@ if __name__ == "__main__":
     raw_args += ['--verbose']
     
     # Running the evaluator to obtain output triggers (with clustering)
-    evaluator(raw_args, far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
+    evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
