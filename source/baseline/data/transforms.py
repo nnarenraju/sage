@@ -27,33 +27,44 @@ Documentation: NULL
 import os
 import random
 import numpy as np
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, sosfiltfilt, resample
 
 # LOCAL
 from data.multirate_sampling import multirate_sampling
+from data.snr_calculation import get_network_snr
 # from data.parallel_transforms import Parallelise
 
 # PyCBC
+import pycbc
 from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
 from pycbc.types import TimeSeries
+
+# Time Stretching
+import librosa
+import pyrubberband
 
 # Addressing HDF5 error with file locking (used to address PSD file read error)
 # PSD file read has been moved to dataset object. (DEPRECATED)
 # os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 
+""" UTILS """
+
+def coin(pof1=0.5):
+    return 1 if np.random.random() < pof1 else 0
+
 
 """ WRAPPERS """
 
 class Unify:
-    def __init__(self, transforms: list):
+    def __init__(self, transforms: dict):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
+    def __call__(self, y: np.ndarray, special: dict, key=None):
         transforms = {}
-        for transform in self.transforms:
+        for transform in self.transforms[key]:
             name = transform.__class__.__name__
-            y = transform(y, psds, data_cfg)
+            y = transform(y, special)
             transforms[name] = y
         transforms['sample'] = y
         return transforms
@@ -63,19 +74,17 @@ class UnifySignal:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
-        aug = {}
-        aug['signal'] = y
+    def __call__(self, y: np.ndarray, params: dict, special: dict, debug=None):
         for transform in self.transforms:
-            aug = transform(aug, dets, distrs, debug, **params)
-        return aug
+            y, params, special = transform(y, params, special, debug)
+        return (y, params, special)
 
 
 class UnifyNoise:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, debug=''):
+    def __call__(self, y: np.ndarray, debug=None):
         for transform in self.transforms:
             y = transform(y, debug)
         return y
@@ -85,9 +94,9 @@ class TransformWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
+    def __call__(self, y: np.ndarray, special: dict):
         if self.always_apply:
-            return self.apply(y, psds, data_cfg)
+            return self.apply(y, special)
         else:
             pass
 
@@ -96,14 +105,13 @@ class TransformWrapperPerChannel(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply=always_apply)
     
-    def __call__(self, y: np.ndarray, psds=None, data_cfg=None):
+    def __call__(self, y: np.ndarray, special: dict):
         channels = y.shape[0]
         # Store transformed array
         augmented = []
         for channel in range(channels):
             if self.always_apply:
-                data = y[channel]
-                augmented.append(self.apply(data, channel, psds[channel], data_cfg))
+                augmented.append(self.apply(y[channel], channel, special))
             else:
                 pass
         return np.stack(augmented, axis=0)
@@ -113,9 +121,9 @@ class SignalWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
+    def __call__(self, y: np.ndarray, params: dict, special: dict, debug=None):
         if self.always_apply:
-            return self.apply(y, dets, distrs, debug, **params)
+            return self.apply(y, params, special, debug)
         else:
             pass
 
@@ -148,18 +156,37 @@ class Buffer(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
+    def apply(self, y: np.ndarray, special: dict):
         return y
 
 
 class Normalise(TransformWrapperPerChannel):
-    def __init__(self, always_apply=True, factors=[1.0, 1.0]):
+    def __init__(self, always_apply=True, factors=[1.0, 1.0], ignore_factors=False):
         super().__init__(always_apply)
         assert len(factors) == 2
         self.factors = factors
+        self.ignore_factors = ignore_factors
 
-    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
-        return y / self.factors[channel]
+    def apply(self, y: np.ndarray, channel: int, special: dict):
+        if not self.ignore_factors:
+            norm = y / self.factors[channel]
+        else:
+            std = (y - np.min(y)) / (np.max(y) - np.min(y))
+            max_range = 1
+            min_range = 0
+            norm = std * (max_range - min_range) + min_range
+        return norm
+
+
+class Resample(TransformWrapperPerChannel):
+    def __init__(self, always_apply=True, factor=2.):
+        super().__init__(always_apply)
+        self.factor = factor
+
+    def apply(self, y: np.ndarray, channel: int, special: dict):
+        new_len = int(len(y) * self.factor)
+        resampled = resample(y, new_len)
+        return resampled
 
 
 class BandPass(TransformWrapper):
@@ -182,7 +209,7 @@ class BandPass(TransformWrapper):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
+    def apply(self, y: np.ndarray, special: dict):
         return self.butter_bandpass_filter(y)
 
 
@@ -204,7 +231,7 @@ class HighPass(TransformWrapper):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, psds=None, data_cfg=None):
+    def apply(self, y: np.ndarray, special: dict):
         # Parallelise HighPass filter
         return self.butter_highpass_filter(y)
 
@@ -216,54 +243,25 @@ class Whiten(TransformWrapperPerChannel):
         self.trunc_method = trunc_method
         self.remove_corrupted = remove_corrupted
         self.estimated = estimated
+        self.median_psd = []
         
     def whiten(self, signal, psd, data_cfg):
-        """
-        Return a whitened time series
-
-        Parameters
-        ----------
-        signal : time_series object
-            TimeSeries object of the sample
-        psd : frequency_series
-            PSD used to create the noise_sample
-            For dataset 2 & 3, separate file paths for each detector would be given.
-            These files are read and passed as frequency_series objects to psd
-        max_filter_duration : int
-            Maximum length of the time-domain filter in seconds.
-        trunc_method : {None, 'hann'}
-            Function used for truncating the time-domain filter.
-            None produces a hard truncation at `max_filter_len`.
-        remove_corrupted : {True, boolean}
-            If True, the region of the time series corrupted by the whitening
-            is excised before returning. If false, the corrupted regions
-            are not excised and the full time series is returned.
-        low_frequency_cutoff : {None, float}
-            Low frequency cutoff to pass to the inverse spectrum truncation.
-            This should be matched to a known low frequency cutoff of the
-            data if there is one.
-
-        Returns
-        -------
-        whitened_data : TimeSeries
-            The whitened time series
-        
-        """
-        
+        """ Return a whitened time series """
+        # Convert signal to Timeseries object
+        signal = TimeSeries(signal, delta_t=1./data_cfg.sample_rate)
+        # Filter length for inverse spectrum truncation
         max_filter_len = int(round(data_cfg.whiten_padding * data_cfg.sample_rate))
         
-        """ 
-        Manipulate PSD for usage in whitening 
-        This need not be done (i think) as the psds are created based on signal len anyway
-        What would we do when we start using multi-rate sampling?
-        """
+        ## Manipulate PSD for usage in whitening
+        ## Interpolation is probably not required as the psds are created based on signal len anyway
         # Calculating delta_f of signal and providing that to the PSD interpolation method
         delta_f = data_cfg.delta_f
         # Interpolate the PSD to the required delta_f
-        # NOTe: This may or may not be required (enable if there is a discrepancy in delta_f)
+        # NOTE: This may or may not be required (enable if there is a discrepancy in delta_f)
+        # Possible bug: It is possible that the sample lengths are not consistent in Dataloader
         # psd = interpolate(psd, delta_f)
         
-        """ Whitening """
+        ## Whitening
         # Whiten the data by the asd
         if self.estimated:
             ### Estimate the PSD
@@ -273,148 +271,413 @@ class Whiten(TransformWrapperPerChannel):
             seg_stride = int(seg_len / 2)
             psd = welch(signal[:int(8.*2048.)], seg_len=seg_len, seg_stride=seg_stride)
             psd = interpolate(psd, delta_f)
-
+            self.median_psd.append(psd)
+            self.median_psd = [np.median(self.median_psd, axis=0)]
+            psd = self.median_psd[0]
         else:
             # Interpolate and smooth to the desired corruption length
             psd = inverse_spectrum_truncation(psd,
                                               max_filter_len=max_filter_len,
                                               low_frequency_cutoff=data_cfg.noise_low_freq_cutoff,
-                                              trunc_method=self.trunc_method)    
+                                              trunc_method=self.trunc_method)
         
+        # NOTE: Factor of dt not taken into account. Since layernorm takes care of standardisation,
+        # we don't necessarily need to include this. After decorrelation, the diagonal matrix 
+        # values will not be 1 but some other value dependant on the signal input.
         white = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5).to_timeseries()
         
         if self.remove_corrupted:
             white = white[int(max_filter_len/2):int(len(white)-max_filter_len/2)]
-            
+
         return white
     
-    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
-        # Convert signal to TimeSeries object
-        # --> many signals
-        # signals = [TimeSeries(signal, delta_t=1./data_cfg.sample_rate) for signal in y]
-        signal = TimeSeries(y, delta_t=1./data_cfg.sample_rate)
-        # Whitening
-        whitened_sample = self.whiten(signal, psd, data_cfg)
-        return whitened_sample
+    def apply(self, y: np.ndarray, channel: int, special: dict):
+        # Whitening using approximate PSD
+        return self.whiten(y, special['psds'][channel], special['data_cfg'])
 
 
 class MultirateSampling(TransformWrapperPerChannel):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, channel: int, psd=None, data_cfg=None):
+    def apply(self, y: np.ndarray, channel: int, special: dict):
         # Call multi-rate sampling module for usage
         # This module is kept separate since further experimentation might be required
-        return multirate_sampling(y, data_cfg)
-    
+        return multirate_sampling(y, special['data_cfg'])
+
 
 
 """ Signal only Transformations """
+
+class GenerateNewSignal(SignalWrapper):
+    ## Used to augment on all parameters (might be too slow)
+    # Produces a new set of h_plus and h_cross arrays
+    # Make batch_size priots in dataset object and pass waveform_kwargs one by one
+    # Other signal augmentation methods are not required unless it changes the prior distribution.
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+        self.waveform_kwargs = {}
+        self.waveform_kwargs['delta_t'] = 1./2048.
+        self.waveform_kwargs['f_lower'] = 20.0 # Hz
+        self.waveform_kwargs['approximant'] = 'IMRPhenomXPHM'
+        self.waveform_kwargs['f_ref'] = 20.0 # Hz
+
+        self.signal_length = 20.0 # seconds 
+        self.whiten_padding = 5.0 # seconds
+        self.sample_rate = 2048. # Hz
+        self.sample_length_in_s = self.signal_length + self.whiten_padding # seconds
+        self.sample_length_in_num = round(self.sample_length_in_s * self.sample_rate)
+        self.error_padding_in_s = 0.5 # seconds
+        self.error_padding_in_num = round(self.error_padding_in_s * self.sample_rate)
+        self.signal_low_freq_cutoff = 20.0 # Hz
+
+    def optimise_fmin(self, h_pol):
+        # Use self.waveform_kwargs to calculate the fmin for given params
+        # Such that the length of the sample is atleast 20s by the time it reaches fmin
+        # This DOES NOT mean we produce signals that are exactly 20s long
+        current_start_time = -1*h_pol.get_sample_times()[0]
+        req_start_time = self.signal_length - h_pol.get_sample_times()[-1]
+        fmin = self.signal_low_freq_cutoff*(current_start_time/req_start_time)**(3./8.)
+        
+        while True:
+            # fmin_new is the fmin required for the current params to produce 20.0s signal
+            self.waveform_kwargs['f_lower'] = fmin
+            h_plus, h_cross = pycbc.waveform.get_td_waveform(**self.waveform_kwargs)
+            # Sanity check to verify the new signal length
+            new_signal_length = len(h_plus)/self.sample_rate
+            if new_signal_length > self.signal_length:
+                break
+            else:
+                fmin = fmin - 3.0
+            
+        # Return new signal
+        return h_plus, h_cross
+
+    def generate(self, prior_values):
+        # Convert np.record object to dict and append to waveform_kwargs dict
+        self.waveform_kwargs.update(prior_values)
+        
+        ## Injection
+        # Generate the full waveform
+        h_plus, h_cross = pycbc.waveform.get_td_waveform(**self.waveform_kwargs)
+        # If the signal is smaller than 20s, we change fmin such that it is atleast 20s
+        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] < self.signal_length:
+            # Pass h_plus or h_cross
+            h_plus, h_cross = self.optimise_fmin(h_plus)
+        
+        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] > self.signal_length:
+            new_end = h_plus.get_sample_times()[-1]
+            new_start = -1*(self.signal_length - new_end)
+            h_plus = h_plus.time_slice(start=new_start, end=new_end)
+            h_cross = h_cross.time_slice(start=new_start, end=new_end)
+        
+        ## Properly time and project the waveform (What there is)
+        start_time = prior_values['injection_time'] + h_plus.get_sample_times()[0]
+        end_time = prior_values['injection_time'] + h_plus.get_sample_times()[-1]
+        
+        # Calculate the number of zeros to append or prepend (What we need)
+        # Whitening padding will be corrupt and removed in whiten transformation
+        start_samp = prior_values['tc'] + (self.whiten_padding/2.0)
+        start_interval = prior_values['injection_time'] - start_samp
+        # subtract delta value for length error (0.001 if needed)
+        end_padding = self.whiten_padding/2.0
+        post_merger = self.signal_length - prior_values['tc']
+        end_interval = prior_values['injection_time'] + post_merger + end_padding
+        
+        # Calculate the difference (if any) between two time sets
+        diff_start = start_time - start_interval
+        diff_end = end_interval - end_time
+        # Convert num seconds to num samples
+        diff_end_num = int(diff_end * self.sample_rate)
+        diff_start_num = int(diff_start * self.sample_rate)
+        
+        expected_length = ((end_interval-start_interval) + self.error_padding_in_s*2.0) * self.sample_rate
+        observed_length = len(h_plus) + (diff_start_num + diff_end_num + self.error_padding_in_num*2.0)
+        diff_length = expected_length - observed_length
+        if diff_length != 0:
+            diff_end_num += diff_length
+            
+        # If any positive difference exists, add padding on that side
+        # Pad h_plus and h_cross with zeros on both end for slicing
+        if diff_end > 0.0:
+            # Append zeros if we need samples after signal ends
+            h_plus.append_zeros(int(diff_end_num + self.error_padding_in_num))
+            h_cross.append_zeros(int(diff_end_num + self.error_padding_in_num))
+        
+        if diff_start > 0.0:
+            # Prepend zeros if we need samples before signal begins
+            # prepend_zeros arg must be an integer
+            h_plus.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
+            h_cross.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
+
+        elif diff_start < 0.0:
+            h_plus = h_plus.crop(left=-1*((diff_start_num + self.error_padding_in_num)/2048.), right=0.0)
+            h_cross = h_cross.crop(left=-1*((diff_start_num + self.error_padding_in_num)/2048.), right=0.0)
+        
+        assert len(h_plus) == self.sample_length_in_num + self.error_padding_in_num*2.0
+        assert len(h_cross) == self.sample_length_in_num + self.error_padding_in_num*2.0
+        
+        # Setting the start_time, sets epoch and end_time as well within the TS
+        # Set the start time of h_plus and h_plus after accounting for prepended zeros
+        h_plus.start_time = start_interval - self.error_padding_in_s
+        h_cross.start_time = start_interval - self.error_padding_in_s
+        # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
+        strains = [det.project_wave(h_plus, h_cross, prior_values['ra'], prior_values['dec'], prior_values['polarization'], method='constant') for det in self.dets]
+        # Put both strains together
+        time_interval = (start_interval, end_interval)
+        signal = np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
+
+        return signal
+
+    def apply(self, y: np.ndarray, params: dict, special: dict, debug=None):
+        # Sanity check for validation
+        if not special['training']:
+            return (y, params, special)
+        # Set lal.Detector object as global as workaround for MP methods
+        # Project wave does not work with DataLoader otherwise
+        setattr(self, 'dets', special['dets'])
+        # Augmentation on all params
+        out = self.generate(params)
+        # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
+        # Shape remains the same, so reading in dataset object won't be a problem
+        return (out, params, special)
+
 
 class AugmentPolSky(SignalWrapper):
     """ Used to augment polarisation angle, ra and dec """
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def augment(self, h_plus, h_cross, pol_angle, sky_pos, il, iu, st):
+    def augment(self, signals, params, special):
+        ## Get random value (with a given prior) for polarisation angle, ra, dec
+        # Polarisation angle
+        pol_angle = special['distrs']['pol'].rvs()[0][0]
+        # Right ascension, declination
+        sky_pos = special['distrs']['sky'].rvs()[0]
+        # Times
+        time_interval = (params['interval_lower'], params['interval_upper'])
+        start_time = params['start_time']
+        # h+ and hx
+        h_plus = signals[0]
+        h_cross = signals[1]
+
         declination, right_ascension = sky_pos
         # Using PyCBC project_wave to get h_t from h_plus and h_cross
         # Setting the start_time is important! (too late, too early errors are because of this)
-        h_plus = TimeSeries(h_plus, delta_t=1./self.sample_rate)
-        h_cross = TimeSeries(h_cross, delta_t=1./self.sample_rate)
+        h_plus = TimeSeries(h_plus, delta_t=1./params['sample_rate'])
+        h_cross = TimeSeries(h_cross, delta_t=1./params['sample_rate'])
         # Set start times
-        h_plus.start_time = st
-        h_cross.start_time = st
+        h_plus.start_time = start_time
+        h_cross.start_time = start_time
         
         # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
-        strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle, method='constant') for det in self.dets]
-        time_interval = (il, iu)
+        strains = [det.project_wave(h_plus, h_cross, right_ascension, declination, pol_angle) for det in self.dets]
         # Put both strains together
-        return np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
-    
+        augmented_signal = np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
+        # Update params
+        params['declination'] = declination
+        params['right_ascension'] = right_ascension
+        params['polarisation_angle'] = pol_angle
+        
+        return (augmented_signal, params)
 
-    def apply(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
-        # Get Augmentation params
-        for key, value in params.items():
-            setattr(self, key, value)
-        # Get signal from input dict
-        signal = y['signal']
-        
+    def apply(self, y: np.ndarray, params: dict, special: dict, debug=None):
         # Set lal.Detector object as global as workaround for MP methods
-        setattr(self, 'dets', dets)
-        
-        ## Get random value (with a given prior) for polarisation angle, ra, dec
-        # Polarisation angle
-        # maxlen = len(signal[0]) --> many signals
-        pol_angles = distrs['pol'].rvs()[0][0]
-        # Right ascension, declination
-        sky_positions = distrs['sky'].rvs()[0]
-        
-        if debug != '':
-            with open(os.path.join(debug, 'save_augment_pol.txt'), 'a') as fp:
-                fp.write("{} ".format(pol_angles))
-            with open(os.path.join(debug, 'save_augment_ra.txt'), 'a') as fp:
-                fp.write("{} ".format(sky_positions[0]))
-            with open(os.path.join(debug, 'save_augment_dec.txt'), 'a') as fp:
-                fp.write("{} ".format(sky_positions[1]))
-        
-        times = (self.interval_lower, self.interval_upper, self.start_time, )
-        args = (signal[0], signal[1], pol_angles, sky_positions, ) + times
-        out = self.augment(*args)
-        
-        """
-        # Sanity check for sample_length
-        for strain in strains:
-            to_append = self.sample_length_in_num - len(strain)
-            if to_append>0:
-                strain.append_zeros(to_append)
-            if len(strain) != self.sample_length_in_num:
-                raise ValueError("Sample length greater than expected!")
-        """
-        
+        # Project wave does not work with DataLoader otherwise
+        setattr(self, 'dets', special['dets'])
+        # Augmentation on polarisation and sky position
+        out, params = self.augment(y, params, special)
+        # Update params
+        params.update(params)
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         # Shape remains the same, so reading in dataset object won't be a problem
-        y['signal'] = out
-        return y
+        return (out, params, special)
 
 
 class AugmentDistance(SignalWrapper):
     """ Used to augment the distance parameter of the given signal """
-    def __init__(self, always_apply=True):
+    def __init__(self, always_apply=True, uniform_dchirp=False):
         super().__init__(always_apply)
+        self.uniform_dchirp = uniform_dchirp
 
-    def get_augmented_signal(self, signal, distance, mchirp, distrs, debug):
-        distance_old = distance
+    def get_augmented_signal(self, signal, params, distrs, debug):
+        # Get old params
+        distance_old = params['distance']
+        mchirp = params['mchirp']
         # Getting new distance
-        chirp_distance = distrs['dchirp'].rvs()[0][0]
+        if self.uniform_dchirp:
+            chirp_distance = np.random.uniform(130., 350., size=1)[0]
+        else:
+            chirp_distance = distrs['dchirp'].rvs()[0][0]
         # Producing the new distance with the required priors
         distance_new = chirp_distance * (2.**(-1./5) * 1.4 / mchirp)**(-5./6)
         
-        if debug != '':
-            with open(os.path.join(debug, 'save_augment_distance_old.txt'), 'a') as fp:
-                fp.write("{} ".format(distance_old))
-            with open(os.path.join(debug, 'save_augment_distance_new.txt'), 'a') as fp:
-                fp.write("{} ".format(distance_new))
-            with open(os.path.join(debug, 'save_augment_dchirp.txt'), 'a') as fp:
-                fp.write("{} ".format(chirp_distance))
+        ## Augmenting on the distance
+        augmented_signal = (distance_old/distance_new) * signal
+        # Update params
+        params['distance'] = distance_new
+        params['dchirp'] = chirp_distance
+        return (augmented_signal, params)
+
+    def apply(self, y: np.ndarray, params: dict, special: dict, debug=None):
+        # Augmenting on distance parameter
+        # Unpack required elements from special for augmentation
+        distrs = special['distrs']
+        norms = special['norm']
+        # Run through the augmentation procedure with given dist, mchirp
+        out, params = self.get_augmented_signal(y, params, distrs, debug)
+        # Update params
+        params.update(params)
+        # Update special
+        special['norm_dist'] = norms['dist'].norm(params['distance'])
+        special['norm_dchirp'] = norms['dchirp'].norm(params['dchirp'])
+        # Send back the rescaled signal and updated dicts
+        return (out, params, special)
+
+
+class AugmentUniformChirpMass(SignalWrapper):
+    """ Used to augment the mchirp parameter of the given signal """
+    def __init__(self, always_apply=True, p=1.0):
+        super().__init__(always_apply)
+
+    def get_augmented_signal(self, signal, params, mchirp_lower, mchirp_upper):
+        # Get old params
+        mchirp_old = params['mchirp']
+        # Getting new chirp mass
+        mchirp_new = np.random.uniform(mchirp_lower, mchirp_upper, size=1)[0]
+        # Get new signal duration from new chirp mass
+        lf = 20.0 # Hz
+        G = 6.67e-11
+        c = 3.0e8 # ms^-1
+        tau_old = 5. * (8.*np.pi*lf)**(-8./3.) * (mchirp_old*1.989e30*G/c**3.)**(-5./3.)
+        tau_new = 5. * (8.*np.pi*lf)**(-8./3.) * (mchirp_new*1.989e30*G/c**3.)**(-5./3.)
         
         ## Augmenting on the distance
-        return ((distance_old/distance_new) * signal, distance_new, chirp_distance)
+        rate = tau_old/tau_new
+        # augmented_signal = [pyrubberband.pyrb.time_stretch(foo, sr=2048, rate=rate) for foo in signal]
+        augmented_signal = [librosa.effects.time_stretch(foo, rate=rate) for foo in signal]
+        # Time slice the required 20 second portion of the signal using tc param
+        tc_in_num_old = int(params['tc']*2048.)
+        tc_in_num_new = int((tc_in_num_old)/rate)
+        # Add padding on either side before slicing
+        augmented_signal = [np.pad(foo, (int(25.0*2048), int(5.0*2048)), 'constant') for foo in augmented_signal]
+        # Time slicing while retaining the old time of coalescence
+        llimit = (int(25.0*2048)+tc_in_num_new) - (tc_in_num_old + int(2.5*2048))
+        ulimit = (int(25.0*2048)+tc_in_num_new) + (int(20.0*2048)-tc_in_num_old) + int(2.5*2048)
+        augmented_signal = [foo[llimit:ulimit] for foo in augmented_signal]
+        augmented_signal = np.stack(augmented_signal, axis=0)
+        # Update params
+        params['mchirp'] = mchirp_new
+        return (augmented_signal, params)
 
-    def apply(self, y: np.ndarray, dets=None, distrs=None, debug='', **params):
+    def apply(self, y: np.ndarray, params: dict, special: dict, debug=None):
         # Augmenting on distance parameter
-        for key, value in params.items():
-            setattr(self, key, value)
-        # Get the signal from input dict
-        signal = y['signal']
+        # Unpack required elements from special for augmentation
+        mchirp_lower, mchirp_upper = special['limits']['mchirp']
+        # Run through the augmentation procedure
+        out, params = self.get_augmented_signal(y, params, mchirp_lower, mchirp_upper)
+        # Update params
+        params.update(params)
+        # Update special
+        norms = special['norm']
+        special['norm_mchirp'] = norms['mchirp'].norm(params['mchirp'])
+        # Send back the rescaled signal and updated dicts
+        return (out, params, special)
+
+
+class AugmentOptimalNetworkSNR(SignalWrapper):
+    """ Used to augment the SNR distribution of the dataset """
+    def __init__(self, always_apply=True, rescale=True, p=1.0):
+        super().__init__(always_apply)
+        # If rescale is False, AUG method returns original network_snr, norm_snr and signal
+        self.rescale = rescale
+        self.p = p
+
+    def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
+        # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
+        # Returns the chirp distance given the luminosity distance and chirp mass.
+        return dist * (2.**(-1./5) * ref_mass / mchirp)**(5./6)
+
+    def get_rescaled_signal(self, signal, psds, params, cfg, debug, training, epoch):
+        # params: This will contain params var found in __getitem__ method of custom dataset object
+        # Get original network SNR
+        prelim_network_snr = get_network_snr(signal, psds, params, cfg.export_dir, debug)
         
-        # Augmentation should be valid if given a batch of signals
-        # Run through the augmentation procedure with given dist, mchirp
-        out, new_distance, new_dchirp = self.get_augmented_signal(signal, self.distance, self.mchirp, distrs, debug)
-        y['signal'] = out
-        y['dist'] = new_distance
-        y['dchirp'] = new_dchirp
-        return y
+        if self.rescale:
+            coin = 1 if np.random.random() <= 0.33 else 0
+            if coin and False:
+                target_snr = 5.0
+            else:
+                # Rescaling the SNR to a uniform distribution within a given range
+                rescaled_snr_lower = cfg.rescaled_snr_lower if training else 5.0
+                rescaled_snr_upper = cfg.rescaled_snr_upper if training else 15.0
+                
+                # Curriculum learning with SNR
+                if epoch < 4:
+                    rescaled_snr_lower = 12.5 
+                    rescaled_snr_upper = 25.0
+                elif epoch >= 4 and epoch < 6:
+                    rescaled_snr_lower = 8.5
+                    rescaled_snr_upper = 25.0
+                elif epoch >= 6 and epoch < 8:
+                    rescaled_snr_lower = 5.0
+                    rescaled_snr_upper = 8.5
+                elif epoch >= 8 and epoch < 10:
+                    rescaled_snr_lower = 5.0
+                    rescaled_snr_upper = 12.5
+                elif epoch >= 10 and epoch < 14:
+                    rescaled_snr_lower = 5.0
+                    rescaled_snr_upper = 25.0
+                
+                # Uniform on SNR range
+                target_snr = np.random.uniform(rescaled_snr_lower, rescaled_snr_upper)
+
+            rescaling_factor = target_snr/prelim_network_snr
+            # Add noise to rescaled signal
+            rescaled_signal = signal * rescaling_factor
+            
+            # Adjust distance parameter for signal according to the new rescaled SNR
+            rescaled_distance = params['distance'] / rescaling_factor
+            rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
+            # Update targets and params with new rescaled distance is not possible
+            # We do not know the priors of network_snr properly
+            if 'norm_dist' in cfg.parameter_estimation or 'norm_dchirp' in cfg.parameter_estimation:
+                raise RuntimeError('rescale_snr option cannot be used with dist/dchirp PE!')
+            # Update the params dictionary with new rescaled distances
+            params['distance'] = rescaled_distance
+            params['dchirp'] = rescaled_dchirp
+            # Add network snr to params as well
+            params['network_snr'] = target_snr
+        else:
+            # Default option returns only network snr
+            params['network_snr'] = prelim_network_snr
+            rescaled_signal = signal
+
+        return (rescaled_signal, params)
+
+    def apply(self, y: np.ndarray, params: dict, special: dict, debug=None):
+        # Rescaling based on biased coin
+        coin = 1 if np.random.random() <= self.p else 0
+        if coin:
+            self.rescale = True
+        else:
+            self.rescale = False
+        # Unpack required elements from special for augmentation
+        psds = special['psds']
+        cfg = special['cfg']
+        training = special['training']
+        norms = special['norm']
+        epoch = special['epoch']
+        # Augmentation on optimal network SNR
+        out, params = self.get_rescaled_signal(y, psds, params, cfg, debug, training, epoch)
+        # Update params
+        params.update(params)
+        # Update special
+        special['network_snr'] = params['network_snr']
+        special['norm_snr'] = norms['snr'].norm(params['network_snr'])
+        self.rescale = True
+        # Send back the rescaled signal and updated dicts
+        return (out, params, special)
 
 
 
@@ -428,7 +691,8 @@ class CyclicShift(NoiseWrapper):
     def apply(self, y: np.ndarray, debug=''):
         # Cyclic shifting noise is possible for artificial and real noise
         num_roll = [random.randint(0, y.shape[1]), random.randint(0, y.shape[1])]
-        return np.array([np.roll(foo, num_roll[n]) for n, foo in enumerate(y)])
+        augmented_noise = np.array([np.roll(foo, num_roll[n]) for n, foo in enumerate(y)])
+        return augmented_noise
 
 
 class AugmentPhase(NoiseWrapper):
@@ -447,6 +711,7 @@ class AugmentPhase(NoiseWrapper):
         f = np.arange(len(noise_fft[0])) * df
         # We have turned off shift in time until properly debugged (March 16th, 2023)
         # augmented_noise_fft = [foo*np.exp(2j*np.pi*f*dt[n] + 1j*dphi) for n, foo in enumerate(noise_fft)]
+        # NOTE: We are excluding time shifts here for now. They seem to introduce artifacts in the noise after whitening.
         augmented_noise_fft = [foo * np.exp(1j*dphi) for n, foo in enumerate(noise_fft)]
         # Go back to time domain and we should have augmented noise
         augmented_noise = np.array([np.fft.irfft(foo) for foo in augmented_noise_fft])
