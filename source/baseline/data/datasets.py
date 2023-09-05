@@ -34,9 +34,15 @@ import numpy as np
 
 from torch.utils.data import Dataset
 from statsmodels.tsa.stattools import adfuller
+import matplotlib.pyplot as plt
+plt.rcParams.update({'font.size': 16})
 
 
 # LOCAL
+from data.psd_loader import load_psds
+from data.prior_modifications import *
+from data.distributions import get_distributions
+from data.normalisation import get_normalisations
 from data.snr_calculation import get_network_snr
 from data.plot_dataloader_unit import plot_unit
 from data.multirate_sampling import get_sampling_rate_bins
@@ -47,6 +53,7 @@ from pycbc import distributions
 from pycbc.types import TimeSeries
 from pycbc.types import FrequencySeries
 from pycbc.psd import welch, interpolate
+from pycbc.distributions.utils import draw_samples_from_config
 
 # Datatype for storage
 tensor_dtype=torch.float32
@@ -96,8 +103,9 @@ class MLMDC1(Dataset):
         self.data_cfg = data_cfg
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         self.epoch = -1
-        self.plot_on_first_batch = True
+        self.plot_on_first_batch = self.cfg.plot_on_first_batch
         self.nplot_on_first_batch = 0
+        self.plot_batch_fnames = []
         
         self.training = training
         
@@ -109,115 +117,71 @@ class MLMDC1(Dataset):
         """ PSD Handling (used in whitening) """
         # Store the PSD files here in RAM. This reduces the overhead when whitening.
         # Read all psds in the data_dir and store then as FrequencySeries
-        self.PSDs = {}
-        psd_files = glob.glob(os.path.join(self.data_loc, "psds/*"))
-        for psd_file in psd_files:
-            with h5py.File(psd_file, 'r') as fp:
-                data = np.array(fp['data'])
-                delta_f = fp.attrs['delta_f']
-                name = fp.attrs['name']
-                
-            psd_data = FrequencySeries(data, delta_f=delta_f)
-            # Store PSD data into lookup dict
-            self.PSDs[name] = psd_data
-        
-        if self.data_cfg.dataset == 1:
-            self.psds_data = [self.PSDs['aLIGOZeroDetHighPower']]*2
-        else:
-            self.psds_data = [self.PSDs['median_det1'], self.PSDs['median_det2']]
+        self.psds_data = load_psds(self.data_loc, self.data_cfg)
             
-        
         """ Multi-rate Sampling """
         # Get the sampling rates and their bins idx
-        data_cfg.dbins = get_sampling_rate_bins(data_cfg)
-        
+        self.data_cfg.dbins = get_sampling_rate_bins(self.data_cfg)
         
         """ LAL Detector Objects (used in project_wave - AugPolSky) """
         # Detector objects (these are lal objects and may present problems when parallelising)
         # Create the detectors (TODO: generalise this!!!)
         self.detectors_abbr = ('H1', 'L1')
-        self.detectors = []
-        for det_abbr in self.detectors_abbr:
-            self.detectors.append(pycbc.detector.Detector(det_abbr))
-        
+        self.detectors = [pycbc.detector.Detector(det_abbr) for det_abbr in self.detectors_abbr]
         
         """ PyCBC Distributions (used in AugPolSky and AugDistance) """
         ## Distribution objects for augmentation
-        # Used for obtaining random polarisation angle
-        self.uniform_angle_distr = distributions.angular.UniformAngle(uniform_angle=(0., 2.0*np.pi))
-        # Used for obtaining random ra and dec
-        self.skylocation_distr = distributions.sky_location.UniformSky()
-        # Used for obtaining random mass
-        self.mass_distr = distributions.Uniform(mass=(data_cfg.prior_low_mass, data_cfg.prior_high_mass))
-        # Used for obtaining random chirp distance
-        dist_gen = distributions.power_law.UniformRadius
-        self.chirp_distance_distr = dist_gen(distance=(data_cfg.prior_low_chirp_dist, 
-                                                       data_cfg.prior_high_chirp_dist))
-        # Distributions object
-        self.distrs = {'pol': self.uniform_angle_distr, 'sky': self.skylocation_distr,
-                       'mass': self.mass_distr, 'dchirp': self.chirp_distance_distr}
-        
-        
+        self.distrs = get_distributions(self.data_cfg)
+
         """ Normalising the augmented params (if needed) """
-        # Normalise chirp mass
-        ml = self.data_cfg.prior_low_mass
-        mu = self.data_cfg.prior_high_mass
-        # m2 will always be slightly lower than m1, but (m, m) will give limit
-        # that the mchirp will never reach but tends to as num_samples tends to inf.
-        # Range for mchirp can be written as --> (min_mchirp, max_mchirp)
-        min_mchirp = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
-        max_mchirp = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
+        ## Normnalisation dict
+        self.norm, self.limits = get_normalisations(self.cfg, self.data_cfg)
+
+        """ Weighting the custom BCE loss using the input prior distributions of parameters """
+        # injnames = ['mass1', 'mass2', 'ra', 'dec', 'inclination', 'coa_phase', 'polarization',
+        #            'chirp_distance', 'spin1_a', 'spin1_azimuthal', 'spin1_polar', 'spin2_a',
+        #            'spin2_azimuthal', 'spin2_polar', 'tc', 'tcsamp', 'spin1x', 'spin1y', 'spin1z',
+        #            'spin2x', 'spin2y', 'spin2z', 'mchirp', 'q', 'distance']
         
-        # Get distance ranges from chirp distance priors
-        # mchirp present in numerator of self.distance_from_chirp_distance.
-        # Thus, min_mchirp for dist_lower and max_mchirp for dist_upper
-        dist_lower = self._dist_from_dchirp(self.data_cfg.prior_low_chirp_dist, min_mchirp)
-        dist_upper = self._dist_from_dchirp(self.data_cfg.prior_high_chirp_dist, max_mchirp)
-        # get normlised distance class
-        self.norm_dist = Normalise(min_val=dist_lower, max_val=dist_upper)
-        
-        # Normalise chirp distance
-        self.norm_dchirp = Normalise(min_val=self.data_cfg.prior_low_chirp_dist, 
-                                     max_val=self.data_cfg.prior_high_chirp_dist)
-        # Normalise the mass ratio 'q'
-        self.norm_q = Normalise(min_val=1.0, max_val=mu/ml)
-        self.norm_invq = Normalise(min_val=0.0, max_val=1.0)
-        
-        # Normalise the SNR
-        self.norm_snr = Normalise(min_val=self.cfg.rescaled_snr_lower,
-                                  max_val=self.cfg.rescaled_snr_upper)
-        
-        # All normalisation variables
-        self.norm = {}
-        self.norm['dist'] = self.norm_dist
-        self.norm['dchirp'] = self.norm_dchirp
-        self.norm['q'] = self.norm_q
-        self.norm['invq'] = self.norm_invq
-        self.norm['snr'] = self.norm_snr
-        
-        
+        """
+        injections_file = os.path.join(self.data_loc, "injections/injections_1.hdf")
+        with h5py.File(injections_file, "r") as foo:
+            # Attributes of file        
+            injections = np.asarray(foo['data'])
+            injections = np.asarray([list(foo) for foo in injections])
+        """
+        # Get the number of GW signals within each bin of injections
+        # We do this for all params, to be used within custom losses
+        self.weighted_bce_data = {}
+        #for param in self.cfg.weighted_bce_loss_params:
+        #    self.weighted_bce_data[param] = np.histogram(injections, bins=64)
+
         """ Data Save Params (for plotting sample just before training) """
         if self.data_cfg.num_sample_save == None:
             self.num_sample_save = 100
         else:
             self.num_sample_save = data_cfg.num_sample_save
         
-        
         """ Random noise realisation """
         self.noise_idx = np.argwhere(self.targets == 0).flatten()
         self.noise_norm_idx = np.arange(len(self.noise_idx))
         self.noise_paths = self.data_paths[self.noise_idx]
-        
         
         """ Keep ExternalLink Lookup table open till end of run """
         lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
         self.extmain = h5py.File(lookup, 'r', libver='latest')
         self.sample_rate = self.extmain.attrs['sample_rate']
         self.noise_low_freq_cutoff = self.extmain.attrs['noise_low_freq_cutoff']
+
+        """ Dataset 1 PSD """
+        psd_fun = pycbc.psd.analytical.aLIGOZeroDetHighPower
+        self.unet_psds = [psd_fun(self.data_cfg.psd_len, self.data_cfg.delta_f, self.data_cfg.noise_low_freq_cutoff) for _ in range(2)]
+        self.noise_generator = pycbc.noise.gaussian.frequency_noise_from_psd
         
         """ numpy random """
         self.np_gen = np.random.default_rng()
         
+        ## DEBUG
         self.debug = cfg.debug
         if self.debug:
             self.debug_dir = os.path.join(cfg.export_dir, 'DEBUG')
@@ -225,7 +189,27 @@ class MLMDC1(Dataset):
                 os.makedirs(self.debug_dir, exist_ok=False)
         else:
             self.debug_dir = ''
-        
+
+        ## SPECIAL
+        self.special = {}
+        self.special['distrs'] = self.distrs
+        self.special['norm'] = self.norm
+        self.special['cfg'] = self.cfg
+        self.special['data_cfg'] = self.data_cfg
+        self.special['dets'] = self.detectors
+        self.special['psds'] = self.psds_data
+        self.special['default_keys'] = self.special.keys()
+        self.special['training'] = self.training
+        self.special['limits'] = self.limits
+
+        # Set epoch priors (if required)
+        self.priors = None
+
+        ## Ignore Params
+        self.ignore_params = {'start_time', 'interval_lower', 'interval_upper', 
+                              'sample_rate', 'noise_low_freq_cutoff', 'declination', 
+                              'right_ascension', 'polarisation_angle'}
+
 
     def __len__(self):
         return len(self.data_paths)
@@ -253,11 +237,11 @@ class MLMDC1(Dataset):
             noise_2 = np.array(group['noise_2'][didx])
             sample = np.stack([noise_1, noise_2], axis=0)
             # Dummy noise params
-            targets['norm_dchirp'] = -1
-            targets['norm_dist'] = -1
+            #targets['norm_dchirp'] = -1
+            #targets['norm_dist'] = -1
             targets['norm_mchirp'] = -1
-            targets['norm_q'] = -1
-            targets['norm_invq'] = -1
+            #targets['norm_q'] = -1
+            #targets['norm_invq'] = -1
             targets['norm_tc'] = -1
             # Dummy params
             params['mass1'] = -1
@@ -265,6 +249,11 @@ class MLMDC1(Dataset):
             params['distance'] = -1
             params['mchirp'] = -1
             params['dchirp'] = -1
+            params['tc'] = -1
+            #params['chirp_distance'] = -1
+            #params['q'] = -1
+            #params['invq'] = -1
+            params['network_snr'] = -1
         else:
             ## Read signal data
             h_plus = np.array(group['h_plus'][didx])
@@ -278,12 +267,16 @@ class MLMDC1(Dataset):
             params['mass2'] = group['mass2'][didx]
             params['distance'] = group['distance'][didx]
             params['mchirp'] = group['mchirp'][didx]
+            params['tc'] = group['tc'][didx]
+            #params['chirp_distance'] = group['chirp_distance'][didx]
+            #params['q'] = group['q'][didx]
+            #params['invq'] = group['invq'][didx]
             # Target params
-            targets['norm_dchirp'] = group['norm_dchirp'][didx]
-            targets['norm_dist'] = group['norm_dist'][didx]
+            # targets['norm_dchirp'] = group['norm_dchirp'][didx]
+            # targets['norm_dist'] = group['norm_dist'][didx]
             targets['norm_mchirp'] = group['norm_mchirp'][didx]
-            targets['norm_q'] = group['norm_q'][didx]
-            targets['norm_invq'] = group['norm_invq'][didx]
+            #targets['norm_q'] = group['norm_q'][didx]
+            #targets['norm_invq'] = group['norm_invq'][didx]
             targets['norm_tc'] = group['norm_tc'][didx]
         
         # Generic params
@@ -305,28 +298,21 @@ class MLMDC1(Dataset):
         return dist * (2.**(-1./5) * ref_mass / mchirp)**(5./6)
     
     
-    def _augmentation_(self, sample, target, params, debug):
+    def _augmentation_(self, sample, target, params, mode=None):
         """ Signal and Noise only Augmentation """
-        ## Convert the signal from h_plus and h_cross to h_t and augment
-        # Get augmented values if they affect the parameter estimation labels
-        augmented_labels = {}
+        if mode == None:
+            raise ValueError('Augmentation mode not chosen!')
         
-        if target and self.signal_only_transforms:
-            aug_sample = self.signal_only_transforms(sample, self.detectors, self.distrs, self.debug_dir, **params)
-            sample = aug_sample['signal']
-            # Change the values of augmented parameters for sample and update corresponding labels (if needed)
-            augkeys = [foo for foo in aug_sample.keys() if foo != 'signal']
-            for augkey in augkeys:
-                augmented_labels['norm_'+augkey] = self.norm[augkey].norm(aug_sample[augkey])
-                # Update the distance parameter according to the new augmented distance
-                # Generalise this to include all params
-                if augkey == 'dist':
-                    params['distance'] = aug_sample[augkey]
+        ## Noise and Signal Augmentation
+        if target and self.signal_only_transforms and mode=='signal':
+            self.special['epoch'] = self.epoch.value
+            sample, params, _special = self.signal_only_transforms(sample, params, self.special, self.debug_dir)
+            self.special.update(_special)
         
-        elif not target and self.noise_only_transforms:
+        elif not target and self.noise_only_transforms and mode=='noise':
             sample = self.noise_only_transforms(sample, self.debug_dir)
         
-        return sample, augmented_labels, params
+        return sample, params
     
     
     def _noise_realisation_(self, sample, targets, params):
@@ -346,43 +332,12 @@ class MLMDC1(Dataset):
             # in noise added to signals without augmenting this noise as well. 
             # Bug fixes to noise augmentation completed. Artifacts should now not be introduced to noise.
             # Solution: Whitening has to be done before cyclic shift of noise. 
-            pure_noise, _, _ = self._augmentation_(pure_noise, target_noise, params_noise, self.debug)
-            
-            """ Calculation of Network SNR (use pure signal, before adding noise realisation) """
-            prelim_network_snr = get_network_snr(sample, self.psds_data, params, self.cfg.export_dir, self.debug)
+            # transformed_noise = self._transforms_(pure_noise, key='stage1')
+            pure_noise, _ = self._augmentation_(pure_noise, target_noise, params_noise, mode='noise')
             
             """ Adding noise to signals """
-            if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):
-                # TODO: Add SNR rescaling to transforms module
-                if self.cfg.rescale_snr:
-                    # Rescaling the SNR to a uniform distribution within a given range
-                    # target_snr = self.np_gen.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
-                    target_snr = np.random.uniform(self.cfg.rescaled_snr_lower, self.cfg.rescaled_snr_upper)
-                    
-                    rescaling_factor = target_snr/prelim_network_snr
-                    # Add noise to rescaled signal
-                    noisy_signal = pure_noise + (sample * rescaling_factor)
-                    
-                    # Adjust distance parameter for signal according to the new rescaled SNR
-                    rescaled_distance = params['distance'] / rescaling_factor
-                    rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
-                    # Update targets and params with new rescaled distance is not possible
-                    # We do not know the priors of network_snr properly
-                    if 'norm_dist' in self.cfg.parameter_estimation or 'norm_dchirp' in self.cfg.parameter_estimation:
-                        raise RuntimeError('rescale_snr option cannot be used with dist/dchirp PE!')
-                    # Update final network SNR to new value given by target SNR
-                    network_snr = target_snr
-                    norm_snr = self.norm_snr.norm(network_snr)
-                    # Update the params dictionary with new rescaled distances
-                    params['distance'] = rescaled_distance
-                    params['dchirp'] = rescaled_dchirp
-                else:
-                    network_snr = prelim_network_snr
-                    if 'norm_snr' in self.cfg.parameter_estimation:
-                        raise RuntimeError('rescale_snr option is off. Cannot use norm_snr PE!')
-                    norm_snr = -1
-                    noisy_signal = sample + pure_noise
-                    
+            if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray): 
+                noisy_signal = sample + pure_noise
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
             
@@ -394,30 +349,17 @@ class MLMDC1(Dataset):
             # If the sample is pure noise
             noisy_signal = sample
             pure_noise = sample
-            # For pure noise sample, we could calculate the matched filter SNR and set a target
-            # This value will be very low, but could help improve FAR
-            if self.cfg.network_snr_for_noise:
-                raise NotImplementedError('SNR for noise samples under construction!')
-                network_snr = get_network_snr(sample, self.psds_data, params, None, False)
-                norm_snr = self.norm_snr.norm(network_snr)
-            else:
-                network_snr = -1
-                norm_snr = -1
         
-        # Update target and params
-        targets['norm_snr'] = norm_snr
-        params['network_snr'] = network_snr
-        
-        return (noisy_signal, pure_noise, targets, params)
+        return (noisy_signal, pure_noise)
     
     
-    def _transforms_(self, noisy_sample):
+    def _transforms_(self, sample, key=None):
         """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
-            sample_transforms = self.transforms(noisy_sample, self.psds_data, self.data_cfg)
+            sample_transforms = self.transforms(sample, self.special, key=key)
         else:
-            sample_transforms = noisy_sample
+            sample_transforms = {'sample': sample}
         
         return sample_transforms
     
@@ -426,7 +368,9 @@ class MLMDC1(Dataset):
         """ Plotting idx data (if flag is set to True) """
         # Input parameters
         if self.transforms:
-            trans_pure_signal = self.transforms(pure_sample, self.psds_data, self.data_cfg)
+            trans_pure_signal = self.transforms(pure_sample, self.special, key='stage1')
+            update_transforms = self.transforms(trans_pure_signal['sample'], self.special, key='stage2')
+            trans_pure_signal.update(update_transforms)
         else:
             trans_pure_signal = None
         
@@ -492,8 +436,10 @@ class MLMDC1(Dataset):
                                  H0 cannot be rejected. Sample is non-stationary.".format(p_value))
                 
     
-    def target_handling(self, targets, aug_targets, params):
+    def target_handling(self, targets, params):
         # Gather up all parameters required for training and validation
+        # NOTE: We can't use structured arrays here as PyTorch does not support it yet.
+        #       Dictionaries are slow but it does the job.
         """ Targets """
         ## Storing targets as dictionary
         all_targets = {}
@@ -501,32 +447,38 @@ class MLMDC1(Dataset):
         all_targets.update(targets)
         # Update parameter labels if augmentation changed them
         # aug_labels must have the same keys as targets dict
-        all_targets.update(aug_targets)
+        target_update = {foo: self.special[foo] for foo in self.special.keys() if foo not in self.special['default_keys']}
+        # Exception
+        if 'norm_snr' not in target_update.keys():
+            target_update['norm_snr'] = -1
+
+        # Update targets dict
+        all_targets.update(target_update)
+
+        # Add the weighted BCE loss terms into all_targets
+        # all_targets['weighted_bce_data'] = self.weighted_bce_data
         
         """ Source Parameters """
         ## Add sample params to all_targets variable
         source_params = {}
-        source_params['snr'] = params['network_snr']
         # Distance and dchirp could have been alterred when rescaling SNR
-        source_params['distance'] = params['distance']
-        if 'dchirp' in params.keys():
-            source_params['dchirp'] = params['dchirp']
-        else:
+        source_params.update(params)
+
+        ## Exceptions
+        for foo in self.ignore_params:
+            if foo in source_params.keys():
+                source_params.pop(foo)
+
+        if 'dchirp' not in params.keys():
             source_params['dchirp'] = self._dchirp_from_dist(params['distance'], params['mchirp'])
             
-        ## Other params should be unalterred
-        source_params['mchirp'] = params['mchirp']
-        source_params['mass1'] = params['mass1']
-        source_params['mass2'] = params['mass2']
-        
         if targets['gw']:
-            # Written as m2/m1. Different from PyCBC format of m1/m2. m1>m2 in both cases.
-            source_params['q'] = params['mass2']/params['mass1']
             # Calculating the duration of the given signal
             lf = self.data_cfg.signal_low_freq_cutoff
-            source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * params['mchirp']**(-5./3.)
+            G = 6.67e-11
+            c = 3.0e8
+            source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * (params['mchirp']*1.989e30*G/c**3.)**(-5./3.)
         else:
-            source_params['q'] = -1
             source_params['signal_duration'] = -1
         
         return all_targets, source_params
@@ -545,28 +497,134 @@ class MLMDC1(Dataset):
         
         ## Test for non-stationarity of sample
         self.adfuller_test(sample_transforms['sample'])
-        
     
+
+    def get_priors_for_epoch(self, random_seed):
+        ## Generate source prior parameters
+        # A path to the .ini file.
+        ini_parent = './data/ini_files'
+        CONFIG_PATH = '{}/ds{}.ini'.format(ini_parent, self.data_cfg.dataset)
+        
+        # Draw num_waveforms number of samples from ds.ini file
+        priors = draw_samples_from_config(path=CONFIG_PATH,
+                                          num=self.data_cfg.num_waveforms,
+                                          seed=random_seed)
+        
+        ## MODIFICATIONS ##
+        if self.data_cfg.modification != None and isinstance(self.data_cfg.modification, str):
+            # Check for known modifications
+            if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
+                _mass1, _mass2 = get_uniform_masses(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.num_waveforms)
+                # Masses used for mass ratio need not be used later as mass1 and mass2
+                # We calculate them again after getting chirp mass
+                q = q_from_uniform_mass1_mass2(_mass1, _mass2)
+
+            if self.data_cfg.modification == 'uniform_signal_duration':
+                # Get chirp mass from uniform signal duration
+                tau_lower, tau_upper = get_tau_priors(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.signal_low_freq_cutoff)
+                mchirp = mchirp_from_uniform_signal_duration(tau_lower, tau_upper, self.data_cfg.num_waveforms, self.data_cfg.signal_low_freq_cutoff)
+
+            elif self.data_cfg.modification == 'uniform_chirp_mass':
+                # Get uniform chirp mass
+                mchirp = get_uniform_mchirp(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.num_waveforms)
+
+            else:
+                raise ValueError("get_priors: Unknown modification ({}) added to data_cfg.modification!".format(self.data_cfg.modification))
+
+            if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
+                # Using mchirp and q, get mass1 and mass2
+                mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
+                # Get chirp distances using the power law distribution
+                dchirp = np.asarray([self.distrs['dchirp'].rvs()[0][0] for _ in range(self.data_cfg.num_waveforms)])
+                # Get distance from chirp distance and chirp mass
+                distance = self._dist_from_dchirp(dchirp, mchirp)
+                ## Update Priors
+                priors['q'] = q
+                priors['mchirp'] = mchirp
+                priors['mass1'] = mass1
+                priors['mass2'] = mass2
+                priors['chirp_distance'] = dchirp
+                priors['distance'] = distance
+                
+        elif self.data_cfg.modification != None and not isinstance(self.data_cfg.modification, str):
+            raise ValueError("get_priors: Unknown data type used in data_cfg.modification!")
+        
+        self.priors = iter(priors)
+
+
     def __getitem__(self, idx):
         
         # Setting the unique seed for given sample
         np.random.seed(idx+1)
+        
         # Get data paths for external link
         data_path = self.data_paths[idx]
+        # Get data from ExternalLink'ed lookup file
+        HDF5_Dataset, didx = os.path.split(data_path)
+        # If we are generating signals on the fly, we do not need to access data via extlinks.hdf
+        gencondition = 'GenerateNewSignal' in [foo.__class__.__name__ for foo in self.cfg.transforms['signal'].transforms] and self.training
+        if gencondition and (1 if bool(re.search('signal', HDF5_Dataset)) else 0):
+            # Dummy sample to handle to transforms wrapper
+            sample = np.empty([2, 2])
+            # Generate signal params from given prior and convert to dict (to be used as waveform_kwargs)
+            # Run this once per epoch for the required number of waveforms
+            params = next(self.priors)
+            params = dict(zip(params.dtype.names, params))
+            params['sample_rate'] = self.sample_rate
+            params['noise_low_freq_cutoff'] = self.noise_low_freq_cutoff
+            params['dchirp'] = params['chirp_distance']
+            # Create target for signal params
+            targets = {}
+            targets['gw'] = 1
+            targets['norm_tc'] = self.norm['tc'].norm(params['tc'])
+            targets['norm_mchirp'] = self.norm['mchirp'].norm(params['mchirp'])
+        else:
+            ## Read the sample(s)
+            sample, targets, params = self._read_(data_path)
         
-        ## Read the sample(s)
-        sample, targets, params = self._read_(data_path)
-        
-        ## Signal and Noise Augmentation
-        pure_sample, aug_targets, params = self._augmentation_(sample, targets['gw'], params, self.debug)
+        ## Signal Augmentation
+        pure_sample, params = self._augmentation_(sample, targets['gw'], params, mode='signal')
+        keys = list(params.keys())[:]
+        for key in keys:
+            if key not in ['mass1', 'mass2', 'distance', 'mchirp', 'tc', 'dchirp', 'network_snr']:
+                params.pop(key, None)
+
         ## Add noise realisation to the signals
-        noisy_sample, pure_noise, targets, params = self._noise_realisation_(pure_sample, targets, params)
+        noisy_sample, pure_noise = self._noise_realisation_(pure_sample, targets, params)
         
-        ## Transforms
-        sample_transforms = self._transforms_(noisy_sample)
+        ## Noise Augmentation
+        if self.training:
+            noisy_sample, params = self._augmentation_(noisy_sample, targets['gw'], params, mode='noise')
+
+        ## Transformation Stage 1 (HighPass and Whitening)
+        # These transformations are possible for pure noise before augmentation
+        # NOTE: Cyclic shifting and phase augmentation cannot be performed before whitening
+        #       The discontinuities in the sample will cause issues.
+        # sample_transforms['sample'] will always provide the output of the last performed transform
+        sample_transforms = self._transforms_(noisy_sample, key='stage1')
+
+        ## Transformation Stage 2 (Multirate Sampling)
+        mrsampling = self._transforms_(sample_transforms['sample'], key='stage2')
+        # With the update 'sample' should point to mrsampled data
+        # but still contain all other transformations in the correct key.
+        sample_transforms.update(mrsampling)
         
+        ## Creating a UNet target using pure signal and white Gaussian noise
+        """
+        noise = [self.noise_generator(psd).to_timeseries()[:pure_sample.shape[-1]] for psd in self.unet_psds]
+        if targets['gw']:
+            unet_signal = pure_sample + noise
+            unet_transforms = self._transforms_(unet_signal, key='stage1')
+            unet_transforms = self._transforms_(unet_transforms['sample'], key='stage2')
+            targets['whitened'] = unet_transforms['sample'][:, :3680]
+        else:
+            unet_transforms = self._transforms_(noise, key='stage1')
+            unet_transforms = self._transforms_(unet_transforms['sample'], key='stage2')
+            targets['whitened'] = unet_transforms['sample'][:, :3680]
+        """
+
         ## Targets and Parameters Handling
-        all_targets, source_params = self.target_handling(targets, aug_targets, params)
+        all_targets, source_params = self.target_handling(targets, params)
         
         ## DEBUG Modules
         if self.debug:
@@ -581,26 +639,29 @@ class MLMDC1(Dataset):
         
         # Reducing memory footprint
         # This can only be performed after transforms and augmentation
-        sample = np.array(sample_transforms['sample'], dtype=np.float32)
+        _sample = np.array(sample_transforms['sample'], dtype=np.float32)
+        sample = _sample[:].copy()
         
         # Tensorification
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
-        
         # First batch processes
-        plot_batch = []
         if self.plot_on_first_batch:
-            plot_batch += [noisy_sample/max(abs(noisy_sample)), ]
-            plot_batch += [sample_transforms['HighPass']/max(abs(sample_transforms['HighPass'])), ]
-            plot_batch += [sample_transforms['Whiten'], ]
-            plot_batch += [sample_transforms['MultirateSampling'], ]
+            # NOTE: Structured arrays are faster but PyTorch does not support them.
+            #       Dictionaries are slower but they do the job.
             # Convert all samples into float16 for the sake of saving memory
-            # Also use .copy() for some arrays as PyTorch does not support data with negative stride
-            plot_batch = [np.array(foo, dtype=np.float16).copy() for foo in plot_batch]
-            self.nplot_on_first_batch = len(plot_batch)
+            # Also, use .copy() for some arrays as PyTorch does not support data with negative stride
+            nsamp = (pure_sample/max(abs(pure_sample[0]))).astype(np.float16).copy()
+            hpass = (sample_transforms['HighPass']/max(abs(sample_transforms['HighPass'][0]))).astype(np.float16).copy()
+            white = (sample_transforms['Whiten']).astype(np.float16).copy()
+            # msamp = (sample_transforms['MultirateSampling']).astype(np.float16).copy()
+            msamp = (sample_transforms['Whiten']).astype(np.float16).copy()
+            plot_batch = [nsamp, hpass, white, msamp]
+            self.plot_batch_fnames = ['PureSample', 'HighPass', 'Whiten', 'MRSampling']
+            self.nplot_on_first_batch = 4
         else:
             plot_batch = [None] * self.nplot_on_first_batch
-        
+
         return (sample, all_targets, source_params, plot_batch)
 
 
