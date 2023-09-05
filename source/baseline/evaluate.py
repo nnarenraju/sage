@@ -506,7 +506,8 @@ def compare_plot_2(team_1, team_2, save_dir):
             if len(unique_team1) != 0:
                 ax[i][j].scatter(unique_team1[:,0], unique_team1[:,1], **kwargs)
             kwargs.update({'color': 'red', 's': 100.0, 'label': 'Unique {}'.format(team_2['name']), 'alpha': 0.7})
-            ax[i][j].scatter(unique_team2[:,0], unique_team2[:,1], **kwargs)
+            if len(unique_team2) != 0:
+                ax[i][j].scatter(unique_team2[:,0], unique_team2[:,1], **kwargs)
             kwargs.update({'color': 'darkgrey', 's': 30.0, 'label': 'Found by Both', 'alpha': 0.3})
             if len(found_both) != 0:
                 ax[i][j].scatter(found_both[:,0], found_both[:,1], **kwargs)
@@ -971,6 +972,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         dataset = args.dataset
     elif dataset != None:
         dataset = dataset
+        args.dataset = dataset
     
     # Caluclate the SNR for each injection in the testing dataset (if not present already)
     dataset_dir = Path(args.injection_file).parent.absolute()
