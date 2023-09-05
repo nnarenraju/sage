@@ -28,14 +28,16 @@ import numpy as np
 import torch.optim as optim
 
 from pathlib import Path
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR, ReduceLROnPlateau
 
 # LOCAL
 from data.datasets import MLMDC1
-from architectures.frontend import GammaModel, KappaModel, KappaModelPE, DeltaModelPE
+from architectures.frontend import GammaModel, KappaModel, KappaModelPE, DeltaModelPE, MuModelPE, ZetaModel, KappaModel_ResNet_CBAM
+from architectures.frontend import Rho2Model1D, PhiModel, RhoModel, AlphaModel, KappaModel_Res2Net, UpsilonModel_Res2Net, KappaModel_Res2Net_branched
 from data.transforms import Unify, UnifySignal, UnifyNoise
-from data.transforms import BandPass, HighPass, Whiten, MultirateSampling
-from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase
+from data.transforms import BandPass, HighPass, Whiten, MultirateSampling, Normalise, Resample
+from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase, AugmentOptimalNetworkSNR, AugmentUniformChirpMass
+from data.transforms import GenerateNewSignal
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
 
 # RayTune
@@ -416,7 +418,7 @@ class Baseline_May18(KaggleFirst):
     verbose = True
 
 
-class KaggleFirst_Jun9(KaggleFirst):
+class KaggleFirst_REF(KaggleFirst):
     
     """ Data storage """
     name = "KaggleFirst_Jul11"
@@ -496,26 +498,25 @@ class KaggleFirst_Jun9(KaggleFirst):
     debug_size = 1000
     
 
-class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
+class KaggleFirstPE_Jul12(KaggleFirst_REF):
     
     """ Data storage """
-    name = "KaggleFirst_Mar13_TRD4"
-    export_dir = Path("/home/nnarenraju/Research") / name
+    name = "VirgoNet_Aug31_HUGE_1s_noMRS_replicateVirgo_curriculum_withoutAMS_paperSpecs_rerun"
+    # name = "Kaggle2Net50_v1b_CBAM_Aug23_EVEREST_shortSamples"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     save_remarks = 'Training-D4'
     
     """ RayTune """
     # Placed before initialising any relevant tunable parameter
-    rtune_optimise = True
+    rtune_optimise = False
     
     rtune_params = dict(
         # RayTune Tunable Parameters
         config = {
-            "l1": tune.sample_from(lambda _: 2**np.random.randint(2, 9)),
-            "l2": tune.sample_from(lambda _: 2**np.random.randint(2, 9)),
-            "lr": tune.loguniform(1e-4, 1e-1),
-            "batch_size": tune.choice([2, 4, 8, 16])
+            "learning_rate": tune.loguniform(1e-5, 1e-2),
+            "batch_size": tune.choice([32,])
         },
-        # Scheduler (ASHA has intelligent early stoppping)
+        # Scheduler (ASHA has intelligent early stopping)
         scheduler = ASHAScheduler,
         # NOTE: max_t is maximum number of epochs Tune is allowed to run
         scheduler_params = dict(
@@ -523,17 +524,17 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
             mode = "min",
             max_t = 10,
             grace_period = 1,
-            reduction_factor = 2    
+            reduction_factor = 2
         ),
         # Reporter
         reporter = CLIReporter,
         reporter_params = dict(
             # parameter_columns=["l1", "l2", "lr", "batch_size"],
-            metric_columns=["loss", "accuracy", "training_iteration"]
+            metric_columns=["loss", "accuracy", "low_far_nsignals", "training_iteration"]
         ),
         # To sample multiple times/run multiple trials
         # Samples from config num_samples number of times
-        num_samples = 10
+        num_samples = 100
     )
     
     """ Dataset """
@@ -541,31 +542,25 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     dataset_params = dict()
     
     """ Architecture """
-    model = KappaModelPE
+    model = ZetaModel
     
     model_params = dict(
-        # Kaggle frontend+backend
-        # This model is ridiculously slow on cpu, use cuda
-        model_name = 'KaggleFirstPEJun9', 
-        filter_size = 32,
-        kernel_size = 64,
-        timm_params = {'model_name': 'resnet34', 
-                        'pretrained': True, 
-                        'in_chans': 2, 
-                        'drop_rate': 0.25},
-        store_device = 'cuda:0',
+        store_device = 'cuda:1',
     )
-    
+
     """ Epochs and Batches """
     num_epochs = 50
-    batch_size = 32
+    batch_size = 400
     save_freq = 1
     
     """ Save samples """
     num_sample_save = 100
     
     """ Weight Types """
-    weight_types = ['loss', 'accuracy', 'roc_auc']
+    weight_types = ['loss', 'accuracy', 'roc_auc', 'low_far_nsignals']
+    
+    # Save weights for particular epochs
+    save_epoch_weight = [8, 9, 10, 11, 12, 13]
     
     # Pick one of the above weights for best epoch save directory
     save_best_option = 'loss'
@@ -577,45 +572,57 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     parameter_estimation = ('norm_tc', 'norm_mchirp', )
     
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
     
     """ Optimizer """
-    optimizer = optim.SGD
-    optimizer_params = dict(lr=1e-3, momentum=0.9, weight_decay=1e-6)
+    optimizer = optim.Adam
+    # optimizer_params = dict(lr=1e-3, momentum=0.9, weight_decay=1e-6)
+    optimizer_params = dict(lr=1e-3)
     
     """ Scheduler """
     # Default option: scheduler = LambdaLR
-    scheduler = None
+    scheduler = ReduceLROnPlateau
     lambda1 = lambda epoch: 0.95 ** epoch
-    scheduler_params = dict(lr_lambda=lambda1)
+    scheduler_params = dict(mode='min', factor=0.5, patience=2, min_lr=1e-5)
     
     """ Gradient Clipping """
     clip_norm = 100
     
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
+    # Extra losses cannot be used without BCEWithLogitsLoss()
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(gw_criterion=None, mse_alpha=5.0,
-                                emphasis_threshold=0.7, emphasis_operator=None, 
-                                noise_emphasis=False, signal_emphasis=False, 
-                                emphasis_alpha=0.2, emphasis_type='pred_prob', 
-                                snr_loss=False, snr_low=8.0, snr_high=15.0, snr_alpha=0.2,
-                                mchirp_loss=False, mchirp_operator=None, mchirp_thresh=0.7, mchirp_alpha=0.2)
+    loss_function = BCEgw_MSEtc(gw_criterion=None, weighted_bce_loss=False, mse_alpha=0.0,
+                                emphasis_type='raw',
+                                noise_emphasis=False, noise_conditions=[('min_noise', 'max_noise', 0.5),],
+                                signal_emphasis=False, signal_conditions=[('min_signal', 'max_signal', 1.0),],
+                                snr_loss=False, snr_conditions=[(5.0, 10.0, 0.3),],
+                                mchirp_loss=False, mchirp_conditions=[(25.0, 45.0, 0.3),],
+                                dchirp_conditions=[(130.0, 350.0, 1.0),],
+                                variance_loss=False)
+
+    # These params must be present in target dict
+    # Make sure that params of PE are also included within this (generalise this!)
+    weighted_bce_loss_params = ('mchirp', 'tc', 'q', )
     
     # Rescaling the SNR (mapped into uniform distribution)
     rescale_snr = True
-    rescaled_snr_lower = 6.0
-    rescaled_snr_upper = 16.0
+    rescaled_snr_lower = 5.0
+    rescaled_snr_upper = 15.0
     
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
     network_snr_for_noise = False
+
+    # Dataset imbalance
+    ignore_dset_imbalance = False
+    subset_for_funsies = False
     
     """ Dataloader params """
-    num_workers = 16
+    num_workers = 32
     pin_memory = True
-    prefetch_factor = 2
+    prefetch_factor = 4
     persistent_workers = True
 
     """ Transforms """    
@@ -623,18 +630,27 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
         signal=UnifySignal([
                     AugmentPolSky(),
                     AugmentDistance(),
+                    AugmentOptimalNetworkSNR(),
                 ]),
         noise=None,
-        train=Unify([
-                    HighPass(lower=20.0, fs=2048., order=6),
-                    Whiten(trunc_method='hann', remove_corrupted=True),
-                    MultirateSampling(),
-                ]),
-        test=Unify([
-                    HighPass(lower=20.0, fs=2048., order=6),
-                    Whiten(trunc_method='hann', remove_corrupted=True),
-                    MultirateSampling(),
-                ]),
+        train=Unify({
+                    'stage1':[
+                            HighPass(lower=20.0, fs=2048., order=6),
+                            Whiten(trunc_method='hann', remove_corrupted=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            HighPass(lower=20.0, fs=2048., order=6),
+                            Whiten(trunc_method='hann', remove_corrupted=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                    ],
+                }),
         target=None
     )
     
@@ -643,10 +659,15 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     """ Optional things to do during training """
     # Plots the input to the network (including transformations) 
     # and output from the network
-    network_io = True
+    network_io = False
+    # Extremes only plot
+    extremes_io = False
+    # Plotting on first batch
+    plot_on_first_batch = False
     # Testing on a small 32000s dataset at the end of each epoch
-    epoch_testing = True
-    epoch_testing_dir = "/local/scratch/igr/nnarenraju/testing_32000_D4_seeded"
+    epoch_testing = False
+    epoch_testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D4_seeded"
+    epoch_far_scaling_factor = 64000.0
     
     """ Testing Phase """
     testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
@@ -669,13 +690,13 @@ class KaggleFirstPE_Jun9(KaggleFirst_Jun9):
     # Based on prediction probabilities in best epoch
     trigger_threshold = 0.0
     # Time shift the signal by multiple of step_size and check pred probs
-    cluster_threshold = 0.1
+    cluster_threshold = 0.0001
     # Run device for testing phase
-    testing_device = 'cuda:1'
+    testing_device = 'cuda:0'
     
     # When debug is False the following plots are not made
     # SAMPLES, DEBUG, CNN_OUTPUT
     debug = False
-    debug_size = 8000
-    
+    debug_size = 1000
+
     verbose = True
