@@ -29,6 +29,8 @@ import numpy as np
 from scipy.signal import decimate
 from operator import itemgetter
 
+from scipy.signal import butter, sosfiltfilt
+
 # Parallelisation of transforms
 # import data.parallel as parallel
 
@@ -130,7 +132,7 @@ def get_sampling_rate_bins(data_cfg):
     # Get necessary constants
     C = signal_low_freq_cutoff/f_ISCO # used to obtain upper fval when freq>=f_ISCO
     # Function to obtain frequencies wrt time
-    f_check = lambda t_: signal_low_freq_cutoff/((t_/max_signal_length)**(3./8.) + C * delta(t_))
+    f_check = lambda t_: signal_low_freq_cutoff/((t_/20.0)**(3./8.) + C * delta(t_))
     # delta function at dt_merg_old == 0.0, to activate 'C'
     delta = lambda t_: 1.0 if t_==0 else 0.0
     # Clip the frequency response for all values greater than f_ISCO
@@ -157,7 +159,7 @@ def get_sampling_rate_bins(data_cfg):
         # Adding a tc_upper and ringdown leeway
         # TODO: Add 2s to end_time to account for ringdown and light-travel delay
         leeway = tc_inject_upper - tc_inject_lower + ringdown_leeway
-        if (t_ < 0.0 and t_ >= -1*leeway) or (t_ > 0.0 and t_ < merger_leeway):
+        if (t_ < 0.0 and t_ >= -1*leeway) or (t_ >= 0.0 and t_ < merger_leeway):
             f = f_hqual
         elif t_ > 0 and t_ > merger_leeway:
             f = clip_f(f_check(t_))
@@ -178,7 +180,7 @@ def get_sampling_rate_bins(data_cfg):
             bins.append(n)
             hqual_chunk = False
         elif f < f_edge/fbin_reduction_factor and f != f_bad:
-            # get the time when frequency of the inspiral reduces by a factor of 2.0
+            # get the time when frequency of the inspiral reduces by a factor of 2.0 (or fbin_reduction_factor)
             bins.append(n)
             f_edge = f_edge/fbin_reduction_factor
             
@@ -186,7 +188,7 @@ def get_sampling_rate_bins(data_cfg):
     check_f = np.array(check_f)
     
     # Add the bins and sampling frequency for the pure noise chunks
-    bad_bin = [[bins[0], bins[1], 128.0]] # using low sampling freq for bad bin
+    bad_bin = [[bins[0], bins[1], 64.0]] # using low sampling freq for bad bin
     hqual_bin = [[bins[1], bins[2], sample_rate]] # using highest sampling freq for ringdown+merger phase
     # Starting freq. at time of merger is given based on f_ISCO
     # We use a sampling freq. a factor of 4 higher than f_ISCO
@@ -202,6 +204,7 @@ def get_sampling_rate_bins(data_cfg):
     #             raise ValueError("Sampling freq. too close to Nyquist Frequency")
     #         start_freq = 2.**n
     #         break
+    
     
     # Set the starting frequency based on a buffer_factor
     start_freq = f_ISCO * start_freq_factor
@@ -235,7 +238,7 @@ def get_sampling_rate_bins(data_cfg):
     return np.array(detailed_bins)
     
     
-def multirate_sampling(signal, data_cfg):
+def multirate_sampling(signal, data_cfg, check=False):
     # Downsample the data into required sampling rates and slice intervals
     # These intervals are stitched together to for a sample with MRsampling
     # Get data bins (pre-calculated for given problem in dataset object)
@@ -308,17 +311,33 @@ def multirate_sampling(signal, data_cfg):
             sidx_dec = int(start_idx_norm * num_samples_decimated)
             eidx_dec = int(end_idx_norm * num_samples_decimated)
             
+            """
+            # Apply bandpass filter over chunk
+            if lower_band != None and upper_band != None and len(decimated_signal) > 39:
+                nyq = 0.5 * new_sample_rate
+                low = lower_band / nyq
+                high = upper_band / nyq
+                sos = butter(6, [low, high], analog=False, btype='bandpass', output='sos')
+                decimated_signal = sosfiltfilt(sos, decimated_signal)
+            """
             # Slice the decimated signals using the start and end decimated idx
             chunk = decimated_signal[sidx_dec:eidx_dec]
             # Rescale the decimated chunk using a mean based factor
             # Change in mean^2 amplitude
-            func = np.mean
-            mean_sample = np.sqrt(func(signal**2.))
-            mean_decimated = np.sqrt(func(decimated_signal**2.))
-            factor = mean_sample/mean_decimated
-            chunk = chunk * factor
+            #func = np.mean
+            #mean_sample = np.sqrt(func(signal**2.))
+            #mean_decimated = np.sqrt(func(decimated_signal**2.))
+            #factor = mean_sample/mean_decimated
+            #chunk = chunk * factor
         else:
             # No decimation done, original sample rate is used
+            """
+            nyq = 0.5 * 2048.
+            low = 145. / nyq
+            high = 400. / nyq
+            sos = butter(6, [low, high], analog=False, btype='bandpass', output='sos')
+            signal = sosfiltfilt(sos, signal)
+            """
             chunk = signal[int(start_idx):int(end_idx)]
         
         # Append the decimated chunk together
@@ -332,13 +351,18 @@ def multirate_sampling(signal, data_cfg):
     # Get the idxs of each chunk edge for glitch veto
     start = 0
     # Save the start and end idx of chunks
+    # Remove corrupted samples and update indices
     save_idxs = []
     for chunk in multirate_chunks:
-        save_idxs.append((start, start+len(chunk)))
+        save_idxs.append([start, start+len(chunk)-data_cfg.corrupted_len])
         start = start + len(chunk)
+    save_idxs[-1][1] -= data_cfg.corrupted_len
     
     multirate_signal = np.concatenate(tuple(multirate_chunks))
     # Remove regions corrupted by high decimation (if required)
-    multirate_signal = multirate_signal[:]
-    
-    return multirate_signal
+    multirate_signal = multirate_signal[data_cfg.corrupted_len:-1*data_cfg.corrupted_len]
+
+    if check:
+        return multirate_signal, save_idxs
+    else:
+        return multirate_signal
