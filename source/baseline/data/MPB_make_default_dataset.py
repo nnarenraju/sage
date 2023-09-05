@@ -36,6 +36,7 @@ import requests
 import itertools
 import tracemalloc
 import numpy as np
+import configparser
 import multiprocessing as mp
 
 # Prettification
@@ -49,11 +50,13 @@ plt.rcParams.update({'font.size': 16})
 import pycbc.waveform, pycbc.noise, pycbc.psd, pycbc.detector
 
 from pycbc.psd import interpolate, welch
+from pycbc.distributions.power_law import UniformRadius
 from pycbc.distributions.utils import draw_samples_from_config
 from pycbc.types import load_frequencyseries, complex_same_precision_as, FrequencySeries
 
 # LOCAL
 from data.testdata_slicer import Slicer
+from data.prior_modifications import *
 from data.mlmdc_noise_generator import NoiseGenerator
 from data.real_noise_datagen import RealNoiseGenerator
 
@@ -183,7 +186,8 @@ class GenerateData:
                  'fs_reduction_factor', 'fbin_reduction_factor', 'dbins', 'check_seeds',
                  'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq',
                  'complex_asds', 'psd_est_segment_length', 'psd_est_segment_stride', 'blackout_max_ratio',
-                 'globtmp']
+                 'globtmp', 'network_sample_length', '_decimated_bins', 'corrupted_len',
+                 'mixed_noise', 'mix_ratio', 'use_d3_psds_for_d4', 'modification']
     
     
     def __init__(self, **kwargs):
@@ -257,10 +261,16 @@ class GenerateData:
         self.tmp = None
         
         ## Names
+        # All possible params to add into the chunk files
+        # ('mass1', 'mass2', 'ra', 'dec', 'inclination', 'coa_phase', 'polarization', 'chirp_distance', 
+        # 'spin1_a', 'spin1_azimuthal', 'spin1_polar', 'spin2_a', 'spin2_azimuthal', 'spin2_polar', 
+        # 'tc', 'spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'mchirp', 'q', 'distance')
+        # invq is not a part of priors but is included explicitly into sample var in worker
         # All datasets that need to be created from the sample dict
         self.waveform_names = ['h_plus', 'h_cross', 'start_time', 'interval_lower', 'interval_upper',
-                          'norm_tc', 'norm_dist', 'norm_mchirp', 'norm_dchirp', 'norm_q', 'norm_invq',
-                          'mass1', 'mass2', 'distance', 'mchirp', 'label']
+                               'norm_tc', 'norm_dist', 'norm_mchirp', 'norm_dchirp', 'norm_q', 'norm_invq',
+                               'mass1', 'mass2', 'distance', 'mchirp', 'tc', 'chirp_distance', 'q', 'invq', 
+                               'label']
         
         self.noise_names = ['noise_1', 'noise_2', 'label']
         
@@ -291,7 +301,7 @@ class GenerateData:
                 os.makedirs(self.dirs['injections'], exist_ok=False)
         else:
             raise IOError("make_default_dataset: Dataset dir already exists!")
-    
+        
     
     def _save_(self, save_name, psd_data, psd_name):
         ## Store the PSD in HDF5 format
@@ -335,23 +345,24 @@ class GenerateData:
             psd_name = 'aLIGOZeroDetHighPower'
             self._save_(save_name, psd_data, psd_name)
             
-        elif self.dataset in [2, 3]:
+        elif self.dataset in [2, 3] or self.use_d3_psds_for_d4:
             ## Save the median PSD from the PSD files provided
             psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
                            'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
             # Frequencies in the PSD
             f = np.linspace(self.noise_low_freq_cutoff, self.noise_high_freq_cutoff, self.psd_len)
             
-            # Plotting
-            plt.figure(figsize=(32.0, 12.0))
-            
             # Iterate through all PSD files for detector and compute the median PSD
             for det in self.detectors_abbr:
+                # Plotting
+                plt.figure(figsize=(32.0, 12.0))
                 # Read all detector PSDs as frequency series with appropriate delta_f
                 det_psds = []
+                sample_frequencies = None
                 for psd_det in psd_options[det]:
                     psd = load_frequencyseries(psd_det)
                     psd = interpolate(psd, self.delta_f)
+                    sample_frequencies = psd.sample_frequencies
                     psd = psd.numpy()
                     det_psds.append(psd)
                     plt.plot(f, psd, linewidth=2.0, color='red')
@@ -364,6 +375,9 @@ class GenerateData:
                 ratio_psd = max_psd / median_psd
                 # Black out all regions where the ratio is greater than threshold
                 blackout_idxs = np.argwhere(ratio_psd > self.blackout_max_ratio).flatten()
+                # EXPERIMENTAL: Remove low frequency components from notching
+                # max_lf_idx = max(np.argwhere(sample_frequencies < 100.0).flatten())
+                # blackout_idxs = blackout_idxs[blackout_idxs >= max_lf_idx]
                 # Ratio is freq bins blacked out
                 del_ratio = len(blackout_idxs)/len(ratio_psd)
                 print('Percentage of deleted bins while blacking out (D2,D3) = {}%'.format(del_ratio*100))
@@ -391,7 +405,7 @@ class GenerateData:
                 psd_name = 'median_det{}'.format(1 if det=='H1' else 2)
                 self._save_(save_name, blacked_psd, psd_name)
                 
-        elif self.dataset == 4:
+        elif self.dataset == 4 and not self.use_d3_psds_for_d4:
             ## Estimation of PSD for dataset 4
             # Calculate the PSD for each day of the 81 days of real O3a noise data
             # It is necessary that we use only 51 days of this noise that we DO NOT use for testing
@@ -441,23 +455,24 @@ class GenerateData:
                         pbar.set_description("D4 PSD Estimation")
                         estimated_psd = self._MP_PSD_D4_(idx, slicer, sample_rate, ndet)
                         # Save the estimated PSDs for D4
-                        d4_psds = os.path.join(noise_dir, 'd4_psds')
-                        if not os.path.exists(d4_psds):
-                            os.makedirs(d4_psds)
-                        save_name = "real_psd_{}_{}.hdf".format(det, idx)
-                        save_path = os.path.join(d4_psds, save_name)
-                        psd_file_path = os.path.abspath(save_path)
-                        # Remove and rewrite if the PSD file already exists
-                        if os.path.exists(psd_file_path):
-                            os.remove(psd_file_path)
-                        # Write PSD in HDF5 format
-                        with h5py.File(psd_file_path, 'a') as fp:
-                            data = estimated_psd
-                            key = 'data'
-                            fp.create_dataset(key, data=data, compression='gzip',
-                                              compression_opts=9, shuffle=True)
-                            # Adding all relevant attributes
-                            fp.attrs['delta_f'] = self.delta_f
+                        if self.mixed_noise:
+                            d4_psds = os.path.join(noise_dir, 'd4_psds')
+                            if not os.path.exists(d4_psds):
+                                os.makedirs(d4_psds)
+                            save_name = "real_psd_{}_{}.hdf".format(det, idx)
+                            save_path = os.path.join(d4_psds, save_name)
+                            psd_file_path = os.path.abspath(save_path)
+                            # Remove and rewrite if the PSD file already exists
+                            if os.path.exists(psd_file_path):
+                                os.remove(psd_file_path)
+                            # Write PSD in HDF5 format
+                            with h5py.File(psd_file_path, 'a') as fp:
+                                data = estimated_psd
+                                key = 'data'
+                                fp.create_dataset(key, data=data, compression='gzip',
+                                                  compression_opts=9, shuffle=True)
+                                # Adding all relevant attributes
+                                fp.attrs['delta_f'] = self.delta_f
                         
                         all_psds.append(estimated_psd)
                         ax.plot(f, estimated_psd, linewidth=1.0, alpha=0.3)
@@ -518,13 +533,62 @@ class GenerateData:
         ini_parent = './data/ini_files'
         CONFIG_PATH = "{}/ds{}.ini".format(ini_parent, self.dataset)
         random_seed = self.seed
+
+        ## Sanity check
+        # data_config and ini_file both have definitions of tc range
+        # There may be a discrepancy between the two
+        # NOTE: Change this such that we only need to define it in one spot
+        config_reader = configparser.ConfigParser()
+        config_reader.read(CONFIG_PATH)
+        assert float(config_reader['prior-tc']['min-tc']) == self.tc_inject_lower, 'min-tc in ini file {} different from tc_inject_lower {} in data_config'.format(config_reader['prior-tc']['min-tc'], self.tc_inject_lower)
+        assert float(config_reader['prior-tc']['max-tc']) == self.tc_inject_upper, 'max-tc in ini file {} different from tc_inject_upper {} in data_config'.format(config_reader['prior-tc']['max-tc'], self.tc_inject_upper)
         
         # Draw num_waveforms number of samples from ds.ini file
         priors = draw_samples_from_config(path=CONFIG_PATH,
                                           num=self.num_waveforms,
                                           seed=random_seed)
         
-        ## Get normalisation params for certain output values
+        ## MODIFICATIONS ##
+        if self.modification != None and isinstance(self.modification, str):
+            # Check for known modifications
+            if self.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
+                _mass1, _mass2 = get_uniform_masses(self.prior_low_mass, self.prior_high_mass, self.num_waveforms)
+                # Masses used for mass ratio need not be used later as mass1 and mass2
+                # We calculate them again after getting chirp mass
+                q = q_from_uniform_mass1_mass2(_mass1, _mass2)
+
+            if self.modification == 'uniform_signal_duration':
+                # Get chirp mass from uniform signal duration
+                tau_lower, tau_upper = get_tau_priors(self.prior_low_mass, self.prior_high_mass, self.signal_low_freq_cutoff)
+                mchirp = mchirp_from_uniform_signal_duration(tau_lower, tau_upper, self.num_waveforms, self.signal_low_freq_cutoff)
+
+            elif self.modification == 'uniform_chirp_mass':
+                # Get uniform chirp mass
+                mchirp = get_uniform_mchirp(self.prior_low_mass, self.prior_high_mass, self.num_waveforms)
+
+            else:
+                raise ValueError("get_priors: Unknown modification added to data_cfg.modification!")
+
+            if self.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
+                # Using mchirp and q, get mass1 and mass2
+                mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
+                # Get chirp distances using the power law distribution
+                chirp_distance_distr = UniformRadius(distance=(self.prior_low_chirp_dist, self.prior_high_chirp_dist))
+                dchirp = np.asarray([chirp_distance_distr.rvs()[0][0] for _ in range(self.num_waveforms)])
+                # Get distance from chirp distance and chirp mass
+                distance = self.distance_from_chirp_distance(dchirp, mchirp)
+                ## Update Priors
+                priors['q'] = q
+                priors['mchirp'] = mchirp
+                priors['mass1'] = mass1
+                priors['mass2'] = mass2
+                priors['chirp_distance'] = dchirp
+                priors['distance'] = distance
+                
+        elif self.modification != None and not isinstance(self.modification, str):
+            raise ValueError("get_priors: Unknown data type used in data_cfg.modification!")
+
+        ## Get normalisation params for certain output values ##
         
         # Normalise time of coalescence
         self.norm_tc = Normalise(min_val=self.tc_inject_lower, max_val=self.tc_inject_upper)
@@ -576,6 +640,7 @@ class GenerateData:
         
         """ Write priors """
         self.fieldnames = priors.fieldnames
+        
         if self.save_injection_priors:
             self.inj_path = os.path.join(self.dirs['injections'], 'injections.hdf')
             if not os.path.exists(self.inj_path):
@@ -585,8 +650,8 @@ class GenerateData:
                     fp.create_dataset('data', data=priors, 
                                       compression='gzip', compression_opts=9, 
                                       shuffle=True)
-    
-    
+       
+
     def download_data(self, path, resume=True):
         """
         Download noise data from the central server.
@@ -644,7 +709,8 @@ class GenerateData:
     
     def optimise_fmin(self, h_pol):
         # Use self.waveform_kwargs to calculate the fmin for given params
-        # Such that the length of the signal is atleast 20s by the time it reaches fmin
+        # Such that the length of the sample is atleast 20s by the time it reaches fmin
+        # This DOES NOT mean we produce signals that are exactly 20s long
         current_start_time = -1*h_pol.get_sample_times()[0]
         req_start_time = self.signal_length - h_pol.get_sample_times()[-1]
         fmin = self.signal_low_freq_cutoff*(current_start_time/req_start_time)**(3./8.)
@@ -700,19 +766,20 @@ class GenerateData:
                 # We don't have to colour the noise ourselves, so they would not fill up RAM memory
                 # idx values will now offset to [0, 0.8*num_noises] for training
                 # idx values will now offset to [0.8*num_noises, num_noises] for validation
-                index = int(idx - self.num_waveforms + self.globtmp)
+                index = int(idx - self.num_waveforms)
                 
+                # Example notes for mixed_noise case
                 # O3a noise: Slicer has items with ids [0-250_000]
                 # Artificial noise: Seeds must be unique
                 # Training: [0-200_000] O3a noise, [200_000-400_000] artificial noise
-                # Validation: [0-50_000] O3a noise (globtmp=200_000), [50_000-100_000] artificial noise 
-                if index < 0.5*self.num_noises:
+                # Validation: [0-50_000] O3a noise (globtmp=200_000), [50_000-100_000] artificial noise
+                if index < 0.5*self.num_noises or not self.mixed_noise:
+                    index = int(index + self.globtmp)
                     noise, _ = noigen_slicer.__getitem__(index)
                 else:
                     # Make sure the seeds are unique
-                    index = index - self.globtmp
                     self.noise_generator = NoiseGenerator(self.dataset,
-                                                          seed=int(index+1),
+                                                          seed=int(index+1+1000_000),
                                                           delta_f=self.delta_f,
                                                           sample_rate=self.sample_rate,
                                                           low_frequency_cutoff=self.noise_low_freq_cutoff,
@@ -794,15 +861,19 @@ class GenerateData:
                 # Append zeros if we need samples after signal ends
                 h_plus.append_zeros(int(diff_end_num + self.error_padding_in_num))
                 h_cross.append_zeros(int(diff_end_num + self.error_padding_in_num))
-            
+
             if diff_start > 0.0:
                 # Prepend zeros if we need samples before signal begins
                 # prepend_zeros arg must be an integer
                 h_plus.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
                 h_cross.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
+
+            elif diff_start < 0.0:
+                h_plus = h_plus.crop(left=-1*((diff_start_num + self.error_padding_in_num)/2048.), right=0.0)
+                h_cross = h_cross.crop(left=-1*((diff_start_num + self.error_padding_in_num)/2048.), right=0.0)
             
-            assert len(h_plus) == self.sample_length_in_num + self.error_padding_in_num*2.0
-            assert len(h_cross) == self.sample_length_in_num + self.error_padding_in_num*2.0
+            assert len(h_plus) == self.sample_length_in_num + self.error_padding_in_num*2.0, 'Expected length = {}, actual length = {}'.format(self.sample_length_in_num + self.error_padding_in_num*2.0, len(h_plus))
+            assert len(h_cross) == self.sample_length_in_num + self.error_padding_in_num*2.0, 'Expected length = {}, actual length = {}'.format(self.sample_length_in_num + self.error_padding_in_num*2.0, len(h_cross))
             
             # Setting the start_time, sets epoch and end_time as well within the TS
             # Set the start time of h_plus and h_plus after accounting for prepended zeros
@@ -824,6 +895,8 @@ class GenerateData:
             sample['norm_dchirp'] = self.norm_dchirp.norm(prior_values['chirp_distance'])
             sample['norm_q'] = self.norm_q.norm(prior_values['q'])
             sample['norm_invq'] = 1./sample['norm_q']
+            # Add invq as well, since it is not a part of priors
+            sample['invq'] = 1.0/prior_values['q']
             # waveform_kwargs will contain all prior values and additional attrs.
             sample.update(self.waveform_kwargs)
             ## norm SNR will be added to attributes after converting h_pols into h_t
@@ -1147,10 +1220,21 @@ class GenerateData:
         """
         
         # Data and params
+        """
+        samples = []
+        for injpath in self.inj_path:
+            with h5py.File(injpath, "r") as fp:
+                # Get and return the batch data
+                tmp = np.array([list(foo) for foo in fp['data'][:]])
+                samples.append(tmp)
+        """
+
         with h5py.File(self.inj_path, "r") as fp:
-            # Get and return the batch data
             samples = np.array([list(foo) for foo in fp['data'][:]])
-            
+
+        
+        # samples = np.row_stack((samples[0], samples[1]))
+
         n_bins = 100
         
         ignore = []
@@ -1194,7 +1278,13 @@ class GenerateData:
         else:
             dsetdirs = ['dataset']
         
+        # Other params to be saved in extlink file
+        other_params = ['mchirp', 'chirp_distance']
+        # Save params
         all_data = {'id': [], 'path': [], 'target': [], 'type': []}
+        # Save other params into all_data
+        oparams_dict = {foo: [] for foo in other_params}
+        all_data.update(oparams_dict)
         
         self.dirs['lookup'] = os.path.join(self.dirs['parent'], 'extlinks.hdf')
         # Save this data in the hdf5 format as training.hdf
@@ -1204,10 +1294,8 @@ class GenerateData:
         # Iterate through the available dataset dirs
         ref_nfile = 0
         for dsetdir in dsetdirs:
-            # tmp vars
-            paths = []
-            ids = []
-            targets = []
+            # tmp var
+            tmp_var = {foo:[] for foo in all_data.keys()}
             # Add attributes if present
             add_attrs = True
             
@@ -1248,15 +1336,24 @@ class GenerateData:
                         
                         # Maxshape of given np.ndarray
                         shape = np.array(h5f[grp][list(h5f[grp].keys())[0]]).shape[0]
+                        # Other params of each sample
+                        for oparam in other_params:
+                            if oparam in h5f[grp].keys():
+                                oparam_ = np.array(h5f[grp][oparam])
+                            else:
+                                oparam_ = np.full(shape, -1)
+                            # Update oparam
+                            tmp_var[oparam].extend(oparam_)
+
                         # Update idxs
                         branch_ids = np.arange(idx, idx+shape)
-                        ids.extend(branch_ids)
+                        tmp_var['id'].extend(branch_ids)
                         idx = idx+shape
                         # Update paths to dataset objects
                         branch_paths = itertools.product([_branch], np.arange(shape))
-                        paths.extend([foo + '/' + str(bar) for foo, bar in branch_paths])
+                        tmp_var['path'].extend([foo + '/' + str(bar) for foo, bar in branch_paths])
                         # Update target variable for each sample
-                        targets.extend(np.full(shape, mode))
+                        tmp_var['target'].extend(np.full(shape, mode))
                             
                     # Add attributes from chunk files once to main ExternalLink File
                     if add_attrs:
@@ -1277,28 +1374,28 @@ class GenerateData:
             
             # NOTE: On using visititems() method in h5py
             # visititems does not show h_plus, h_cross or noise datasets for some reason
-            # If we add an extra /lorem to the linked dataset name, this shows up
-            # However, this is not a phantom name. It will actually exist. 
+            # If we add an extra /lorem to the linked dataset name, this bug shows up
             # Probably an issue with visititems method.
             
             ## Create lookup using zip
             # Explicitly check for length inconsistancies. zip doesn't raise error.
-            assert len(ids) == len(paths)
-            assert len(paths) == len(targets)
-            lookup = list(zip(ids, paths, targets))
+            tmp_var_lens = [len(tmp_var[foo]) for foo in tmp_var.keys() if foo != 'type']
+            assert len(list(set(tmp_var_lens))) == 1, 'var:tmp_var fields in extlinks have inconsistent column lengths!'
+            
+            tmp_var.pop('type') # This is taken care of separately
+            lookup = list(zip(*tmp_var.values()))
             # Shuffle the column stack (signal and noise are not shuffled)
             random.shuffle(lookup)
             # Separate out the tuples for ids, paths and targets
-            ids, paths, targets = zip(*lookup)
+            for foo, key in zip(zip(*lookup), tmp_var.keys()):
+                all_data[key].extend(foo)
             
-            # Append all samples from current file to all_data
-            all_data['id'].extend(ids)
-            all_data['path'].extend(paths)
-            all_data['target'].extend(targets)
+            # Append type var to all_data
             if dsetdir == 'dataset':
-                dstype = ['training']*len(ids)
+                dstype = ['training']*len(all_data['id'])
             elif dsetdir == 'validation_dataset':
-                dstype = ['validation']*len(ids)
+                # Only used in D4
+                dstype = ['validation']*len(all_data['id'])
             all_data['type'].extend(dstype)
         
         # Close file explicitly, or use with instead
@@ -1313,16 +1410,16 @@ class GenerateData:
                 the chunk and may improve compression ratio. No significant speed penalty, 
                 lossless.
             """
-            ds.create_dataset('id', data=all_data['id'], compression='gzip', compression_opts=9, shuffle=True)
-            ds.create_dataset('path', data=all_data['path'], compression='gzip', compression_opts=9, shuffle=True)
-            ds.create_dataset('target', data=all_data['target'], compression='gzip', compression_opts=9, shuffle=True)
-            ds.create_dataset('type', data=all_data['type'], compression='gzip', compression_opts=9, shuffle=True)
+            for _param in all_data.keys():
+                ds.create_dataset(_param, data=all_data[_param], compression='gzip', compression_opts=9, shuffle=True)
             
         print("make_elink_lookup: ExternalLink lookup table created successfully!")
 
 
 def _gen_(gd, mode=None, default_nums=None):
     ## Generate the dataset
+    # Module assumes a 0.8 to 0.2 split between training and validation
+    # Currently this is not configurable in data_cfg
     # mode is set only for D4
     print("Running _gen_ in {} mode for D4".format(mode))
     if mode == 'training' or mode == None:
@@ -1335,7 +1432,10 @@ def _gen_(gd, mode=None, default_nums=None):
         start = int(0.8*default_nums[0])
         gd.num_waveforms = int(0.2*default_nums[0])
         gd.num_noises = int(0.2*default_nums[1])
-        gd.globtmp = int(0.5*0.8*default_nums[1] + 1000)
+        mix_ratio = gd.mix_ratio if gd.mixed_noise else 1.0
+        # Add a small leeway of 1000 samples so that PSDs are a little different
+        # between the last training sample and first validation sample
+        gd.globtmp = int(mix_ratio*0.8*default_nums[1] + 1000)
         gd.dirs['dataset'] = os.path.join(gd.dirs['parent'], "validation_dataset")
         if not os.path.exists(gd.dirs['dataset']):
             os.makedirs(gd.dirs['dataset'], exist_ok=False)
@@ -1381,9 +1481,12 @@ def _gen_(gd, mode=None, default_nums=None):
 
 
 def get_D4_noise(gd):
+    
     # Get the O3a real noise data (if using dataset 4)
     noise_dir = os.path.join(gd.parent_dir, 'O3a_real_noise')
     noise_file = os.path.join(noise_dir, 'O3a_real_noise.hdf')
+
+    """
     # Download real noise (if not already present, checked inside download_data)
     gd.download_data(noise_file)
     # Sometimes the above command claims to be completed but
@@ -1398,14 +1501,17 @@ def get_D4_noise(gd):
         except:
             # If not, we resume download
             gd.download_data(noise_file, resume=True)
-    
+    """
+
     # If using dataset 4, split the O3a real noise into training and testing segments
     # Testing segments should consist of 30 days. Whatever is left will be used for training.
     # During testing phase, call the testing noise .hdf file that we create here
     store_output = {'training': os.path.join(noise_dir, 'training_real_noise.hdf'),
                     'testing': os.path.join(noise_dir, 'testing_real_noise.hdf')}
+    # noise_seed = {'training': gd.seed,
+    #               'testing': 2_514_409_456}
     noise_seed = {'training': gd.seed,
-                  'testing': 2_514_409_456}
+                  'testing': 25}
     # We produce 1 month of data (30 days) using the seed provided in the MLGWSC-1 paper (for testing)
     # NOTE: This seed is only used for OverlapSegment class to get noise data for two detectors
     # This should not affect the training in any manner.
@@ -1430,11 +1536,15 @@ def get_D4_noise(gd):
     # does not have any overlap between them.
     # We get 0.5*num_noises as real noise from the data. The rest of the noise samples will be
     # Gaussian noise coloured using D4 PSDs.
-    step_size = (infile.attrs['duration'] - gd.sample_length_in_num)/(0.5*gd.num_noises + 2000)
+    mix_ratio = gd.mix_ratio if gd.mixed_noise else 1.0
+    # Add a leeway of 2000 samples so we can have a gap between training and validation samples
+    step_size = (infile.attrs['duration'] - gd.sample_length_in_num)/(mix_ratio*gd.num_noises + 2000)
+    # step_size = 0.1
 
+    # The peak_offset option here is a dummy variable, we don't use the output times from slicer
     kwargs = dict(infile=infile,
                   step_size=step_size,
-                  peak_offset=18.0,
+                  peak_offset=18.1,
                   whiten_padding=5.0,
                   slice_length=int(gd.signal_length*gd.sample_rate))
 
@@ -1442,7 +1552,8 @@ def get_D4_noise(gd):
     # The slicer object can take an index and return the required training data sample
     slicer = Slicer(**kwargs)
     # Sanity check the length of slicer
-    assert len(slicer) >= 0.5*gd.num_noises, "Insufficient number ({}/{}) of samples in slicer object!".format(len(slicer), 0.5*gd.num_noises)
+    print("Number of samples in D4 slicer = {}".format(len(slicer)))
+    assert len(slicer) >= mix_ratio*gd.num_noises, "Insufficient number ({}/{}) of samples in slicer object!".format(len(slicer), mix_ratio*gd.num_noises)
     global noigen_slicer
     noigen_slicer = slicer
     
@@ -1470,10 +1581,11 @@ def get_D4_psds(gd):
                 delta_f = fp.attrs['delta_f']
             psd = FrequencySeries(data, delta_f=delta_f)
             # Convert PSD's to ASD's for colouring the white noise
-            foo = psd_to_asd(psd, 0.0, 25.0,
+            # TODO: Generalise this method
+            foo = psd_to_asd(psd, 0.0, 15.0,
                              sample_rate=2048.,
                              low_frequency_cutoff=15.0,
-                             filter_duration=25.0)
+                             filter_duration=15.0)
             complex_asds[det].append(foo)
 
     global d4_asds
@@ -1495,7 +1607,7 @@ def make(slots_magic_params, export_dir):
     None.
     
     """
-    
+     
     gd = GenerateData(**slots_magic_params)
     
     # Create storage directory sub-structure
@@ -1509,9 +1621,9 @@ def make(slots_magic_params, export_dir):
     # Save PSDs required for dataset
     gd.save_PSD()
     
-    if gd.dataset == 4:
+    if gd.dataset == 4 and gd.mixed_noise:
         get_D4_psds(gd)
-
+    
     # Get priors for entire dataset
     gd.get_priors()
     
@@ -1522,9 +1634,12 @@ def make(slots_magic_params, export_dir):
         for mode in ['training', 'validation']:
             # We take care of the splits here for D4
             _gen_(gd, mode=mode, default_nums=nums)
-
+    
     # Make elink dataset lookup table
     gd.make_elink_lookup()
+    
+    # gd.inj_path = [os.path.join(gd.dirs['injections'], 'injections_1.hdf'), os.path.join(gd.dirs['injections'], 'injections_2.hdf')]
+    gd.inj_path = os.path.join(gd.dirs['injections'], 'injections.hdf')
     # Making the prior distribution plots
     gd.plot_priors(gd.dirs['parent'])
 
