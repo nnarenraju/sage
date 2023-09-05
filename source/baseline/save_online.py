@@ -26,7 +26,7 @@ Documentation: NULL
 # Modules
 import os
 import glob
-import datetime
+from datetime import datetime
 
 from distutils.dir_util import copy_tree
 
@@ -87,8 +87,9 @@ def save(cfg, data_cfg):
     save_dir = os.path.join(cfg.online_workspace, 'ALL_OVERLAY')
     if not os.path.isdir(save_dir):
         os.makedirs(save_dir, exist_ok=False)
-    if run_names != []:
-        overlay_plotter(overview_paths, roc_paths, roc_aucs, save_dir, run_names)
+    
+    #if run_names != []:
+    #    overlay_plotter(overview_paths, roc_paths, roc_aucs, save_dir, run_names)
     
     # Save a copy of the entire code used to run this config into the RUN/DEBUG directory
     # The GIT file size may be too large. Storing it each time within online_workspace may be overkill.
