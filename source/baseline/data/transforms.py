@@ -40,8 +40,8 @@ from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
 from pycbc.types import TimeSeries
 
 # Time Stretching
-import librosa
-import pyrubberband
+# import librosa
+# import pyrubberband
 
 # Addressing HDF5 error with file locking (used to address PSD file read error)
 # PSD file read has been moved to dataset object. (DEPRECATED)
@@ -60,11 +60,11 @@ class Unify:
     def __init__(self, transforms: dict):
         self.transforms = transforms
 
-    def __call__(self, y: np.ndarray, special: dict, key=None):
+    def __call__(self, y: np.ndarray, pure_noise: np.ndarray, special: dict, key=None):
         transforms = {}
         for transform in self.transforms[key]:
             name = transform.__class__.__name__
-            y = transform(y, special)
+            y = transform(y, pure_noise, special)
             transforms[name] = y
         transforms['sample'] = y
         return transforms
@@ -94,9 +94,9 @@ class TransformWrapper:
     def __init__(self, always_apply=True):
         self.always_apply = always_apply
     
-    def __call__(self, y: np.ndarray, special: dict):
+    def __call__(self, y: np.ndarray, pure_noise: np.ndarray, special: dict):
         if self.always_apply:
-            return self.apply(y, special)
+            return self.apply(y, pure_noise, special)
         else:
             pass
 
@@ -105,13 +105,13 @@ class TransformWrapperPerChannel(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply=always_apply)
     
-    def __call__(self, y: np.ndarray, special: dict):
+    def __call__(self, y: np.ndarray, pure_noise: np.ndarray, special: dict):
         channels = y.shape[0]
         # Store transformed array
         augmented = []
         for channel in range(channels):
             if self.always_apply:
-                augmented.append(self.apply(y[channel], channel, special))
+                augmented.append(self.apply(y[channel], pure_noise[channel], channel, special))
             else:
                 pass
         return np.stack(augmented, axis=0)
@@ -156,7 +156,7 @@ class Buffer(TransformWrapper):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, special: dict):
+    def apply(self, y: np.ndarray, pure_noise: np.ndarray, special: dict):
         return y
 
 
@@ -167,14 +167,12 @@ class Normalise(TransformWrapperPerChannel):
         self.factors = factors
         self.ignore_factors = ignore_factors
 
-    def apply(self, y: np.ndarray, channel: int, special: dict):
+    def apply(self, y: np.ndarray, pure_noise:np.ndarray, channel: int, special: dict):
         if not self.ignore_factors:
             norm = y / self.factors[channel]
         else:
-            std = (y - np.min(y)) / (np.max(y) - np.min(y))
-            max_range = 1
-            min_range = 0
-            norm = std * (max_range - min_range) + min_range
+            norm = (y - np.min(y)) / (np.max(y) - np.min(y)) # varies from 0 to 1
+            norm = norm - np.mean(norm) # centering at 0
         return norm
 
 
@@ -209,7 +207,7 @@ class BandPass(TransformWrapper):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, special: dict):
+    def apply(self, y: np.ndarray, pure_noise: np.ndarray, special: dict):
         return self.butter_bandpass_filter(y)
 
 
@@ -231,9 +229,36 @@ class HighPass(TransformWrapper):
         filtered_data = sosfiltfilt(sos, data)
         return filtered_data
     
-    def apply(self, y: np.ndarray, special: dict):
+    def apply(self, y: np.ndarray, pure_noise: np.ndarray, special: dict):
         # Parallelise HighPass filter
         return self.butter_highpass_filter(y)
+
+
+class Crop(TransformWrapperPerChannel):
+    # Crop the signal if required
+    # If not whitening, we use this to emulate the remove_corrupted = True option
+    def __init__(self, always_apply=True, croplen=0.0, emulate_rmcorrupt=False, double_sided=True, side='left'):
+        super().__init__(always_apply)
+        self.emulate_rmcorrupt = emulate_rmcorrupt
+        self.croplen = croplen
+        self.double_sided = double_sided
+
+    def get_cropped(self, y, data_cfg):
+        if self.emulate_rmcorrupt:
+            self.croplen = int(round(data_cfg.whiten_padding * data_cfg.sample_rate))
+        if self.double_sided:
+            cropped = y[int(self.croplen/2):int(len(y)-self.croplen/2)]
+        else:
+            if side == 'left':
+                cropped = y[int(self.croplen):]
+            elif side == 'right':
+                cropped = y[:int(len(y)-self.croplen)]
+            else:
+                raise ValueError('Crop Transform: side not recognised!')
+        return cropped
+    
+    def apply(self, y: np.ndarray, pure_noise: np.ndarray, channel: int, special: dict):
+        return self.get_cropped(y, special['data_cfg'])
 
 
 class Whiten(TransformWrapperPerChannel):
@@ -245,7 +270,7 @@ class Whiten(TransformWrapperPerChannel):
         self.estimated = estimated
         self.median_psd = []
         
-    def whiten(self, signal, psd, data_cfg):
+    def whiten(self, signal, pure_noise, psd, data_cfg):
         """ Return a whitened time series """
         # Convert signal to Timeseries object
         signal = TimeSeries(signal, delta_t=1./data_cfg.sample_rate)
@@ -259,27 +284,24 @@ class Whiten(TransformWrapperPerChannel):
         # Interpolate the PSD to the required delta_f
         # NOTE: This may or may not be required (enable if there is a discrepancy in delta_f)
         # Possible bug: It is possible that the sample lengths are not consistent in Dataloader
-        # psd = interpolate(psd, delta_f)
+        psd = interpolate(psd, delta_f)
         
         ## Whitening
         # Whiten the data by the asd
         if self.estimated:
             ### Estimate the PSD
-            # We'll choose 4 seconds PSD samples that are overlapped 50 %
             delta_t = 1.0/2048.
-            seg_len = int(4. / delta_t)
+            seg_len = int(0.5 / delta_t)
             seg_stride = int(seg_len / 2)
-            psd = welch(signal[:int(8.*2048.)], seg_len=seg_len, seg_stride=seg_stride)
+            pure_noise = TimeSeries(pure_noise, delta_t=1./data_cfg.sample_rate)
+            psd = welch(pure_noise, seg_len=seg_len, seg_stride=seg_stride)
             psd = interpolate(psd, delta_f)
-            self.median_psd.append(psd)
-            self.median_psd = [np.median(self.median_psd, axis=0)]
-            psd = self.median_psd[0]
-        else:
-            # Interpolate and smooth to the desired corruption length
-            psd = inverse_spectrum_truncation(psd,
-                                              max_filter_len=max_filter_len,
-                                              low_frequency_cutoff=data_cfg.noise_low_freq_cutoff,
-                                              trunc_method=self.trunc_method)
+        
+        # Interpolate and smooth to the desired corruption length
+        psd = inverse_spectrum_truncation(psd,
+                                        max_filter_len=max_filter_len,
+                                        low_frequency_cutoff=data_cfg.signal_low_freq_cutoff,
+                                        trunc_method=self.trunc_method)
         
         # NOTE: Factor of dt not taken into account. Since layernorm takes care of standardisation,
         # we don't necessarily need to include this. After decorrelation, the diagonal matrix 
@@ -291,16 +313,16 @@ class Whiten(TransformWrapperPerChannel):
 
         return white
     
-    def apply(self, y: np.ndarray, channel: int, special: dict):
+    def apply(self, y: np.ndarray, pure_noise: np.ndarray, channel: int, special: dict):
         # Whitening using approximate PSD
-        return self.whiten(y, special['psds'][channel], special['data_cfg'])
+        return self.whiten(y, pure_noise, special['psds'][channel], special['data_cfg'])
 
 
 class MultirateSampling(TransformWrapperPerChannel):
     def __init__(self, always_apply=True):
         super().__init__(always_apply)
 
-    def apply(self, y: np.ndarray, channel: int, special: dict):
+    def apply(self, y: np.ndarray, pure_noise: np.ndarray, channel: int, special: dict):
         # Call multi-rate sampling module for usage
         # This module is kept separate since further experimentation might be required
         return multirate_sampling(y, special['data_cfg'])
@@ -322,7 +344,7 @@ class GenerateNewSignal(SignalWrapper):
         self.waveform_kwargs['approximant'] = 'IMRPhenomXPHM'
         self.waveform_kwargs['f_ref'] = 20.0 # Hz
 
-        self.signal_length = 20.0 # seconds 
+        self.signal_length = 12.0 # seconds 
         self.whiten_padding = 5.0 # seconds
         self.sample_rate = 2048. # Hz
         self.sample_length_in_s = self.signal_length + self.whiten_padding # seconds
@@ -445,15 +467,16 @@ class GenerateNewSignal(SignalWrapper):
 
 class AugmentPolSky(SignalWrapper):
     """ Used to augment polarisation angle, ra and dec """
-    def __init__(self, always_apply=True):
+    def __init__(self, always_apply=True, augmentation=True):
         super().__init__(always_apply)
+        self.augmentation = augmentation
 
     def augment(self, signals, params, special):
         ## Get random value (with a given prior) for polarisation angle, ra, dec
         # Polarisation angle
-        pol_angle = special['distrs']['pol'].rvs()[0][0]
+        pol_angle = special['distrs']['pol'].rvs()[0][0] if self.augmentation else params['polarization']
         # Right ascension, declination
-        sky_pos = special['distrs']['sky'].rvs()[0]
+        sky_pos = special['distrs']['sky'].rvs()[0] if self.augmentation else (params['dec'], params['ra'])
         # Times
         time_interval = (params['interval_lower'], params['interval_upper'])
         start_time = params['start_time']
@@ -462,6 +485,7 @@ class AugmentPolSky(SignalWrapper):
         h_cross = signals[1]
 
         declination, right_ascension = sky_pos
+
         # Using PyCBC project_wave to get h_t from h_plus and h_cross
         # Setting the start_time is important! (too late, too early errors are because of this)
         h_plus = TimeSeries(h_plus, delta_t=1./params['sample_rate'])
@@ -604,33 +628,12 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         prelim_network_snr = get_network_snr(signal, psds, params, cfg.export_dir, debug)
         
         if self.rescale:
-            coin = 1 if np.random.random() <= 0.33 else 0
-            if coin and False:
-                target_snr = 5.0
-            else:
-                # Rescaling the SNR to a uniform distribution within a given range
-                rescaled_snr_lower = cfg.rescaled_snr_lower if training else 5.0
-                rescaled_snr_upper = cfg.rescaled_snr_upper if training else 15.0
+            # Rescaling the SNR to a uniform distribution within a given range
+            rescaled_snr_lower = cfg.rescaled_snr_lower
+            rescaled_snr_upper = cfg.rescaled_snr_upper
                 
-                # Curriculum learning with SNR
-                if epoch < 4:
-                    rescaled_snr_lower = 12.5 
-                    rescaled_snr_upper = 25.0
-                elif epoch >= 4 and epoch < 6:
-                    rescaled_snr_lower = 8.5
-                    rescaled_snr_upper = 25.0
-                elif epoch >= 6 and epoch < 8:
-                    rescaled_snr_lower = 5.0
-                    rescaled_snr_upper = 8.5
-                elif epoch >= 8 and epoch < 10:
-                    rescaled_snr_lower = 5.0
-                    rescaled_snr_upper = 12.5
-                elif epoch >= 10 and epoch < 14:
-                    rescaled_snr_lower = 5.0
-                    rescaled_snr_upper = 25.0
-                
-                # Uniform on SNR range
-                target_snr = np.random.uniform(rescaled_snr_lower, rescaled_snr_upper)
+            # Uniform on SNR range
+            target_snr = np.random.uniform(rescaled_snr_lower, rescaled_snr_upper)
 
             rescaling_factor = target_snr/prelim_network_snr
             # Add noise to rescaled signal
@@ -656,12 +659,6 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         return (rescaled_signal, params)
 
     def apply(self, y: np.ndarray, params: dict, special: dict, debug=None):
-        # Rescaling based on biased coin
-        coin = 1 if np.random.random() <= self.p else 0
-        if coin:
-            self.rescale = True
-        else:
-            self.rescale = False
         # Unpack required elements from special for augmentation
         psds = special['psds']
         cfg = special['cfg']
@@ -678,6 +675,9 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         self.rescale = True
         # Send back the rescaled signal and updated dicts
         return (out, params, special)
+
+
+
 
 
 
