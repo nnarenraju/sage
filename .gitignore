@@ -142,3 +142,4 @@ source/baseline/data/psds/
 *.json
 *.jpg
 
+source/baseline/check.py
