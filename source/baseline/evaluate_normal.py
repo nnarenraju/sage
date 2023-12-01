@@ -285,16 +285,35 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
     thresh_names = ['1-per-month', '1-per-week', '1-per-day', '100-per-month', '1000-per-month']
     # How many signals are present above given threshold?
     far_found_idx = {thresh_names[n]: found_injections[0][found_injections[1] > thresh] for n, thresh in enumerate(far_thresholds)}
+    badfar_idx = found_injections[0][(found_injections[1] <= noise_stats[::-1][99]) & (found_injections[1] > noise_stats[::-1][999])].astype(int)
+    highsnr_badfar_idx = np.argwhere((injparams['snr'][badfar_idx] > 10.0) & (injparams['snr'][badfar_idx] < 100.0))
+    highsnr_badfar_params = {}
     
     ## Plotting the comparison plots (injections and found histogram) for all params 
     # cmap = cm.get_cmap('RdYlBu_r', 10)
     save_dir = os.path.join(output_dir, 'FOUND_INJECTIONS')
+    bad_dir = os.path.join(output_dir, 'HIGH_SNR_BAD')
     for param in injparams.keys():
         param_dir = os.path.join(save_dir, '{}'.format(param))
         if not os.path.exists(param_dir):
             os.makedirs(param_dir, exist_ok=False)
-            
+        if not os.path.exists(bad_dir):
+            os.makedirs(bad_dir, exist_ok=False)
+        
         all_param = injparams[param]
+        highsnr_badfar_params[param] = all_param[badfar_idx][highsnr_badfar_idx]
+
+        # plot params of highsnr bad signals if present
+        plt.figure(figsize=(12.0, 12.0))
+        plt.title('SNR>10 and 1000/month>FAR>100/month {}'.format(param))
+        plt.hist(highsnr_badfar_params[param], bins=100, label='{}-bad'.format(param), alpha=0.8)
+        plt.grid(True, which='both')
+        plt.xlabel('{}'.format(param))
+        plt.ylabel('Number of Occurences')
+        plt.legend()
+        plt.savefig(os.path.join(bad_dir, '{}-highsnr_bad.png'.format(param)))
+        plt.close()
+
         for key, value in far_found_idx.items():
             found_param = all_param[value.astype(int)]
             # Plotting the overlap histograms of all and found data
@@ -308,7 +327,53 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
             plt.legend()
             plt.savefig(os.path.join(param_dir, '{}-compare_FAR_{}.png'.format(param, key)))
             plt.close()
-            
+    
+    # plotting param vs param for bad signals    
+    # Calculate signal duration
+    lf = 20.0 # Hz
+    G = 6.67e-11
+    c = 3.0e8
+    duration = lambda mchirp: 5. * (8.*np.pi*lf)**(-8./3.) * (mchirp*1.989e30*G/c**3.)**(-5./3.)
+    team = {}
+    team.update(highsnr_badfar_params)
+    team['duration'] = duration(team['mchirp'])
+    
+    ## VS Plots
+    compare_bad_dir = os.path.join(bad_dir, 'COMPARE')
+    os.makedirs(compare_bad_dir, exist_ok=False)
+    params = ['duration', 'mchirp', 'distance', 'q', 'chirp_distance', 'snr', 'mass1', 'mass2']
+    ncols = 3
+    plots = list(itertools.combinations(params, 2))
+    nsubplots = len(plots)
+    nrows = nsubplots//ncols + int(nsubplots%ncols or False)
+    
+    # Subplotting
+    fig, ax = plt.subplots(nrows, ncols, figsize=(9.0*ncols, 6.0*nrows))
+    kwargs = {}
+    
+    pidxs = list(itertools.product(range(nrows), range(ncols)))
+    num_fin = 0
+    for (param_1, param_2), (i, j)  in zip(plots, pidxs):
+        # Team 1
+        x = team[param_1]
+        y = team[param_2]
+
+        # Scatter plotting
+        kwargs.update({'color': 'blue', 's': 100.0, 'alpha': 0.7})
+        ax[i][j].scatter(x, y, **kwargs) 
+        ax[i][j].set_xlabel(param_1)
+        ax[i][j].set_ylabel(param_2)
+        ax[i][j].grid(True)
+        num_fin+=1
+
+    for i, j in pidxs[num_fin:]:
+        ax[i][j].set_visible(False)
+    
+    save_name = "param_vs_param.png"
+    save_path = os.path.join(compare_bad_dir, save_name)
+    plt.savefig(save_path)
+    plt.close()
+
 
 def network_output(found_injections, noise_stats, output_dir, team_name):
     # Plotting the noise and signals stats for found samples
@@ -375,10 +440,15 @@ def read_data(args, idxs):
             
         use_chirp_distance = 'chirp_distance' in params
     
+    # print([len(injparams[foo]) for foo in injparams.keys()])
+
     team_1 = {'name': args.team1}
     team_2 = {'name': args.team2}
     other_results = "/home/nnarenraju/Research/ORChiD/results"
     other_teams = os.listdir(other_results)
+
+    print('Dataset {} compared against {}'.format(args.dataset, team_2['name']))
+
     if args.team1 in other_teams:
         team_1['fgpath'] = [os.path.join(other_results, "{}/ds{}/fg.hdf".format(team_1['name'], args.dataset))]
         team_1['bgpath'] = [os.path.join(other_results, "{}/ds{}/bg.hdf".format(team_1['name'], args.dataset))]
@@ -438,8 +508,10 @@ def compare_plot_1(team_1, team_2, save_dir):
         pidxs = list(itertools.product(range(nrows), range(ncols)))
         num_fin = 0
         for param, (i, j)  in zip(params, pidxs):
-            ax[i][j].hist(team_1[param][team_1[thresh_name]], label=team_1['name'], color='blue', **kwargs)
-            ax[i][j].hist(team_2[param][team_2[thresh_name]], label=team_2['name'], color='red', **kwargs)
+            #ax[i][j].hist(team_1[param][team_1[thresh_name]], label=team_1['name'], color='blue', **kwargs)
+            #ax[i][j].hist(team_2[param][team_2[thresh_name]], label=team_2['name'], color='red', **kwargs)
+            _, bins, _ = ax[i][j].hist(team_1[param][team_1[thresh_name]], label=team_1['name'], color='blue', **kwargs)
+            _ = ax[i][j].hist(team_2[param][team_2[thresh_name]], bins=bins, label=team_2['name'], color='red', histtype='stepfilled', alpha=0.5)
             ax[i][j].set_title(param)
             ax[i][j].grid(True)
             ax[i][j].legend()
@@ -971,7 +1043,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     if args.far_scaling_factor == -1 and cfg_far_scaling_factor == None:
         raise ValueError('FAR scaling factor not provided. Use the --far-scaling-factor argument when running.')
     elif cfg_far_scaling_factor == None:
-         far_scaling_factor = args.far_scaling_factor
+        far_scaling_factor = args.far_scaling_factor
     elif cfg_far_scaling_factor != None:
         far_scaling_factor = cfg_far_scaling_factor
 
@@ -982,6 +1054,8 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     elif dataset != None:
         dataset = dataset
         args.dataset = dataset
+    
+    print('dataset = {}'.format(args.dataset))
 
     # Caluclate the SNR for each injection in the testing dataset (if not present already)
     dataset_dir = Path(args.injection_file).parent.absolute()
@@ -1009,6 +1083,8 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         raise RuntimeError(msg)
     
     print('Duration calculated by find_injection_times = {}'.format(dur))
+    snrs = np.array(snrs)
+    snrs = snrs[idxs]
     stats = get_stats(args, idxs, duration=dur, output_dir=args.output_dir, snrs=snrs)
     
     # Store results
