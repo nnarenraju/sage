@@ -34,6 +34,7 @@ import multiprocessing as mp
 import pycbc.waveform, pycbc.detector
 from pycbc.filter.matchedfilter import sigmasq
 from pycbc.types import TimeSeries, FrequencySeries
+from pycbc.psd import inverse_spectrum_truncation, interpolate
 
 # Prettification
 from tqdm import tqdm
@@ -91,45 +92,46 @@ def get_injection_snr(args):
     waveform_kwargs.update(injection_values)
     
     h_plus, h_cross = pycbc.waveform.get_td_waveform(**waveform_kwargs)
-    # If the signal is smaller than 20s, we change fmin such that it is atleast 20s
-    if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] < signal_length:
+    # If the signal is smaller than 20s, we change fmin such that it is atleast 20s 
+    if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] < data_cfg.signal_length:
         # Pass h_plus or h_cross
         h_plus, h_cross = optimise_fmin(h_plus, signal_length, signal_low_freq_cutoff, sample_rate, waveform_kwargs)
     
-    if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] > signal_length:
+    if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] > data_cfg.signal_length:
         new_end = h_plus.get_sample_times()[-1]
-        new_start = -1*(signal_length - new_end)
+        new_start = -1*(data_cfg.signal_length - new_end)
         h_plus = h_plus.time_slice(start=new_start, end=new_end)
         h_cross = h_cross.time_slice(start=new_start, end=new_end)
     
     # Sanity check for signal lengths
-    if len(h_plus)/sample_rate != signal_length:
-        act = signal_length*sample_rate
+    if len(h_plus)/data_cfg.sample_rate != data_cfg.signal_length:
+        act = data_cfg.signal_length*data_cfg.sample_rate
         obs = len(h_plus)
         raise ValueError('Signal length ({}) is not as expected ({})!'.format(obs, act))
     
     # # Properly time and project the waveform (What there is)
-    start_time = injection_values['injection_time'] + h_plus.get_sample_times()[0]
-    end_time = injection_values['injection_time'] + h_plus.get_sample_times()[-1]
+    prior_values = injection_values
+    start_time = prior_values['injection_time'] + h_plus.get_sample_times()[0]
+    end_time = prior_values['injection_time'] + h_plus.get_sample_times()[-1]
     
     # Calculate the number of zeros to append or prepend (What we need)
     # Whitening padding will be corrupt and removed in whiten transformation
-    start_samp = injection_values['tc'] + (whiten_padding/2.0)
-    start_interval = injection_values['injection_time'] - start_samp
+    start_samp = prior_values['tc'] + (data_cfg.whiten_padding/2.0)
+    start_interval = prior_values['injection_time'] - start_samp
     # subtract delta value for length error (0.001 if needed)
-    end_padding = whiten_padding/2.0
-    post_merger = signal_length - injection_values['tc']
-    end_interval = injection_values['injection_time'] + post_merger + end_padding
+    end_padding = data_cfg.whiten_padding/2.0
+    post_merger = data_cfg.signal_length - prior_values['tc']
+    end_interval = prior_values['injection_time'] + post_merger + end_padding
     
     # Calculate the difference (if any) between two time sets
     diff_start = start_time - start_interval
     diff_end = end_interval - end_time
     # Convert num seconds to num samples
-    diff_end_num = int(diff_end * sample_rate)
-    diff_start_num = int(diff_start * sample_rate)
+    diff_end_num = int(diff_end * data_cfg.sample_rate)
+    diff_start_num = int(diff_start * data_cfg.sample_rate)
     
-    expected_length = ((end_interval-start_interval) + error_padding_in_s*2.0) * sample_rate
-    observed_length = len(h_plus) + (diff_start_num + diff_end_num + error_padding_in_num*2.0)
+    expected_length = ((end_interval-start_interval) + data_cfg.error_padding_in_s*2.0) * data_cfg.sample_rate
+    observed_length = len(h_plus) + (diff_start_num + diff_end_num + data_cfg.error_padding_in_num*2.0)
     diff_length = expected_length - observed_length
     if diff_length != 0:
         diff_end_num += diff_length
@@ -138,23 +140,27 @@ def get_injection_snr(args):
     # Pad h_plus and h_cross with zeros on both end for slicing
     if diff_end > 0.0:
         # Append zeros if we need samples after signal ends
-        h_plus.append_zeros(int(diff_end_num + error_padding_in_num))
-        h_cross.append_zeros(int(diff_end_num + error_padding_in_num))
-    
+        h_plus.append_zeros(int(diff_end_num + data_cfg.error_padding_in_num))
+        h_cross.append_zeros(int(diff_end_num + data_cfg.error_padding_in_num))
+
     if diff_start > 0.0:
         # Prepend zeros if we need samples before signal begins
         # prepend_zeros arg must be an integer
-        h_plus.prepend_zeros(int(diff_start_num + error_padding_in_num))
-        h_cross.prepend_zeros(int(diff_start_num + error_padding_in_num))
+        h_plus.prepend_zeros(int(diff_start_num + data_cfg.error_padding_in_num))
+        h_cross.prepend_zeros(int(diff_start_num + data_cfg.error_padding_in_num))
+
+    elif diff_start < 0.0:
+        h_plus = h_plus.crop(left=-1*((diff_start_num + data_cfg.error_padding_in_num)/2048.), right=0.0)
+        h_cross = h_cross.crop(left=-1*((diff_start_num + data_cfg.error_padding_in_num)/2048.), right=0.0)
     
-    assert len(h_plus) == sample_length_in_num + error_padding_in_num*2.0
-    assert len(h_cross) == sample_length_in_num + error_padding_in_num*2.0
+    assert len(h_plus) == data_cfg.sample_length_in_num + data_cfg.error_padding_in_num*2.0, 'Expected length = {}, actual length = {}'.format(data_cfg.sample_length_in_num + data_cfg.error_padding_in_num*2.0, len(h_plus))
+    assert len(h_cross) == data_cfg.sample_length_in_num + data_cfg.error_padding_in_num*2.0, 'Expected length = {}, actual length = {}'.format(data_cfg.sample_length_in_num + data_cfg.error_padding_in_num*2.0, len(h_cross))
     
     # Setting the start_time, sets epoch and end_time as well within the TS
     # Set the start time of h_plus and h_plus after accounting for prepended zeros
-    h_plus.start_time = start_interval - error_padding_in_s
-    h_cross.start_time = start_interval - error_padding_in_s
-    
+    h_plus.start_time = start_interval - data_cfg.error_padding_in_s
+    h_cross.start_time = start_interval - data_cfg.error_padding_in_s
+
     # Calculate htilde from the above polarisation data
     declination, right_ascension = injection_values['dec'], injection_values['ra']
     # Using PyCBC project_wave to get h_t from h_plus and h_cross
@@ -189,16 +195,53 @@ def get_injection_snr(args):
     else:
         psds_data = [PSDs['median_det1'], PSDs['median_det2']]
     
-    # Calculation of SNR
-    snr = np.sqrt(sum([sigmasq(strain, psd=psd, low_frequency_cutoff=data_cfg.noise_low_freq_cutoff) 
-                       for strain, psd in zip(pure_sample, psds_data)]))
+
+    ### Calculation of SNR
+    # data_fft = np.stack([np.fft.fft(strain) for strain in pure_sample])
+    # template_fft = data_fft[:]
+    # -- Calculate the PSD of the data
+    # fs = 2048. # samples/second
+    # psd_data = [plt.psd(noise_det[:], Fs=fs, NFFT=fs, visible=False) for noise_det in noise_data]
+
+    # -- Interpolate to get the PSD values at the needed frequencies
+    # datafreq = [np.fft.fftfreq(strain.size)*fs for strain in pure_sample]
+    # power_vec = [np.interp(datafreq, freq_psd, power_data) for power_data, freq_psd in psd_data]
+
+    # -- Calculate the matched filter output
+    # power_vec = psds_data
+    # optimal = [strain_fft * strain_fft.conjugate() / power_vec_i for strain_fft, power_vec_i in zip(data_fft, power_vec)]
+    # optimal_time = [2. * np.fft.ifft(optimal_i) for optimal_i in optimal]
+
+    # -- Normalize the matched filter output
+    # df = [np.abs(datafreq_i[1] - datafreq_i[0]) for datafreq_i in datafreq]
+    # sigmasq = [2*(strain_fft * strain_fft.conjugate() / power_vec_i).sum() * df for strain_fft, power_vec_i in zip(data_fft, power_vec)]
+    # sigma = [np.sqrt(np.abs(sigmasq_i)) for sigmasq_i in sigmasq]
+    # SNR = [abs(optimal_time_i) / (sigma_i) for optimal_time_i, sigma_i in zip(optimal_time, sigma)]
+    # network_snr = np.sqrt(SNR[0]**2. + SNR[1]**2.)
+    # print(network_snr)
+
+
+    # psds_data = [interpolate(psd, data_cfg.delta_f) for psd in psds_data]
+
+    # Interpolate and smooth to the desired corruption length
+    # max_filter_len = int(round(data_cfg.whiten_padding * data_cfg.sample_rate))
+    """ 
+    psds_data = [inverse_spectrum_truncation(psd,
+                                    max_filter_len=max_filter_len,
+                                    low_frequency_cutoff=data_cfg.signal_low_freq_cutoff,
+                                    trunc_method='hann') for psd in psds_data]
+    """ 
+
+    network_snr = np.sqrt(sum([sigmasq(strain, psd=psd, low_frequency_cutoff=data_cfg.signal_low_freq_cutoff) 
+                            for strain, psd in zip(pure_sample, psds_data)]))
     
-    return snr
+    return network_snr
 
 
-def get_snrs(injection_file, data_cfg, dataset_dir):
+def get_snrs(injection_file, data_cfg, dataset_dir=None):
     # Calculate the SNRs of all testing dataset injections
     # Current dataset only has to deal with an ~96,000 signal subset
+    """ 
     injparams = {}
     with h5py.File(injection_file, 'r') as fp:
         params = list(fp.keys())
@@ -208,9 +251,25 @@ def get_snrs(injection_file, data_cfg, dataset_dir):
     injlen = len(injparams['tc'])
     # Add injection times into injparams
     injparams['injection_time'] = injparams['tc']
-    injparams['tc'] = np.random.uniform(18.0, 18.2, injlen)
+    injparams['tc'] = np.random.uniform(11.0, 11.2, injlen)
+    """ 
+
+    names = ['mass1', 'mass2', 'ra', 'dec', 'inclination', 'coa_phase', 'polarization',
+            'chirp_distance', 'spin1_a', 'spin1_azimuthal', 'spin1_polar', 'spin2_a',
+            'spin2_azimuthal', 'spin2_polar', 'injection_time', 'tc', 'spin1x', 'spin1y',
+            'spin1z', 'spin2x', 'spin2y', 'spin2z', 'mchirp', 'q', 'distance']
+
+    mpnames = {name:n for n, name in enumerate(names)}
+
+    with h5py.File(injection_file, "r") as foo:
+        # Attributes of file        
+        injections = np.asarray(foo['data'])
+        injections = np.asarray([list(foo) for foo in injections])
+        print(injections.shape)
+        injparams = {name: injections[:, mpnames[name]] for name in names}
 
     snrs = []
+    injlen = len(injparams['tc'])
     # Multiprocessing SNR calculation
     print("Starting MP based SNR Calculation")
     
@@ -219,15 +278,24 @@ def get_snrs(injection_file, data_cfg, dataset_dir):
     with mp.Pool(processes=64) as pool:
         with tqdm(total=injlen) as pbar:
             pbar.set_description("MP-SNR Calculation")
-            for snr in pool.imap_unordered(get_injection_snr, [(injection_values(n), data_cfg) for n in range(injlen)]):
+            for snr in pool.imap(get_injection_snr, [(injection_values(n), data_cfg) for n in range(injlen)]):
                 snrs.append(snr)
-                pbar.update()
+                pbar.update() 
+    
+    """
+    for n in range(injlen):
+        snr = get_injection_snr((injection_values(n), data_cfg))
+        print(snr)
+        snrs.append(snr)
+    """ 
 
     # Update injparams with the SNR values
     injparams['snr'] = snrs
    
+    """ 
     # Save all SNRs within the dataset directory as a .hdf file
     with h5py.File(os.path.join(dataset_dir, "snr.hdf"), 'a') as ds:
         ds.create_dataset('snr', data=injparams['snr'])
-    
+    """ 
+
     return injparams['snr']
