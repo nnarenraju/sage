@@ -227,15 +227,17 @@ class DataModule:
                                               random_state=42, stratify=all_targets)
                 train = train.iloc[X]
                 
-            elif data_cfg.dataset == 4:
+            elif data_cfg.dataset == 4: 
                 num_training = int(0.8*cfg.debug_size)
                 num_validation = int(0.2*cfg.debug_size)
                 training_data = train.loc[train['dstype'] == 'training'].head(num_training)
+                balance_params = {'mchirp': training_data['mchirp'].values}
                 validation_data = train.loc[train['dstype'] == 'validation'].head(num_validation)
                 # Get the required number of samples from each
                 train = pd.concat([training_data, validation_data])
                 folds = [(np.arange(len(training_data)), np.arange(len(training_data), len(training_data)+len(validation_data)))]
-                return (train, folds)
+
+                return (train, folds, balance_params)
         
         ## Splitting
         if cfg.splitter is not None:
@@ -252,7 +254,8 @@ class DataModule:
             if data_cfg.dataset in [1, 2, 3]:
                 X_train, X_valid, _, _ = train_test_split(idxs, all_targets, test_size=0.2, 
                                                           random_state=42, stratify=all_targets)
-                # Save as folds for training and validation            
+                # Save as folds for training and validation 
+                balance_params = None
                 folds = [(X_train, X_valid)]
             
             elif data_cfg.dataset == 4:
@@ -261,6 +264,7 @@ class DataModule:
                     num_training = int(0.8*cfg.debug_size)
                     num_validation = int(0.2*cfg.debug_size)
                     training_data = train.loc[train['dstype'] == 'training'].head(num_training)
+                    balance_params = {'mchirp': training_data['mchirp'].values}
                     validation_data = train.loc[train['dstype'] == 'validation'].head(num_validation)
                     # Get the required number of samples from each
                     train = pd.concat([training_data, validation_data])
@@ -395,7 +399,6 @@ class DataModule:
         # weights = make_weights_for_balancing_param(balance_params['mchirp'], nbins=8)
         # sampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
 
-        # NOTE: Turned off shuffle for the sake of sampler
         train_loader = D.DataLoader(
             train_data, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory, shuffle=True,
