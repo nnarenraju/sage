@@ -56,18 +56,6 @@ def get_network_snr(signals, psds_data, params, save_dir, debug):
     psd_data = [interpolate(psd, delta_f) for psd in psds_data]
     
     """ Calculation of SNR """
-    network_snr = calculate_network_snr(signals, psd_data, params['noise_low_freq_cutoff'])
-    
-    """ Save the SNRs for plotting prior distribution """
-    if debug:
-        save_dir = os.path.join(save_dir, 'SNR')
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir, exist_ok=False)
-        
-        save_path = os.path.join(save_dir, 'snr_priors.csv')
-        # NOTE: Using newline='' is backward incompatible between python2 and python3
-        with open(save_path, 'a', newline='') as fp:
-            writer = csv.writer(fp)
-            writer.writerow([network_snr])
+    network_snr = calculate_network_snr(signals, psd_data, params['noise_low_freq_cutoff']) 
     
     return network_snr
