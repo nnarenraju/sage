@@ -43,6 +43,7 @@ from tqdm import tqdm
 from scipy import signal
 from collections import defaultdict
 from distutils.dir_util import copy_tree
+from contextlib import nullcontext
 
 ## RayTune for parameter tuning
 from functools import partial
@@ -214,7 +215,7 @@ def prediction_probability(nep, output, labels, export_dir):
     pred_prob_tn = mx[mx.mask == False].data
     
     # Diffference between noise and signal stats
-    boundary_diff = np.around(max(pred_prob_tp) - max(pred_prob_tn), 3)
+    boundary_diff = np.around(max(pred_prob_tp) - max(pred_prob_tn), 8)
     
     # Plotting routine
     ax, _ = figure(title="Pred prob output at Epoch = {}".format(nep))
@@ -393,7 +394,7 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         plt.close(fig_gt8)
 
 
-def plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels, epoch, mode, extremes_io=False):
+def plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels, epoch, mode, extremes_io=False, snrs=None):
     # Plotting the network io of any layer used (provide non MR sample as input)
     dir_name = 'EXTREMES_IO' if extremes_io else 'NETWORK_IO'
     parent_dir = os.path.join(export_dir, dir_name)
@@ -411,11 +412,10 @@ def plot_network_io(cfg, export_dir, plot_batch, training_output, training_label
     pred_probs = training_output['pred_prob']
     cnn_output = training_output['cnn_output']
 
-    
-    for n, data in enumerate(zip(training_labels, raws, pred_probs, normed, network_input, cnn_output)):
+    for n, data in enumerate(zip(training_labels, raws, pred_probs, snrs, normed, network_input, cnn_output)):
         ## Analysing normed output of the pipeline
         # Convert all tensors to numpy arrays
-        label, raw, pred_prob, norm, netinpt, cnnopt = [foo.cpu().detach().numpy() for foo in data]
+        label, raw, pred_prob, snr, norm, netinpt, cnnopt = [foo.cpu().detach().numpy() for foo in data]
         # Checking for the effect of normalisation layers used
         nrows = 4 + len(plot_batch)
         pblen = len(plot_batch)
@@ -423,7 +423,7 @@ def plot_network_io(cfg, export_dir, plot_batch, training_output, training_label
         raw = np.around(raw, 3)
         pred_prob = np.around(pred_prob, 3)
         
-        plt.suptitle('raw={}, pred_prob={}, label={}'.format(raw, pred_prob, label))
+        plt.suptitle('raw={}, pred_prob={}, label={}, snr={}'.format(raw, pred_prob, label, snr))
         ndet = 2
         pbdat = [plot_batch[i][n] for i in range(pblen)]
         for i in range(ndet):
@@ -766,6 +766,7 @@ def pairwise(iterable):
     next(b, None)
     return zip(a, b)
 
+
 def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_step, 
                    loss_function, training_samples, training_labels, source_params,
                    optional, plot_batch, export_dir):
@@ -773,18 +774,28 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
     # Set zero_grad to apply None values instead of zeroes
     optimizer.zero_grad(set_to_none = True)
     
-    # with torch.cuda.amp.autocast():
-    if True:
+    with torch.cuda.amp.autocast() if cfg.do_AMP else nullcontext():
         # Obtain training output from network
         training_output = Network(training_samples)
         
         # Plotting cnn_output in debug mode
-        permitted_models = ['KappaModel', 'KappaModelPE']
-        # Plotting the normed outputs
-        if optional['network_io'] and cfg.model.__name__ in permitted_models:
-            plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels['gw'], nep, 'training')
+        if optional['network_io'] and cfg.model.__name__ in cfg.permitted_models:
+            plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels['gw'], nep, 'training', False, source_params['network_snr'])
             optional['network_io'] = False
-           
+
+        # Plotting high SNR bad signals separately
+        """ 
+        source_snrs = source_params['network_snr'].detach().cpu().numpy()
+        highsnr_idx = np.argwhere(source_snrs > cfg.high_snr_thresh).flatten().astype(int)
+        bad_highsnr_idx = np.argwhere(training_output['raw'][highsnr_idx].detach().cpu().numpy() < cfg.bad_snr_stat_thresh).flatten().astype(int)
+        if len(bad_highsnr_idx):
+            plot_batch = np.array(plot_batch)
+            pb = plot_batch[:][highsnr_idx][bad_highsnr_idx]
+            to = training_output[highsnr_idx][bad_highsnr_idx]
+            tl = training_labels['gw'][highsnr_idx][bad_highsnr_idx]
+            plot_network_io(cfg, export_dir, pb, to, tl, nep, 'check_bad_highSNR', False, source_snrs[highsnr_idx][bad_highsnr_idx])
+        """ 
+
         # Loss calculation
         all_losses = loss_function(training_output, training_labels, source_params, cfg.parameter_estimation)
         # Backward propogation using loss_function
@@ -798,7 +809,7 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
     # Make the actual optimizer step and save the batch loss
     optimizer.step()
     # Scheduler step
-    if scheduler and False:
+    if scheduler:
         scheduler.step(scheduler_step)
     
     return (all_losses, accuracy)
@@ -807,15 +818,14 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
 def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samples, validation_labels,
                      source_params, optional, plot_batch, export_dir):
     # Evaluation of a single validation batch
-    with torch.cuda.amp.autocast():
+    with torch.cuda.amp.autocast() if cfg.do_AMP else nullcontext():
         # Gradient evaluation is not required for validation and testing
         # Make sure that we don't do a .backward() function anywhere inside this scope
         with torch.no_grad():
             validation_output = Network(validation_samples)
             # Plotting the normed outputs
-            permitted_models = ['KappaModel', 'KappaModelPE']
-            if optional['network_io'] and cfg.model.__name__ in permitted_models:
-                plot_network_io(cfg, export_dir, plot_batch, validation_output, validation_labels['gw'], nep, 'validation')
+            if optional['network_io'] and cfg.model.__name__ in cfg.permitted_models:
+                plot_network_io(cfg, export_dir, plot_batch, validation_output, validation_labels['gw'], nep, 'validation', False, source_params['network_snr'])
                 optional['network_io'] = False
             # Calculate validation loss with params if required
             all_losses = loss_function(validation_output, validation_labels, source_params, cfg.parameter_estimation)
@@ -951,6 +961,8 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 start_train = time.time()
                 
                 ## Class balance assertions
+                ## NOTE: This may be too stringent for small batch sizes
+                ##       Also, the variance in dataset balance might help training. 
                 # batch_labels = training_labels['gw'].numpy()
                 # check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
                 # assert check_balance >= 0.30 and check_balance <= 0.70
@@ -975,7 +987,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                                          plot_batch, export_dir)
                 
                 ## Display stuff
-                loss = np.around(training_loss['total_loss'].clone().cpu().item(), 4)
+                loss = np.around(training_loss['total_loss'].clone().cpu().item(), 8)
                 # Update pbar with loss, acc
                 pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, nbatch, loss))
                 # Stop all first batch processes
@@ -1046,7 +1058,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                                                           optional, plot_batch, export_dir)
 
                     # Display stuff
-                    loss = np.around(validation_loss['total_loss'].clone().cpu().item(), 4)
+                    loss = np.around(validation_loss['total_loss'].clone().cpu().item(), 8)
                     pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, validation_batches, loss))
                     
                     # Update losses and accuracy
@@ -1071,6 +1083,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                 best_epoch_samples['signal']['plot_batch'] = [foo[maxarg:maxarg+1] for foo in plot_batch]
                                 best_epoch_samples['signal']['vout_slice'] = slice(maxarg, maxarg+1)
                                 best_epoch_samples['signal']['vlabels'] = validation_labels['gw'][maxarg:maxarg+1]
+                                best_epoch_samples['signal']['snr'] = source_params['network_snr'][maxarg:maxarg+1]
                             
                             if torch.min(signal_stats) < worst_epoch_samples['signal']['stat']:
                                 minarg = int(torch.masked_select(enum, signal_mask)[torch.argmin(signal_stats)].item())
@@ -1078,6 +1091,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                 worst_epoch_samples['signal']['plot_batch'] = [foo[minarg:minarg+1] for foo in plot_batch]
                                 worst_epoch_samples['signal']['vout_slice'] = slice(minarg, minarg+1)
                                 worst_epoch_samples['signal']['vlabels'] = validation_labels['gw'][minarg:minarg+1]
+                                worst_epoch_samples['signal']['snr'] = source_params['network_snr'][minarg:minarg+1]
 
                         ## Noise stats
                         # Possible error: RuntimeError: min(): Expected reduction dim to be specified for input.numel() == 0. 
@@ -1090,6 +1104,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                 best_epoch_samples['noise']['plot_batch'] = [foo[minarg:minarg+1] for foo in plot_batch]
                                 best_epoch_samples['noise']['vout_slice'] = slice(minarg, minarg+1)
                                 best_epoch_samples['noise']['vlabels'] = validation_labels['gw'][minarg:minarg+1]
+                                best_epoch_samples['noise']['snr'] = source_params['network_snr'][minarg:minarg+1]
 
                             if torch.max(noise_stats) > worst_epoch_samples['noise']['stat']: 
                                 maxarg = int(torch.masked_select(enum, noise_mask)[torch.argmax(noise_stats)].item())
@@ -1097,6 +1112,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                 worst_epoch_samples['noise']['plot_batch'] = [foo[maxarg:maxarg+1] for foo in plot_batch]
                                 worst_epoch_samples['noise']['vout_slice'] = slice(maxarg, maxarg+1)
                                 worst_epoch_samples['noise']['vlabels'] = validation_labels['gw'][maxarg:maxarg+1]
+                                worst_epoch_samples['noise']['snr'] = source_params['network_snr'][maxarg:maxarg+1]
 
 
                     # Params for storing labels and outputs
@@ -1120,9 +1136,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 
                 # Convert source params into dictionary of np.ndarray
                 sample_params = dict((key, np.concatenate(tuple(val))) for key, val in dd.items()) 
-                
-                # Update ReduceLronPlateau Scheduler
-                scheduler.step(loss)
+
 
                 if nep % cfg.save_freq == 0:
 
@@ -1156,14 +1170,18 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                         
                         # BEST
                         plot_network_io(cfg, export_dir, best_epoch_samples['signal']['plot_batch'], tmp['best_signal'], 
-                                        best_epoch_samples['signal']['vlabels'], nep, 'best_signal', extremes_io=True)
+                                        best_epoch_samples['signal']['vlabels'], nep, 'best_signal', extremes_io=True, 
+                                        snrs=best_epoch_samples['signal']['snr'])
                         plot_network_io(cfg, export_dir, best_epoch_samples['noise']['plot_batch'], tmp['best_noise'], 
-                                        best_epoch_samples['noise']['vlabels'], nep, 'best_noise', extremes_io=True)
+                                        best_epoch_samples['noise']['vlabels'], nep, 'best_noise', extremes_io=True,
+                                        snrs=best_epoch_samples['noise']['snr'])
                         # WORST
                         plot_network_io(cfg, export_dir, worst_epoch_samples['signal']['plot_batch'], tmp['worst_signal'], 
-                                        worst_epoch_samples['signal']['vlabels'], nep, 'worst_signal', extremes_io=True)
+                                        worst_epoch_samples['signal']['vlabels'], nep, 'worst_signal', extremes_io=True,
+                                        snrs=worst_epoch_samples['signal']['snr'])
                         plot_network_io(cfg, export_dir, worst_epoch_samples['noise']['plot_batch'], tmp['worst_noise'], 
-                                        worst_epoch_samples['noise']['vlabels'], nep, 'worst_noise', extremes_io=True)
+                                        worst_epoch_samples['noise']['vlabels'], nep, 'worst_noise', extremes_io=True,
+                                        snrs=worst_epoch_samples['noise']['snr'])
                     
                     """ Param distribution of network raw output bins """
                     outputbin_param_distribution(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
@@ -1236,17 +1254,17 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             epoch_training_loss = {}
             for key in training_running_loss.keys():
                 _key = "tot" if key == "total_loss" else key
-                epoch_validation_loss[_key] = np.around(validation_running_loss[key]/validation_batches, 4)
-                epoch_training_loss[_key] = np.around(training_running_loss[key]/training_batches, 4)
+                epoch_validation_loss[_key] = np.around(validation_running_loss[key]/validation_batches, 8)
+                epoch_training_loss[_key] = np.around(training_running_loss[key]/training_batches, 8)
             
-            avg_acc_valid = np.around(sum(acc_valid)/len(acc_valid), 4)
-            avg_acc_train = np.around(sum(acc_train)/len(acc_train), 4)
-            roc_auc = np.around(roc_auc, 4)
+            avg_acc_valid = np.around(sum(acc_valid)/len(acc_valid), 8)
+            avg_acc_train = np.around(sum(acc_train)/len(acc_train), 8)
+            roc_auc = np.around(roc_auc, 8)
             
             # Save args
             args = (nep, )
-            args += tuple(np.around(foo, 4) for foo in epoch_training_loss.values())
-            args += tuple(np.around(foo, 4) for foo in epoch_validation_loss.values())
+            args += tuple(np.around(foo, 8) for foo in epoch_training_loss.values())
+            args += tuple(np.around(foo, 8) for foo in epoch_validation_loss.values())
             args += (avg_acc_train, avg_acc_valid, roc_auc, )
             output_string = '{}    ' * len(args)
             output_string = output_string.format(*args)
@@ -1310,7 +1328,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
             """ Update Scheduler """
             # ReduceLRonPlateau requires scheduler to be updated with epoch validation loss
-            scheduler.step(epoch_params['loss'])
+            # scheduler.step(epoch_params['loss'])
 
             """ RayTune Logging """
             if cfg.rtune_optimise: 
