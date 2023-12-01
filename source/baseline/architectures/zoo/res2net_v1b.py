@@ -93,13 +93,13 @@ class Bottle2neck(nn.Module):
 
 class Res2Net(nn.Module):
 
-    def __init__(self, block, layers, baseWidth = 26, scale = 4, num_classes=1):
+    def __init__(self, block, layers, baseWidth = 26, scale = 4, num_classes=1, in_channels=2):
         self.inplanes = 64
         super(Res2Net, self).__init__()
         self.baseWidth = baseWidth
         self.scale = scale
         self.conv1 = nn.Sequential(
-            nn.Conv2d(2, 32, 3, 2, 1, bias=False),
+            nn.Conv2d(in_channels, 32, 3, 2, 1, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 32, 3, 1, 1, bias=False),
@@ -179,12 +179,12 @@ def res2net101_v1b(pretrained=False, num_classes=1, **kwargs):
     model = Res2Net(Bottle2neck, [3, 4, 23, 3], baseWidth = 26, scale = 4, num_classes=num_classes, **kwargs)
     return model
 
-def res2net50_v1b_26w_4s(pretrained=False, num_classes=1, **kwargs):
+def res2net50_v1b_26w_4s(pretrained=False, num_classes=1, in_channels=2, **kwargs):
     """Constructs a Res2Net-50_v1b_26w_4s model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = Res2Net(Bottle2neck, [3, 4, 6, 3], baseWidth = 26, scale = 4, num_classes=num_classes, **kwargs)
+    model = Res2Net(Bottle2neck, [3, 4, 6, 3], baseWidth = 26, scale = 4, num_classes=num_classes, in_channels=in_channels, **kwargs)
     return model
 
 def res2net101_v1b_26w_4s(pretrained=False, num_classes=1, **kwargs):
