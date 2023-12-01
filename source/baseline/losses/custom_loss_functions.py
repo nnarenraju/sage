@@ -253,16 +253,6 @@ class BCEgw_MSEtc(LossWrapper):
                         weighted_criterion = torch.nn.BCEWithLogitsLoss(weight=weight)
                         bce_loss += weighted_criterion(outputs['raw'], targets['gw'])
                 else:
-                    """
-                    ml = 7.0
-                    mu = 50.0
-                    min_mchirp = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
-                    max_mchirp = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
-                    edges = torch.linspace(min_mchirp, max_mchirp, steps=5)
-                    masks = [(source_params['mchirp']>=ledge) & (source_params['mchirp']<=uedge) | (source_params['mchirp']==-1) for ledge, uedge in pairwise(edges)]
-                    # Use masks to add multiple loss terms for each branch network
-                    for mask in masks:
-                    """
                     bce_loss = self.gw_criterion(outputs['raw'], targets['gw'])
                 
                 # Additional Focal Loss
@@ -281,7 +271,7 @@ class BCEgw_MSEtc(LossWrapper):
                 raise NotImplementedError('Bits and bobs loss not implemented for regularised losses')
             loss = self.gw_criterion(outputs, targets)
             BCEgw = loss['total_loss']
-
+        
         custom_loss['gw'] = BCEgw
         
         
@@ -309,10 +299,10 @@ class BCEgw_MSEtc(LossWrapper):
             # Calculating the individual PE MSE loss
             elif self.variance_loss:
                 # Variance loss on PE terms
-                assert key+"_sigma" in outputs.keys(), "Variance output not present for {} parameter!".format(key)
+                assert key+"_var" in outputs.keys(), "Variance output not present for {} parameter!".format(key)
                 # TODO: Output log(sigma) instead of sigma for HDR.
-                param_sigma = torch.masked_select(outputs[key+'_sigma'], mask)
-                pe_loss = torch.mean(0.5 * ((masked_target-masked_output)/torch.exp(param_sigma))**2 + param_sigma)
+                param_var = torch.masked_select(outputs[key+'_var'], mask)
+                pe_loss = torch.mean(0.5 * ((masked_target-masked_output)/torch.exp(param_var))**2 + param_var)
                 pe_loss = self.mse_alpha * pe_loss
             else:
                 pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
@@ -478,7 +468,7 @@ class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
         self.regularization_A = epsilon
         self.regularization_B = 1. - epsilon*self.regularization_dim
     
-    def __call__(self, outputs, targets, pe):
+    def __call__(self, outputs, targets, source_params, pe):
         # We use raw values here as BCEWithLogitsLoss has a Sigmoid wrapper
         raw_outputs = outputs['raw'].reshape(len(outputs['raw']), 1)
         raw_targets = targets['gw'].reshape(len(targets['gw']), 1)
@@ -490,5 +480,7 @@ class regularised_BCEWithLogitsLoss(torch.nn.BCEWithLogitsLoss):
         custom_loss = {}
         custom_loss['total_loss'] = torch.nn.BCEWithLogitsLoss.forward(self, transformed_input, targets, *args, **kwargs)
         custom_loss['gw'] = custom_loss['total_loss']
+        custom_loss['norm_tc'] = torch.tensor(0.0).to(device='cuda:1')
+        custom_loss['norm_mchirp'] = torch.tensor(0.0).to(device='cuda:1')
         return custom_loss
     
