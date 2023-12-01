@@ -28,14 +28,14 @@ import numpy as np
 import torch.optim as optim
 
 from pathlib import Path
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR, ReduceLROnPlateau, StepLR
 
 # LOCAL
 from data.datasets import MLMDC1
 from architectures.frontend import GammaModel, KappaModel, KappaModelPE, DeltaModelPE, MuModelPE, ZetaModel, KappaModel_ResNet_CBAM
-from architectures.frontend import Rho2Model1D, PhiModel, RhoModel, AlphaModel, KappaModel_Res2Net, UpsilonModel_Res2Net, KappaModel_Res2Net_branched
+from architectures.frontend import Rho2Model1D, PhiModel, RhoModel, AlphaModel, KappaModel_Res2Net, KappaModel_Res2Net_singleDet, UpsilonModel_Res2Net, KappaModel_Res2Net_branched
 from data.transforms import Unify, UnifySignal, UnifyNoise
-from data.transforms import BandPass, HighPass, Whiten, MultirateSampling, Normalise, Resample
+from data.transforms import BandPass, HighPass, Whiten, MultirateSampling, Normalise, Resample, Buffer, Crop
 from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase, AugmentOptimalNetworkSNR, AugmentUniformChirpMass
 from data.transforms import GenerateNewSignal
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
@@ -498,11 +498,10 @@ class KaggleFirst_REF(KaggleFirst):
     debug_size = 1000
     
 
-class KaggleFirstPE_Jul12(KaggleFirst_REF):
+class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     
     """ Data storage """
-    name = "VirgoNet_Aug31_HUGE_1s_noMRS_replicateVirgo_curriculum_withoutAMS_paperSpecs_rerun"
-    # name = "Kaggle2Net50_v1b_CBAM_Aug23_EVEREST_shortSamples"
+    name = "KaggleNet50_CBAM_Dec01_Adam_CAWR5_CombinationDset_PE_BASELINE"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     save_remarks = 'Training-D4'
     
@@ -536,21 +535,27 @@ class KaggleFirstPE_Jul12(KaggleFirst_REF):
         # Samples from config num_samples number of times
         num_samples = 100
     )
+
+    """ Weights and Biases (Wandb) """
+    use_wandb_logging = False
     
     """ Dataset """
     dataset = MLMDC1
     dataset_params = dict()
     
     """ Architecture """
-    model = ZetaModel
+    model = KappaModel_ResNet_CBAM
     
     model_params = dict(
-        store_device = 'cuda:1',
+        # Res2net50
+        filter_size = 32,
+        kernel_size = 64,
+        store_device = 'cuda:0',
     )
 
     """ Epochs and Batches """
     num_epochs = 50
-    batch_size = 400
+    batch_size = 64
     save_freq = 1
     
     """ Save samples """
@@ -560,7 +565,7 @@ class KaggleFirstPE_Jul12(KaggleFirst_REF):
     weight_types = ['loss', 'accuracy', 'roc_auc', 'low_far_nsignals']
     
     # Save weights for particular epochs
-    save_epoch_weight = [8, 9, 10, 11, 12, 13]
+    save_epoch_weight = list(range(50))
     
     # Pick one of the above weights for best epoch save directory
     save_best_option = 'loss'
@@ -572,28 +577,46 @@ class KaggleFirstPE_Jul12(KaggleFirst_REF):
     parameter_estimation = ('norm_tc', 'norm_mchirp', )
     
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
     
     """ Optimizer """
+    ## Stochastic Gradient Descent
+    #optimizer = optim.SGD
+    #optimizer_params = dict(lr=1e-3, momentum=0.9, weight_decay=1e-6)
+    ## Adam 
     optimizer = optim.Adam
-    # optimizer_params = dict(lr=1e-3, momentum=0.9, weight_decay=1e-6)
-    optimizer_params = dict(lr=1e-3)
+    optimizer_params = dict(lr=2e-4, weight_decay=1e-6)
+    ## AdamW
+    #optimizer = optim.AdamW
+    #optimizer_params = dict(lr=2e-4, betas=(0.9, 0.999), eps=1e-08, weight_decay=1e-6)
     
     """ Scheduler """
+    ## Lambda LR
     # Default option: scheduler = LambdaLR
-    scheduler = ReduceLROnPlateau
-    lambda1 = lambda epoch: 0.95 ** epoch
-    scheduler_params = dict(mode='min', factor=0.5, patience=2, min_lr=1e-5)
+    # lambda1 = lambda epoch: 0.95 ** epoch
+    ## ReduceLR on Plateau
+    # scheduler = ReduceLROnPlateau
+    # scheduler_params = dict(mode='min', factor=0.5, patience=3, min_lr=1e-5)
+    ## Cosine Annealing with Warm Restarts
+    scheduler = CosineAnnealingWarmRestarts
+    scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
+    #scheduler = StepLR
+    #scheduler_params = dict(step_size=2, gamma=0.7)
     
     """ Gradient Clipping """
-    clip_norm = 100
+    clip_norm = 10000
+
+    """ Automatic Mixed Precision """
+    # Keep this turned off when using Adam
+    # It seems to be unstable and produces NaN losses
+    do_AMP = False
     
     """ Loss Function """
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # Extra losses cannot be used without BCEWithLogitsLoss()
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(gw_criterion=None, weighted_bce_loss=False, mse_alpha=0.0,
+    loss_function = BCEgw_MSEtc(gw_criterion=None, weighted_bce_loss=False, mse_alpha=1.0,
                                 emphasis_type='raw',
                                 noise_emphasis=False, noise_conditions=[('min_noise', 'max_noise', 0.5),],
                                 signal_emphasis=False, signal_conditions=[('min_signal', 'max_signal', 1.0),],
@@ -617,7 +640,7 @@ class KaggleFirstPE_Jul12(KaggleFirst_REF):
 
     # Dataset imbalance
     ignore_dset_imbalance = False
-    subset_for_funsies = False
+    subset_for_funsies = False # debug_size is used for subset, debug need not be true
     
     """ Dataloader params """
     num_workers = 32
@@ -629,37 +652,42 @@ class KaggleFirstPE_Jul12(KaggleFirst_REF):
     transforms = dict(
         signal=UnifySignal([
                     AugmentPolSky(),
-                    AugmentDistance(),
-                    AugmentOptimalNetworkSNR(),
+                    AugmentOptimalNetworkSNR(rescale=True),
                 ]),
         noise=None,
         train=Unify({
                     'stage1':[
-                            HighPass(lower=20.0, fs=2048., order=6),
-                            Whiten(trunc_method='hann', remove_corrupted=True),
+                            HighPass(lower=20, fs=2048., order=10),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
                     ],
                     'stage2':[
                             Normalise(ignore_factors=True),
+                            MultirateSampling(),
                     ],
                 }),
         test=Unify({
                     'stage1':[
-                            HighPass(lower=20.0, fs=2048., order=6),
-                            Whiten(trunc_method='hann', remove_corrupted=True),
+                            HighPass(lower=20, fs=2048., order=10),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
                     ],
                     'stage2':[
                             Normalise(ignore_factors=True),
+                            MultirateSampling(),
                     ],
                 }),
         target=None
     )
     
-    batchshuffle_noise = True
+    batchshuffle_noise = False
     
     """ Optional things to do during training """
     # Plots the input to the network (including transformations) 
     # and output from the network
     network_io = False
+    permitted_models = ['KappaModel', 'KappaModelPE', 'KappaModel_ResNet_CBAM']
+    # Bad high SNR signals plotting
+    bad_snr_stat_thresh = 8.0 # less than this value in network output
+    high_snr_thresh = 12.0 # greater than this value in source network SNR
     # Extremes only plot
     extremes_io = False
     # Plotting on first batch
@@ -670,13 +698,13 @@ class KaggleFirstPE_Jul12(KaggleFirst_REF):
     epoch_far_scaling_factor = 64000.0
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D4_seeded"
     injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
     # Short: far_scaling_factor = 64000.0
     # Month: far_scaling_factor = 2592000.0
-    far_scaling_factor = 2592000.0
+    far_scaling_factor = 64000.0
     
     test_foreground_dataset = "foreground.hdf"
     test_foreground_output = "testing_foutput.hdf"
@@ -692,11 +720,61 @@ class KaggleFirstPE_Jul12(KaggleFirst_REF):
     # Time shift the signal by multiple of step_size and check pred probs
     cluster_threshold = 0.0001
     # Run device for testing phase
-    testing_device = 'cuda:0'
+    testing_device = 'cuda:1'
     
     # When debug is False the following plots are not made
     # SAMPLES, DEBUG, CNN_OUTPUT
     debug = False
-    debug_size = 1000
+    debug_size = 50000
 
     verbose = True
+
+
+
+class KaggleNet_Unwhitened_Nov29(KaggleFirstPE_BASELINE):
+
+    """ Data storage """
+    name = "KaggleNet50_CBAM_Nov29_Adam_CAWR5_CombinationDset_PE_BASELINE_unwhitened"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+
+    model_params = dict(
+        # Res2net50
+        filter_size = 32,
+        kernel_size = 64,
+        store_device = 'cuda:1',
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+    
+    """ Transforms """    
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentPolSky(),
+                    AugmentOptimalNetworkSNR(rescale=True),
+                ]),
+        noise=None,
+        train=Unify({
+                    'stage1':[
+                            Crop(emulate_rmcorrupt=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Crop(emulate_rmcorrupt=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
