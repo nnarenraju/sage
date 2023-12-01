@@ -50,7 +50,7 @@ class Default:
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
     # data_dir = "buffer_dataset"
-    data_dir = "dataset_D4_2e6_Aug23_seed42_shortSamples"
+    data_dir = "dataset_D4_2e6_Nov28_seed2GW_combination"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -68,13 +68,13 @@ class Default:
     # Keep both values equal (balanced dataset)
     # For imbalanced dataset, change the class weights in loss function
     # instead of changing the data generation procedures.
-    num_waveforms = 1000
-    num_noises = 1000
+    num_waveforms = 25000
+    num_noises = 25000
     # For efficient RAM usage in data generation
     # Here too, keep both nums equal (Each chunk will be class balanced)
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
     # sum(chunk_size) must be a divisor of num_waveforms + num_noises
-    chunk_size = [25, 25]
+    chunk_size = [2500, 2500]
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
@@ -95,7 +95,7 @@ class Default:
     # Create a new class for a different problem instead of changing this config
     sample_rate = 2048. # Hz
     # (20.0 seconds max + 2.0 seconds of noise padding) would be better
-    signal_length = 1.0  # seconds
+    signal_length = 12.0 # seconds
     # whiten_padding is also known as max_filter_duration in some modules
     whiten_padding = 5.0 # seconds (padding/2.0 on each side of signal_length)
     sample_length_in_s = signal_length + whiten_padding # seconds
@@ -111,13 +111,13 @@ class Default:
     reference_freq = 20.0 # Hz
     
     """ PRIORS """
-    prior_low_mass = 7.0 # Msun
-    prior_high_mass = 50.0 # Msun
+    prior_low_mass = 5.0 # Msun
+    prior_high_mass = 55.0 # Msun
     prior_low_chirp_dist = 130.0
     prior_high_chirp_dist = 350.0
     
-    tc_inject_lower = 0.7 # seconds
-    tc_inject_upper = 0.9 # seconds
+    tc_inject_lower = 11.0 # seconds
+    tc_inject_upper = 11.2 # seconds
 
     ### MODS ###
     # Modifications to Dataset
@@ -169,12 +169,12 @@ class Default:
     ###
     # Maximum possible signal length in the entire dataset
     # Defined in MLMDC1 as being the longest signal in the testing dataset
-    max_signal_length = 1.0 # s
+    max_signal_length = signal_length # s
     # Conservative value for max length of ringdown in seconds
     # This ringdown section will be sampled at max possible sample rate
-    ringdown_leeway = 0.05 # s
+    ringdown_leeway = 0.1 # s
     # Seconds before merger to include in max possible sample rate
-    merger_leeway = 0.08 # s
+    merger_leeway = 0.1 # s
     # f_ISCO is multiplied by this factor and used a starting sample freq. at merger
     # If this factor == 2.0, the sampling freq. will be at Nyquist limit
     start_freq_factor = 2.5
