@@ -129,12 +129,12 @@ def get_complex_asds():
         # Read all detector PSDs as frequency series with appropriate delta_f
         for psd_det in psd_options[det]:
             psd = load_frequencyseries(psd_det)
-            psd = interpolate(psd, 1.0/25.0)
+            psd = interpolate(psd, 1.0/17.0)
             # Convert PSD's to ASD's for colouring the white noise
-            foo = psd_to_asd(psd, 0.0, 25.0,
+            foo = psd_to_asd(psd, 0.0, 17.0,
                              sample_rate=2048.,
                              low_frequency_cutoff=15.0,
-                             filter_duration=25.0)
+                             filter_duration=17.0)
             complex_asds[det].append(foo)
     
     return complex_asds
@@ -269,8 +269,8 @@ class GenerateData:
         # All datasets that need to be created from the sample dict
         self.waveform_names = ['h_plus', 'h_cross', 'start_time', 'interval_lower', 'interval_upper',
                                'norm_tc', 'norm_dist', 'norm_mchirp', 'norm_dchirp', 'norm_q', 'norm_invq',
-                               'mass1', 'mass2', 'distance', 'mchirp', 'tc', 'chirp_distance', 'q', 'invq', 
-                               'label']
+                               'mass1', 'mass2', 'distance', 'mchirp', 'tc', 'chirp_distance', 'q', 'invq',
+                               'polarization', 'ra', 'dec', 'label']
         
         self.noise_names = ['noise_1', 'noise_2', 'label']
         
@@ -1228,10 +1228,10 @@ class GenerateData:
                 tmp = np.array([list(foo) for foo in fp['data'][:]])
                 samples.append(tmp)
         """
-
+         
         with h5py.File(self.inj_path, "r") as fp:
             samples = np.array([list(foo) for foo in fp['data'][:]])
-
+        
         
         # samples = np.row_stack((samples[0], samples[1]))
 
@@ -1511,7 +1511,7 @@ def get_D4_noise(gd):
     # noise_seed = {'training': gd.seed,
     #               'testing': 2_514_409_456}
     noise_seed = {'training': gd.seed,
-                  'testing': 25}
+                  'testing': 150914}
     # We produce 1 month of data (30 days) using the seed provided in the MLGWSC-1 paper (for testing)
     # NOTE: This seed is only used for OverlapSegment class to get noise data for two detectors
     # This should not affect the training in any manner.
@@ -1539,7 +1539,6 @@ def get_D4_noise(gd):
     mix_ratio = gd.mix_ratio if gd.mixed_noise else 1.0
     # Add a leeway of 2000 samples so we can have a gap between training and validation samples
     step_size = (infile.attrs['duration'] - gd.sample_length_in_num)/(mix_ratio*gd.num_noises + 2000)
-    # step_size = 0.1
 
     # The peak_offset option here is a dummy variable, we don't use the output times from slicer
     kwargs = dict(infile=infile,
@@ -1626,7 +1625,7 @@ def make(slots_magic_params, export_dir):
     
     # Get priors for entire dataset
     gd.get_priors()
-    
+
     if gd.dataset in [1, 2, 3]:
         _gen_(gd)
     elif gd.dataset == 4:
