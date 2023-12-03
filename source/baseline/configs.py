@@ -32,12 +32,11 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR, Redu
 
 # LOCAL
 from data.datasets import MLMDC1
-from architectures.frontend import GammaModel, KappaModel, KappaModelPE, DeltaModelPE, MuModelPE, ZetaModel, KappaModel_ResNet_CBAM
-from architectures.frontend import Rho2Model1D, PhiModel, RhoModel, AlphaModel, KappaModel_Res2Net, KappaModel_Res2Net_singleDet, UpsilonModel_Res2Net, KappaModel_Res2Net_branched
+from architectures.frontend import GammaModel, KappaModel, ZetaModel, KappaModel_ResNet_CBAM
 from data.transforms import Unify, UnifySignal, UnifyNoise
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling, Normalise, Resample, Buffer, Crop
-from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase, AugmentOptimalNetworkSNR, AugmentUniformChirpMass
-from data.transforms import GenerateNewSignal
+from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase, AugmentOptimalNetworkSNR
+from data.transforms import GenerateNewSignal, GlitchAugmentGWSPY
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
 
 # RayTune
@@ -550,7 +549,7 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
         # Res2net50
         filter_size = 32,
         kernel_size = 64,
-        store_device = 'cuda:0',
+        store_device = 'cuda:1',
     )
 
     """ Epochs and Batches """
@@ -577,8 +576,8 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     parameter_estimation = ('norm_tc', 'norm_mchirp', )
     
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
     
     """ Optimizer """
     ## Stochastic Gradient Descent
@@ -643,7 +642,7 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     subset_for_funsies = False # debug_size is used for subset, debug need not be true
     
     """ Dataloader params """
-    num_workers = 32
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 4
     persistent_workers = True
@@ -678,7 +677,7 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
         target=None
     )
     
-    batchshuffle_noise = False
+    batchshuffle_noise = True
     
     """ Optional things to do during training """
     # Plots the input to the network (including transformations) 
@@ -728,8 +727,7 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     debug_size = 50000
 
     verbose = True
-
-
+    
 
 class KaggleNet_Unwhitened_Nov29(KaggleFirstPE_BASELINE):
 
@@ -746,11 +744,11 @@ class KaggleNet_Unwhitened_Nov29(KaggleFirstPE_BASELINE):
         kernel_size = 64,
         store_device = 'cuda:1',
     )
-
+    
     """ Storage Devices """
     store_device = 'cuda:1'
     train_device = 'cuda:1'
-    
+
     """ Transforms """    
     transforms = dict(
         signal=UnifySignal([
@@ -770,6 +768,142 @@ class KaggleNet_Unwhitened_Nov29(KaggleFirstPE_BASELINE):
         test=Unify({
                     'stage1':[
                             Crop(emulate_rmcorrupt=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+
+class KaggleNet_GWSPY_Dec01(KaggleFirstPE_BASELINE):
+
+    """ Data storage """
+    name = "KaggleNet50_CBAM_Nov29_Adam_CAWR5_CombinationDset_PE_BASELINE_GWSPY_augmented"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+
+    model_params = dict(
+        # Res2net50
+        filter_size = 32,
+        kernel_size = 64,
+        store_device = 'cuda:1',
+    )
+    
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+
+    """ Transforms """    
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentPolSky(),
+                    AugmentOptimalNetworkSNR(rescale=True),
+                ]),
+        noise=UnifyNoise([
+                    GlitchAugmentGWSPY(p=0.33),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            HighPass(lower=20, fs=2048., order=10),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            HighPass(lower=20, fs=2048., order=10),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+
+class VirgoNet_Dec01(KaggleFirstPE_BASELINE):
+
+    """ Data storage """
+    name = "VirgoNet_Dec01_Adam_CAWR5_CombinationDset"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+
+    """ Architecture """
+    model = ZetaModel
+
+    model_params = dict(
+        store_device = 'cuda:1',
+    )
+     
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1' 
+
+    """ Loss Function """
+    # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
+    # Extra losses cannot be used without BCEWithLogitsLoss()
+    # All parameter estimation is done only using MSE loss at the moment
+    loss_function = BCEgw_MSEtc(gw_criterion=None, weighted_bce_loss=False, mse_alpha=0.0,
+                                emphasis_type='raw',
+                                noise_emphasis=False, noise_conditions=[('min_noise', 'max_noise', 0.5),],
+                                signal_emphasis=False, signal_conditions=[('min_signal', 'max_signal', 1.0),],
+                                snr_loss=False, snr_conditions=[(5.0, 10.0, 0.3),],
+                                mchirp_loss=False, mchirp_conditions=[(25.0, 45.0, 0.3),],
+                                dchirp_conditions=[(130.0, 350.0, 1.0),],
+                                variance_loss=False)
+
+
+class KaggleNetOTF_Dec02(KaggleFirstPE_BASELINE):
+
+    """ Data storage """
+    name = "KaggleNet50_CBAM_OTF_Dec02_Adam_CAWR5_CombinationDset_PE"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+
+    model_params = dict(
+        # Res2net50
+        filter_size = 32,
+        kernel_size = 64,
+        store_device = 'cuda:1',
+    )
+    
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+
+    """ Transforms """    
+    transforms = dict(
+        signal=UnifySignal([
+                    GenerateNewSignal(),
+                    AugmentPolSky(),
+                    AugmentOptimalNetworkSNR(rescale=True),
+                ]),
+        noise=None,
+        train=Unify({
+                    'stage1':[
+                            HighPass(lower=20, fs=2048., order=10),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            HighPass(lower=20, fs=2048., order=10),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
                     ],
                     'stage2':[
                             Normalise(ignore_factors=True),
