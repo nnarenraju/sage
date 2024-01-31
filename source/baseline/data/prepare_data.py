@@ -134,29 +134,32 @@ class DataModule:
     
         """
         
-        # Getting the attributes of data_config class as dict
-        dc_attrs = {key:value for key, value in data_cfg.__dict__.items() if not key.startswith('__') and not callable(key)}
-        
-        # Set "make_dataset" to the appropriate method
-        make_module = dc_attrs['make_module']
-        
-        # Training data
-        if dc_attrs['make_dataset']:
-            make_module(dc_attrs, export_dir)
-        
-        # Check if dataset already exists
-        # If it does, check if training.hdf exists within it and save in export dir
-        check_dir = os.path.join(dc_attrs['parent_dir'], dc_attrs['data_dir'])
-        if os.path.isdir(check_dir):
-            # Lookup table formats
-            elink_file = os.path.join(check_dir, "extlinks.hdf")
-            # Copy lookup tables to export_dir
-            if os.path.isfile(elink_file):
-                # Move the extlinks.hdf to export_dir for pipeline
-                move_location = os.path.join(export_dir, 'extlinks.hdf')
-                shutil.copy(elink_file, move_location)
+        if not data_cfg.OTF:
+            # Getting the attributes of data_config class as dict
+            dc_attrs = {key:value for key, value in data_cfg.__dict__.items() if not key.startswith('__') and not callable(key)}
+            
+            # Set "make_dataset" to the appropriate method
+            make_module = dc_attrs['make_module']
+            
+            # Training data
+            if dc_attrs['make_dataset']:
+                make_module(dc_attrs, export_dir)
+            
+            # Check if dataset already exists
+            # If it does, check if training.hdf exists within it and save in export dir
+            check_dir = os.path.join(dc_attrs['parent_dir'], dc_attrs['data_dir'])
+            if os.path.isdir(check_dir):
+                # Lookup table formats
+                elink_file = os.path.join(check_dir, "extlinks.hdf")
+                # Copy lookup tables to export_dir
+                if os.path.isfile(elink_file):
+                    # Move the extlinks.hdf to export_dir for pipeline
+                    move_location = os.path.join(export_dir, 'extlinks.hdf')
+                    shutil.copy(elink_file, move_location)
+            else:
+                raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
         else:
-            raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
+            print('Running ORChiD in OTF Mode')
             
     
     def get_metadata(cfg, data_cfg):
@@ -309,14 +312,24 @@ class DataModule:
         # Where weights is the probability of each sample, it depends in how many samples
         # per category you have, for instance, if you data is simple as that data = [0, 1, 0, 0, 1],
         # class '0' count is 3, and class '1' count is 2 So weights vector is [1/3, 1/2, 1/3, 1/3, 1/2].
-        ttargets = train_fold['target'].values
-        check_class_balance = len(ttargets[ttargets == 1])/len(ttargets)
-        if check_class_balance != 0.5 and not cfg.ignore_dset_imbalance:
-            raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) training dataset!'.format(check_class_balance))
+        if not data_cfg.OTF:
+            ttargets = train_fold['target'].values
+            check_class_balance = len(ttargets[ttargets == 1])/len(ttargets)
+            if check_class_balance != 0.5 and not cfg.ignore_dset_imbalance:
+                raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) training dataset!'.format(check_class_balance))
+            
+            # Set data_paths and targets
+            data_paths = train_fold['path'].values
+            targets = train_fold['target'].values
+        
+        else:
+            # Set data_paths and targets for OTF
+            data_paths = targets = None
         
         # Create the training and validation dataset objects
         train_dataset = cfg.dataset(
-                data_paths=train_fold['path'].values, targets=train_fold['target'].values,
+                data_paths=data_paths, targets=targets,
+                waveform_generation=cfg.generation['signal'], noise_generation=cfg.generation['noise'],
                 transforms=cfg.transforms['train'], target_transforms=cfg.transforms['target'],
                 signal_only_transforms=cfg.transforms['signal'], 
                 noise_only_transforms=cfg.transforms['noise'],
@@ -324,13 +337,23 @@ class DataModule:
                 train_device=cfg.train_device, **cfg.dataset_params)
         
         # Validation dataset
-        vtargets = valid_fold['target'].values
-        check_class_balance = len(vtargets[vtargets == 1])/len(vtargets)
-        if check_class_balance != 0.5 and not cfg.ignore_dset_imbalance:
-            raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) validation dataset!'.format(check_class_balance))
+        if not data_cfg.OTF:
+            vtargets = valid_fold['target'].values
+            check_class_balance = len(vtargets[vtargets == 1])/len(vtargets)
+            if check_class_balance != 0.5 and not cfg.ignore_dset_imbalance:
+                raise ValueError('Encountered a class imbalanced (num_signals/tot = {}) validation dataset!'.format(check_class_balance))
+            
+            # Set data_paths and targets
+            data_paths = valid_fold['path'].values
+            targets = valid_fold['target'].values
+        
+        else:
+            # Set data_paths and targets for OTF
+            data_paths = targets = None
         
         valid_dataset = cfg.dataset(
-                data_paths=valid_fold['path'].values, targets=valid_fold['target'].values,
+                data_paths=data_paths, targets=targets,
+                waveform_generation=cfg.generation['signal'], noise_generation=cfg.generation['noise'],
                 transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
                 signal_only_transforms=cfg.transforms['signal'],
                 noise_only_transforms=cfg.transforms['noise'],
