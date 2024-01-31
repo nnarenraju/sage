@@ -30,13 +30,20 @@ Documentation: NULL
 from data.MPB_make_default_dataset import make as make_MPB_default_dataset
 
 
+
 # WARNING: Removing any of the parameters present in default will result in errors.
 
 """ DEFAULT """
 
 class Default:
-    
+
     """ Make """
+    # Run ORChiD on OTF (on-the-fly data generation) mode
+    # Does not try to move extlinks.hdf from dataset dir
+    # FIXME: We still need a dataset dir for accessing the PSDs
+    OTF = True
+    # To handle this: target = 1 if np.random.rand() < self.data_cfg.signal_probability else 0
+    signal_probability = 0.5
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
     make_dataset = False
@@ -49,7 +56,7 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
-    # data_dir = "buffer_dataset"
+    # data_dir = "buffer_dataset_check"
     data_dir = "dataset_D4_2e6_Nov28_seed2GW_combination"
     
     """ Basic dataset options """
@@ -59,7 +66,7 @@ class Default:
     dataset = 4
     # Random seed provided to generate_data script
     # This seed is used to generate the priors
-    seed = 42
+    seed = 110798
 
     """ Save Toggle """
     save_injection_priors = True
@@ -68,18 +75,23 @@ class Default:
     # Keep both values equal (balanced dataset)
     # For imbalanced dataset, change the class weights in loss function
     # instead of changing the data generation procedures.
-    num_waveforms = 25000
-    num_noises = 25000
+    # Not used for OTF
+    num_waveforms = 1_250_000
+    num_noises = 1_250_000
     # For efficient RAM usage in data generation
     # Here too, keep both nums equal (Each chunk will be class balanced)
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
     # sum(chunk_size) must be a divisor of num_waveforms + num_noises
-    chunk_size = [2500, 2500]
+    chunk_size = [25000, 25000]
+
+    """ OTF Params """
+    num_training_samples = 2_000_000
+    num_validation_samples = 500_000
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
     # chunk_size[0] and chunk_size[1] must be divisible exactly by num_queues_datasave
-    num_queues_datasave = 1
+    num_queues_datasave = 8
     num_cores_datagen = 24
     
     """ Save frequency """
@@ -107,12 +119,13 @@ class Default:
     error_padding_in_num = round(error_padding_in_s * sample_rate)
     
     signal_low_freq_cutoff = 20.0 # Hz
-    signal_approximant = 'IMRPhenomXPHM'
+    signal_approximant = 'IMRPhenomPv2'
     reference_freq = 20.0 # Hz
     
     """ PRIORS """
-    prior_low_mass = 5.0 # Msun
-    prior_high_mass = 55.0 # Msun
+    prior_low_mass = 7.0 # Msun
+    prior_high_mass = 50.0 # Msun
+    # Chirp distance
     prior_low_chirp_dist = 130.0
     prior_high_chirp_dist = 350.0
     
@@ -123,7 +136,22 @@ class Default:
     # Modifications to Dataset
     # Possible mods: ('uniform_signal_duration', 'uniform_chirp_mass')
     # NOTE: Set to None if not required
-    modification = None
+    modification = 'uniform_chirp_mass'
+    # Option to use the priors for tau or mchirp below
+    # If False, we use ml and mu above to get limits instead
+    use_mod_priors = False
+    # Tau limits
+    prior_tau_lower = None
+    prior_tau_upper = None
+    # Mchirp limits
+    prior_mchirp_lower = 25.0
+    prior_mchirp_upper = 100.0
+
+    # Distance and dchirp options
+    # Priors are based on above-given data
+    # This can only be used when modifications is not None
+    uniform_distance = False
+    uniform_dchirp = False
     
     """ PSD Params """
     noise_low_freq_cutoff = 15.0 # Hz
