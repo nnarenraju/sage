@@ -647,14 +647,6 @@ def paramfrac_detected_above_thresh(cfg, export_dir, network_output, labels, sam
         plt.close()
 
 
-def learning_rate_curve():
-    pass
-
-
-def worst_noise_diagnosis():
-    pass
-
-
 def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     # Read diagnostic file
     # option engine='python' required if sep > 1 character in length
@@ -782,19 +774,6 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
         if optional['network_io'] and cfg.model.__name__ in cfg.permitted_models:
             plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels['gw'], nep, 'training', False, source_params['network_snr'])
             optional['network_io'] = False
-
-        # Plotting high SNR bad signals separately
-        """ 
-        source_snrs = source_params['network_snr'].detach().cpu().numpy()
-        highsnr_idx = np.argwhere(source_snrs > cfg.high_snr_thresh).flatten().astype(int)
-        bad_highsnr_idx = np.argwhere(training_output['raw'][highsnr_idx].detach().cpu().numpy() < cfg.bad_snr_stat_thresh).flatten().astype(int)
-        if len(bad_highsnr_idx):
-            plot_batch = np.array(plot_batch)
-            pb = plot_batch[:][highsnr_idx][bad_highsnr_idx]
-            to = training_output[highsnr_idx][bad_highsnr_idx]
-            tl = training_labels['gw'][highsnr_idx][bad_highsnr_idx]
-            plot_network_io(cfg, export_dir, pb, to, tl, nep, 'check_bad_highSNR', False, source_snrs[highsnr_idx][bad_highsnr_idx])
-        """ 
 
         # Loss calculation
         all_losses = loss_function(training_output, training_labels, source_params, cfg.parameter_estimation)
