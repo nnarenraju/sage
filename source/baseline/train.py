@@ -159,113 +159,117 @@ def run_trainer():
     # This should create/use a dataset and save a copy of the lookup table
     dat.get_summary(cfg, data_cfg, cfg.export_dir)
     
-    # Prepare dataset (read, split and return fold idx)
-    # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
-    train, folds, balance_params = dat.get_metadata(cfg, data_cfg)
+    if not data_cfg.OTF:
+        # Prepare dataset (read, split and return fold idx)
+        # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
+        train, folds, balance_params = dat.get_metadata(cfg, data_cfg)
 
-    """ Training """
-    # Folds are obtained only by splitting the training dataset
-        
-    # Use folds for cross-validation
-    for nfold, (train_idx, val_idx) in enumerate(folds):
-        
-        if cfg.splitter != None:
-            raise NotImplementedError('K-fold cross validation method under construction!')
-            print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
+        """ Training (non-OTF) """
+        # Folds are obtained only by splitting the training dataset
+        # Use folds for cross-validation
+        for nfold, (train_idx, val_idx) in enumerate(folds):
+            
+            if cfg.splitter != None:
+                raise NotImplementedError('K-fold cross validation method under construction!')
+                print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
 
-        train_fold = train.iloc[train_idx]
-        val_fold = train.iloc[val_idx]
+            train_fold = train.iloc[train_idx]
+            val_fold = train.iloc[val_idx]
+            
+            if cfg.rtune_optimise:
+                ### RayTune needs to optimise parameter from this point forward
+                ### All code before inference section must be wrapped into a train function
+                rtune = cfg.rtune_params
+                # Get RayTune configs
+                rtune_config = rtune['config']
+                rtune_scheduler = rtune['scheduler'](**rtune['scheduler_params'])
+                rtune_reporter = rtune['reporter'](**rtune['reporter_params'])
+                
+                # Constant args to be passed to trainer
+                const = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
+                
+                # Run RayTune with given config options
+                result = tune.run(
+                    partial(trainer, args=const),
+                    name = "raytune_optimisation",
+                    local_dir = os.path.join(cfg.export_dir, "raytune"),
+                    resources_per_trial = {"cpu": 1, "gpu": 1},
+                    max_concurrent_trials=1,
+                    config = rtune_config,
+                    num_samples = rtune['num_samples'],
+                    scheduler = rtune_scheduler,
+                    progress_reporter = rtune_reporter
+                )
+                
+                # Getting the best trial
+                # Syntax: get_best_trial(metric, mode, scope)
+                # Usage: esult.get_best_trial("loss", "min", "last")
+                # Meaning: Get the trial that has minimum validation loss
+                best_trial = result.get_best_trial("loss", "min", "last")
+                print("Best trial config: {}".format(best_trial.config))
+                print("Best trial final validation loss: {}".format(
+                    best_trial.last_result["loss"]))
+                
+                # Best trained Network
+                best_checkpoint_dir = best_trial.checkpoint.value
+                model_state, optimizer_state = torch.load(os.path.join(best_checkpoint_dir, "checkpoint"))
+                # Loading the network the best weights
+                Network = cfg.model(**cfg.model_params)
+                Network.load_state_dict(model_state)
+                
+                ### RayTune Optimisation ends ###
+            
+            else:
+                # Running the pipeline without RayTune optimisation
+                args = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
+                Network = trainer(args=args)
+            
+            # Save run in online workspace
+            # save(cfg, data_cfg)
+            
+            # Sanity check for Network load
+            if Network == None:
+                return
+    
+    else:
+        args = (cfg, data_cfg, opts, None, None, None, )
+        Network = trainer(args=args)
         
-        if cfg.rtune_optimise:
-            ### RayTune needs to optimise parameter from this point forward
-            ### All code before inference section must be wrapped into a train function
-            rtune = cfg.rtune_params
-            # Get RayTune configs
-            rtune_config = rtune['config']
-            rtune_scheduler = rtune['scheduler'](**rtune['scheduler_params'])
-            rtune_reporter = rtune['reporter'](**rtune['reporter_params'])
-            
-            # Constant args to be passed to trainer
-            const = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
-            
-            # Run RayTune with given config options
-            result = tune.run(
-                partial(trainer, args=const),
-                name = "raytune_optimisation",
-                local_dir = os.path.join(cfg.export_dir, "raytune"),
-                resources_per_trial = {"cpu": 1, "gpu": 1},
-                max_concurrent_trials=1,
-                config = rtune_config,
-                num_samples = rtune['num_samples'],
-                scheduler = rtune_scheduler,
-                progress_reporter = rtune_reporter
-            )
-            
-            # Getting the best trial
-            # Syntax: get_best_trial(metric, mode, scope)
-            # Usage: esult.get_best_trial("loss", "min", "last")
-            # Meaning: Get the trial that has minimum validation loss
-            best_trial = result.get_best_trial("loss", "min", "last")
-            print("Best trial config: {}".format(best_trial.config))
-            print("Best trial final validation loss: {}".format(
-                best_trial.last_result["loss"]))
-            
-            # Best trained Network
-            best_checkpoint_dir = best_trial.checkpoint.value
-            model_state, optimizer_state = torch.load(os.path.join(best_checkpoint_dir, "checkpoint"))
-            # Loading the network the best weights
-            Network = cfg.model(**cfg.model_params)
-            Network.load_state_dict(model_state)
-            
-            ### RayTune Optimisation ends ###
+    """ TESTING """
+    if opts.inference:
+        # Running the testing phase for foreground data
+        transforms = cfg.transforms['test']
+        jobs = ['foreground', 'background']
         
-        else:
-            # Running the pipeline without RayTune optimisation
-            args = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
-            Network = trainer(args=args)
+        output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
+        for job in jobs:
+            # Get the required data based on testing job
+            if job == 'foreground':
+                testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
+                evalfile = os.path.join(output_testing_dir, cfg.test_foreground_output)
+            elif job == 'background':
+                testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
+                evalfile = os.path.join(output_testing_dir, cfg.test_background_output)
+                
+            print('\nRunning the testing phase on {} data'.format(job))
+            run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
+                        step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
+                        trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
+                        batch_size = cfg.batch_size,
+                        device=cfg.testing_device, verbose=cfg.verbose)
+    
+        # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
+        raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
+        raw_args += ['--foreground-events', os.path.join(output_testing_dir, cfg.test_foreground_output)]
+        raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
+        raw_args += ['--background-events', os.path.join(output_testing_dir, cfg.test_background_output)]
+        out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
+        raw_args += ['--output-file', out_eval]
+        raw_args += ['--output-dir', output_testing_dir]
+        raw_args += ['--verbose']
         
-        # Save run in online workspace
-        # save(cfg, data_cfg)
-        
-        # Sanity check for Network load
-        if Network == None:
-            return
-        
-        """ TESTING """
-        if opts.inference:
-            # Running the testing phase for foreground data
-            transforms = cfg.transforms['test']
-            jobs = ['foreground', 'background']
-            
-            output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
-            for job in jobs:
-                # Get the required data based on testing job
-                if job == 'foreground':
-                    testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
-                    evalfile = os.path.join(output_testing_dir, cfg.test_foreground_output)
-                elif job == 'background':
-                    testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
-                    evalfile = os.path.join(output_testing_dir, cfg.test_background_output)
-                    
-                print('\nRunning the testing phase on {} data'.format(job))
-                run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-                         step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
-                         trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
-                         batch_size = cfg.batch_size,
-                         device=cfg.testing_device, verbose=cfg.verbose)
-        
-            # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
-            raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
-            raw_args += ['--foreground-events', os.path.join(output_testing_dir, cfg.test_foreground_output)]
-            raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
-            raw_args += ['--background-events', os.path.join(output_testing_dir, cfg.test_background_output)]
-            out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
-            raw_args += ['--output-file', out_eval]
-            raw_args += ['--output-dir', output_testing_dir]
-            raw_args += ['--verbose']
-            
-            # Running the evaluator to obtain output triggers (with clustering)
-            evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
+        # Running the evaluator to obtain output triggers (with clustering)
+        evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
 
         
 
