@@ -58,12 +58,16 @@ def get_tau_priors(ml, mu, lf):
     tau_upper = tau(min_mchirp)
     return (tau_lower, tau_upper)
 
-def get_uniform_mchirp(ml, mu, num_samples):
+def get_uniform_mchirp(ml, mu, num_samples, min_mchirp=None, max_mchirp=None, override=False):
     # m2 will always be slightly lower than m1, but (m, m) will give limit
     # that the mchirp will never reach but tends to as num_samples tends to inf.
     # Range for mchirp can be written as --> (min_mchirp, max_mchirp)
-    min_mchirp = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
-    max_mchirp = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
+    if override:
+        min_mchirp = min_mchirp
+        max_mchirp = max_mchirp
+    else:
+        min_mchirp = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
+        max_mchirp = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
     # Get uniform chirp mass
     uniform_mchirp = np.random.uniform(min_mchirp, max_mchirp, num_samples)
     return uniform_mchirp
