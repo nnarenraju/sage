@@ -143,3 +143,7 @@ source/baseline/data/psds/
 *.jpg
 
 source/baseline/check.py
+source/baseline/notebooks/tmp/h1_o3a.npy
+source/baseline/notebooks/tmp/h1_o3b.npy
+source/baseline/notebooks/tmp/l1_o3a.npy
+source/baseline/notebooks/tmp/l1_o3b.npy
