@@ -31,6 +31,7 @@ import glob
 import torch
 import random
 import numpy as np
+import configparser
 
 from torch.utils.data import Dataset
 from statsmodels.tsa.stattools import adfuller
@@ -46,17 +47,22 @@ from data.normalisation import get_normalisations
 from data.snr_calculation import get_network_snr
 from data.plot_dataloader_unit import plot_unit
 from data.multirate_sampling import get_sampling_rate_bins
+from data.pycbc_draw_samples import read_config
 
 # PyCBC
 import pycbc
+from pycbc import transforms
 from pycbc import distributions
 from pycbc.types import TimeSeries
+from pycbc.conversions import det_tc
 from pycbc.types import FrequencySeries
 from pycbc.psd import welch, interpolate
+from pycbc.distributions.power_law import UniformRadius
 from pycbc.distributions.utils import draw_samples_from_config
 
 # Datatype for storage
 tensor_dtype=torch.float32
+
 
 
 """ Utility Classes """
@@ -85,7 +91,9 @@ class Normalise:
 
 class MLMDC1(Dataset):
     
-    def __init__(self, data_paths, targets, transforms=None, target_transforms=None,
+    def __init__(self, data_paths, targets, 
+                 waveform_generation=None, noise_generation=None,
+                 transforms=None, target_transforms=None,
                  signal_only_transforms=None, noise_only_transforms=None, 
                  training=False, testing=False, store_device='cpu', train_device='cpu', 
                  cfg=None, data_cfg=None):
@@ -112,7 +120,6 @@ class MLMDC1(Dataset):
         # Set CUDA device for pin_memory if needed
         if bool(re.search('cuda', self.cfg.store_device)):
             setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
-        
         
         """ PSD Handling (used in whitening) """
         # Store the PSD files here in RAM. This reduces the overhead when whitening.
@@ -250,6 +257,9 @@ class MLMDC1(Dataset):
             params['mchirp'] = -1
             params['dchirp'] = -1
             params['tc'] = -1
+            params['ra'] = -1
+            params['dec'] = -1
+            params['polarization'] = -1
             #params['chirp_distance'] = -1
             #params['q'] = -1
             #params['invq'] = -1
@@ -268,6 +278,9 @@ class MLMDC1(Dataset):
             params['distance'] = group['distance'][didx]
             params['mchirp'] = group['mchirp'][didx]
             params['tc'] = group['tc'][didx]
+            params['ra'] = group['ra'][didx]
+            params['dec'] = group['dec'][didx]
+            params['polarization'] = group['polarization'][didx]
             #params['chirp_distance'] = group['chirp_distance'][didx]
             #params['q'] = group['q'][didx]
             #params['invq'] = group['invq'][didx]
@@ -454,6 +467,18 @@ class MLMDC1(Dataset):
 
         # Update targets dict
         all_targets.update(target_update)
+         
+        ## Get the detector tc from detname, ra, dec, barycentric tc
+        # GPS time used is dummy
+        normalise_tc = Normalise(self.data_cfg.tc_inject_lower, self.data_cfg.tc_inject_upper)
+        tc_H1 = det_tc(self.detectors_abbr[0], params['ra'], params['dec'], 1248166018)
+        all_targets['norm_tc_1'] = normalise_tc.norm(params['tc'] + (tc_H1-1248166018))
+        tc_L1 = det_tc(self.detectors_abbr[1], params['ra'], params['dec'], 1248166018)
+        all_targets['norm_tc_2'] = normalise_tc.norm(params['tc'] + (tc_L1-1248166018))
+        
+        ## Single detector mode params
+        all_targets['norm_mchirp_1'] = all_targets['norm_mchirp']
+        all_targets['norm_mchirp_2'] = all_targets['norm_mchirp']
 
         # Add the weighted BCE loss terms into all_targets
         # all_targets['weighted_bce_data'] = self.weighted_bce_data
@@ -463,7 +488,7 @@ class MLMDC1(Dataset):
         source_params = {}
         # Distance and dchirp could have been alterred when rescaling SNR
         source_params.update(params)
-
+        
         ## Exceptions
         for foo in self.ignore_params:
             if foo in source_params.keys():
@@ -502,6 +527,7 @@ class MLMDC1(Dataset):
     def get_priors_for_epoch(self, random_seed):
         ## Generate source prior parameters
         # A path to the .ini file.
+
         ini_parent = './data/ini_files'
         CONFIG_PATH = '{}/ds{}.ini'.format(ini_parent, self.data_cfg.dataset)
         
@@ -555,12 +581,13 @@ class MLMDC1(Dataset):
     def __getitem__(self, idx):
         
         # Setting the unique seed for given sample
-        np.random.seed(idx+1)
+        np.random.seed(int(idx+1+1e6))
         
         # Get data paths for external link
         data_path = self.data_paths[idx]
         # Get data from ExternalLink'ed lookup file
         HDF5_Dataset, didx = os.path.split(data_path)
+
         # If we are generating signals on the fly, we do not need to access data via extlinks.hdf
         gencondition = 'GenerateNewSignal' in [foo.__class__.__name__ for foo in self.cfg.transforms['signal'].transforms] and self.training
         if gencondition and (1 if bool(re.search('signal', HDF5_Dataset)) else 0):
@@ -584,10 +611,6 @@ class MLMDC1(Dataset):
         
         ## Signal Augmentation
         pure_sample, params = self._augmentation_(sample, targets['gw'], params, mode='signal')
-        keys = list(params.keys())[:]
-        for key in keys:
-            if key not in ['mass1', 'mass2', 'distance', 'mchirp', 'tc', 'dchirp', 'network_snr']:
-                params.pop(key, None)
 
         ## Add noise realisation to the signals
         noisy_sample, pure_noise = self._noise_realisation_(pure_sample, targets, params)
@@ -609,20 +632,6 @@ class MLMDC1(Dataset):
         # but still contain all other transformations in the correct key.
         sample_transforms.update(mrsampling)
         
-        ## Creating a UNet target using pure signal and white Gaussian noise
-        """
-        noise = [self.noise_generator(psd).to_timeseries()[:pure_sample.shape[-1]] for psd in self.unet_psds]
-        if targets['gw']:
-            unet_signal = pure_sample + noise
-            unet_transforms = self._transforms_(unet_signal, key='stage1')
-            unet_transforms = self._transforms_(unet_transforms['sample'], key='stage2')
-            targets['whitened'] = unet_transforms['sample'][:, :3680]
-        else:
-            unet_transforms = self._transforms_(noise, key='stage1')
-            unet_transforms = self._transforms_(unet_transforms['sample'], key='stage2')
-            targets['whitened'] = unet_transforms['sample'][:, :3680]
-        """
-
         ## Targets and Parameters Handling
         all_targets, source_params = self.target_handling(targets, params)
         
@@ -654,19 +663,438 @@ class MLMDC1(Dataset):
             nsamp = (pure_sample/max(abs(pure_sample[0]))).astype(np.float16).copy()
             hpass = (sample_transforms['HighPass']/max(abs(sample_transforms['HighPass'][0]))).astype(np.float16).copy()
             white = (sample_transforms['Whiten']).astype(np.float16).copy()
-            # msamp = (sample_transforms['MultirateSampling']).astype(np.float16).copy()
-            msamp = (sample_transforms['Whiten']).astype(np.float16).copy()
+            msamp = (sample_transforms['MultirateSampling']).astype(np.float16).copy()
             plot_batch = [nsamp, hpass, white, msamp]
             self.plot_batch_fnames = ['PureSample', 'HighPass', 'Whiten', 'MRSampling']
-            self.nplot_on_first_batch = 4
+            self.nplot_on_first_batch = len(self.plot_batch_fnames)
         else:
             plot_batch = [None] * self.nplot_on_first_batch
-
+        
         return (sample, all_targets, source_params, plot_batch)
 
 
 
 
+
+class MinimalOTF(Dataset):
+    # NOTE: Currently, this works only for Dataset 4
+    
+    def __init__(self, data_paths=None, targets=None,
+                 waveform_generation=None, noise_generation=None,
+                 transforms=None, target_transforms=None,
+                 signal_only_transforms=None, noise_only_transforms=None, 
+                 training=False, store_device='cpu', train_device='cpu', 
+                 cfg=None, data_cfg=None):
+        
+        super().__init__()
+        self.waveform_generation = waveform_generation
+        self.noise_generation = noise_generation
+        self.transforms = transforms
+        self.target_transforms = target_transforms
+        self.signal_only_transforms = signal_only_transforms
+        self.noise_only_transforms = noise_only_transforms
+        self.store_device = store_device
+        self.train_device = train_device
+        self.cfg = cfg
+        self.data_cfg = data_cfg
+        # Using this for now to get psds (TODO: move psd creation from datagen)
+        self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
+        self.epoch = -1
+        self.plot_on_first_batch = self.cfg.plot_on_first_batch
+        self.nplot_on_first_batch = 0
+        self.plot_batch_fnames = []
+        if training:
+            self.total_samples_per_epoch = self.data_cfg.num_training_samples
+        else:
+            self.total_samples_per_epoch = self.data_cfg.num_validation_samples
+        
+        self.training = training
+        
+        # Set CUDA device for pin_memory if needed
+        if bool(re.search('cuda', self.cfg.store_device)):
+            setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
+        
+        """ PSD Handling (used in whitening) """
+        # Store the PSD files here in RAM. This reduces the overhead when whitening.
+        # Read all psds in the data_dir and store then as FrequencySeries
+        self.psds_data = load_psds(self.data_loc, self.data_cfg)
+            
+        """ Multi-rate Sampling """
+        # Get the sampling rates and their bins idx
+        self.data_cfg.dbins = get_sampling_rate_bins(self.data_cfg)
+        
+        """ LAL Detector Objects (used in project_wave - AugPolSky) """
+        # Detector objects (these are lal objects and may present problems when parallelising)
+        # Create the detectors (TODO: generalise this!!!)
+        self.detectors_abbr = ('H1', 'L1')
+        self.detectors = [pycbc.detector.Detector(det_abbr) for det_abbr in self.detectors_abbr]
+        
+        """ PyCBC Distributions (used in AugPolSky and AugDistance) """
+        ## Distribution objects for augmentation
+        self.distrs = get_distributions(self.data_cfg)
+
+        """ Normalising the augmented params (if needed) """
+        self.norm, self.limits = get_normalisations(self.cfg, self.data_cfg)
+
+        """ Useful params """
+        self.sample_rate = self.data_cfg.sample_rate
+        self.noise_low_freq_cutoff = self.data_cfg.noise_low_freq_cutoff
+
+        ## SPECIAL
+        self.special = {}
+        self.special['distrs'] = self.distrs
+        self.special['norm'] = self.norm
+        self.special['cfg'] = self.cfg
+        self.special['data_cfg'] = self.data_cfg
+        self.special['dets'] = self.detectors
+        self.special['psds'] = self.psds_data
+        self.special['training'] = self.training
+        self.special['limits'] = self.limits
+        self.special['default_keys'] = self.special.keys()
+
+        ## Ignore Params
+        self.ignore_params = {'start_time', 'interval_lower', 'interval_upper', 
+                              'sample_rate', 'noise_low_freq_cutoff', 'declination', 
+                              'right_ascension', 'polarisation_angle'}
+        
+        """ Waveform Parameters """
+        ## Parameters required to produce a waveform
+        # m1_msun, m2_msun, s1x, s1y, s1z, s2x, s2y, s2z, distance_mpc, tc, phiRef, inclination
+        # Parameters must be of form np.ndarray to be input into Ripple jitted generator
+        self.params = {'mass1': -1, 'mass2': -1, 'spin1x': -1, 'spin1y': -1, 'spin1z': -1,
+                       'spin2x': -1, 'spin2y': -1, 'spin2z': -1, 'distance': -1, 'tc': -1,
+                       'coa_phase': -1,  'inclination': -1}
+        
+        ini_parent = './data/ini_files'
+        dataset = 4 # MinimalOTF made specifically for dataset 4
+        CONFIG_PATH = "{}/ds{}.ini".format(ini_parent, dataset)
+        self.randomsampler, self.waveform_transforms = read_config(path=CONFIG_PATH)
+        # data_config and ini_file both have definitions of tc range
+        # There may be a discrepancy between the two
+        config_reader = configparser.ConfigParser()
+        config_reader.read(CONFIG_PATH)
+        assert float(config_reader['prior-tc']['min-tc']) == self.data_cfg.tc_inject_lower, 'min-tc discrepancy in ini file'
+        assert float(config_reader['prior-tc']['max-tc']) == self.data_cfg.tc_inject_upper, 'max-tc discrepancy in ini file'
+        # mass check
+        assert float(config_reader['prior-mass1']['min-mass1']) == self.data_cfg.prior_low_mass, 'min-m1 discrepancy in ini file'
+        assert float(config_reader['prior-mass1']['max-mass1']) == self.data_cfg.prior_high_mass, 'max-m1 discrepancy in ini file'
+        assert float(config_reader['prior-mass2']['min-mass2']) == self.data_cfg.prior_low_mass, 'min-m2 discrepancy in ini file'
+        assert float(config_reader['prior-mass2']['max-mass2']) == self.data_cfg.prior_high_mass, 'max-m2 discrepancy in ini file'
+        # dchirp check
+        assert float(config_reader['prior-chirp_distance']['min-chirp_distance']) == self.data_cfg.prior_low_chirp_dist, 'min-dchirp discrepancy in ini file'
+        assert float(config_reader['prior-chirp_distance']['max-chirp_distance']) == self.data_cfg.prior_high_chirp_dist, 'max-dchirp discrepancy in ini file'
+
+
+    def __len__(self):
+        return self.total_samples_per_epoch
+    
+
+    def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
+        # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
+        # Returns the chirp distance given the luminosity distance and chirp mass.
+        return dist * (2.**(-1./5) * ref_mass / mchirp)**(5./6)
+
+
+    def _dist_from_dchirp(self, chirp_distance, mchirp, ref_mass=1.4):
+        # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
+        # Returns the luminosity distance given a chirp distance and chirp mass.
+        return chirp_distance * (2.**(-1./5) * ref_mass / mchirp)**(-5./6)
+
+
+    def apply_prior_mods(self, priors):
+        if self.data_cfg.modification != None and isinstance(self.data_cfg.modification, str):
+            # Check for known modifications
+            if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass', 'uniform_masses']:
+                _mass1, _mass2 = get_uniform_masses(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, 1)
+                # Masses used for mass ratio need not be used later as mass1 and mass2
+                # We calculate them again after getting chirp mass
+                q = q_from_uniform_mass1_mass2(_mass1, _mass2)
+
+            if self.data_cfg.modification == 'uniform_signal_duration':
+                # Get chirp mass from uniform signal duration
+                if self.data_cfg.use_mod_priors:
+                    tau_lower = self.data_cfg.prior_tau_lower
+                    tau_upper = self.data_cfg.prior_tau_upper
+                else:
+                    tau_lower, tau_upper = get_tau_priors(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.signal_low_freq_cutoff)
+                
+                mchirp = mchirp_from_uniform_signal_duration(tau_lower, tau_upper, 1, self.data_cfg.signal_low_freq_cutoff)
+
+            elif self.data_cfg.modification == 'uniform_chirp_mass':
+                # Get uniform chirp mass
+                if self.data_cfg.use_mod_priors:
+                    mchirp = get_uniform_mchirp(None, None, 1, self.data_cfg.prior_mchirp_lower, self.data_cfg.prior_mchirp_upper, True)
+                else:
+                    mchirp = get_uniform_mchirp(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, 1)
+            
+            elif self.data_cfg.modification == 'uniform_masses':
+                mchirp = (_mass1*_mass2 / (_mass1+_mass2)**2.)**(3./5) * (_mass1 + _mass2)
+
+            else:
+                raise ValueError("get_priors: Unknown modification added to data_cfg.modification!")
+
+            if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass', 'uniform_masses']:
+                if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
+                    # Using mchirp and q, get mass1 and mass2
+                    mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
+                elif self.data_cfg.modification == 'uniform_masses':
+                    mass1, mass2 = (_mass1, _mass2)
+                
+                # Get chirp distances using the power law distribution
+                if not self.data_cfg.uniform_distance:
+                    if self.data_cfg.uniform_dchirp:
+                        dchirp = np.random.uniform(self.data_cfg.prior_low_chirp_dist, self.data_cfg.prior_high_chirp_dist)
+                    else:
+                        chirp_distance_distr = UniformRadius(distance=(self.data_cfg.prior_low_chirp_dist, 
+                                                                    self.data_cfg.prior_high_chirp_dist))
+                        dchirp = np.asarray([chirp_distance_distr.rvs()[0][0] for _ in range(1)])
+                
+                    # Get distance from chirp distance and chirp mass
+                    distance = self._dist_from_dchirp(dchirp, mchirp)
+                else:
+                    dist_lower = self._dist_from_dchirp(chirp_distance=self.data_cfg.prior_low_chirp_dist, mchirp=mchirp)
+                    dist_upper = self._dist_from_dchirp(chirp_distance=self.data_cfg.prior_high_chirp_dist, mchirp=mchirp)
+                    distance = np.random.uniform(dist_lower, dist_upper)
+                    dchirp = self._dchirp_from_dist(dist=distance, mchirp=mchirp)
+
+                ## Update Priors
+                priors['q'] = q
+                priors['mchirp'] = mchirp
+                priors['mass1'] = mass1
+                priors['mass2'] = mass2
+                priors['chirp_distance'] = dchirp
+                priors['distance'] = distance
+        
+        elif self.data_cfg.modification != None and not isinstance(self.data_cfg.modification, str):
+            raise ValueError("get_priors: Unknown data type used in data_cfg.modification!")
+        
+        return priors
+
+
+    def get_waveform_parameters(self, seed):
+        # Draw sample using config
+        # Draw samples from prior distribution.
+        np.random.seed(seed)
+        # Draw samples from prior distribution.
+        prior = self.randomsampler.rvs(size=1)
+        # Apply parameter transformation.
+        prior = transforms.apply_transforms(prior, self.waveform_transforms)
+        # Apply modifications to prior (uniform signal duration/ uniform chirp mass)
+        if self.training:
+            prior = self.apply_prior_mods(prior)
+        return prior
+
+
+    def set_waveform_parameters(self, params, seed):
+        # Get waveform params using PyCBC ini file
+        priors = self.get_waveform_parameters(seed=seed)
+        waveform_kwargs = {}
+        waveform_kwargs['approximant'] = 'IMRPhenomPv2'
+        waveform_kwargs['f_ref'] = 20.0
+        waveform_kwargs.update(dict(zip(list(priors.fieldnames), priors[0])))
+        # Set waveform parameters for Ripple IMRPhenomPv2
+        # m1_msun, m2_msun, s1x, s1y, s1z, s2x, s2y, s2z, distance_mpc, tc, phiRef, inclination
+        for key in params.keys():
+            params[key] = priors[key][0]
+        
+        # Params in the dict are in the exact order required for Ripple
+        # Ripple specific changes to params
+        # params = np.fromiter(params.values(), dtype=np.float64)
+        # params['tc'] = 0.0
+        return (waveform_kwargs, params)
+
+
+    def generate_data(self, seed, return_noise=False):
+        ## Generate waveform or read noise sample for D4
+        # Are we generating noise or waveform?
+        np.random.seed(seed)
+        target = 1 if np.random.rand() < self.data_cfg.signal_probability else 0
+        target = target if not return_noise else 0
+        # Target can be set using probablity of hypothesis
+        targets = {}
+        targets['gw'] = target
+        
+        if not target:
+            ## Generate noise sample
+            sample = self.noise_generation(self.special)
+            # Dummy noise params
+            params = self.params.copy()
+            params['mchirp'] = -1
+            # Dummy targets
+            targets['norm_mchirp'] = -1
+            targets['norm_tc'] = -1
+        else:
+            # Set parameters for waveform generation
+            # Parameter (time of coalescence, tc) is always set to 0.0 for Ripple to reproduce LAL
+            # NOTE: All further manipulations assume this. Do not change this to any other value.
+            waveform_kwargs, params = self.set_waveform_parameters(self.params.copy(), seed)
+            ## Generate waveform sample
+            sample = self.waveform_generation(waveform_kwargs, self.special)
+            # Target params
+            m1, m2 = params['mass1'], params['mass2']
+            mchirp = (m1*m2 / (m1+m2)**2.)**(3./5) * (m1 + m2)
+            params['mchirp'] = mchirp
+            targets['norm_mchirp'] = self.norm['mchirp'].norm(mchirp)
+            targets['norm_tc'] = self.norm['tc'].norm(params['tc'])
+        
+        # Generic params
+        params['sample_rate'] = self.sample_rate
+        params['noise_low_freq_cutoff'] = self.noise_low_freq_cutoff
+
+        return (sample, targets, params)
+    
+
+    def _augmentation_(self, sample, target, params, mode=None):
+        """ Signal and Noise only Augmentation """
+        if target and self.signal_only_transforms and mode=='signal':
+            self.special['epoch'] = self.epoch.value
+            # Debug dir set to empty str
+            sample, params, _special = self.signal_only_transforms(sample, params, self.special, '')
+            self.special.update(_special)
+        
+        elif not target and self.noise_only_transforms and mode=='noise':
+            sample = self.noise_only_transforms(sample, '')
+        
+        return sample, params
+    
+    
+    def _noise_realisation_(self, sample, targets, seed=None):
+        """ Finding random noise realisation for signal """
+        if self.cfg.add_random_noise_realisation and targets['gw']:
+            # Read the noise data
+            pure_noise, targets_noise, params_noise = self.generate_data(seed=seed, return_noise=True)
+            target_noise = targets_noise['gw']
+            if self.training:
+                pure_noise, _ = self._augmentation_(pure_noise, target_noise, params_noise, mode='noise')
+            
+            """ Adding noise to signals """
+            if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray): 
+                noisy_signal = sample + pure_noise
+            else:
+                raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
+            
+        else:
+            # If the sample is pure noise
+            noisy_signal = sample
+            pure_noise = sample
+        
+        return (noisy_signal, pure_noise)
+    
+    
+    def _transforms_(self, sample, key=None):
+        """ Transforms """
+        # Apply transforms to signal and target (if any)
+        if self.transforms:
+            sample_transforms = self.transforms(sample, self.special, key=key)
+        else:
+            sample_transforms = {'sample': sample}
+        
+        return sample_transforms
+    
+
+    def target_handling(self, targets, params):
+        # Gather up all parameters required for training and validation
+        # NOTE: We can't use structured arrays here as PyTorch does not support it yet.
+        #       Dictionaries are slow but it does the job.
+        
+        """ Targets """
+        ## Storing targets as dictionary
+        all_targets = {}
+        # targets contain all other norm values for PE
+        all_targets.update(targets)
+        
+        """ Source Parameters """
+        ## Add sample params to all_targets variable
+        source_params = {}
+        # Distance and dchirp could have been alterred when rescaling SNR
+        source_params.update(params)
+        
+        if targets['gw']:
+            # Calculating the duration of the given signal
+            lf = self.data_cfg.signal_low_freq_cutoff
+            G = 6.67e-11
+            c = 3.0e8
+            source_params['signal_duration'] = 5. * (8.*np.pi*lf)**(-8./3.) * (params['mchirp']*1.989e30*G/c**3.)**(-5./3.)
+            # Set chirp distance for signal
+            source_params['dchirp'] = self._dchirp_from_dist(params['distance'], params['mchirp'])
+        else:
+            source_params['signal_duration'] = -1
+            source_params['dchirp'] = -1
+            source_params['network_snr'] = -1
+        
+        return all_targets, source_params
+    
+
+    def __getitem__(self, idx):
+        
+        # Setting the unique seed for given sample
+        if self.training:
+            seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1)
+        else:
+            seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**30)
+        np.random.seed(seed)
+
+        ## Read the sample(s)
+        sample, targets, params = self.generate_data(seed=seed)
+        
+        ## Signal Augmentation
+        # Runs signal augmentation if sample is clean waveform
+        pure_sample, params = self._augmentation_(sample, targets['gw'], params, mode='signal')
+
+        ## Add noise realisation to the signals
+        noisy_sample, pure_noise = self._noise_realisation_(pure_sample, targets, seed)
+        
+        ## Noise Augmentation
+        if self.training:
+            # Runs noise augmentation only for pure noise samples
+            # var name noisy_sample might suggest that this is waveform + noise (fix this) 
+            noisy_sample, params = self._augmentation_(noisy_sample, targets['gw'], params, mode='noise')
+
+        ## Transformation Stage 1 (HighPass and Whitening)
+        # These transformations are possible for pure noise before augmentation
+        # NOTE: Cyclic shifting and phase augmentation cannot be performed before whitening
+        #       The discontinuities in the sample will cause issues.
+        # sample_transforms['sample'] will always provide the output of the last performed transform
+        sample_transforms = self._transforms_(noisy_sample, key='stage1')
+
+        ## Transformation Stage 2 (Multirate Sampling)
+        mrsampling = self._transforms_(sample_transforms['sample'], key='stage2')
+
+        # With the update 'sample' should point to mrsampled data
+        # but still contain all other transformations in the correct key.
+        sample_transforms.update(mrsampling)
+
+        ## Targets and Parameters Handling
+        all_targets, source_params = self.target_handling(targets, params)
+        
+        # Reducing memory footprint
+        # This can only be performed after transforms and augmentation
+        sample = np.array(sample_transforms['sample'], dtype=np.float32)
+        
+        # Tensorification
+        # Convert signal/target to Tensor objects
+        sample = torch.from_numpy(sample)
+        # First batch processes
+        if self.plot_on_first_batch:
+            # NOTE: Structured arrays are faster but PyTorch does not support them.
+            #       Dictionaries are slower but they do the job.
+            # Convert all samples into float16 for the sake of saving memory
+            # Also, use .copy() for some arrays as PyTorch does not support data with negative stride
+            nsamp = (pure_sample/max(abs(pure_sample[0]))).astype(np.float16).copy()
+            hpass = nsamp
+            white = (sample_transforms['Whiten']).astype(np.float16).copy()
+            msamp = (sample_transforms['MultirateSampling']).astype(np.float16).copy()
+            plot_batch = [nsamp, hpass, white, msamp]
+            self.plot_batch_fnames = ['PureSample', 'HighPass', 'Whiten', 'MRSampling']
+            self.nplot_on_first_batch = len(self.plot_batch_fnames)
+        else:
+            plot_batch = [None] * self.nplot_on_first_batch
+        
+        return (sample, all_targets, source_params, plot_batch)
+    
+
+
+    
 
 """ Other Loaders """
 
