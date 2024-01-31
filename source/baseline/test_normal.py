@@ -197,7 +197,7 @@ class TorchSlicer(Slicer, torch.utils.data.Dataset):
         exp_length = self.data_cfg.sample_length_in_num
         if len(next_slice[0]) != exp_length or len(next_slice[1]) != exp_length:
             raise ValueError('Length error in next_slice. Expected = {}, observed = {}'.format(self.data_cfg.sample_length_in_num, len(next_slice[0])))
-            
+
         special = {}
         special['data_cfg'] = self.data_cfg
         special['psds'] = self.psds_data
@@ -331,15 +331,15 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                              transforms=transforms, psds_data=psds_data,
                              data_cfg=data_cfg)
         
-        data_loader = torch.utils.data.DataLoader(slicer, batch_size=64, shuffle=False, 
-                                                  num_workers=64, pin_memory=cfg.pin_memory, 
-                                                  prefetch_factor=100, 
+        data_loader = torch.utils.data.DataLoader(slicer, batch_size=512, shuffle=False, 
+                                                  num_workers=32, pin_memory=cfg.pin_memory, 
+                                                  prefetch_factor=4, 
                                                   persistent_workers=cfg.persistent_workers)
-        
+
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
         iterable = tqdm(data_loader, desc="Testing Dataset") if verbose else data_loader
         max_trigger = torch.tensor(-999)
-
+        
         for slice_batch, slice_times in iterable:
             
             # Running evaluation procedure on testing dataset
@@ -353,7 +353,7 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                     raw_values = testing_output['raw']
                     # Get a boolean vector of output values greater than the trigger threshold
                     trigger_bools = torch.gt(raw_values, trigger_threshold)
-                
+
                 max_trigger = torch.max(max_trigger, torch.max(raw_values))
                 iterable.set_description("Max Trigger = {}".format(max_trigger.cpu().detach().item()))
                 for slice_time, trigger_bool, output_value in zip(slice_times, trigger_bools, raw_values):
@@ -366,7 +366,7 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
         if len(_triggers) == 0:
             raise ValueError("No triggers found when searching for events!")
         print('raw values of output: max = {}, min = {}'.format(max(_triggers[:,1]), min(_triggers[:,1])))
-    
+
     return triggers
 
 
