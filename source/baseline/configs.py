@@ -31,12 +31,13 @@ from pathlib import Path
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR, ReduceLROnPlateau, StepLR
 
 # LOCAL
-from data.datasets import MLMDC1
-from architectures.frontend import GammaModel, KappaModel, ZetaModel, KappaModel_ResNet_CBAM
-from data.transforms import Unify, UnifySignal, UnifyNoise
+from data.datasets import MLMDC1, MinimalOTF
+from architectures.frontend import GammaModel, KappaModel, ZetaModel, KappaModel_ResNet_CBAM, IotaModelPE
+from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling, Normalise, Resample, Buffer, Crop
-from data.transforms import AugmentDistance, AugmentPolSky, CyclicShift, AugmentPhase, AugmentOptimalNetworkSNR
-from data.transforms import GenerateNewSignal, GlitchAugmentGWSPY
+from data.transforms import AugmentDistance, AugmentPolSky, AugmentOptimalNetworkSNR
+from data.transforms import CyclicShift, AugmentPhase, Recolour
+from data.transforms import GenerateWaveform, FastGenerateWaveform, GlitchAugmentGWSPY, RandomNoiseSlice
 from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
 
 # RayTune
@@ -500,7 +501,7 @@ class KaggleFirst_REF(KaggleFirst):
 class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     
     """ Data storage """
-    name = "KaggleNet50_CBAM_Dec01_Adam_CAWR5_CombinationDset_PE_BASELINE"
+    name = "KaggleNet50_CheckRealNoise"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     save_remarks = 'Training-D4'
     
@@ -589,7 +590,7 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     ## AdamW
     #optimizer = optim.AdamW
     #optimizer_params = dict(lr=2e-4, betas=(0.9, 0.999), eps=1e-08, weight_decay=1e-6)
-    
+
     """ Scheduler """
     ## Lambda LR
     # Default option: scheduler = LambdaLR
@@ -642,10 +643,16 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     subset_for_funsies = False # debug_size is used for subset, debug need not be true
     
     """ Dataloader params """
-    num_workers = 16
+    num_workers = 32
     pin_memory = True
     prefetch_factor = 4
     persistent_workers = True
+
+    """ Generation """
+    generation = dict(
+        signal = None,
+        noise = None 
+    )
 
     """ Transforms """    
     transforms = dict(
@@ -697,13 +704,13 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     epoch_far_scaling_factor = 64000.0
     
     """ Testing Phase """
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D4_seeded"
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
     injection_file = 'injections.hdf'
     evaluation_output = 'evaluation.hdf'
     # FAR scaling factor --> seconds per month
     # Short: far_scaling_factor = 64000.0
     # Month: far_scaling_factor = 2592000.0
-    far_scaling_factor = 64000.0
+    far_scaling_factor = 2592000.0
     
     test_foreground_dataset = "foreground.hdf"
     test_foreground_output = "testing_foutput.hdf"
@@ -719,116 +726,14 @@ class KaggleFirstPE_BASELINE(KaggleFirst_REF):
     # Time shift the signal by multiple of step_size and check pred probs
     cluster_threshold = 0.0001
     # Run device for testing phase
-    testing_device = 'cuda:1'
+    testing_device = 'cuda:0'
     
     # When debug is False the following plots are not made
     # SAMPLES, DEBUG, CNN_OUTPUT
     debug = False
-    debug_size = 50000
+    debug_size = 10000
 
     verbose = True
-    
-
-class KaggleNet_Unwhitened_Nov29(KaggleFirstPE_BASELINE):
-
-    """ Data storage """
-    name = "KaggleNet50_CBAM_Nov29_Adam_CAWR5_CombinationDset_PE_BASELINE_unwhitened"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
-
-    """ Architecture """
-    model = KappaModel_ResNet_CBAM
-
-    model_params = dict(
-        # Res2net50
-        filter_size = 32,
-        kernel_size = 64,
-        store_device = 'cuda:1',
-    )
-    
-    """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
-
-    """ Transforms """    
-    transforms = dict(
-        signal=UnifySignal([
-                    AugmentPolSky(),
-                    AugmentOptimalNetworkSNR(rescale=True),
-                ]),
-        noise=None,
-        train=Unify({
-                    'stage1':[
-                            Crop(emulate_rmcorrupt=True),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        test=Unify({
-                    'stage1':[
-                            Crop(emulate_rmcorrupt=True),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        target=None
-    )
-
-
-class KaggleNet_GWSPY_Dec01(KaggleFirstPE_BASELINE):
-
-    """ Data storage """
-    name = "KaggleNet50_CBAM_Nov29_Adam_CAWR5_CombinationDset_PE_BASELINE_GWSPY_augmented"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
-
-    """ Architecture """
-    model = KappaModel_ResNet_CBAM
-
-    model_params = dict(
-        # Res2net50
-        filter_size = 32,
-        kernel_size = 64,
-        store_device = 'cuda:1',
-    )
-    
-    """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
-
-    """ Transforms """    
-    transforms = dict(
-        signal=UnifySignal([
-                    AugmentPolSky(),
-                    AugmentOptimalNetworkSNR(rescale=True),
-                ]),
-        noise=UnifyNoise([
-                    GlitchAugmentGWSPY(p=0.33),
-                ]),
-        train=Unify({
-                    'stage1':[
-                            HighPass(lower=20, fs=2048., order=10),
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        test=Unify({
-                    'stage1':[
-                            HighPass(lower=20, fs=2048., order=10),
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        target=None
-    )
 
 
 class VirgoNet_Dec01(KaggleFirstPE_BASELINE):
@@ -862,38 +767,63 @@ class VirgoNet_Dec01(KaggleFirstPE_BASELINE):
                                 variance_loss=False)
 
 
-class KaggleNetOTF_Dec02(KaggleFirstPE_BASELINE):
+class KaggleNetOTF_BASELINE(KaggleFirstPE_BASELINE):
+    # OTF automatically includes OTF signal generation and random noise slice for noise
 
     """ Data storage """
-    name = "KaggleNet50_CBAM_OTF_Dec02_Adam_CAWR5_CombinationDset_PE"
+    name = "KaggleNet50_CBAM_OTF_Jan30_Adam_morenoise_uniform_mchirp"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
 
     """ Architecture """
     model = KappaModel_ResNet_CBAM
-
     model_params = dict(
         # Res2net50
         filter_size = 32,
         kernel_size = 64,
-        store_device = 'cuda:1',
+        resnet_size = 50,
+        store_device = 'cuda:0',
     )
+
+    """ Dataset """
+    dataset = MinimalOTF
     
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
 
-    """ Transforms """    
+    """ Dataloader params """
+    num_workers = 16
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=0, segment_ulimit=-1
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132
+                                ),
+                    },
+                    GlitchAugmentGWSPY(),
+                    pfixed = 0.33
+                )
+    )
+    
+    """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    GenerateNewSignal(),
-                    AugmentPolSky(),
                     AugmentOptimalNetworkSNR(rescale=True),
                 ]),
         noise=None,
         train=Unify({
                     'stage1':[
-                            HighPass(lower=20, fs=2048., order=10),
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
                     ],
                     'stage2':[
                             Normalise(ignore_factors=True),
@@ -902,8 +832,7 @@ class KaggleNetOTF_Dec02(KaggleFirstPE_BASELINE):
                 }),
         test=Unify({
                     'stage1':[
-                            HighPass(lower=20, fs=2048., order=10),
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=True),
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
                     ],
                     'stage2':[
                             Normalise(ignore_factors=True),
@@ -912,3 +841,344 @@ class KaggleNetOTF_Dec02(KaggleFirstPE_BASELINE):
                 }),
         target=None
     )
+
+    # Do not set this to True
+    # RandomNoiseSlice does the same thing but better
+    batchshuffle_noise = False
+
+    """ Optional things to do during training """
+    # Plots the input to the network (including transformations) 
+    # and output from the network
+    network_io = False
+    permitted_models = ['KappaModel', 'KappaModelPE', 'KappaModel_ResNet_CBAM', 'KappaModel_Res2Net']
+    # Extremes only plot
+    extremes_io = False
+    # Plotting on first batch
+    plot_on_first_batch = False
+    # Testing on a small 64000s dataset at the end of each epoch
+    epoch_testing = False
+    epoch_testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D4_seeded"
+    epoch_far_scaling_factor = 64000.0
+
+    """ Testing Phase """
+    # Run device for testing phase
+    weights_path = 'weights_loss.pt'
+    testing_device = 'cuda:2'
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
+    far_scaling_factor = 2592000.0
+
+
+class KaggleNetOTF_PSDaug(KaggleNetOTF_BASELINE):
+    """ Data storage """
+    name = "KaggleNet50_CBAM_OTF_Jan28_AugmentedPSDs"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+    model_params = dict(
+        # Res2net152
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = 'cuda:2',
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:2'
+    train_device = 'cuda:2'
+
+    """ Dataloader params """
+    num_workers = 16
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132
+                                ),
+                    },
+                    GlitchAugmentGWSPY(),
+                    pfixed = 0.0
+                )
+    )
+    
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf="./notebooks/tmp/psds_h1_81days.hdf", 
+                             l1_psds_hdf="./notebooks/tmp/psds_l1_81days.hdf"),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+    """ Testing Phase """
+    # Run device for testing phase
+    weights_path = 'weights_loss.pt'
+    testing_device = 'cuda:0'
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
+    far_scaling_factor = 2592000.0
+
+
+class KaggleNetOTF_bigboi(KaggleNetOTF_BASELINE):
+    """ Data storage """
+    name = "KaggleNet50_CBAM_OTF_Jan30_bigboi"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+    model_params = dict(
+        # Res2net152
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 152,
+        store_device = 'cuda:1',
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+
+    """ Dataloader params """
+    num_workers = 16
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132
+                                ),
+                    },
+                    None,
+                    pfixed = 0.0
+                )
+    )
+    
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf="./notebooks/tmp/psds_h1_81days.hdf", 
+                             l1_psds_hdf="./notebooks/tmp/psds_l1_81days.hdf"),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+    """ Testing Phase """
+    # Run device for testing phase
+    weights_path = 'weights_loss.pt'
+    testing_device = 'cuda:0'
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
+    far_scaling_factor = 2592000.0
+
+
+class KaggleNetOTF_bigboi_uniformMchirp(KaggleNetOTF_BASELINE):
+    """ Data storage """
+    name = "KaggleNet50_CBAM_OTF_Jan30_bigboi_uniformMchirp"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+    model_params = dict(
+        # Res2net152
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 152,
+        store_device = 'cuda:0',
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
+
+    """ Dataloader params """
+    num_workers = 16
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132
+                                ),
+                    },
+                    None,
+                    pfixed = 0.0
+                )
+    )
+    
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf="./notebooks/tmp/psds_h1_81days.hdf", 
+                             l1_psds_hdf="./notebooks/tmp/psds_l1_81days.hdf"),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+    """ Testing Phase """
+    # Run device for testing phase
+    weights_path = 'weights_loss.pt'
+    testing_device = 'cuda:0'
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
+    far_scaling_factor = 2592000.0
+
+
+class InceptionNetOTF(KaggleNetOTF_BASELINE):
+
+    """ Data storage """
+    name = "InceptionNet_OTF_Jan22"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+
+    """ Architecture """
+    model = IotaModelPE
+    
+    model_params = dict(
+        # InceptionNet
+        store_device = 'cuda:2',
+    )
+    
+    """ Storage Devices """
+    store_device = 'cuda:2'
+    train_device = 'cuda:2'
+
+    """ Dataloader params """
+    num_workers = 16
+
+    """ Optional things to do during training """
+    # Plots the input to the network (including transformations) 
+    # and output from the network
+    network_io = False
+    permitted_models = ['KappaModel', 'KappaModelPE', 'KappaModel_ResNet_CBAM', 'KappaModel_Res2Net']
+    # Extremes only plot
+    extremes_io = False
+    # Plotting on first batch
+    plot_on_first_batch = False
+
+    """ Testing Phase """
+    # Run device for testing phase
+    weights_path = 'weights_loss.pt'
+    testing_device = 'cuda:0'
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
+    far_scaling_factor = 2592000.0
+
+
+class VirgoNetOTF(KaggleNetOTF_BASELINE):
+
+    """ Data storage """
+    name = "VirgoNet_OTF_Jan12_Adam"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+
+    """ Architecture """
+    model = ZetaModel
+
+    model_params = dict(
+        store_device = 'cuda:0',
+    )
+     
+    """ Storage Devices """
+    store_device = 'cuda:0'
+    train_device = 'cuda:0' 
+
+    """ Loss Function """
+    # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
+    # Extra losses cannot be used without BCEWithLogitsLoss()
+    # All parameter estimation is done only using MSE loss at the moment
+    loss_function = BCEgw_MSEtc(gw_criterion=None, weighted_bce_loss=False, mse_alpha=0.0,
+                                emphasis_type='raw',
+                                noise_emphasis=False, noise_conditions=[('min_noise', 'max_noise', 0.5),],
+                                signal_emphasis=False, signal_conditions=[('min_signal', 'max_signal', 1.0),],
+                                snr_loss=False, snr_conditions=[(5.0, 10.0, 0.3),],
+                                mchirp_loss=False, mchirp_conditions=[(25.0, 45.0, 0.3),],
+                                dchirp_conditions=[(130.0, 350.0, 1.0),],
+                                variance_loss=False)
