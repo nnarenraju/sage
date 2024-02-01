@@ -44,6 +44,7 @@ from data.snr_calculation import get_network_snr
 # PyCBC
 import pycbc
 from pycbc import DYN_RANGE_FAC
+from pycbc.filter import pycbc_highpass
 from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
 from pycbc.types import TimeSeries, FrequencySeries
 
@@ -962,7 +963,10 @@ class Recolour(NoiseWrapper):
     # Whitening module removes corrupted bits due to possible edge effects.
     def __init__(self, always_apply=True,
                  use_precomputed=False, h1_psds_hdf="", l1_psds_hdf="",
-                 use_augmented=False):
+                 use_shifted=False,
+                 use_blurred=False,
+                 p_recolour=0.3,
+                 noise_low_freq_cutoff=15.0):
         
         super().__init__(always_apply)
         # Warnings (if required)
@@ -977,60 +981,114 @@ class Recolour(NoiseWrapper):
         self.shape_h1_psds = dict(self.h1_psds.attrs)['shape']
         self.l1_psds = h5py.File(l1_psds_hdf, 'r')
         self.shape_l1_psds = dict(self.h1_psds.attrs)['shape']
-        # Using augmented PSD (shift along y axis)
-        self.use_augmented = use_augmented
+        # Using shifted PSD (shift along y axis)
+        self.use_shifted = use_shifted
+        # Add Gaussian noise to PSD
+        self.use_blurred = use_blurred
+        # Probability of being recoloured
+        self.p_recolour = p_recolour
 
         # Other params
         self.fs = 2048. #Hz
+        self.noise_low_freq_cutoff = noise_low_freq_cutoff
     
-    def estimate_psd(self, y):
+    def estimate_psd(self, ts, DET):
         # Compute PSD using Welch's method
-        data = [scipy_welch(ts, fs=self.fs, nperseg=4.*self.fs, average='median') for ts in y]
-        psds = [datum[1] for datum in data]
-        delta_fs = [datum[0][1]-datum[0][0] for datum in data]
-        return psds, delta_fs
+        if DET['is_recolour']:
+            freqs, psd = scipy_welch(ts, fs=self.fs, nperseg=4.*self.fs, average='median')
+            delta_f = freqs[1]-freqs[0]
+            DET['old_psd'] = psd
+            DET['old_delta_f'] = delta_f
+        return DET
 
-    def get_psd(self):
-        # Use pre-computed PSDs from HDF5 file
-        idx_h1 = np.random.randint(0, int(self.shape_h1_psds[0]))
-        idx_l1 = np.random.randint(0, int(self.shape_l1_psds[0]))
-        new_psds = np.stack([self.h1_psds['data'][idx_h1], self.l1_psds['data'][idx_l1]], axis=0)
-        return new_psds
+    def get_psd(self, H1, L1):
+        ## Use pre-computed PSDs from HDF5 file
+        # H1 - use different PSD
+        if H1['is_diff_psd'] and H1['is_recolour']:
+            idx_h1 = np.random.randint(0, int(self.shape_h1_psds[0]))
+            H1['new_psd'] = self.h1_psds['data'][idx_h1]
+        else:
+            H1['new_psd'] = H1['old_psd']
+        # L1 - use different PSD
+        if L1['is_diff_psd'] and L1['is_recolour']:
+            idx_l1 = np.random.randint(0, int(self.shape_l1_psds[0]))
+            L1['new_psd'] = self.l1_psds['data'][idx_l1]
+        else:
+            L1['new_psd'] = L1['old_psd']
+        return H1, L1
 
-    def augment_psd(self):
+    def shift_psd(self):
         # Shift new PSD along y axis
-        raise NotImplementedError('augment_psd method under construction!')
+        raise NotImplementedError('shift_psd method under construction!')
     
-    def recolour(self, y, new_psds, old_psds, old_psd_delta_fs):
+    def blur_psd(self):
+        # Blur the PSD using Gaussian noise
+        raise NotImplementedError('blur_psd method under construction!')
+    
+    def recolour(self, ts, DET):
         ## Whiten the noise using old PSD and recolour using new PSD
         # Convert to frequency domain after windowing
-        n = len(y[0])
+        n = len(ts)
         delta_t = 1./self.fs
-        data_fd = [np.fft.rfft(ts) for ts in y]
+        data_fd = np.fft.rfft(ts)
         freq = np.fft.rfftfreq(n, delta_t)
         data_delta_f = freq[1] - freq[0]
         # Convert the PSD to new delta_f using PyCBC interpolate function
-        old_psds = [FrequencySeries(old_psd, delta_f=delta_f) for old_psd, delta_f in zip(old_psds, old_psd_delta_fs)]
-        old_psds = [interpolate(old_psd, data_delta_f) for old_psd in old_psds]
+        old_psd = FrequencySeries(DET['old_psd'], delta_f=DET['old_delta_f'])
+        old_psd = interpolate(old_psd, data_delta_f)
         # Whitening (Remove old PSD from data)
-        whitened_signal = [d_fd / np.sqrt(old_psd) for d_fd, old_psd in zip(data_fd, old_psds)]
+        whitened_signal = data_fd / np.sqrt(old_psd)
         # Convert the new PSDs to have delta_f similar to data
-        new_psds = [FrequencySeries(new_psd, delta_f=delta_f) for new_psd, delta_f in zip(new_psds, old_psd_delta_fs)]
-        new_psds = [interpolate(new_psd, data_delta_f) for new_psd in new_psds]
+        new_psd = FrequencySeries(DET['new_psd'], delta_f=DET['old_delta_f'])
+        new_psd = interpolate(new_psd, data_delta_f)
         # Recolour using new PSD and return to time domain
-        recoloured = [np.fft.irfft(white*np.sqrt(new_psd)) for white, new_psd in zip(whitened_signal, new_psds)]
-        recoloured = np.stack(recoloured, axis=0)
-        return recoloured
+        recoloured = np.fft.irfft(whitened_signal*np.sqrt(new_psd))
+        tmp = TimeSeries(recoloured, delta_t=1./self.fs)
+        recoloured = pycbc_highpass(tmp, self.noise_low_freq_cutoff).astype(np.float64)
+        return recoloured.numpy()
 
     def apply(self, y: np.ndarray, debug=''):
         # Apply given PSD augmentation technique
-        old_psds, old_psd_delta_fs = self.estimate_psd(y)
+        ## Or not to recolour
+        if np.random.rand() >= self.p_recolour:
+            return y
+        ## To Recolour
+        # Is the detector noise going to be recoloured?
+        # Is the detector PSD going to be shifted along y axis?
+        # Is the detector PSD going to be blurred with Gaussian noise?
+        H1 = {'is_recolour': np.random.rand() < 0.5,
+              'is_diff_psd': np.random.rand() < 0.5,
+              'is_shifted': np.random.rand() < 0.5,
+              'is_blurred': np.random.rand() < 0.5,
+              'recoloured': y[0]}
+        L1 = {'is_recolour': np.random.rand() < 0.5,
+              'is_diff_psd': np.random.rand() < 0.5,
+              'is_shifted': np.random.rand() < 0.5,
+              'is_blurred': np.random.rand() < 0.5,
+              'recoloured': y[1]}
+        # Sanity check
+        if not H1['is_recolour'] and not L1['is_recolour']:
+            return y
+        # shifted and blurred are not implemented yet
+        # TODO: Remove this after implementation
+        H1['is_diff_psd'] = H1['is_recolour']
+        L1['is_diff_psd'] = L1['is_recolour']
+        # Estimate the old PSD of each detector (as required)
+        H1 = self.estimate_psd(y[0], H1)
+        L1 = self.estimate_psd(y[1], L1)
+        # Recolour and augment (as required)
         if self.use_precomputed:
-            new_psds = self.get_psd()
-        elif self.use_augmented:
-            new_psds = self.augment_psd(old_psds)
+            H1, L1 = self.get_psd(H1, L1)
+        if self.use_shifted:
+            H1, L1 = self.shift_psd(H1, L1)
+        if self.use_blurred:
+            H1, L1 = self.blur_psd(H1, L1)
         
-        recoloured_noise = self.recolour(y, new_psds, old_psds, old_psd_delta_fs)
+        if H1['is_recolour']:
+            H1['recoloured'] = self.recolour(y[0], H1)
+        if L1['is_recolour']:
+            L1['recoloured'] = self.recolour(y[1], L1)
+        recoloured_noise = np.stack([H1['recoloured'], L1['recoloured']], axis=0)
         return recoloured_noise
 
 
