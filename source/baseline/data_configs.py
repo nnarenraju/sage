@@ -23,15 +23,12 @@ Documentation: NULL
 
 """
 
-# IN-BUILT
-
-
 # LOCAL
 from data.MPB_make_default_dataset import make as make_MPB_default_dataset
 
 
-
-# WARNING: Removing any of the parameters present in default will result in errors.
+# WARNING: Removing any of the parameters present in default will result in errors,
+# when running MPB datagen.
 
 """ DEFAULT """
 
