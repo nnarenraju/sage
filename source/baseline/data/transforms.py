@@ -122,7 +122,18 @@ class UnifyNoiseGen:
         if special['training']:
             do_fixed = np.random.rand() < self.pfixed
             if do_fixed:
-                y = self.fixed.apply()
+                # Has probability to set one or more dets to zeros
+                y = self.fixed.apply(special)
+                # If both detectors are set to zeros
+                if not np.any(y[0]) and not np.any(y[1]):
+                    y = self.generations['training'].apply()
+                # If only one detector is set to zeros
+                elif not np.any(y[0]) or not np.any(y[1]):
+                    det_only = 'H1' if not np.any(y[0]) else None
+                    det_only = 'L1' if not np.any(y[1]) else det_only
+                    # Get noise for one det only and set noise
+                    det_noise = self.generations['training'].apply(det_only)
+                    y[0 if det_only=='H1' else 1] = det_noise
             else:
                 y = self.generations['training'].apply()
         else:
@@ -949,15 +960,12 @@ class Recolour(NoiseWrapper):
     """ Used to augment the PSD of given real noise segment (D4) """
     # This method required extra sample length for noise (equal to whiten_padding). 
     # Whitening module removes corrupted bits due to possible edge effects.
-    def __init__(self, always_apply=True, 
-                 shift_psd_along_y=False,
+    def __init__(self, always_apply=True,
                  use_precomputed=False, h1_psds_hdf="", l1_psds_hdf="",
-                 use_generated=False, 
                  use_augmented=False):
+        
         super().__init__(always_apply)
         # Warnings (if required)
-        if use_generated:
-            warnings.warn('Using generative AI to augment the PSD. Known limitations of supervised learning apply.')
         if use_precomputed:
             warnings.warn('Using precomputed PSDs. Make sure that they do not include PSDs from testing dataset.')
             warnings.warn('Unless using a robust set of PSDs, this method is bound by the limitations of supervised learning')
@@ -969,11 +977,8 @@ class Recolour(NoiseWrapper):
         self.shape_h1_psds = dict(self.h1_psds.attrs)['shape']
         self.l1_psds = h5py.File(l1_psds_hdf, 'r')
         self.shape_l1_psds = dict(self.h1_psds.attrs)['shape']
-        # Using generated PSD
-        self.use_generated = use_generated
-        # Using augmented PSD
+        # Using augmented PSD (shift along y axis)
         self.use_augmented = use_augmented
-        self.shift_psd_along_y = shift_psd_along_y
 
         # Other params
         self.fs = 2048. #Hz
@@ -992,18 +997,9 @@ class Recolour(NoiseWrapper):
         new_psds = np.stack([self.h1_psds['data'][idx_h1], self.l1_psds['data'][idx_l1]], axis=0)
         return new_psds
 
-    def generate_psd(self):
-        # Generate PSDs using TimeGAN
-        # WARNING: Limitations of supervised learning apply
-        raise NotImplementedError('generate_psd method under construction!')
-
     def augment_psd(self):
-        # Manually augment PSD
-        raise NotImplementedError('augment_psd method under construction!')
-    
-    def shift_psd(self, new_psds):
         # Shift new PSD along y axis
-        raise NotImplementedError('shift_psd method under construction!')
+        raise NotImplementedError('augment_psd method under construction!')
     
     def recolour(self, y, new_psds, old_psds, old_psd_delta_fs):
         ## Whiten the noise using old PSD and recolour using new PSD
@@ -1031,8 +1027,6 @@ class Recolour(NoiseWrapper):
         old_psds, old_psd_delta_fs = self.estimate_psd(y)
         if self.use_precomputed:
             new_psds = self.get_psd()
-        elif self.use_generated:
-            new_psds = self.generate_psd()
         elif self.use_augmented:
             new_psds = self.augment_psd(old_psds)
         
@@ -1044,71 +1038,92 @@ class Recolour(NoiseWrapper):
 """ Noise Generation """
 
 class GlitchAugmentGWSPY():
-    """ Used to augment the noise samples using GWSPY glitch GPS times """
+    """ 
+    Used to augment the noise samples using GWSPY glitch GPS times 
+        1. We download 60 seconds of data from GWOSC per glitch
+        2. 30 seconds on either side of event time
+        3. Make sure to NOT to use O3a glitches when testing on O3a data
+        4. Pick a random start time (appropriate based on sample len) within the segment
+        5. We have about 280,000 segments in O3b = 19.44 days
+        6. Using a random start time (aka time slides) gives us more realisations
+    
+    """
     def __init__(self,
-                 H1_O3a_dirname="/local/scratch/igr/nnarenraju/gwspy/H1_O3a_glitches", 
-                 L1_O3a_dirname="/local/scratch/igr/nnarenraju/gwspy/L1_O3a_glitches",
-                 H1_O3b_dirname="/local/scratch/igr/nnarenraju/gwspy/H1_O3b_glitches", 
-                 L1_O3b_dirname="/local/scratch/igr/nnarenraju/gwspy/L1_O3b_glitches"):
+                 glitch_dirs=dict(
+                    H1_O3a="/local/scratch/igr/nnarenraju/gwspy/H1_O3a_glitches",
+                    L1_O3a="/local/scratch/igr/nnarenraju/gwspy/L1_O3a_glitches",
+                    H1_O3b="/local/scratch/igr/nnarenraju/gwspy/H1_O3b_glitches",
+                    L1_O3b="/local/scratch/igr/nnarenraju/gwspy/L1_O3b_glitches"
+                 ),
+                 include=['H1_O3a', 'H1_O3b', 'L1_O3a', 'L1_O3b']):
         
+        # Assertions
+        assert len(include) > 0, 'At least one observing run for a detector must be selected'
+
         # Glitch data files
-        self.glitch_files_H1_O3a = [h5py.File(fname) for fname in glob.glob(os.path.join(H1_O3a_dirname, "*.hdf"))]
-        # self.num_glitches_H1_O3a = [len(np.array(hf['data'][:])) for hf in self.glitch_files_H1_O3a]
-        self.num_glitches_H1_O3a = np.load("./notebooks/tmp/h1_o3a.npy")
+        self.include = include
+        self.glitch_files = {}
+        self.num_glitches = {}
+        for name in include:
+            self.glitch_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(glitch_dirs[name], "*.hdf"))]
+            self.num_glitches[name] = np.load("./notebooks/tmp/{}.npy".format(name))
 
-        self.glitch_files_L1_O3a = [h5py.File(fname) for fname in glob.glob(os.path.join(L1_O3a_dirname, "*.hdf"))]
-        # self.num_glitches_L1_O3a = [len(np.array(hf['data'][:])) for hf in self.glitch_files_L1_O3a]
-        self.num_glitches_L1_O3a = np.load("./notebooks/tmp/l1_o3a.npy")
-
-        self.glitch_files_H1_O3b = [h5py.File(fname) for fname in glob.glob(os.path.join(H1_O3b_dirname, "*.hdf"))]
-        # self.num_glitches_H1_O3b = [len(np.array(hf['data'][:])) for hf in self.glitch_files_H1_O3b]
-        self.num_glitches_H1_O3b = np.load("./notebooks/tmp/h1_o3b.npy")
-
-        self.glitch_files_L1_O3b = [h5py.File(fname) for fname in glob.glob(os.path.join(L1_O3b_dirname, "*.hdf"))]
-        # self.num_glitches_L1_O3b = [len(np.array(hf['data'][:])) for hf in self.glitch_files_L1_O3b]
-        self.num_glitches_L1_O3b = np.load("./notebooks/tmp/l1_o3b.npy")
-
-
-    def pick_glitch_file_H1(self, pick_observing_run):
+    def pick_glitch_file_H1(self, obs_run):
         # Pick a glitch file for each detector
         # Glitch sample obtained from GWOSC using GWSPY GPS times
-        H1opt = [self.glitch_files_H1_O3a, self.num_glitches_H1_O3a] if pick_observing_run['H1'] else [self.glitch_files_H1_O3b, self.num_glitches_H1_O3b]
-        H1_choice = np.random.randint(low=0, high=len(H1opt[0]))
-        H1_file = H1opt[0][H1_choice]
-        H1_file_len = H1opt[1][H1_choice]
+        H1opt = ([self.glitch_files_H1_O3a, self.num_glitches_H1_O3a] 
+                  if obs_run=='H1_O3a' 
+                  else [self.glitch_files_H1_O3b, self.num_glitches_H1_O3b])
+        # Pick a random file to get the glitch
+        H1_file, H1_file_len = np.random.choice(list(zip(H1opt[0], H1opt[1])))
         return H1_file, H1_file_len
     
-    def pick_glitch_file_L1(self, pick_observing_run):
+    def pick_glitch_file_L1(self, obs_run):
         # Pick a glitch file for each detector
         # Glitch sample obtained from GWOSC using GWSPY GPS times
-        L1opt = [self.glitch_files_L1_O3a, self.num_glitches_L1_O3a] if pick_observing_run['L1'] else [self.glitch_files_L1_O3b, self.num_glitches_L1_O3b]
-        L1_choice = np.random.randint(low=0, high=len(L1opt[0]))
-        L1_file = L1opt[0][L1_choice]
-        L1_file_len = L1opt[1][L1_choice]
+        L1opt = ([self.glitch_files_L1_O3a, self.num_glitches_L1_O3a] 
+                  if obs_run=='L1_O3a' 
+                  else [self.glitch_files_L1_O3b, self.num_glitches_L1_O3b])
+        # Pick a random file to get glitch
+        L1_file, L1_file_len = np.random.choice(list(zip(L1opt[0], L1opt[1])))
         return L1_file, L1_file_len
 
-    def read_glitch(self, hf, length):
-        # Read requested glitch and return noise sample
+    def read_glitch(self, hf, length, data_cfg):
+        # Pick a random glitch from glitch file
         idx = np.random.randint(low=0, high=int(length))
-        glitch = np.array(hf['data'][idx]).astype(np.float64)
+        # Pick a random start time from 0 to 60-sample_length
+        start_time_ulimit = int(60.*2048.) - int(data_cfg.sample_length_in_num)
+        rand_start_idx = np.random.randint(low=0, high=start_time_ulimit)
+        rand_slice = slice(rand_start_idx, int(data_cfg.sample_length_in_num))
+        # Get the required segment from glitch array
+        glitch = np.array(hf['data'][idx][rand_slice]).astype(np.float64)
         return glitch
 
-    def apply(self):
-        ## Get random glitch for each detector
-        # if randval < 0.5 ('O3a') else ('O3b')
-        pick_observing_run = {'H1': np.random.rand() < 0.5, 
-                              'L1': np.random.rand() < 0.5}
+    def apply(self, special):
+        ## Get random glitch for detector(s)
+        # Is the detector going to get a glitch?
+        is_glitch = {'H1': np.random.rand() < 0.5, 
+                     'L1': np.random.rand() < 0.5}
+
+        # Pick on observing run for each detector (if needed)
+        h1_options = [opt for opt in self.include if 'H1' in opt]
+        l1_options = [opt for opt in self.include if 'L1' in opt]
+
+        pick_observing_run = {'H1': np.random.choice(h1_options),
+                              'L1': np.random.choice(l1_options)}
 
         # Read the glitch from the provided filenum
-        while True:
-            H1_file, H1_file_len = self.pick_glitch_file_H1(pick_observing_run)
-            glitch_H1 = self.read_glitch(H1_file, H1_file_len)
+        glitch_H1 = np.zeros(special['data_cfg'].sample_length_in_num)
+        while True and is_glitch['H1']:
+            H1_file, H1_file_len = self.pick_glitch_file_H1(pick_observing_run['H1'])
+            glitch_H1 = self.read_glitch(H1_file, H1_file_len, special['data_cfg'])
             if not any(np.isnan(glitch_H1)):
                 break
         
-        while True:
-            L1_file, L1_file_len = self.pick_glitch_file_L1(pick_observing_run)
-            glitch_L1 = self.read_glitch(L1_file, L1_file_len)
+        glitch_L1 = np.zeros(special['data_cfg'].sample_length_in_num)
+        while True and is_glitch['L1']:
+            L1_file, L1_file_len = self.pick_glitch_file_L1(pick_observing_run['L1'])
+            glitch_L1 = self.read_glitch(L1_file, L1_file_len, special['data_cfg'])
             if not any(np.isnan(glitch_L1)):
                 break
         
@@ -1143,33 +1158,6 @@ class RandomNoiseSlice():
         # limit check
         if segment_ulimit == -1:
             segment_ulimit = len(ligo_segments)
-
-        """ 
-        psegment = {}
-        for n, seg in enumerate(ligo_segments):
-            key_time = str(load_times[seg][0])
-            _key = f'{self.detectors[0]}/{key_time}'
-            # Sanity check if _key is present in noise file
-            try:
-                _ = self.O3a_real_noise[_key]
-            except:
-                # An impossible segment duration and cond rand < segprob is never satisfied
-                segdurs[n] = 0
-                psegment[n] = [-1, -1, -1]
-                continue
-            
-            # Set valid start and end times of given segment (not actual start time)
-            # load_times[seg][0] is the same as seg[0]
-            segment_length = len(np.array(self.O3a_real_noise[_key][:]))
-            seg_start_idx = 0 + self.segment_ends_buffer
-            seg_end_idx = segment_length - (self.sample_length + self.segment_ends_buffer)*(1./self.dt)
-            # Get segment duration for calculating sampling ratio wrt all segments
-            segdurs[n] = segment_length
-            # Add the epoch parameter to store
-            psegment[n] = [key_time, seg_start_idx, seg_end_idx]
-        
-        print(self.real_noise_path)
-        """ 
         
         lookup = np.load("./notebooks/tmp/segdurs_all.npy")
         for n, seg in enumerate(ligo_segments):
@@ -1251,10 +1239,12 @@ class RandomNoiseSlice():
         # Make a sample start time that is uniformly distributed within segdur
         return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
 
-    def get_noise_segment(self, segdeets):
+    def get_noise_segment(self, segdeets, det_only):
         ## Get noise sample from given O3a real noise segment
         noise = []
         for det, segdeet in zip(self.detectors, segdeets):
+            if det_only != '' and det_only != det:
+                continue
             key_time, seg_start_idx, seg_end_idx = segdeet
             # Get sample_start_time using segment times
             # This start time will lie within a valid segment time interval
@@ -1269,6 +1259,10 @@ class RandomNoiseSlice():
             ts = np.array(self.O3a_real_noise[key][sidx:eidx]).astype(np.float64)
             if "O3a_real_noise.hdf" in self.real_noise_path:
                 ts /= DYN_RANGE_FAC
+            # Send back one det data if requested
+            if det_only != '' and det_only == det:
+                return ts
+            # Else send back stacked noise
             noise.append(ts)
         
         # Convert noise into np.ndarray, suitable for other transformations
@@ -1283,11 +1277,11 @@ class RandomNoiseSlice():
         # Return the segment details of selected segment
         return (self.psegment[idx1], self.psegment[idx2])
 
-    def apply(self):
+    def apply(self, det_only=''):
         ## Get noise sample with random start time from O3a real noise
         # Toss a biased die and retrieve the segment to use
         segdeets = self.pick_segment()
         # Get noise sample with random start time (uniform within segment)
-        noise = self.get_noise_segment(segdeets)
+        noise = self.get_noise_segment(segdeets, det_only)
         # Return noise data
         return noise
