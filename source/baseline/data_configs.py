@@ -133,7 +133,7 @@ class Default:
     # Modifications to Dataset
     # Possible mods: ('uniform_signal_duration', 'uniform_chirp_mass')
     # NOTE: Set to None if not required
-    modification = 'uniform_chirp_mass'
+    modification = None
     # Option to use the priors for tau or mchirp below
     # If False, we use ml and mu above to get limits instead
     use_mod_priors = False
