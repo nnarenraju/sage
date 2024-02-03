@@ -36,6 +36,7 @@ import numpy as np
 from scipy.signal import butter, sosfiltfilt, resample, get_window
 from scipy.signal import welch as scipy_welch
 from scipy.signal.windows import tukey
+from scipy.stats import beta
 
 # LOCAL
 from data.multirate_sampling import multirate_sampling
@@ -44,7 +45,7 @@ from data.snr_calculation import get_network_snr
 # PyCBC
 import pycbc
 from pycbc import DYN_RANGE_FAC
-from pycbc.filter import pycbc_highpass
+from pycbc.filter import highpass as pycbc_highpass
 from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
 from pycbc.types import TimeSeries, FrequencySeries
 
@@ -113,13 +114,37 @@ class UnifyNoise:
 
 
 class UnifyNoiseGen:
-    def __init__(self, generations, fixed, pfixed):
+    def __init__(self, generations, fixed, pfixed, debug_me=False, debug_dir=""):
         self.generations = generations
         self.fixed = fixed
         # Probability of selecting a generation or fixed
         self.pfixed = pfixed
+        # Debugging
+        self.debug_me = debug_me
+        if debug_me:
+            self.debug_dir = debug_dir
+            if not os.path.exists(self.debug_dir):
+                os.makedirs(self.debug_dir)
+            save_txt = os.path.join(debug_dir, 'unify_noise_gen.txt')
+            self.tmp_debug = open(save_txt, "a")
+    
+    def debug_noise_generator(self, data, labels):
+        # Debugging plotter for gwspy
+        fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
+        fig.suptitle('Debugging Noise Generator')
+        for n, (d, l) in enumerate(zip(data, labels)):
+            # Subplot
+            axs[n][0].plot(d, label=l)
+            axs[n][0].grid()
+            axs[n][0].legend()
+        # Other
+        filename = 'noise_generator_backend_{}.png'.format(uuid.uuid4().hex)
+        save = os.path.join(self.debug_dir, filename)
+        plt.savefig(save)
+        plt.close()
     
     def __call__(self, special: dict):
+        det_only = "none"
         if special['training']:
             do_fixed = np.random.rand() < self.pfixed
             if do_fixed:
@@ -127,18 +152,27 @@ class UnifyNoiseGen:
                 y = self.fixed.apply(special)
                 # If both detectors are set to zeros
                 if not np.any(y[0]) and not np.any(y[1]):
-                    y = self.generations['training'].apply()
+                    y = self.generations['training'].apply(special)
                 # If only one detector is set to zeros
                 elif not np.any(y[0]) or not np.any(y[1]):
                     det_only = 'H1' if not np.any(y[0]) else None
                     det_only = 'L1' if not np.any(y[1]) else det_only
                     # Get noise for one det only and set noise
-                    det_noise = self.generations['training'].apply(det_only)
+                    det_noise = self.generations['training'].apply(special, det_only)
                     y[0 if det_only=='H1' else 1] = det_noise
             else:
-                y = self.generations['training'].apply()
+                y = self.generations['training'].apply(special)
         else:
-            y = self.generations['validation'].apply()
+            y = self.generations['validation'].apply(special)
+        
+        # Debugging
+        if self.debug_me:
+            data = [y[0], y[1]]
+            labels = ['H1 final noise sample', 'L1 final noise sample']
+            self.debug_noise_generator(data, labels)
+            foo = "{}".format(det_only)
+            self.tmp_debug.write(foo)
+
         return y
     
 
@@ -187,8 +221,6 @@ class NoiseWrapper:
     def __call__(self, y: np.ndarray, debug=''):
         if self.always_apply:
             return self.apply(y, debug)
-        else:
-            pass
 
 
 ####################################################################################################
@@ -853,11 +885,15 @@ class AugmentDistance(SignalWrapper):
 
 class AugmentOptimalNetworkSNR(SignalWrapper):
     """ Used to augment the SNR distribution of the dataset """
-    def __init__(self, always_apply=True, rescale=True, p=1.0):
+    def __init__(self, always_apply=True, rescale=True, use_uniform=False, use_beta=False, a=2, b=5):
         super().__init__(always_apply)
         # If rescale is False, AUG method returns original network_snr, norm_snr and signal
         self.rescale = rescale
-        self.p = p
+        # Applying a custom distributions for SNR PDFs
+        self.use_uniform = use_uniform
+        self.use_beta = use_beta
+        self.a = a
+        self.b = b
 
     def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
@@ -875,7 +911,12 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
             rescaled_snr_upper = cfg.rescaled_snr_upper
                 
             # Uniform on SNR range
-            target_snr = np.random.uniform(rescaled_snr_lower, rescaled_snr_upper)
+            if self.use_uniform:
+                target_snr = np.random.uniform(rescaled_snr_lower, rescaled_snr_upper)
+            elif self.use_beta:
+                target_snr = beta.rvs(self.a, self.b)
+                target_snr *= rescaled_snr_upper
+                target_snr += rescaled_snr_lower
 
             rescaling_factor = target_snr/prelim_network_snr
             # Add noise to rescaled signal
@@ -966,7 +1007,13 @@ class Recolour(NoiseWrapper):
                  use_shifted=False,
                  use_blurred=False,
                  p_recolour=0.3,
-                 noise_low_freq_cutoff=15.0):
+                 sample_length_in_s=17.0,
+                 noise_low_freq_cutoff=15.0,
+                 signal_low_freq_cutoff=20.0,
+                 trunc_method='hann',
+                 whiten_padding=5.0,
+                 debug_me=False,
+                 debug_dir=""):
         
         super().__init__(always_apply)
         # Warnings (if required)
@@ -990,7 +1037,21 @@ class Recolour(NoiseWrapper):
 
         # Other params
         self.fs = 2048. #Hz
+        self.sample_length_in_s = sample_length_in_s
         self.noise_low_freq_cutoff = noise_low_freq_cutoff
+        self.signal_low_freq_cutoff = signal_low_freq_cutoff
+        self.trunc_method = trunc_method
+        self.whiten_padding = whiten_padding # seconds
+
+        # DEBUGGER
+        self.debug_me = debug_me
+        if debug_me:
+            # TODO: If this is fast enough, include in export dir
+            self.debug_dir = debug_dir
+            if not os.path.exists(self.debug_dir):
+                os.makedirs(self.debug_dir)
+            save_txt = os.path.join(debug_dir, 'recolour.txt')
+            self.tmp_debug = open(save_txt, "a")
     
     def estimate_psd(self, ts, DET):
         # Compute PSD using Welch's method
@@ -1000,21 +1061,53 @@ class Recolour(NoiseWrapper):
             DET['old_psd'] = psd
             DET['old_delta_f'] = delta_f
         return DET
+    
+    def inv_spec_trunc(self, psd, max_filter_len):
+        # Interpolate and smooth to the desired corruption length
+        psd = inverse_spectrum_truncation(psd,
+                                        max_filter_len=max_filter_len,
+                                        low_frequency_cutoff=self.signal_low_freq_cutoff,
+                                        trunc_method=self.trunc_method)
+        return psd
+
+    def whiten(self, signal, psd, signal_delta_f):
+        """ Return a whitened time series """
+        # Convert signal to Timeseries object
+        signal = TimeSeries(signal, delta_t=1./self.fs)
+        # Filter length for inverse spectrum truncation
+        max_filter_len = int(round(self.whiten_padding * self.fs))
+        ## Manipulate PSD for usage in whitening
+        delta_f = signal_delta_f
+        ## Whitening
+        psd = self.inv_spec_trunc(psd, max_filter_len)
+        # NOTE: Factor of dt not taken into account. Since normlayer takes care of standardisation,
+        # we don't necessarily need to include this. After decorrelation, the diagonal matrix 
+        # values will not be 1 but some other value dependant on the signal input.
+        white_frequency_series = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5)
+        return (white_frequency_series, max_filter_len)
 
     def get_psd(self, H1, L1):
         ## Use pre-computed PSDs from HDF5 file
+        idx_h1 = -1
+        idx_l1 = -1
         # H1 - use different PSD
         if H1['is_diff_psd'] and H1['is_recolour']:
             idx_h1 = np.random.randint(0, int(self.shape_h1_psds[0]))
             H1['new_psd'] = self.h1_psds['data'][idx_h1]
         else:
-            H1['new_psd'] = H1['old_psd']
+            H1['new_psd'] = None # H1['old_psd']
         # L1 - use different PSD
         if L1['is_diff_psd'] and L1['is_recolour']:
             idx_l1 = np.random.randint(0, int(self.shape_l1_psds[0]))
             L1['new_psd'] = self.l1_psds['data'][idx_l1]
         else:
-            L1['new_psd'] = L1['old_psd']
+            L1['new_psd'] = None # L1['old_psd']
+
+        # Debugger
+        if self.debug_me:
+            foo = "{}, {}, {}, {}".format(idx_h1, idx_l1, H1['is_recolour'], L1['is_recolour'])
+            self.tmp_debug.write(foo)
+
         return H1, L1
 
     def shift_psd(self):
@@ -1025,32 +1118,68 @@ class Recolour(NoiseWrapper):
         # Blur the PSD using Gaussian noise
         raise NotImplementedError('blur_psd method under construction!')
     
+    def debug_recolour(self, data, labels):
+        # Plotting debug recoloured
+        # NOTE to self: figsize is (width, height)
+        fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
+        fig.suptitle('Debugging Recolour Module')
+        for n, (d, l) in enumerate(zip(data, labels)):
+            # Subplot top
+            if 'psd' in l:
+                axs[n][0].loglog(d, label=l)
+            else:
+                axs[n][0].plot(d, label=l)
+            axs[n][0].grid()
+            axs[n][0].legend()
+        # Other
+        filename = 'recolour_{}.png'.format(uuid.uuid4().hex)
+        save = os.path.join(self.debug_dir, filename)
+        plt.savefig(save)
+        plt.close()
+    
+    def resize_to_samplelen(self, ts):
+        crop = slice(int(self.whiten_padding/2.*self.fs), -int(self.whiten_padding/2.*self.fs))
+        cropped = ts[crop]
+        return cropped
+
     def recolour(self, ts, DET):
         ## Whiten the noise using old PSD and recolour using new PSD
-        # Convert to frequency domain after windowing
-        n = len(ts)
-        delta_t = 1./self.fs
-        data_fd = np.fft.rfft(ts)
-        freq = np.fft.rfftfreq(n, delta_t)
-        data_delta_f = freq[1] - freq[0]
+        if not DET['is_recolour']:
+            cropped = self.resize_to_samplelen(ts)
+            return cropped
+        # Add a whiten padding to either side of the ts (will be corrupted)
+        # padlen = int((self.whiten_padding/2.0)*self.fs)
+        # ts = np.pad(ts, (padlen, padlen), 'constant', constant_values=(0, 0))
+        # delta_f will have to be changed based on new length
+        data_delta_f = 1./(self.sample_length_in_s+self.whiten_padding)
         # Convert the PSD to new delta_f using PyCBC interpolate function
         old_psd = FrequencySeries(DET['old_psd'], delta_f=DET['old_delta_f'])
         old_psd = interpolate(old_psd, data_delta_f)
-        # Whitening (Remove old PSD from data)
-        whitened_signal = data_fd / np.sqrt(old_psd)
+        # Whitening (Remove old PSD from data) still in fd
+        whitened_fd, max_filter_len = self.whiten(ts, old_psd, data_delta_f)
         # Convert the new PSDs to have delta_f similar to data
         new_psd = FrequencySeries(DET['new_psd'], delta_f=DET['old_delta_f'])
         new_psd = interpolate(new_psd, data_delta_f)
+        new_psd = self.inv_spec_trunc(new_psd, max_filter_len)
         # Recolour using new PSD and return to time domain
-        recoloured = np.fft.irfft(whitened_signal*np.sqrt(new_psd))
-        tmp = TimeSeries(recoloured, delta_t=1./self.fs)
-        recoloured = pycbc_highpass(tmp, self.noise_low_freq_cutoff).astype(np.float64)
-        return recoloured.numpy()
+        recoloured = (whitened_fd * new_psd**0.5).to_timeseries()
+        # NOTE: Removing 5 seconds of data here. Make sure sample length is set accordingly.
+        recoloured = recoloured[int(max_filter_len/2):int(len(recoloured)-max_filter_len/2)].numpy()
+        # debug plotter
+        if self.debug_me:
+            _, recovered = scipy_welch(recoloured, fs=self.fs, nperseg=4.*self.fs, average='median')
+            self.debug_recolour([old_psd, new_psd, ts, recoloured, recovered],
+                                ['old_psd', 'new_psd', 'original', 'recoloured', 'recovered_psd'])
+
+        return recoloured
 
     def apply(self, y: np.ndarray, debug=''):
         # Apply given PSD augmentation technique
         ## Or not to recolour
         if np.random.rand() >= self.p_recolour:
+            cropped_h1 = self.resize_to_samplelen(y[0])
+            cropped_l1 = self.resize_to_samplelen(y[1])
+            y = np.stack([cropped_h1, cropped_l1], axis=0)
             return y
         ## To Recolour
         # Is the detector noise going to be recoloured?
@@ -1066,8 +1195,11 @@ class Recolour(NoiseWrapper):
               'is_shifted': np.random.rand() < 0.5,
               'is_blurred': np.random.rand() < 0.5,
               'recoloured': y[1]}
-        # Sanity check
+        # Sanity check (happens 25% of the time)
         if not H1['is_recolour'] and not L1['is_recolour']:
+            cropped_h1 = self.resize_to_samplelen(y[0])
+            cropped_l1 = self.resize_to_samplelen(y[1])
+            y = np.stack([cropped_h1, cropped_l1], axis=0)
             return y
         # shifted and blurred are not implemented yet
         # TODO: Remove this after implementation
@@ -1084,10 +1216,10 @@ class Recolour(NoiseWrapper):
         if self.use_blurred:
             H1, L1 = self.blur_psd(H1, L1)
         
-        if H1['is_recolour']:
-            H1['recoloured'] = self.recolour(y[0], H1)
-        if L1['is_recolour']:
-            L1['recoloured'] = self.recolour(y[1], L1)
+        # Adjusting H1 and L1 for extra padding added (if needed)
+        H1['recoloured'] = self.recolour(y[0], H1)
+        L1['recoloured'] = self.recolour(y[1], L1)
+
         recoloured_noise = np.stack([H1['recoloured'], L1['recoloured']], axis=0)
         return recoloured_noise
 
@@ -1113,7 +1245,9 @@ class GlitchAugmentGWSPY():
                     H1_O3b="/local/scratch/igr/nnarenraju/gwspy/H1_O3b_glitches",
                     L1_O3b="/local/scratch/igr/nnarenraju/gwspy/L1_O3b_glitches"
                  ),
-                 include=['H1_O3a', 'H1_O3b', 'L1_O3a', 'L1_O3b']):
+                 include=['H1_O3a', 'H1_O3b', 'L1_O3a', 'L1_O3b'],
+                 debug_me=False,
+                 debug_dir=""):
         
         # Assertions
         assert len(include) > 0, 'At least one observing run for a detector must be selected'
@@ -1125,40 +1259,76 @@ class GlitchAugmentGWSPY():
         for name in include:
             self.glitch_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(glitch_dirs[name], "*.hdf"))]
             self.num_glitches[name] = np.load("./notebooks/tmp/{}.npy".format(name))
+        
+        # DEBUGGER
+        self.debug_me = debug_me
+        if debug_me:
+            self.debug_dir = debug_dir
+            if not os.path.exists(self.debug_dir):
+                os.makedirs(self.debug_dir)
+            save_txt = os.path.join(debug_dir, 'gravity_spy.txt')
+            self.tmp_debug = open(save_txt, "a")
 
     def pick_glitch_file_H1(self, obs_run):
         # Pick a glitch file for each detector
         # Glitch sample obtained from GWOSC using GWSPY GPS times
-        H1opt = ([self.glitch_files_H1_O3a, self.num_glitches_H1_O3a] 
+        H1opt = ([self.glitch_files['H1_O3a'], self.num_glitches['H1_O3a']] 
                   if obs_run=='H1_O3a' 
-                  else [self.glitch_files_H1_O3b, self.num_glitches_H1_O3b])
+                  else [self.glitch_files['H1_O3b'], self.num_glitches['H1_O3b']])
         # Pick a random file to get the glitch
-        H1_file, H1_file_len = np.random.choice(list(zip(H1opt[0], H1opt[1])))
+        idx = np.random.choice(list(range(len(H1opt[1]))))
+        H1_file, H1_file_len = H1opt[0][idx], H1opt[1][idx]
         return H1_file, H1_file_len
     
     def pick_glitch_file_L1(self, obs_run):
         # Pick a glitch file for each detector
         # Glitch sample obtained from GWOSC using GWSPY GPS times
-        L1opt = ([self.glitch_files_L1_O3a, self.num_glitches_L1_O3a] 
+        L1opt = ([self.glitch_files['L1_O3a'], self.num_glitches['L1_O3a']] 
                   if obs_run=='L1_O3a' 
-                  else [self.glitch_files_L1_O3b, self.num_glitches_L1_O3b])
+                  else [self.glitch_files['L1_O3b'], self.num_glitches['L1_O3b']])
         # Pick a random file to get glitch
-        L1_file, L1_file_len = np.random.choice(list(zip(L1opt[0], L1opt[1])))
+        idx = np.random.choice(list(range(len(L1opt[1]))))
+        L1_file, L1_file_len = L1opt[0][idx], L1opt[1][idx]
         return L1_file, L1_file_len
 
-    def read_glitch(self, hf, length, data_cfg):
+    def read_glitch(self, hf, length, data_cfg, is_training):
+        # Check if training (worry about using recolour)
+        if is_training:
+            recolour_pad = int(data_cfg.whiten_padding*data_cfg.sample_rate)
+        else:
+            recolour_pad = 0
         # Pick a random glitch from glitch file
         idx = np.random.randint(low=0, high=int(length))
         # Pick a random start time from 0 to 60-sample_length
-        start_time_ulimit = int(60.*2048.) - int(data_cfg.sample_length_in_num)
+        start_time_ulimit = int(60.*2048.) - (int(data_cfg.sample_length_in_num)+recolour_pad)
         rand_start_idx = np.random.randint(low=0, high=start_time_ulimit)
-        rand_slice = slice(rand_start_idx, int(data_cfg.sample_length_in_num))
+        rand_slice = slice(rand_start_idx, int(rand_start_idx+data_cfg.sample_length_in_num+recolour_pad))
         # Get the required segment from glitch array
         glitch = np.array(hf['data'][idx][rand_slice]).astype(np.float64)
         return glitch
 
+    def debug_gwspy(self, data, labels):
+        # Debugging plotter for gwspy
+        fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
+        fig.suptitle('Debugging Gravity Spy Augmentation')
+        for n, (d, l) in enumerate(zip(data, labels)):
+            # Subplot
+            axs[n][0].plot(d, label=l)
+            axs[n][0].grid()
+            axs[n][0].legend()
+        # Other
+        filename = 'gravity_spy_{}.png'.format(uuid.uuid4().hex)
+        save = os.path.join(self.debug_dir, filename)
+        plt.savefig(save)
+        plt.close()
+
     def apply(self, special):
         ## Get random glitch for detector(s)
+        if special['training']:
+            recolour_pad = int(special['data_cfg'].whiten_padding*
+                               special['data_cfg'].sample_rate)
+        else:
+            recolour_pad = 0
         # Is the detector going to get a glitch?
         is_glitch = {'H1': np.random.rand() < 0.5, 
                      'L1': np.random.rand() < 0.5}
@@ -1171,23 +1341,31 @@ class GlitchAugmentGWSPY():
                               'L1': np.random.choice(l1_options)}
 
         # Read the glitch from the provided filenum
-        glitch_H1 = np.zeros(special['data_cfg'].sample_length_in_num)
+        glitch_H1 = np.zeros(int(special['data_cfg'].sample_length_in_num + recolour_pad))
         while True and is_glitch['H1']:
             H1_file, H1_file_len = self.pick_glitch_file_H1(pick_observing_run['H1'])
-            glitch_H1 = self.read_glitch(H1_file, H1_file_len, special['data_cfg'])
+            glitch_H1 = self.read_glitch(H1_file, H1_file_len, special['data_cfg'], special['training'])
             if not any(np.isnan(glitch_H1)):
                 break
         
-        glitch_L1 = np.zeros(special['data_cfg'].sample_length_in_num)
+        glitch_L1 = np.zeros(int(special['data_cfg'].sample_length_in_num + recolour_pad))
         while True and is_glitch['L1']:
             L1_file, L1_file_len = self.pick_glitch_file_L1(pick_observing_run['L1'])
-            glitch_L1 = self.read_glitch(L1_file, L1_file_len, special['data_cfg'])
+            glitch_L1 = self.read_glitch(L1_file, L1_file_len, special['data_cfg'], special['training'])
             if not any(np.isnan(glitch_L1)):
                 break
         
+        # Debugging
+        if self.debug_me:
+            foo = "{}, {}, {}, {}".format(is_glitch['H1'], is_glitch['L1'], 
+                                          pick_observing_run['H1'], pick_observing_run['L1'])
+            self.tmp_debug.write(foo)
+            data = [glitch_H1, glitch_L1]
+            labels = ['glitch H1', 'glitch L1']
+            self.debug_gwspy(data, labels)
+
         # Augmented noise (Downsampled to 2048. Hz after downloading)
         noise = np.stack([glitch_H1, glitch_L1], axis=0)
-
         return noise
     
 
@@ -1196,7 +1374,7 @@ class RandomNoiseSlice():
     ### TODO: CHECK FOR BUGS!! ###
     # This will become the primary noise reading function
     def __init__(self, real_noise_path="", sample_length=17.0,
-                 segment_llimit=None, segment_ulimit=None):
+                 segment_llimit=None, segment_ulimit=None, debug_me=False, debug_dir=""):
         self.sample_length = sample_length
         self.min_segment_duration = self.sample_length
         self.real_noise_path = real_noise_path
@@ -1238,6 +1416,15 @@ class RandomNoiseSlice():
         segprob = list(segdurs/np.sum(segdurs))
         # Get one choice from seg_idx based on probalities obtained from seg durations
         self.segment_choice = lambda _: np.random.choice(seg_idx, 1, p=segprob)[0]
+
+        # Debugging
+        self.debug_me = debug_me
+        if debug_me:
+            self.debug_dir = debug_dir
+            if not os.path.exists(self.debug_dir):
+                os.makedirs(self.debug_dir)
+            save_txt = os.path.join(debug_dir, 'random_noise_slice.txt')
+            self.tmp_debug = open(save_txt, "a")
 
     def _load_segments(self):
         tmp_dir = "./tmp"
@@ -1293,26 +1480,56 @@ class RandomNoiseSlice():
             
         return ligo_segments, load_times
     
+    def debug_random_noise_slice(self, data, labels):
+        # Plotting debug recoloured
+        # NOTE to self: figsize is (width, height)
+        fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
+        fig.suptitle('Debugging Random Noise Slice')
+        for n, (d, l) in enumerate(zip(data, labels)):
+            # Subplot top
+            axs[n][0].plot(d, label=l)
+            axs[n][0].grid()
+            axs[n][0].legend()
+        # Other
+        filename = 'random_noise_slice_{}.png'.format(uuid.uuid4().hex)
+        save = os.path.join(self.debug_dir, filename)
+        plt.savefig(save)
+        plt.close()
+    
     def _make_sample_start_time(self, seg_start_idx, seg_end_idx):
         # Make a sample start time that is uniformly distributed within segdur
         return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
 
-    def get_noise_segment(self, segdeets, det_only):
+    def get_noise_segment(self, special, segdeets, det_only):
         ## Get noise sample from given O3a real noise segment
+        # If not in training phase, don't worry about Recolour being on
+        if special['training']:
+            recolour_pad = int(special['data_cfg'].whiten_padding*special['data_cfg'].sample_rate)
+        else:
+            recolour_pad = 0
+        # Get random noise segment
         noise = []
+        tmp_key_times = []
+        tmp_start_idxs = []
         for det, segdeet in zip(self.detectors, segdeets):
             if det_only != '' and det_only != det:
                 continue
             key_time, seg_start_idx, seg_end_idx = segdeet
+            seg_end_idx -= recolour_pad
             # Get sample_start_time using segment times
             # This start time will lie within a valid segment time interval
             sample_start_idx = self._make_sample_start_time(seg_start_idx, seg_end_idx)
             # Get the required portion of given segment
             sidx = sample_start_idx
             eidx = sample_start_idx + int(self.sample_length / self.dt)
+            eidx += recolour_pad
             # Which key does the current segment belong to in real noise file
             # key_time provided is the start time of required segment
             key = f'{det}/{key_time}'
+            # Update debugging tools
+            if self.debug_me:
+                tmp_key_times.append(key_time)
+                tmp_start_idxs.append(sidx)
             # Get time series from segment and apply the dynamic range factor
             ts = np.array(self.O3a_real_noise[key][sidx:eidx]).astype(np.float64)
             if "O3a_real_noise.hdf" in self.real_noise_path:
@@ -1323,6 +1540,11 @@ class RandomNoiseSlice():
             # Else send back stacked noise
             noise.append(ts)
         
+        # Debugging
+        if self.debug_me:
+            self.debug_random_noise_slice(data=noise, labels=['H1 noise', 'L1 noise'])
+            foo = 'H1, {}, {}, L1, {}, {}'.format(tmp_key_times[0], tmp_start_idxs[0], tmp_key_times[1], tmp_start_idxs[1])
+            self.tmp_debug.write(foo)
         # Convert noise into np.ndarray, suitable for other transformations
         noise = np.stack(noise, axis=0)
         return noise
@@ -1335,11 +1557,11 @@ class RandomNoiseSlice():
         # Return the segment details of selected segment
         return (self.psegment[idx1], self.psegment[idx2])
 
-    def apply(self, det_only=''):
+    def apply(self, special, det_only=''):
         ## Get noise sample with random start time from O3a real noise
         # Toss a biased die and retrieve the segment to use
         segdeets = self.pick_segment()
         # Get noise sample with random start time (uniform within segment)
-        noise = self.get_noise_segment(segdeets, det_only)
+        noise = self.get_noise_segment(special, segdeets, det_only)
         # Return noise data
         return noise
