@@ -886,7 +886,8 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
             # Update first batch plotting tasks toggler
             # TODO: Use this for validation phase as well
-            td.plot_on_first_batch = True
+            if cfg.plot_on_first_batch:
+                td.plot_on_first_batch = True
             
             # Prettification string
             epoch_string = "\n" + "="*65 + " Epoch {} ".format(nep) + "="*65
