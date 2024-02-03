@@ -23,7 +23,8 @@ Documentation: NULL
 
 """
 
-# IN-BUILT
+# PACKAGES
+import os
 import numpy as np
 import torch.optim as optim
 
@@ -810,7 +811,7 @@ class KaggleNetOTF_BASELINE(KaggleFirstPE_BASELINE):
                                     sample_length=17.0, segment_llimit=0, segment_ulimit=132
                                 ),
                     },
-                    GlitchAugmentGWSPY(),
+                    GlitchAugmentGWSPY(include=['H1_O3b', 'L1_O3b']),
                     pfixed = 0.33
                 )
     )
@@ -868,13 +869,311 @@ class KaggleNetOTF_BASELINE(KaggleFirstPE_BASELINE):
     far_scaling_factor = 2592000.0
 
 
-class KaggleNetOTF_PSDaug(KaggleNetOTF_BASELINE):
+class KaggleNetOTF_bigboi:
     """ Data storage """
-    name = "KaggleNet50_CBAM_OTF_Jan28_AugmentedPSDs"
+    name = "KaggleNet50_CBAM_OTF_Feb03_bigboi"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    debug_dir = "./DEBUG"
+
+    """ RayTune """
+    # Placed before initialising any relevant tunable parameter
+    rtune_optimise = False
+    
+    rtune_params = dict(
+        # RayTune Tunable Parameters
+        config = {
+            "learning_rate": tune.loguniform(1e-5, 1e-2),
+            "batch_size": tune.choice([32,])
+        },
+        # Scheduler (ASHA has intelligent early stopping)
+        scheduler = ASHAScheduler,
+        # NOTE: max_t is maximum number of epochs Tune is allowed to run
+        scheduler_params = dict(
+            metric = "loss",
+            mode = "min",
+            max_t = 10,
+            grace_period = 1,
+            reduction_factor = 2
+        ),
+        # Reporter
+        reporter = CLIReporter,
+        reporter_params = dict(
+            # parameter_columns=["l1", "l2", "lr", "batch_size"],
+            metric_columns=["loss", "accuracy", "low_far_nsignals", "training_iteration"]
+        ),
+        # To sample multiple times/run multiple trials
+        # Samples from config num_samples number of times
+        num_samples = 100
+    )
+
+    """ Weights and Biases (Wandb) """
+    use_wandb_logging = False
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
     
     """ Architecture """
     model = KappaModel_ResNet_CBAM
+
+    model_params = dict(
+        # Res2net152
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 152,
+        store_device = 'cuda:1',
+    )
+
+    """ Epochs and Batches """
+    num_epochs = 50
+    batch_size = 64
+    save_freq = 1
+    
+    """ Save samples """
+    num_sample_save = 100
+    
+    """ Weight Types """
+    weight_types = ['loss', 'accuracy', 'roc_auc', 'low_far_nsignals']
+    
+    # Save weights for particular epochs
+    save_epoch_weight = list(range(50))
+    
+    # Pick one of the above weights for best epoch save directory
+    save_best_option = 'loss'
+    
+    pretrained = False
+    weights_path = 'weights_loss.pt'
+    # This is automatically written in export_dir
+    output_loss_file = "losses.txt"
+    
+    """ Parameter Estimation """
+    parameter_estimation = ('norm_tc', 'norm_mchirp', )
+
+    """ Optimizer """
+    ## Adam 
+    optimizer = optim.Adam
+    optimizer_params = dict(lr=2e-4, weight_decay=1e-6)
+
+    """ Scheduler """
+    ## Cosine Annealing with Warm Restarts
+    scheduler = CosineAnnealingWarmRestarts
+    scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
+    
+    # Early stoppping
+    early_stopping = False
+
+    """ Evaluation Metric """
+    eval_metric = None
+    # Normalised threshold for accuracy
+    accuracy_thresh = 0.5
+    
+    """ Gradient Clipping """
+    clip_norm = 10000
+
+    """ Automatic Mixed Precision """
+    # Keep this turned off when using Adam
+    # It seems to be unstable and produces NaN losses
+    do_AMP = False
+
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+
+    """ Dataloader params """
+    num_workers = 32
+    pin_memory = True
+    prefetch_factor = 4
+    persistent_workers = True
+
+    """ Loss Function """
+    # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
+    # Extra losses cannot be used without BCEWithLogitsLoss()
+    # All parameter estimation is done only using MSE loss at the moment
+    loss_function = BCEgw_MSEtc(gw_criterion=None, weighted_bce_loss=False, mse_alpha=1.0,
+                                emphasis_type='raw',
+                                noise_emphasis=False, noise_conditions=[('min_noise', 'max_noise', 0.5),],
+                                signal_emphasis=False, signal_conditions=[('min_signal', 'max_signal', 1.0),],
+                                snr_loss=False, snr_conditions=[(5.0, 10.0, 0.3),],
+                                mchirp_loss=False, mchirp_conditions=[(25.0, 45.0, 0.3),],
+                                dchirp_conditions=[(130.0, 350.0, 1.0),],
+                                variance_loss=False)
+
+    # These params must be present in target dict
+    # Make sure that params of PE are also included within this (generalise this!)
+    weighted_bce_loss_params = ('mchirp', 'tc', 'q', )
+    
+    # Rescaling the SNR (mapped into uniform distribution)
+    rescale_snr = True
+    rescaled_snr_lower = 5.0
+    rescaled_snr_upper = 15.0
+    
+    # Calculate the network SNR for pure noise samples as well
+    # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
+    network_snr_for_noise = False
+
+    # Dataset imbalance
+    ignore_dset_imbalance = False
+    subset_for_funsies = False # debug_size is used for subset, debug need not be true
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
+                                ),
+                    },
+                    GlitchAugmentGWSPY(include=['H1_O3b', 'L1_O3b'], debug_me=False,
+                                       debug_dir=os.path.join(debug_dir, 'GravitySpy')),
+                    pfixed = 0.2580,
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
+    )
+    
+    """ Transforms """
+    # Adding a random noise realisation during the data loading process
+    # Procedure should be available within dataset object
+    # Fixed noise realisation method has been deprecated
+    add_random_noise_realisation = True
+
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf="./notebooks/tmp/psds_H1_30days.hdf",
+                             l1_psds_hdf="./notebooks/tmp/psds_L1_30days.hdf",
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+    # Do not set this to True
+    # RandomNoiseSlice does the same thing but better
+    batchshuffle_noise = False
+
+    """ Optional things to do during training """
+    # Plots the input to the network (including transformations) 
+    # and output from the network
+    network_io = False
+    permitted_models = ['KappaModel', 'KappaModelPE', 'KappaModel_ResNet_CBAM', 
+                        'KappaModel_Res2Net']
+    # Extremes only plot
+    extremes_io = False
+    # Plotting on first batch
+    plot_on_first_batch = False
+    # Testing on a small 64000s dataset at the end of each epoch
+    epoch_testing = False
+    epoch_testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D4_seeded"
+    epoch_far_scaling_factor = 64000.0
+
+    """ Testing Phase """
+    injection_file = 'injections.hdf'
+    evaluation_output = 'evaluation.hdf'
+
+    test_foreground_dataset = "foreground.hdf"
+    test_foreground_output = "testing_foutput.hdf"
+    
+    test_background_dataset = "background.hdf"
+    test_background_output = "testing_boutput.hdf"
+
+    # Run device for testing phase
+    ## Testing config
+    # Real step will be slightly different due to rounding errors
+    step_size = 0.1
+    # Based on prediction probabilities in best epoch
+    trigger_threshold = 0.0
+    # Time shift the signal by multiple of step_size and check pred probs
+    cluster_threshold = 0.0001
+    # Run device for testing phase
+    testing_device = 'cuda:0'
+
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
+    far_scaling_factor = 2592000.0
+
+    # When debug is False the following plots are not made
+    # SAMPLES, DEBUG, CNN_OUTPUT
+    debug = False
+    debug_size = 10000
+
+    verbose = True
+
+
+class KaggleNetOTF_BOY(KaggleNetOTF_bigboi):
+    """ Data storage """
+    # WARNING: For optimal detection sensitivity, you have to pronounce "BOY" the way Kratos does in God of War 
+    name = "KaggleNet50_CBAM_OTF_Feb03_BOY"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+    
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+
+    model_params = dict(
+        # Res2net152
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = 'cuda:0',
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
+
+    # Run device for testing phase
+    testing_device = 'cuda:0'
+
+
+class KaggleNetOTF_betaSNR(KaggleNetOTF_bigboi):
+    """ Data storage """
+    # WARNING: For optimal detection sensitivity, you have to pronounce "BOY" the way Kratos does in God of War 
+    name = "KaggleNet50_CBAM_OTF_Feb03_BetaSNR"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    debug_dir = "./DEBUG"
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+    
+    """ Architecture """
+    model = KappaModel_ResNet_CBAM
+
     model_params = dict(
         # Res2net152
         filter_size = 32,
@@ -887,39 +1186,20 @@ class KaggleNetOTF_PSDaug(KaggleNetOTF_BASELINE):
     store_device = 'cuda:2'
     train_device = 'cuda:2'
 
-    """ Dataloader params """
-    num_workers = 16
+    # Run device for testing phase
+    testing_device = 'cuda:2'
 
-    """ Generation """
-    # Augmentation using GWSPY glitches happens only during training (not for validation)
-    generation = dict(
-        signal = UnifySignalGen([
-                    FastGenerateWaveform(),
-                ]),
-        noise  = UnifyNoiseGen({
-                    'training': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1
-                                ),
-                    'validation': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132
-                                ),
-                    },
-                    GlitchAugmentGWSPY(),
-                    pfixed = 0.0
-                )
-    )
-    
-    """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True),
+                    AugmentOptimalNetworkSNR(rescale=True, use_beta=True),
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
-                             h1_psds_hdf="./notebooks/tmp/psds_h1_81days.hdf", 
-                             l1_psds_hdf="./notebooks/tmp/psds_l1_81days.hdf"),
+                             h1_psds_hdf="./notebooks/tmp/psds_H1_30days.hdf",
+                             l1_psds_hdf="./notebooks/tmp/psds_L1_30days.hdf",
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
                 ]),
         train=Unify({
                     'stage1':[
@@ -942,176 +1222,10 @@ class KaggleNetOTF_PSDaug(KaggleNetOTF_BASELINE):
         target=None
     )
 
-    """ Testing Phase """
-    # Run device for testing phase
-    weights_path = 'weights_loss.pt'
-    testing_device = 'cuda:0'
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
-    far_scaling_factor = 2592000.0
-
-
-class KaggleNetOTF_bigboi(KaggleNetOTF_BASELINE):
-    """ Data storage """
-    name = "KaggleNet50_CBAM_OTF_Jan30_bigboi"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
-    
-    """ Architecture """
-    model = KappaModel_ResNet_CBAM
-    model_params = dict(
-        # Res2net152
-        filter_size = 32,
-        kernel_size = 64,
-        resnet_size = 152,
-        store_device = 'cuda:1',
-    )
-
-    """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
-
-    """ Dataloader params """
-    num_workers = 16
-
-    """ Generation """
-    # Augmentation using GWSPY glitches happens only during training (not for validation)
-    generation = dict(
-        signal = UnifySignalGen([
-                    FastGenerateWaveform(),
-                ]),
-        noise  = UnifyNoiseGen({
-                    'training': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1
-                                ),
-                    'validation': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132
-                                ),
-                    },
-                    None,
-                    pfixed = 0.0
-                )
-    )
-    
-    """ Transforms """
-    transforms = dict(
-        signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True),
-                ]),
-        noise=UnifyNoise([
-                    Recolour(use_precomputed=True, 
-                             h1_psds_hdf="./notebooks/tmp/psds_h1_81days.hdf", 
-                             l1_psds_hdf="./notebooks/tmp/psds_l1_81days.hdf"),
-                ]),
-        train=Unify({
-                    'stage1':[
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        test=Unify({
-                    'stage1':[
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        target=None
-    )
-
-    """ Testing Phase """
-    # Run device for testing phase
-    weights_path = 'weights_loss.pt'
-    testing_device = 'cuda:0'
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
-    far_scaling_factor = 2592000.0
-
-
-class KaggleNetOTF_bigboi_uniformMchirp(KaggleNetOTF_BASELINE):
-    """ Data storage """
-    name = "KaggleNet50_CBAM_OTF_Jan30_bigboi_uniformMchirp"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
-    
-    """ Architecture """
-    model = KappaModel_ResNet_CBAM
-    model_params = dict(
-        # Res2net152
-        filter_size = 32,
-        kernel_size = 64,
-        resnet_size = 152,
-        store_device = 'cuda:0',
-    )
-
-    """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
-
-    """ Dataloader params """
-    num_workers = 16
-
-    """ Generation """
-    # Augmentation using GWSPY glitches happens only during training (not for validation)
-    generation = dict(
-        signal = UnifySignalGen([
-                    FastGenerateWaveform(),
-                ]),
-        noise  = UnifyNoiseGen({
-                    'training': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1
-                                ),
-                    'validation': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132
-                                ),
-                    },
-                    None,
-                    pfixed = 0.0
-                )
-    )
-    
-    """ Transforms """
-    transforms = dict(
-        signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True),
-                ]),
-        noise=UnifyNoise([
-                    Recolour(use_precomputed=True, 
-                             h1_psds_hdf="./notebooks/tmp/psds_h1_81days.hdf", 
-                             l1_psds_hdf="./notebooks/tmp/psds_l1_81days.hdf"),
-                ]),
-        train=Unify({
-                    'stage1':[
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        test=Unify({
-                    'stage1':[
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
-                    ],
-                    'stage2':[
-                            Normalise(ignore_factors=True),
-                            MultirateSampling(),
-                    ],
-                }),
-        target=None
-    )
-
-    """ Testing Phase """
-    # Run device for testing phase
-    weights_path = 'weights_loss.pt'
-    testing_device = 'cuda:0'
-    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
-    far_scaling_factor = 2592000.0
+    # Rescaling the SNR
+    rescale_snr = True
+    rescaled_snr_lower = 5.0
+    rescaled_snr_upper = 20.0
 
 
 class InceptionNetOTF(KaggleNetOTF_BASELINE):
