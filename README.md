@@ -1,3 +1,3 @@
 # ORChiD
-Machine Learning Mock Data Challenge for GW Searches
+Unbiased detection of gravitational-waves using machine learning
 
