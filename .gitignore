@@ -157,3 +157,10 @@ source/baseline/notebooks/tmp/durs_L1_O3b_all_noise.npy
 source/baseline/notebooks/tmp/freq_psd.npy
 source/baseline/weights/checkpoint_epoch_49_PhenomD_BOY.pt
 source/baseline/weights/weights_loss_BOY.pt
+notebooks/tmp/H1_O3b.npy
+notebooks/tmp/L1_O3b.npy
+notebooks/snrs.npy
+notebooks/tmp/freq_psd.npy
+tmp/segments.csv
+weights/checkpoint_epoch_49_PhenomD_BOY.pt
+weights/weights_loss_BOY.pt
