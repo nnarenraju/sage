@@ -38,9 +38,9 @@ import pycbc
 from pycbc.types import FrequencySeries
 
 # LOCAL
-from evaluate_normal import main as evaluator
+from evaluator import main as evaluator
 from data.prepare_data import DataModule as dat
-from data.multirate_sampling import get_sampling_rate_bins
+from data.multirate_sampling import get_sampling_rate_bins_type1, get_sampling_rate_bins_type2
 
 # Torch default datatype
 dtype = torch.float32
@@ -331,9 +331,9 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                              transforms=transforms, psds_data=psds_data,
                              data_cfg=data_cfg)
         
-        data_loader = torch.utils.data.DataLoader(slicer, batch_size=512, shuffle=False, 
-                                                  num_workers=32, pin_memory=cfg.pin_memory, 
-                                                  prefetch_factor=4, 
+        data_loader = torch.utils.data.DataLoader(slicer, batch_size=64, shuffle=False, 
+                                                  num_workers=16, pin_memory=cfg.pin_memory, 
+                                                  prefetch_factor=16, 
                                                   persistent_workers=cfg.persistent_workers)
 
         ### Gradually apply network to all samples and if output exceeds the trigger threshold
@@ -442,7 +442,13 @@ def run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
         
     """ Multi-rate Sampling """
     # Get the sampling rates and their bins idx
-    data_cfg.dbins = get_sampling_rate_bins(data_cfg)
+    try:
+        if data_cfg.srbins_type == 1:
+            data_cfg.dbins = get_sampling_rate_bins_type1(data_cfg)
+        elif data_cfg.srbins_type == 2:
+            data_cfg.dbins = get_sampling_rate_bins_type2(data_cfg)
+    except:
+        data_cfg.dbins = get_sampling_rate_bins_type1(data_cfg)
     
     # Get the psd data for transformation methods
     psds_data = get_psd_data(data_cfg)
@@ -520,7 +526,8 @@ if __name__ == "__main__":
     ## Error (unsolved): CUDA out of memory when loading weights 
     ## Work-around: mapping weights to CPU before loading into GPU
     # Refer: https://discuss.pytorch.org/t/cuda-error-out-of-memory-when-load-models/38011/3
-    Network.load_state_dict(torch.load(weights_path, map_location='cpu'))
+    checkpoint = torch.load(weights_path, map_location='cpu')
+    Network.load_state_dict(checkpoint['model_state_dict'])
 
     # Try to use multiple GPUs using DataParallel
     # Network = torch.nn.DataParallel(Network)
@@ -556,7 +563,6 @@ if __name__ == "__main__":
             step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
             trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
             batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
-    
     
     # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
     output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
