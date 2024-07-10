@@ -65,6 +65,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR, Redu
 # LOCAL
 from data.datasets import MLMDC1, MinimalOTF
 from architectures.frontend import KappaModel, ZetaModel, KappaModel_ResNet_CBAM, OmegaModel_ResNet_CBAM, KappaModel_Res2Net, SigmaModel, KappaModel_ResNet
+from architectures.frontend import KappaModel_ResNet_small
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
 from data.transforms import BandPass, HighPass, Whiten, MultirateSampling, Normalise, Resample, Buffer, Crop
 from data.transforms import AugmentDistance, AugmentPolSky, AugmentOptimalNetworkSNR
@@ -1963,15 +1964,143 @@ class SageNetOTF_metric_density(KaggleNetOTF_bigboi):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = 'cuda:0',
+        store_device = 'cuda:1',
     )
 
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
 
     # Run device for testing phase
-    testing_device = 'cuda:0'
+    testing_device = 'cuda:1'
+    
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_metric.hdf"    
+    test_background_output = "testing_boutput_metric.hdf"
+
+
+
+# ABLATION 1 - small network resnet50
+class SageNetOTF_metric_lowvar(KaggleNetOTF_bigboi):
+    ### Primary Deviations (Comparison to BOY latest) ###
+    # 1. 113 days of O3b data (not variation)
+    # 2. SNR halfnorm (not variation)
+    # 3. Template placement density (**VARIATION**)
+    # 4. Low variation via fixed size dataset and lack of augmentation 
+
+    """ Data storage """
+    name = "SageNet50_metric_lowvar_Jul00"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    debug_dir = "./DEBUG"
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(sample_length=12.0),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
+                                ),
+                    },
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                                                        ),
+                                                 sample_length=17.0,
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    pfixed = 0.689, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
+    )
+
+    """ Transforms """
+    # Adding a random noise realisation during the data loading process
+    # Procedure should be available within dataset object
+    # Fixed noise realisation method has been deprecated
+    add_random_noise_realisation = True
+
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf="./notebooks/tmp/psds_H1_30days.hdf",
+                             l1_psds_hdf="./notebooks/tmp/psds_L1_30days.hdf",
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = KappaModel_ResNet_small
+
+    model_params = dict(
+        # Resnet50
+        timm_params = {'model_name': 'resnet50',
+                       'pretrained': False, 
+                       'in_chans': 2, 
+                       'drop_rate': 0.25
+                      },
+        store_device = 'cuda:1',
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+
+    # Run device for testing phase
+    testing_device = 'cuda:1'
+    
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_metric_small.hdf"    
+    test_background_output = "testing_boutput_metric_small.hdf"
+
+
+
+
 
 
 # RUNNING (stopping prematurely, will start again later after fixing the sampling issue)
