@@ -68,8 +68,8 @@ import matplotlib.pyplot as plt
 plt.rcParams.update({'font.size': 18})
 
 # LOCAL
-from test import run_test
-from evaluate import main as evaluator
+from test_normal import run_test
+from evaluator import main as evaluator
 
 
 
@@ -752,6 +752,7 @@ def consolidated_display(train_time, total_time):
     print('Total time taken = {}s'.format(np.around(total_time, 3)))
     print('----------------------------------------------------------------------')
 
+
 def pairwise(iterable):
     # pairwise('ABCDEFG') --> AB BC CD DE EF FG
     a, b = itertools.tee(iterable)
@@ -788,7 +789,7 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
     # Make the actual optimizer step and save the batch loss
     optimizer.step()
     # Scheduler step
-    if scheduler:
+    if scheduler and scheduler.__class__.__name__ not in ['ReduceLROnPlateau']:
         scheduler.step(scheduler_step)
     
     return (all_losses, accuracy)
@@ -815,7 +816,7 @@ def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samp
     return (all_losses, accuracy, validation_output)
 
 
-def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, trainDL, validDL, nepoch, verbose=False):
+def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, trainDL, validDL, auxDL, nepoch, cflag, checkpoint, verbose=False):
     
     """
     Train a network on given data.
@@ -860,15 +861,16 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
     try:
         """ Training and Validation """
         ### Initialise global (over all epochs) params
-        best_loss = 1.e10 # impossibly bad value
+        # Update if using checkpoint
+        best_loss = checkpoint['loss'] if cfg.resume_from_checkpoint else 1.e10 # impossibly bad value
         best_accuracy = 0.0 # bad value
         best_roc_auc = 0.0 # bad value
         best_low_far_nsignals = 0 # bad value
         # Best params for weights
         best_params = {'loss': best_loss, 'accuracy': best_accuracy, 'roc_auc': best_roc_auc, 'low_far_nsignals': best_low_far_nsignals}
-        
+
         # Other
-        best_epoch = 0
+        best_epoch = checkpoint['epoch'] if cfg.resume_from_checkpoint else 0
         best_roc_data = None
         overfitting_check = 0
         
@@ -878,11 +880,11 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
         # Setting the filepath to write epoch info
         loss_filepath = os.path.join(export_dir, cfg.output_loss_file)
         
-        for nep in range(cfg.num_epochs):
+        start_epoch = int(checkpoint['epoch'])+1 if cfg.resume_from_checkpoint else 0
+        for nep in range(start_epoch, cfg.num_epochs):
             
             # Update epoch number in dataset object for training and validation
             nepoch.value = nep
-            # td.get_priors_for_epoch(nep)
 
             # Update first batch plotting tasks toggler
             # TODO: Use this for validation phase as well
@@ -1173,6 +1175,46 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     # efficiency_curves(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], save_name='efficiency_validation', export_dir=export_dir)
 
             
+            ### Auxiliary validation set checks
+            print('\nAUX validation phase')
+            with torch.no_grad():
+                
+                aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
+                for cf in range(4):
+                    # Change AUX label in dataloader
+                    cflag.value = cf
+
+                    # Update validation loss dict
+                    aux_val_batches = 0
+
+                    print('AUX validation dataset {}'.format(cf))
+                    pbar = tqdm(auxDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
+                    for nbatch, (aux_samples, aux_labels, source_params, plot_batch) in enumerate(pbar):
+                        
+                        """ Set the device and dtype """
+                        aux_samples = aux_samples.to(dtype=torch.float32, device=cfg.train_device)
+                        for key, value in aux_labels.items():
+                            aux_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
+                            
+                        """ Call Validation Phase """
+                        # Run training phase and get loss and accuracy
+                        aux_loss, accuracy, _ = validation_phase(nep, cfg, data_cfg, Network, 
+                                                                 loss_function,
+                                                                 aux_samples, 
+                                                                 aux_labels, source_params,
+                                                                 optional, plot_batch, export_dir)
+
+                        # Display stuff
+                        loss = np.around(aux_loss['total_loss'].clone().cpu().item(), 8)
+                        pbar.set_description("AUX Epoch {}, batch {} - loss = {}".format(nep, aux_val_batches, loss))
+                        
+                        # Update losses and accuracy
+                        aux_val_batches = nbatch
+                        aux_val_running_loss['aux_{}'.format(cf)] += aux_loss['gw'].clone().cpu().item()
+                
+                cflag.value = -1
+
+
 
             """
             PHASE 3 - TESTING
@@ -1240,12 +1282,17 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             avg_acc_valid = np.around(sum(acc_valid)/len(acc_valid), 8)
             avg_acc_train = np.around(sum(acc_train)/len(acc_train), 8)
             roc_auc = np.around(roc_auc, 8)
+            # Auxilliary validation losses
+            aux_0 = np.around(aux_val_running_loss['aux_0']/aux_val_batches, 8)
+            aux_1 = np.around(aux_val_running_loss['aux_1']/aux_val_batches, 8)
+            aux_2 = np.around(aux_val_running_loss['aux_2']/aux_val_batches, 8)
+            aux_3 = np.around(aux_val_running_loss['aux_3']/aux_val_batches, 8)
             
             # Save args
             args = (nep, )
             args += tuple(np.around(foo, 8) for foo in epoch_training_loss.values())
             args += tuple(np.around(foo, 8) for foo in epoch_validation_loss.values())
-            args += (avg_acc_train, avg_acc_valid, roc_auc, )
+            args += (avg_acc_train, avg_acc_valid, roc_auc, aux_0, aux_1, aux_2, aux_3)
             output_string = '{}    ' * len(args)
             output_string = output_string.format(*args)
             
@@ -1264,7 +1311,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     tloss_fields = tuple(foo+'_tloss' for foo in tloss_fields)
                     vloss_fields = tuple(epoch_validation_loss.keys())
                     vloss_fields = tuple(foo+'_vloss' for foo in vloss_fields)
-                    other_fields = ('train_acc', 'valid_acc', 'roc_auc', )
+                    other_fields = ('train_acc', 'valid_acc', 'roc_auc', 'aux_0', 'aux_1', 'aux_2', 'aux_3')
                     all_fields = epoch_field + tloss_fields + vloss_fields + other_fields
                     field_names = field_names.format(*all_fields)
                     outfile.write(field_names + '\n')
@@ -1273,6 +1320,19 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             
             loss_and_accuracy_curves(cfg, loss_filepath, export_dir)
             
+            """ Save Checkpoint """
+            # Create Checkpoint
+            if cfg.save_checkpoint and nep%cfg.checkpoint_freq==0:
+                save_dir = os.path.join(export_dir, 'CHECKPOINTS')
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir, exist_ok=False)
+                checkpoint_save_path = os.path.join(save_dir, 'checkpoint_epoch_{}.pt'.format(nep))
+                torch.save({
+                            'epoch': nep,
+                            'model_state_dict': Network.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'loss': epoch_validation_loss['gw'],
+                            }, checkpoint_save_path)
             
             """ Save the best weights (if global loss reduces) """
             split_weights_path = os.path.splitext(cfg.weights_path)
@@ -1286,10 +1346,15 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 if param_operator[wtype](epoch_params[wtype], best_params[wtype]) and wtype in cfg.weight_types:
                     weights_path = '{}_{}{}'.format(weights_root_name, wtype, weights_file_ext)
                     weights_save_path = os.path.join(export_dir, weights_path)
-                    torch.save(Network.state_dict(), weights_save_path)
+                    torch.save({
+                        'epoch': nep,
+                        'model_state_dict': Network.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'metric': epoch_params[wtype],
+                        }, weights_save_path)
                     if cfg.save_best_option == wtype:
                         best_epoch = nep
-            
+
             # If we want to save the weights at a particular epoch
             if nep in cfg.save_epoch_weight:
                 weights_path = '{}_{}_{}{}'.format(weights_root_name, wtype, nep, weights_file_ext)
@@ -1308,7 +1373,8 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
             """ Update Scheduler """
             # ReduceLRonPlateau requires scheduler to be updated with epoch validation loss
-            # scheduler.step(epoch_params['loss'])
+            if scheduler.__class__.__name__ in ['ReduceLROnPlateau']:
+                scheduler.step(epoch_params['loss'])
 
             """ RayTune Logging """
             if cfg.rtune_optimise: 
