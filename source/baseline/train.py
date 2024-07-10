@@ -37,9 +37,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # LOCAL
-from test import run_test
+from test_normal import run_test
 from save_online import save
-from evaluate import main as evaluator
+from evaluator import main as evaluator
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
 
@@ -54,10 +54,10 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
     
     cfg, data_cfg, opts, train_fold, val_fold, balance_params = args
     # Get the dataset objects for training and validation
-    train_data, val_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
+    train_data, val_data, aux_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
     
     # Get the Pytorch DataLoader objects of train and valid data
-    train_loader, val_loader, nepoch = dat.get_dataloader(cfg, train_data, val_data, balance_params)
+    train_loader, val_loader, aux_loader, nepoch, cflag = dat.get_dataloader(cfg, train_data, val_data, aux_data, balance_params)
     
     # Initialise chosen model architecture (Backend + Frontend)
     # Equivalent to the "Network" variable in manual mode without weights
@@ -104,7 +104,16 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
     
     # Loss function used
     loss_function = cfg.loss_function
-    
+
+    """ Default Checkpointing """    
+    # Resume training by loading a checkpoint file
+    if cfg.resume_from_checkpoint:
+        checkpoint = torch.load(cfg.checkpoint_path)
+        Network.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    else:
+        checkpoint = None
+
     """ RayTune Checkpointing """
     if checkpoint_dir:
         model_state, optimizer_state = torch.load(
@@ -118,7 +127,7 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
         # Running the manual pipeline version using pure PyTorch
         # Initialise the trainer
         Network = manual_train(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
-                               train_loader, val_loader, nepoch, verbose=cfg.verbose)
+                               train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, verbose=cfg.verbose)
     
     if rtune == None:
         return Network
