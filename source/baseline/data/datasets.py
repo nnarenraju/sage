@@ -46,7 +46,7 @@ from data.distributions import get_distributions
 from data.normalisation import get_normalisations
 from data.snr_calculation import get_network_snr
 from data.plot_dataloader_unit import plot_unit
-from data.multirate_sampling import get_sampling_rate_bins
+from data.multirate_sampling import get_sampling_rate_bins_type1, get_sampling_rate_bins_type2
 from data.pycbc_draw_samples import read_config
 
 # PyCBC
@@ -540,7 +540,7 @@ class MLMDC1(Dataset):
         if self.data_cfg.modification != None and isinstance(self.data_cfg.modification, str):
             # Check for known modifications
             if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
-                _mass1, _mass2 = get_uniform_masses(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.num_waveforms)
+                _mass1, _mass2 = get_uniform_masses_with_mass1_gt_mass2(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.num_waveforms)
                 # Masses used for mass ratio need not be used later as mass1 and mass2
                 # We calculate them again after getting chirp mass
                 q = q_from_uniform_mass1_mass2(_mass1, _mass2)
@@ -683,7 +683,7 @@ class MinimalOTF(Dataset):
                  waveform_generation=None, noise_generation=None,
                  transforms=None, target_transforms=None,
                  signal_only_transforms=None, noise_only_transforms=None, 
-                 training=False, store_device='cpu', train_device='cpu', 
+                 training=False, aux=False, store_device='cpu', train_device='cpu', 
                  cfg=None, data_cfg=None):
         
         super().__init__()
@@ -697,16 +697,23 @@ class MinimalOTF(Dataset):
         self.train_device = train_device
         self.cfg = cfg
         self.data_cfg = data_cfg
+        self.fix_epoch_seeds = self.data_cfg.fix_epoch_seeds
         # Using this for now to get psds (TODO: move psd creation from datagen)
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         self.epoch = -1
+        self.cflag = -1
+        self.aux = aux
         self.plot_on_first_batch = self.cfg.plot_on_first_batch
         self.nplot_on_first_batch = 0
         self.plot_batch_fnames = []
+
         if training:
             self.total_samples_per_epoch = self.data_cfg.num_training_samples
         else:
-            self.total_samples_per_epoch = self.data_cfg.num_validation_samples
+            if not self.aux:
+                self.total_samples_per_epoch = self.data_cfg.num_validation_samples
+            else:
+                self.total_samples_per_epoch = self.data_cfg.num_auxilliary_samples
         
         self.training = training
         
@@ -721,7 +728,10 @@ class MinimalOTF(Dataset):
             
         """ Multi-rate Sampling """
         # Get the sampling rates and their bins idx
-        self.data_cfg.dbins = get_sampling_rate_bins(self.data_cfg)
+        if self.data_cfg.srbins_type == 1:
+            self.data_cfg.dbins = get_sampling_rate_bins_type1(self.data_cfg)
+        elif self.data_cfg.srbins_type == 2:
+            self.data_cfg.dbins = get_sampling_rate_bins_type2(self.data_cfg)
         
         """ LAL Detector Objects (used in project_wave - AugPolSky) """
         # Detector objects (these are lal objects and may present problems when parallelising)
@@ -749,7 +759,9 @@ class MinimalOTF(Dataset):
         self.special['dets'] = self.detectors
         self.special['psds'] = self.psds_data
         self.special['training'] = self.training
+        self.special['aux'] = self.cflag
         self.special['limits'] = self.limits
+        self.special['fix_epoch_seeds'] = self.fix_epoch_seeds
         self.special['default_keys'] = self.special.keys()
 
         ## Ignore Params
@@ -784,6 +796,11 @@ class MinimalOTF(Dataset):
         assert float(config_reader['prior-chirp_distance']['min-chirp_distance']) == self.data_cfg.prior_low_chirp_dist, 'min-dchirp discrepancy in ini file'
         assert float(config_reader['prior-chirp_distance']['max-chirp_distance']) == self.data_cfg.prior_high_chirp_dist, 'max-dchirp discrepancy in ini file'
 
+        """ Prior Modifications """
+        self.bprior = BoundedPriors(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.signal_low_freq_cutoff)
+
+        # Messages
+        # print('WARNING: Using fundamental modes (2, |2|) only for data generation!')
 
     def __len__(self):
         return self.total_samples_per_epoch
@@ -802,68 +819,90 @@ class MinimalOTF(Dataset):
 
 
     def apply_prior_mods(self, priors):
-        if self.data_cfg.modification != None and isinstance(self.data_cfg.modification, str):
-            # Check for known modifications
-            if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass', 'uniform_masses']:
-                _mass1, _mass2 = get_uniform_masses(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, 1)
-                # Masses used for mass ratio need not be used later as mass1 and mass2
-                # We calculate them again after getting chirp mass
-                q = q_from_uniform_mass1_mass2(_mass1, _mass2)
+        if (self.data_cfg.modification != None and isinstance(self.data_cfg.modification, str)) or self.aux:
+            ## Check for known modifications
+            # 1. bounded uniform signal duration (bounded_utau)
+            # 2. bounded uniform chirp mass (bounded_umc)
+            # 3. unbounded uniform signal duration (unbounded_utau)
+            # 4. unbounded uniform chirp mass (unbounded_umc)
+            # 5. bounded power law chirp mass (bounded_plmc)
+            # 6. bounded power law signal duration (bounded_pltau)
 
-            if self.data_cfg.modification == 'uniform_signal_duration':
-                # Get chirp mass from uniform signal duration
-                if self.data_cfg.use_mod_priors:
-                    tau_lower = self.data_cfg.prior_tau_lower
-                    tau_upper = self.data_cfg.prior_tau_upper
-                else:
-                    tau_lower, tau_upper = get_tau_priors(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.signal_low_freq_cutoff)
-                
-                mchirp = mchirp_from_uniform_signal_duration(tau_lower, tau_upper, 1, self.data_cfg.signal_low_freq_cutoff)
+            # Auxilliary prior mods
+            if self.aux:
+                ml = self.data_cfg.prior_low_mass
+                mu = self.data_cfg.prior_high_mass
+                mchirp_lower = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
+                mchirp_upper = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
+                if self.cflag.value in [0, 1]:
+                    mchirp_upper = 25.0
+                elif self.cflag.value in [2, 3]:
+                    mchirp_lower = 25.0
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_mchirp_given_limits(mchirp_lower, mchirp_upper)
 
-            elif self.data_cfg.modification == 'uniform_chirp_mass':
-                # Get uniform chirp mass
-                if self.data_cfg.use_mod_priors:
-                    mchirp = get_uniform_mchirp(None, None, 1, self.data_cfg.prior_mchirp_lower, self.data_cfg.prior_mchirp_upper, True)
-                else:
-                    mchirp = get_uniform_mchirp(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, 1)
+            if self.data_cfg.modification in ['bounded_utau']:
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_tau()
             
-            elif self.data_cfg.modification == 'uniform_masses':
-                mchirp = (_mass1*_mass2 / (_mass1+_mass2)**2.)**(3./5) * (_mass1 + _mass2)
+            elif self.data_cfg.modification in ['bounded_itau']:
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_importance_tau()
 
+            elif self.data_cfg.modification in ['bounded_umc']:
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_mchirp()
+            
+            elif self.data_cfg.modification in ['bounded_pltau']:
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_powerlaw_tau()
+                
+            elif self.data_cfg.modification in ['bounded_plmc']:
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_powerlaw_mchirp()
+            
+            elif self.data_cfg.modification in ['template_placement_metric']:
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_template_placement_metric()
+            
+            elif self.data_cfg.modification in ['bounded_umcq']:
+                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_in_mchirp_q()
+            
+            elif self.data_cfg.modification in ['unbounded_utau', 'unbounded_umc']:
+                _mass1, _mass2 = get_uniform_masses_with_mass1_gt_mass2(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, 1)
+                # Masses used for mass ratio will not be used later as mass1 and mass2
+                # We calculate them again after getting chirp mass
+                q = q_from_mass1_mass2(_mass1, _mass2)
+                # uniform signal duration
+                if self.data_cfg.modification in ['unbounded_utau']:
+                    tau_lower, tau_upper = get_tau_priors(self.data_cfg.prior_low_mass, 
+                                                          self.data_cfg.prior_high_mass, 
+                                                          self.data_cfg.signal_low_freq_cutoff)
+                    # Get chirp mass
+                    tau = np.random.uniform(tau_lower, tau_upper, 1)
+                    mchirp = chirp_mass_from_signal_duration(tau, self.data_cfg.signal_low_freq_cutoff)
+                # uniform chirp mass
+                elif self.data_cfg.modification in ['unbounded_umc']:
+                    mchirp_lower, mchirp_upper = get_mchirp_priors(self.data_cfg.prior_low_mass, 
+                                                                   self.data_cfg.prior_high_mass)
+                    # Get chirp mass
+                    mchirp = np.random.uniform(mchirp_lower, mchirp_upper, 1)
+                
+                # Common
+                mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
+            
             else:
-                raise ValueError("get_priors: Unknown modification added to data_cfg.modification!")
+                if not self.aux:
+                    raise ValueError("get_priors: Unknown modification specified in data_cfg.modification!")
+            
+            # Distance and chirp distance
+            chirp_distance_distr = UniformRadius(distance=(self.data_cfg.prior_low_chirp_dist, 
+                                                           self.data_cfg.prior_high_chirp_dist))
+            dchirp = np.asarray([chirp_distance_distr.rvs()[0][0] for _ in range(1)])
+        
+            # Get distance from chirp distance and chirp mass
+            distance = self._dist_from_dchirp(dchirp, mchirp)
 
-            if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass', 'uniform_masses']:
-                if self.data_cfg.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
-                    # Using mchirp and q, get mass1 and mass2
-                    mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
-                elif self.data_cfg.modification == 'uniform_masses':
-                    mass1, mass2 = (_mass1, _mass2)
-                
-                # Get chirp distances using the power law distribution
-                if not self.data_cfg.uniform_distance:
-                    if self.data_cfg.uniform_dchirp:
-                        dchirp = np.random.uniform(self.data_cfg.prior_low_chirp_dist, self.data_cfg.prior_high_chirp_dist)
-                    else:
-                        chirp_distance_distr = UniformRadius(distance=(self.data_cfg.prior_low_chirp_dist, 
-                                                                    self.data_cfg.prior_high_chirp_dist))
-                        dchirp = np.asarray([chirp_distance_distr.rvs()[0][0] for _ in range(1)])
-                
-                    # Get distance from chirp distance and chirp mass
-                    distance = self._dist_from_dchirp(dchirp, mchirp)
-                else:
-                    dist_lower = self._dist_from_dchirp(chirp_distance=self.data_cfg.prior_low_chirp_dist, mchirp=mchirp)
-                    dist_upper = self._dist_from_dchirp(chirp_distance=self.data_cfg.prior_high_chirp_dist, mchirp=mchirp)
-                    distance = np.random.uniform(dist_lower, dist_upper)
-                    dchirp = self._dchirp_from_dist(dist=distance, mchirp=mchirp)
-
-                ## Update Priors
-                priors['q'] = q
-                priors['mchirp'] = mchirp
-                priors['mass1'] = mass1
-                priors['mass2'] = mass2
-                priors['chirp_distance'] = dchirp
-                priors['distance'] = distance
+            ## Update Priors
+            priors['q'] = q
+            priors['mchirp'] = mchirp
+            priors['mass1'] = mass1
+            priors['mass2'] = mass2
+            priors['chirp_distance'] = dchirp
+            priors['distance'] = distance
         
         elif self.data_cfg.modification != None and not isinstance(self.data_cfg.modification, str):
             raise ValueError("get_priors: Unknown data type used in data_cfg.modification!")
@@ -880,7 +919,9 @@ class MinimalOTF(Dataset):
         # Apply parameter transformation.
         prior = transforms.apply_transforms(prior, self.waveform_transforms)
         # Apply modifications to prior (uniform signal duration/ uniform chirp mass)
-        if self.training:
+        if self.training and np.random.random() <= self.data_cfg.modification_probability:
+            prior = self.apply_prior_mods(prior)
+        if not self.training and self.aux:
             prior = self.apply_prior_mods(prior)
         return prior
 
@@ -889,9 +930,11 @@ class MinimalOTF(Dataset):
         # Get waveform params using PyCBC ini file
         priors = self.get_waveform_parameters(seed=seed)
         waveform_kwargs = {}
-        waveform_kwargs['approximant'] = 'IMRPhenomPv2'
+        waveform_kwargs['approximant'] = self.data_cfg.signal_approximant
         waveform_kwargs['f_ref'] = 20.0
         waveform_kwargs.update(dict(zip(list(priors.fieldnames), priors[0])))
+        # Adding only dominant modes to the waveform
+        # waveform_kwargs['mode_array'] = [ [2,2], [2,-2] ]
         # Set waveform parameters for Ripple IMRPhenomPv2
         # m1_msun, m2_msun, s1x, s1y, s1z, s2x, s2y, s2z, distance_mpc, tc, phiRef, inclination
         for key in params.keys():
@@ -985,6 +1028,7 @@ class MinimalOTF(Dataset):
         """ Transforms """
         # Apply transforms to signal and target (if any)
         if self.transforms:
+            self.special['aux'] = self.cflag.value
             sample_transforms = self.transforms(sample, self.special, key=key)
         else:
             sample_transforms = {'sample': sample}
@@ -1032,6 +1076,8 @@ class MinimalOTF(Dataset):
             seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1)
         else:
             seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**30)
+
+        # Setting the seed for iteration
         np.random.seed(seed)
 
         ## Read the sample(s)
@@ -1080,9 +1126,9 @@ class MinimalOTF(Dataset):
             #       Dictionaries are slower but they do the job.
             # Convert all samples into float16 for the sake of saving memory
             # Also, use .copy() for some arrays as PyTorch does not support data with negative stride
-            nsamp = (pure_sample/max(abs(pure_sample[0]))).astype(np.float16).copy()
-            hpass = nsamp
             white = (sample_transforms['Whiten']).astype(np.float16).copy()
+            nsamp = white
+            hpass = white
             msamp = (sample_transforms['MultirateSampling']).astype(np.float16).copy()
             plot_batch = [nsamp, hpass, white, msamp]
             self.plot_batch_fnames = ['PureSample', 'HighPass', 'Whiten', 'MRSampling']
