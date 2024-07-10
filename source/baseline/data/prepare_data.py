@@ -42,7 +42,8 @@ from sklearn.model_selection import train_test_split
 # LOCAL
 from configs import *
 from data_configs import *
-from data.multirate_sampling import get_sampling_rate_bins, multirate_sampling
+from data.multirate_sampling import get_sampling_rate_bins_type1, get_sampling_rate_bins_type2
+from data.multirate_sampling import multirate_sampling
 
 
 class DataModule:
@@ -360,10 +361,20 @@ class DataModule:
                 training=False, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
                 train_device=cfg.train_device, **cfg.dataset_params)
         
-        return (train_dataset, valid_dataset)
+        # AUX validation sets
+        aux_dataset = cfg.dataset(
+                data_paths=data_paths, targets=targets,
+                waveform_generation=cfg.generation['signal'], noise_generation=cfg.generation['noise'],
+                transforms=cfg.transforms['test'], target_transforms=cfg.transforms['target'],
+                signal_only_transforms=cfg.transforms['signal'],
+                noise_only_transforms=cfg.transforms['noise'],
+                training=False, aux=True, cfg=cfg, data_cfg=data_cfg, store_device=cfg.store_device,
+                train_device=cfg.train_device, **cfg.dataset_params)
+        
+        return (train_dataset, valid_dataset, aux_dataset)
     
 
-    def get_dataloader(cfg, train_data, valid_data, balance_params):
+    def get_dataloader(cfg, train_data, valid_data, aux_data, balance_params):
         """
         Create Pytorch DataLoader objects
         
@@ -386,9 +397,10 @@ class DataModule:
         
         """
         
-        def init_fn(epoch_n, worker_id):
+        def init_fn(epoch_n, cflag, worker_id):
             info = D.get_worker_info()
             info.dataset.epoch = epoch_n
+            info.dataset.cflag = cflag
 
         def make_weights_for_balancing_param(param, nbins=8):
             # Remove the -1 values from the array and count them separately
@@ -406,6 +418,7 @@ class DataModule:
             return weights
 
         epoch_n = Value('i', -1)
+        cflag = Value('i', -1)
 
         batch_size = cfg.batch_size
         num_workers = cfg.num_workers
@@ -426,21 +439,30 @@ class DataModule:
             train_data, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory, shuffle=True,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers,
-            worker_init_fn=partial(init_fn, epoch_n))
+            worker_init_fn=partial(init_fn, epoch_n, cflag))
         
         valid_loader = D.DataLoader(
             valid_data, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory, shuffle=False,
             prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers,
-            worker_init_fn=partial(init_fn, epoch_n))
+            worker_init_fn=partial(init_fn, epoch_n, cflag))
         
-        return (train_loader, valid_loader, epoch_n)
+        aux_loader = D.DataLoader(
+            aux_data, batch_size=batch_size,
+            num_workers=num_workers, pin_memory=pin_memory, shuffle=False,
+            prefetch_factor=cfg.prefetch_factor, persistent_workers=persistent_workers,
+            worker_init_fn=partial(init_fn, epoch_n, cflag))
+        
+        return (train_loader, valid_loader, aux_loader, epoch_n, cflag)
  
 
     def input_sample_length(data_cfg):
         """ Calculate the length of the network input sample """
         # This will be used by torch summary and to initialise norm layers
-        data_cfg.dbins = get_sampling_rate_bins(data_cfg)
+        if data_cfg.srbins_type == 1:
+            data_cfg.dbins = get_sampling_rate_bins_type1(data_cfg)
+        if data_cfg.srbins_type == 2:
+            data_cfg.dbins = get_sampling_rate_bins_type2(data_cfg)
         original_length = data_cfg.dbins[-1][1]
         # mrsampling function
         num_samples_decimated = lambda nsamp, df: int(nsamp/df)
@@ -459,7 +481,10 @@ class DataModule:
 
         # Correct the input length using corrupted length
         # A small portion of the data is removed during MR sampling (from either end)
-        input_length -= 2.*data_cfg.corrupted_len
+        if isinstance(data_cfg.corrupted_len, int):
+            input_length -= 2.*data_cfg.corrupted_len
+        elif isinstance(data_cfg.corrupted_len, list):
+            input_length -= sum(data_cfg.corrupted_len)
         # Set the network sample length in data_cfg
         data_cfg.network_sample_length = int(input_length)
         # Get the decimated bins
