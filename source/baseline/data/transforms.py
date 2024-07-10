@@ -37,6 +37,7 @@ from scipy.signal import butter, sosfiltfilt, resample, get_window
 from scipy.signal import welch as scipy_welch
 from scipy.signal.windows import tukey
 from scipy.stats import beta
+from scipy.stats import halfnorm
 
 # LOCAL
 from data.multirate_sampling import multirate_sampling
@@ -326,6 +327,7 @@ class Crop(TransformWrapperPerChannel):
         self.emulate_rmcorrupt = emulate_rmcorrupt
         self.croplen = croplen
         self.double_sided = double_sided
+        self.side = side
 
     def get_cropped(self, y, data_cfg):
         if self.emulate_rmcorrupt:
@@ -333,9 +335,9 @@ class Crop(TransformWrapperPerChannel):
         if self.double_sided:
             cropped = y[int(self.croplen/2):int(len(y)-self.croplen/2)]
         else:
-            if side == 'left':
+            if self.side == 'left':
                 cropped = y[int(self.croplen):]
-            elif side == 'right':
+            elif self.side == 'right':
                 cropped = y[:int(len(y)-self.croplen)]
             else:
                 raise ValueError('Crop Transform: side not recognised!')
@@ -353,6 +355,21 @@ class Whiten(TransformWrapperPerChannel):
         self.remove_corrupted = remove_corrupted
         self.estimated = estimated
         self.median_psd = []
+    
+    def estimate_psd(self, data_cfg, delta_f, max_filter_len):
+        ### Estimate the PSD
+        delta_t = 1.0/2048.
+        seg_len = int(0.5 / delta_t)
+        seg_stride = int(seg_len / 2)
+        pure_noise = TimeSeries(pure_noise, delta_t=1./data_cfg.sample_rate)
+        psd = welch(pure_noise, seg_len=seg_len, seg_stride=seg_stride)
+        psd = interpolate(psd, delta_f)
+        psd = inverse_spectrum_truncation(psd,
+                                        max_filter_len=max_filter_len,
+                                        low_frequency_cutoff=data_cfg.signal_low_freq_cutoff,
+                                        trunc_method=self.trunc_method)
+        return psd
+
         
     def whiten(self, signal, psd, data_cfg):
         """ Return a whitened time series """
@@ -373,14 +390,7 @@ class Whiten(TransformWrapperPerChannel):
         ## Whitening
         # Whiten the data by the asd
         if self.estimated:
-            ### Estimate the PSD
             raise NotImplementedError('PSD Estimation method not working at the moment!')
-            delta_t = 1.0/2048.
-            seg_len = int(0.5 / delta_t)
-            seg_stride = int(seg_len / 2)
-            pure_noise = TimeSeries(pure_noise, delta_t=1./data_cfg.sample_rate)
-            psd = welch(pure_noise, seg_len=seg_len, seg_stride=seg_stride)
-            psd = interpolate(psd, delta_f)
         
         # Interpolate and smooth to the desired corruption length
         psd = inverse_spectrum_truncation(psd,
@@ -419,7 +429,7 @@ class MultirateSampling(TransformWrapperPerChannel):
 class FastGenerateWaveform():
     ## Used to augment on all parameters (uses GPU-accelerated IMRPhenomPv2 waveform generation)
     ## Link to Ripple: https://github.com/tedwards2412/ripple
-    def __init__(self):
+    def __init__(self, sample_length=15.0, fix_epoch=False):
         # Generate the frequency grid (default values)
         self.f_lower = 20.
         self.f_upper = 2048.
@@ -451,7 +461,7 @@ class FastGenerateWaveform():
         self.kmax = self.kmin + self.winlen//2
 
         # Projection params
-        self.signal_length = 12.0 # seconds
+        self.signal_length = sample_length # seconds
         self.whiten_padding = 5.0 # seconds
         self.error_padding_in_s = 0.5 # seconds
     
@@ -635,6 +645,24 @@ class FastGenerateWaveform():
 
         return hp_td, hc_td
     
+    def debug_waveform_generate(self, data, labels):
+        # Plotting debug recoloured
+        # NOTE to self: figsize is (width, height)
+        fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
+        fig.suptitle('Debugging Waveform Generation Module')
+        for n, (d, l) in enumerate(zip(data, labels)):
+            # Subplot top
+            axs[n][0].plot(d, label=l)
+            axs[n][0].grid()
+            axs[n][0].legend()
+        # Other
+        filename = 'waveform_{}.png'.format(uuid.uuid4().hex)
+        if not os.path.exists("./DEBUG"):
+            os.makedirs("./DEBUG")
+        save = os.path.join("./DEBUG", filename)
+        plt.savefig(save)
+        plt.close()
+    
     def apply(self, params: dict, special: dict):
         # Set lal.Detector object as global as workaround for MP methods
         # Project wave does not work with DataLoader otherwise
@@ -645,6 +673,9 @@ class FastGenerateWaveform():
         hp, hc = self.make_injection(hp, hc, params)
         # Convert hp, hc into h(t) using antenna pattern (H1, L1 considered)
         out = self.project(hp, hc, special, params)
+        # Debug waveform generation
+        #self.debug_waveform_generate(data=[out[0], out[1]],
+        #                             labels=['H1', 'L1'])
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         return out
     
@@ -885,38 +916,75 @@ class AugmentDistance(SignalWrapper):
 
 class AugmentOptimalNetworkSNR(SignalWrapper):
     """ Used to augment the SNR distribution of the dataset """
-    def __init__(self, always_apply=True, rescale=True, use_uniform=False, use_beta=False, a=2, b=5):
+    def __init__(self, always_apply=True, rescale=True, 
+                 use_uniform=False, 
+                 use_beta=False, a=2, b=5,
+                 use_add5=False,
+                 use_halfnorm=False,
+                 use_mc_func=False):
         super().__init__(always_apply)
         # If rescale is False, AUG method returns original network_snr, norm_snr and signal
         self.rescale = rescale
         # Applying a custom distributions for SNR PDFs
         self.use_uniform = use_uniform
         self.use_beta = use_beta
+        self.use_add5 = use_add5
         self.a = a
         self.b = b
+        self.use_halfnorm = use_halfnorm
+        self.use_mc_func = use_mc_func
+
+        # SNR as a function of chirp mass
+        lowest_mc_snr_mean = 10.0
+        highest_mc_snr_mean = 7.0
+        # Chirp mass limits
+        ml = 7.0 # Msun
+        mu = 50.0 # Msun
+        min_mchirp = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
+        max_mchirp = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
+        # Get line params
+        slope = (highest_mc_snr_mean-lowest_mc_snr_mean)/(max_mchirp-min_mchirp)
+        const = lowest_mc_snr_mean - (slope*min_mchirp)
+        self.mean_snr_given_mc = lambda mc: slope * mc + const
 
     def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
         # Returns the chirp distance given the luminosity distance and chirp mass.
         return dist * (2.**(-1./5) * ref_mass / mchirp)**(5./6)
 
-    def get_rescaled_signal(self, signal, psds, params, cfg, debug, training, epoch):
+    def get_rescaled_signal(self, signal, psds, params, cfg, debug, training, aux, epoch):
         # params: This will contain params var found in __getitem__ method of custom dataset object
         # Get original network SNR
         prelim_network_snr = get_network_snr(signal, psds, params, cfg.export_dir, debug)
         
-        if self.rescale:
-            # Rescaling the SNR to a uniform distribution within a given range
-            rescaled_snr_lower = cfg.rescaled_snr_lower
-            rescaled_snr_upper = cfg.rescaled_snr_upper
-                
-            # Uniform on SNR range
-            if self.use_uniform:
-                target_snr = np.random.uniform(rescaled_snr_lower, rescaled_snr_upper)
-            elif self.use_beta:
-                target_snr = beta.rvs(self.a, self.b)
-                target_snr *= rescaled_snr_upper
-                target_snr += rescaled_snr_lower
+        if self.rescale or not training:
+            if aux == -1:
+                # Rescaling the SNR to a uniform distribution within a given range
+                rescaled_snr_lower = cfg.rescaled_snr_lower
+                rescaled_snr_upper = cfg.rescaled_snr_upper
+                    
+                # Uniform on SNR range
+                if self.use_uniform:
+                    target_snr = np.random.uniform(rescaled_snr_lower, rescaled_snr_upper)
+                elif self.use_beta:
+                    target_snr = beta.rvs(self.a, self.b)
+                    target_snr *= rescaled_snr_upper
+                    target_snr += rescaled_snr_lower
+                elif self.use_add5:
+                    # Make everything detectible
+                    target_snr = prelim_network_snr + 5.0
+                elif self.use_halfnorm:
+                    target_snr = halfnorm.rvs() * 4.0 + 5.0
+                elif self.use_mc_func:
+                    # Get mean SNR for given chirp mass
+                    mean_snr = self.mean_snr_given_mc(params['mchirp'])
+                    target_snr = np.random.normal(loc=mean_snr, scale=1.1)
+            elif aux in [0, 2]:
+                target_snr = 5.0
+            elif aux in [1, 3]:
+                target_snr = 12.0
+            else:
+                raise ValueError('Unidentified value for cflag!')
 
             rescaling_factor = target_snr/prelim_network_snr
             # Add noise to rescaled signal
@@ -946,10 +1014,11 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         psds = special['psds']
         cfg = special['cfg']
         training = special['training']
+        aux = special['aux']
         norms = special['norm']
         epoch = special['epoch']
         # Augmentation on optimal network SNR
-        out, params = self.get_rescaled_signal(y, psds, params, cfg, debug, training, epoch)
+        out, params = self.get_rescaled_signal(y, psds, params, cfg, debug, training, aux, epoch)
         # Update params
         params.update(params)
         # Update special
@@ -1004,8 +1073,7 @@ class Recolour(NoiseWrapper):
     # Whitening module removes corrupted bits due to possible edge effects.
     def __init__(self, always_apply=True,
                  use_precomputed=False, h1_psds_hdf="", l1_psds_hdf="",
-                 use_shifted=False,
-                 use_blurred=False,
+                 use_shifted=False, shift_up_factor=10, shift_down_factor=1, udr=0.5,
                  p_recolour=0.3,
                  sample_length_in_s=17.0,
                  noise_low_freq_cutoff=15.0,
@@ -1030,8 +1098,9 @@ class Recolour(NoiseWrapper):
         self.shape_l1_psds = dict(self.h1_psds.attrs)['shape']
         # Using shifted PSD (shift along y axis)
         self.use_shifted = use_shifted
-        # Add Gaussian noise to PSD
-        self.use_blurred = use_blurred
+        self.shift_up_factor = shift_up_factor
+        self.shift_down_factor = shift_down_factor
+        self.udr = udr # up to down ratio
         # Probability of being recoloured
         self.p_recolour = p_recolour
 
@@ -1082,7 +1151,7 @@ class Recolour(NoiseWrapper):
         psd = self.inv_spec_trunc(psd, max_filter_len)
         # NOTE: Factor of dt not taken into account. Since normlayer takes care of standardisation,
         # we don't necessarily need to include this. After decorrelation, the diagonal matrix 
-        # values will not be 1 but some other value dependant on the signal input.
+        # values will not be 1's but some other value dependant on the signal input.
         white_frequency_series = (signal.to_frequencyseries(delta_f=delta_f) / psd**0.5)
         return (white_frequency_series, max_filter_len)
 
@@ -1110,13 +1179,19 @@ class Recolour(NoiseWrapper):
 
         return H1, L1
 
-    def shift_psd(self):
+    def shift_psd(self, H1, L1):
         # Shift new PSD along y axis
-        raise NotImplementedError('shift_psd method under construction!')
-    
-    def blur_psd(self):
-        # Blur the PSD using Gaussian noise
-        raise NotImplementedError('blur_psd method under construction!')
+        H1_shift_up_factor = np.random.uniform(1, self.shift_up_factor)
+        H1_shift_down_factor = np.random.uniform(1, self.shift_down_factor)**-1
+        H1_up_or_down = 1 if np.random.random() < self.udr else 0
+        if H1['is_recolour']:
+            H1['new_psd'] *= H1_shift_up_factor if H1_up_or_down else H1_shift_down_factor
+        L1_shift_up_factor = np.random.uniform(1, self.shift_up_factor)
+        L1_shift_down_factor = np.random.uniform(1, self.shift_down_factor)**-1
+        L1_up_or_down = 1 if np.random.random() < self.udr else 0
+        if L1['is_recolour']:
+            L1['new_psd'] *= L1_shift_up_factor if L1_up_or_down else L1_shift_down_factor
+        return (H1, L1)
     
     def debug_recolour(self, data, labels):
         # Plotting debug recoloured
@@ -1158,6 +1233,7 @@ class Recolour(NoiseWrapper):
         # Whitening (Remove old PSD from data) still in fd
         whitened_fd, max_filter_len = self.whiten(ts, old_psd, data_delta_f)
         # Convert the new PSDs to have delta_f similar to data
+        # new_psd = FrequencySeries(DET['new_psd'], delta_f=0.25)
         new_psd = FrequencySeries(DET['new_psd'], delta_f=DET['old_delta_f'])
         new_psd = interpolate(new_psd, data_delta_f)
         new_psd = self.inv_spec_trunc(new_psd, max_filter_len)
@@ -1185,6 +1261,7 @@ class Recolour(NoiseWrapper):
         # Is the detector noise going to be recoloured?
         # Is the detector PSD going to be shifted along y axis?
         # Is the detector PSD going to be blurred with Gaussian noise?
+        always_recolour = True if self.p_recolour == 1.0 else False
         H1 = {'is_recolour': np.random.rand() < 0.5,
               'is_diff_psd': np.random.rand() < 0.5,
               'is_shifted': np.random.rand() < 0.5,
@@ -1195,6 +1272,10 @@ class Recolour(NoiseWrapper):
               'is_shifted': np.random.rand() < 0.5,
               'is_blurred': np.random.rand() < 0.5,
               'recoloured': y[1]}
+        # Check for always recolour
+        if always_recolour:
+            H1['is_recolour'] = True
+            L1['is_recolour'] = True
         # Sanity check (happens 25% of the time)
         if not H1['is_recolour'] and not L1['is_recolour']:
             cropped_h1 = self.resize_to_samplelen(y[0])
@@ -1213,8 +1294,6 @@ class Recolour(NoiseWrapper):
             H1, L1 = self.get_psd(H1, L1)
         if self.use_shifted:
             H1, L1 = self.shift_psd(H1, L1)
-        if self.use_blurred:
-            H1, L1 = self.blur_psd(H1, L1)
         
         # Adjusting H1 and L1 for extra padding added (if needed)
         H1['recoloured'] = self.recolour(y[0], H1)
@@ -1367,11 +1446,97 @@ class GlitchAugmentGWSPY():
         # Augmented noise (Downsampled to 2048. Hz after downloading)
         noise = np.stack([glitch_H1, glitch_L1], axis=0)
         return noise
+
+
+class MultipleFileRandomNoiseSlice():
+    """ 
+    Same as RandomNoiseSlice but for multiple noise files with different durations in each
+        1. Downloaded ~113 days of noise from O3b for H1 and L1
+        2. PSDs shouldn't vary too drastically from O3a
+        3. Each segment is at least 1 hour in length and stored in separate files
+
+    """
+    def __init__(self,
+                 noise_dirs=dict(
+                    H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                    L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                 ),
+                 sample_length=17.0,
+                 debug_me=False,
+                 debug_dir=""):
+
+        # Noise data files
+        self.sample_length = sample_length
+        self.noise_files = {}
+        self.lengths = {}
+        for name in noise_dirs.keys():
+            self.noise_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(noise_dirs[name], "*.hdf"))]
+            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise.npy".format(name))
+
+    def pick_noise_file(self, det):
+        # Pick a noise file for each detector
+        # Pick a random file to get the noise sample
+        idx = np.random.choice(list(range(len(self.lengths[det]))))
+        det_file, det_file_length = self.noise_files[det][idx], self.lengths[det][idx]
+        return det_file, det_file_length
+    
+    def _make_sample_start_time(self, seg_start_idx, seg_end_idx):
+        # Make a sample start time that is uniformly distributed within segdur
+        return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
+
+    def read_noise(self, hf, length, data_cfg, is_training):
+        # Check if training (worry about using recolour)
+        if is_training:
+            recolour_pad = int(data_cfg.whiten_padding*data_cfg.sample_rate)
+        else:
+            recolour_pad = 0
+        # Get random noise segment
+        seg_start_idx, seg_end_idx = (0, length-1)
+        seg_end_idx -= (recolour_pad + self.sample_length*data_cfg.sample_rate)
+        # This start time will lie within a valid segment time interval
+        sample_start_idx = self._make_sample_start_time(seg_start_idx, seg_end_idx)
+        # Get the required portion of given segment
+        sidx = sample_start_idx
+        eidx = sample_start_idx + int(self.sample_length * data_cfg.sample_rate)
+        eidx += recolour_pad
+        # Get time series from segment and apply the dynamic range factor
+        ts = np.array(hf['data'][sidx:eidx]).astype(np.float64)
+        ts /= DYN_RANGE_FAC
+        return ts
+
+    def apply(self, special, det_only=''):
+        ## Get random noise sample for detector(s)
+        if special['training']:
+            recolour_pad = int(special['data_cfg'].whiten_padding*
+                               special['data_cfg'].sample_rate)
+        else:
+            recolour_pad = 0
+        # Is the detector going to be augmented with extra noise?
+        is_augment = {'H1': np.random.rand() < 0.5, 
+                      'L1': np.random.rand() < 0.5}
+
+        # Read the noise from the provided filenum
+        noise_H1 = np.zeros(int(special['data_cfg'].sample_length_in_num + recolour_pad))
+        while True and is_augment['H1']:
+            H1_file, H1_file_len = self.pick_noise_file('H1')
+            noise_H1 = self.read_noise(H1_file, H1_file_len, special['data_cfg'], special['training'])
+            if not any(np.isnan(noise_H1)):
+                break
+        
+        noise_L1 = np.zeros(int(special['data_cfg'].sample_length_in_num + recolour_pad))
+        while True and is_augment['L1']:
+            L1_file, L1_file_len = self.pick_noise_file('L1')
+            noise_L1 = self.read_noise(L1_file, L1_file_len, special['data_cfg'], special['training'])
+            if not any(np.isnan(noise_L1)):
+                break
+
+        # Augmented noise (Downsampled to 2048. Hz after downloading)
+        noise = np.stack([noise_H1, noise_L1], axis=0)
+        return noise
     
 
 class RandomNoiseSlice():
     """ Used to augment the start time of noise samples from continuous noise .hdf file """
-    ### TODO: CHECK FOR BUGS!! ###
     # This will become the primary noise reading function
     def __init__(self, real_noise_path="", sample_length=17.0,
                  segment_llimit=None, segment_ulimit=None, debug_me=False, debug_dir=""):
@@ -1381,7 +1546,8 @@ class RandomNoiseSlice():
         self.segment_ends_buffer = 0.0 # seconds
         self.slide_buffer = 240.0
         self.dt = 1./2048.
-
+        
+        """
         # Keep all required noise files open
         self.O3a_real_noise = h5py.File(self.real_noise_path, 'r')
         # Get detectors used
@@ -1425,6 +1591,7 @@ class RandomNoiseSlice():
                 os.makedirs(self.debug_dir)
             save_txt = os.path.join(debug_dir, 'random_noise_slice.txt')
             self.tmp_debug = open(save_txt, "a")
+        """
 
     def _load_segments(self):
         tmp_dir = "./tmp"
