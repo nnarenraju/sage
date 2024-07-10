@@ -1,3 +1,3 @@
-# ML-GWSC1-Glasgow
-Machine Learning Mock Data Challenge for GW Searches
+# SAGE
+Unbiased detection of gravitational-waves using machine learning
 
