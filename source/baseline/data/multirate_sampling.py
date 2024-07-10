@@ -31,8 +31,16 @@ from operator import itemgetter
 
 from scipy.signal import butter, sosfiltfilt
 
-# Parallelisation of transforms
-# import data.parallel as parallel
+from pycbc.conversions import tau_from_final_mass_spin, get_final_from_initial
+from pycbc.detector import Detector
+
+from pycbc import waveform
+from pycbc import pnutils
+
+import warnings
+warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
+import lalsimulation as lalsim
+
 
 
 def prime_factors(n):
@@ -92,24 +100,7 @@ def f_schwarzchild_isco(M):
     return velocity_to_frequency((1.0/6.0)**(0.5), M)
 
 
-"""
-Multi-rate Sampling Theory and Description:
-    
-    1. Lower cutoff frequency for signals is 20 Hz
-    2. Upper cutoff frequency for signals is f_ISCO
-    3. Length of longest signal is 20 s
-    4. At t = 20s, the frequency is f_ISCO
-    5. We also have the relationship, f_new = f_old * (dt_merg_old/dt_merg_new)**(3./8.)
-    6. At t = 0.0s, f = 20 Hz
-    7. At t = 20.0s, f = f_ISCO (for worst case masses)
-    8. Subs. to pt5. -> 20.0 = f_ISCO_worst * [ (0.0/20.0)**(3./8.) + 0.090909 * A(dt_merg_old) ]
-    9. Second term should activate if dt_merg_old is zero, and deactivate if dt_merg_old > 0
-    10. 'A' is a unit delta function at dt_merg_old = 0.0
-    11. Worst case scenario the signal 'tc' will be present at t=18.0s
-
-"""
-
-def get_sampling_rate_bins(data_cfg):
+def get_sampling_rate_bins_type1(data_cfg):
     
     # Get data_cfg input params
     signal_low_freq_cutoff=data_cfg.signal_low_freq_cutoff
@@ -236,7 +227,130 @@ def get_sampling_rate_bins(data_cfg):
     
     # Return contains (bin_start_idx, bin_end_idx, sample_rate_required)
     return np.array(detailed_bins)
+
+
+def get_time_at_freq(t, f, search_freq):
+    idx = (np.abs(f - search_freq)).argmin()
+    time_at_search_freq = -t[idx]
+    return time_at_search_freq
+
+
+def get_freq_at_time(t, f, search_time):
+    t = -t
+    idx = (np.abs(t - search_time)).argmin()
+    freq_at_search_time = f[idx]
+    return freq_at_search_time
+
+
+def get_imr_chirp_time(m1, m2, s1z, s2z, fl):
+    return 1.1 * lalsim.SimIMRPhenomDChirpTime(m1*1.989e+30, m2*1.989e+30, s1z, s2z, fl)
+
+
+def get_tf_evolution_before_tc(prior_low_mass, signal_low_freq_cutoff, sample_rate):
+    # Get npoints from tau
+    npoints = get_imr_chirp_time(prior_low_mass, prior_low_mass, 
+                                 0.99, 0.99, 
+                                 signal_low_freq_cutoff) * sample_rate
+    # Get tf of given waveform
+    t, f = pnutils.get_inspiral_tf(tc=0.0, 
+                        mass1=prior_low_mass, mass2=prior_low_mass, 
+                        spin1=0.99, spin2=0.99, 
+                        f_low=signal_low_freq_cutoff, 
+                        n_points=int(npoints), 
+                        pn_2order=7, 
+                        approximant='IMRPhenomD')
+    return (t, f)
+
+
+def get_sampling_rate_bins_type2(data_cfg):
+    # Get data_cfg input params
+    signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff
+    sample_rate = data_cfg.sample_rate
+    prior_low_mass = data_cfg.prior_low_mass
+    prior_high_mass = data_cfg.prior_high_mass
+    signal_length = data_cfg.signal_length
+
+    decimation_start_freq = data_cfg.decimation_start_freq
+    noise_pad = data_cfg.noise_pad
+    num_blocks = data_cfg.num_blocks
+    lowest_allowed_fs = data_cfg.lowest_allowed_fs
+    gap_bw_nyquist_and_fs = data_cfg.gap_bw_nyquist_and_fs
+    override_freqs = data_cfg.override_freqs
+
+    split_with_freqs = data_cfg.split_with_freqs
+    split_with_times = data_cfg.split_with_times
+
+    post_fudge_factor = data_cfg.post_fudge_factor
+    tc_inject_lower = data_cfg.tc_inject_lower
+    tc_inject_upper = data_cfg.tc_inject_upper
+
+    """ Pre Fudge Factor """
+    # Calculate fudge factor at left end of the waveform injection
+    # Get t, f from lowest mass binary system
+    # The times should vary from 0.0 to -tau starting at tc
+    t, f = get_tf_evolution_before_tc(prior_low_mass, 
+                                      signal_low_freq_cutoff, 
+                                      sample_rate)
+    time_at_decim_start_freq = get_time_at_freq(t, f, search_freq=decimation_start_freq)
+    light_travel_time = Detector('H1').light_travel_time_to_detector(Detector('V1')) * 1.1
+    pre_fudge_factor = (light_travel_time + time_at_decim_start_freq) * 1.1 # just in case
+    # print('Pre fudge duration = {} s'.format(pre_fudge_factor))
+
+    """ MR Sampling params """
+    bins = {}
+    # Noise block after ringdown
+    bins['noise'] = []
+    # Block for unchanged sampling rate
+    bins['unchanged'] = []
+    # Get block start freqs
+    if split_with_times:
+        block_times = np.linspace(-get_time_at_freq(t, f, decimation_start_freq), min(t), num_blocks)
+        block_freqs = np.array([get_freq_at_time(t, f, -search_t) for search_t in block_times])[::-1]
+        block_freqs = block_freqs // 1 * 1
+    if split_with_freqs:
+        block_freqs = np.linspace(signal_low_freq_cutoff, decimation_start_freq, num_blocks, dtype=int)
+        block_freqs = block_freqs // 10 * 10
+
+    if len(override_freqs) != 0:
+        block_freqs = override_freqs
     
+    ## Get start and stop of all blocks
+    ends = []
+    # 2048 Hz sampling rate bin (unchanged sampling rate)
+    start_unchanged = int((tc_inject_lower - pre_fudge_factor) * sample_rate)
+    len_unchanged = int((pre_fudge_factor + (tc_inject_upper - tc_inject_lower) + post_fudge_factor) * sample_rate)
+    end_unchanged = start_unchanged + len_unchanged
+    bins['unchanged'].append(start_unchanged)
+    bins['unchanged'].append(end_unchanged)
+    bins['unchanged'].append(int(sample_rate))
+    # Ends will contain end idxs of all other blocks
+    ends.append(start_unchanged)
+    # Iterate through all other blocks and get start, end times
+    for n, bfq in enumerate(block_freqs[-2::-1]):
+        bname = 'block_{}'.format(n)
+        bins[bname] = []
+        # Get start and end times
+        injstart = tc_inject_lower - light_travel_time
+        start = int((injstart - get_time_at_freq(t, f, bfq)) * sample_rate)
+        bins[bname].append(start if bfq != signal_low_freq_cutoff else 0)
+        bins[bname].append(ends[-1])
+        block_fs = (block_freqs[-(n+1)] * 2.) + gap_bw_nyquist_and_fs
+        block_fs = int(block_fs) if block_fs >= lowest_allowed_fs else lowest_allowed_fs
+        bins[bname].append(block_fs)
+        # Add the start idx of this block as end idx for next block in iter
+        ends.append(start)
+
+    # Add noise pad after ringdown as lowest fs
+    bins['noise'].append(end_unchanged)
+    bins['noise'].append(int(signal_length * sample_rate))
+    bins['noise'].append(lowest_allowed_fs)
+
+    # Prepare bins to be used by mrsampling function
+    bins = dict(reversed(bins.items()))
+    detailed_bins = np.array([foo for foo in bins.values()])
+    
+    return detailed_bins
+
     
 def multirate_sampling(signal, data_cfg, check=False):
     # Downsample the data into required sampling rates and slice intervals
@@ -311,33 +425,18 @@ def multirate_sampling(signal, data_cfg, check=False):
             sidx_dec = int(start_idx_norm * num_samples_decimated)
             eidx_dec = int(end_idx_norm * num_samples_decimated)
             
-            """
-            # Apply bandpass filter over chunk
-            if lower_band != None and upper_band != None and len(decimated_signal) > 39:
-                nyq = 0.5 * new_sample_rate
-                low = lower_band / nyq
-                high = upper_band / nyq
-                sos = butter(6, [low, high], analog=False, btype='bandpass', output='sos')
-                decimated_signal = sosfiltfilt(sos, decimated_signal)
-            """
             # Slice the decimated signals using the start and end decimated idx
             chunk = decimated_signal[sidx_dec:eidx_dec]
             # Rescale the decimated chunk using a mean based factor
             # Change in mean^2 amplitude
-            #func = np.mean
-            #mean_sample = np.sqrt(func(signal**2.))
-            #mean_decimated = np.sqrt(func(decimated_signal**2.))
-            #factor = mean_sample/mean_decimated
-            #chunk = chunk * factor
+            # This doesn't make sense since the signal is not rescaled when decimated
+            # func = np.mean
+            # mean_sample = np.sqrt(func(signal**2.))
+            # mean_decimated = np.sqrt(func(decimated_signal**2.))
+            # factor = mean_sample/mean_decimated
+            # chunk = chunk * factor
         else:
             # No decimation done, original sample rate is used
-            """
-            nyq = 0.5 * 2048.
-            low = 145. / nyq
-            high = 400. / nyq
-            sos = butter(6, [low, high], analog=False, btype='bandpass', output='sos')
-            signal = sosfiltfilt(sos, signal)
-            """
             chunk = signal[int(start_idx):int(end_idx)]
         
         # Append the decimated chunk together
@@ -349,20 +448,26 @@ def multirate_sampling(signal, data_cfg, check=False):
     # --> many signals
     # multirate_signals = np.column_stack(tuple(multirate_chunks))
     # Get the idxs of each chunk edge for glitch veto
-    start = 0
+    # start = 0
     # Save the start and end idx of chunks
     # Remove corrupted samples and update indices
-    save_idxs = []
-    for chunk in multirate_chunks:
-        save_idxs.append([start, start+len(chunk)-data_cfg.corrupted_len])
-        start = start + len(chunk)
-    save_idxs[-1][1] -= data_cfg.corrupted_len
+    # save_idxs = []
+    # for chunk in multirate_chunks:
+    #     save_idxs.append([start, start+len(chunk)-data_cfg.corrupted_len])
+    #     start = start + len(chunk)
+    # save_idxs[-1][1] -= data_cfg.corrupted_len
     
     multirate_signal = np.concatenate(tuple(multirate_chunks))
     # Remove regions corrupted by high decimation (if required)
-    multirate_signal = multirate_signal[data_cfg.corrupted_len:-1*data_cfg.corrupted_len]
+    if isinstance(data_cfg.corrupted_len, list):
+        lcorrupted_len = data_cfg.corrupted_len[0]
+        rcorrupted_len = data_cfg.corrupted_len[1]
+    elif isinstance(data_cfg.corrupted_len, int):
+        lcorrupted_len = data_cfg.corrupted_len
+        rcorrupted_len = data_cfg.corrupted_len
+    multirate_signal = multirate_signal[lcorrupted_len:-1*rcorrupted_len]
 
     if check:
-        return multirate_signal, save_idxs
+        return None, None
     else:
         return multirate_signal
