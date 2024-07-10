@@ -108,11 +108,10 @@ class ConcatBlockConv5(nn.Module):
         return x
 
 class ConvBlock(nn.Module):
-    def __init__(self, filters_start=32, kernel_start=64):
+    def __init__(self, filters_start=32, kernel_start=64, in_channels=1):
         super().__init__()
-        in_chans = 1
         self.conv1 = nn.Sequential(
-            ConcatBlockConv5(in_chans, filters_start, kernel_start, bias=False),
+            ConcatBlockConv5(in_channels, filters_start, kernel_start, bias=False),
             ConcatBlockConv5(filters_start, filters_start, kernel_start // 2 + 1, bias=False),
             MaxPool1d(kernel_size=8, stride=8)
         )
