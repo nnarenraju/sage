@@ -1975,8 +1975,8 @@ class SageNetOTF_metric_density(KaggleNetOTF_bigboi):
     testing_device = 'cuda:1'
     
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_metric.hdf"    
-    test_background_output = "testing_boutput_metric.hdf"
+    test_foreground_output = "testing_foutput_metric_latest.hdf"    
+    test_background_output = "testing_boutput_metric_latest.hdf"
 
 
 
@@ -2327,6 +2327,10 @@ class SageNetOTF_metric_density_noCheatyPSDaug(KaggleNetOTF_bigboi):
     # Run device for testing phase
     testing_device = 'cuda:2'
 
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_noCheaty.hdf"    
+    test_background_output = "testing_boutput_noCheaty.hdf"
+
 
 # RUNNING
 class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift(KaggleNetOTF_bigboi):
@@ -2430,15 +2434,19 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift(KaggleNetOTF_bigboi):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = 'cuda:1',
+        store_device = 'cuda:0',
     )
 
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
 
     # Run device for testing phase
-    testing_device = 'cuda:1'
+    testing_device = 'cuda:0'
+
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_noCheaty_noShift.hdf"    
+    test_background_output = "testing_boutput_noCheaty_noShift.hdf"
 
 
 ### POTENTIAL RUNS ###
