@@ -723,13 +723,6 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
     injtimes = injparams['tc']
     dist = injparams['distance']
 
-    # Save inj params and snr in a file
-    """
-    with open('./injparams_D4_seeded.pkl', 'wb') as f:
-        pickle.dump(injparams, f)
-    raise
-    """
-
     # Get chirp mass from the source masses
     if chirp_distance:
         massc = mchirp(injparams['mass1'], injparams['mass2'])
