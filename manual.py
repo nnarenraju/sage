@@ -68,7 +68,7 @@ import matplotlib.pyplot as plt
 plt.rcParams.update({'font.size': 18})
 
 # LOCAL
-from test_normal import run_test
+from test import run_test
 from evaluator import main as evaluator
 
 
