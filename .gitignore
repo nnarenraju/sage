@@ -141,6 +141,11 @@ source/baseline/data/psds/
 *.txt
 *.json
 *.jpg
+*.npy
+*.hdf5
+*.pkl
+*.pt
+*.csv
 
 source/baseline/check.py
 source/baseline/notebooks/tmp/h1_o3a.npy
