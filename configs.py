@@ -60,18 +60,18 @@ import numpy as np
 import torch.optim as optim
 
 from pathlib import Path
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LambdaLR, ReduceLROnPlateau, StepLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 # LOCAL
-from data.datasets import MLMDC1, MinimalOTF
-from architectures.frontend import KappaModel, ZetaModel, KappaModel_ResNet_CBAM, OmegaModel_ResNet_CBAM, KappaModel_Res2Net, SigmaModel, KappaModel_ResNet
+from data.datasets import MinimalOTF
+from architectures.frontend import KappaModel_ResNet_CBAM
 from architectures.frontend import KappaModel_ResNet_small
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
-from data.transforms import BandPass, HighPass, Whiten, MultirateSampling, Normalise, Resample, Buffer, Crop
-from data.transforms import AugmentDistance, AugmentPolSky, AugmentOptimalNetworkSNR
-from data.transforms import CyclicShift, AugmentPhase, Recolour
-from data.transforms import GenerateWaveform, FastGenerateWaveform, GlitchAugmentGWSPY, RandomNoiseSlice, MultipleFileRandomNoiseSlice
-from losses.custom_loss_functions import BCEgw_MSEtc, regularised_BCELoss, regularised_BCEWithLogitsLoss
+from data.transforms import Whiten, MultirateSampling, Normalise
+from data.transforms import AugmentOptimalNetworkSNR
+from data.transforms import Recolour
+from data.transforms import FastGenerateWaveform, GlitchAugmentGWSPY, RandomNoiseSlice, MultipleFileRandomNoiseSlice
+from losses.custom_loss_functions import BCEgw_MSEtc
 
 # RayTune
 from ray import tune
