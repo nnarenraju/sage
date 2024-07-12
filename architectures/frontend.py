@@ -27,34 +27,20 @@ Documentation
 # PACKAGES
 import timm
 import torch
-import numpy as np
 from torch import nn
-from scipy import signal
-
-# Diffusers from HuggingFace
-# from diffusers.models.unet_1d import UNet1DModel as UNet1d
 
 # Importing architecture snippets from zoo
-from architectures.zoo.FCN import FCN
 from architectures.zoo.dain import DAIN_Layer
-from architectures.zoo.wavenet_type1 import WaveNetModel as wavenet_type1
-from architectures.zoo.wavenet_type2 import WaveNet as wavenet_type2
-from architectures.zoo.resnet1d_type1 import ResNet1d
 from architectures.zoo.resnet_cbam import resnet50_cbam, resnet152_cbam, resnet34_cbam
-from architectures.zoo.res2net import res2net50, res2net101_26w_4s
 from architectures.zoo.res2net_v1b import res2net101_v1b_26w_4s, res2net50_v1b_26w_4s, res2net152_v1b_26w_4s
-from architectures.zoo.res2net1d import res2net50 as res2net50_1d
-from architectures.zoo.res2net1d import res2net101_26w_4s as res2net101_1d
-from architectures.zoo.aresnet2d import ResNet38 as AResNet38
-from architectures.zoo.virgo_unedited import ResNet54Double as virgonet
-from architectures.zoo.residual_attention_network import ResidualAttentionModel_56 as AResNet56
-from architectures.zoo.kaggle import ConvBlock, _initialize_weights, ConvBlock_Apr21
-from architectures.zoo.inception_time import inceptiontime_def as InceptionTime_DEF
 from architectures.zoo.osnet1d import osnet_ain_custom as osnet1d
 
 # Datatype for storage
 data_type=torch.float32
 
+
+
+## Models without point parameter estimation ##
 
 class GammaModel(torch.nn.Module):
     """
@@ -133,6 +119,8 @@ class GammaModel(torch.nn.Module):
         return {'pred_prob': pred_prob, 'raw': raw}
 
 
+
+## Models with point parameter estimation ##
 
 class GammaModelPE(torch.nn.Module):
     """
