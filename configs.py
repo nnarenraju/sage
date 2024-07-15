@@ -56,6 +56,7 @@ model_params = dict(
 
 # PACKAGES
 import os
+import subprocess
 import numpy as np
 import torch.optim as optim
 
@@ -83,13 +84,16 @@ from ray.tune.schedulers import ASHAScheduler
 """ CUSTOM MODELS FOR EXPERIMENTATION """
 
 class KaggleNetOTF_bigboi:
+    
     """ Data storage """
     name = "KaggleNet50_CBAM_OTF_Feb03_bigboi"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
+    repo_abspath = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
 
     """ RayTune """
     # Placed before initialising any relevant tunable parameter
+    # WARNING: Required compute is prohibitively large for large models
     rtune_optimise = False
     
     rtune_params = dict(
@@ -253,9 +257,15 @@ class KaggleNetOTF_bigboi:
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
-                    GlitchAugmentGWSPY(include=['H1_O3b', 'L1_O3b'], debug_me=False,
-                                       debug_dir=os.path.join(debug_dir, 'GravitySpy')),
-                    pfixed = 0.2580,
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                                                        ),
+                                                 sample_length=17.0,
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    pfixed = 0.689, # 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
@@ -273,8 +283,8 @@ class KaggleNetOTF_bigboi:
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
-                             h1_psds_hdf="./notebooks/tmp/psds_H1_30days.hdf",
-                             l1_psds_hdf="./notebooks/tmp/psds_L1_30days.hdf",
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
                              p_recolour=0.3829,
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
