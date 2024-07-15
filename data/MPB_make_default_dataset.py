@@ -178,7 +178,7 @@ class GenerateData:
                  'signal_approximant', 'reference_freq', 'detectors_abbr', 'noise_names',
                  'save_injection_priors', 'gc_collect_frequency', 'hdf5_tree', 'tmp',
                  'num_queues_datasave', 'num_cores_datagen', 'fieldnames', 'waveform_names',
-                 'num_sample_save', 'signal_length', 'whiten_padding', 'groups', 'error_padding_in_num',
+                 'signal_length', 'whiten_padding', 'groups', 'error_padding_in_num',
                  'sample_length_in_s', 'sample_length_in_num', 'waveform_kwargs', 'noise_generator',
                  'prior_low_mass', 'prior_high_mass', 'prior_low_chirp_dist', 'prior_high_chirp_dist',
                  'tc_inject_lower', 'tc_inject_upper', 'noise_high_freq_cutoff',

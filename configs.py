@@ -142,9 +142,6 @@ class KaggleNetOTF_bigboi:
     batch_size = 64
     validation_plot_freq = 1
     
-    """ Save samples """
-    num_sample_save = 100
-    
     """ Weight Types """
     weight_types = ['loss', 'accuracy', 'roc_auc', 'low_far_nsignals']
     

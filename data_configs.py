@@ -124,8 +124,6 @@ class Default:
     # Set to -1 to never use gc.collect()
     # WARNING!!! - Do NOT use gc.collect when using multiprocessing.
     gc_collect_frequency = -1
-    ## this param used if make_dataset == False
-    num_sample_save = 10
     
     """ Signal Params """
     ## these params may be used if make_dataset == False
