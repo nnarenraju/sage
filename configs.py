@@ -123,9 +123,6 @@ class KaggleNetOTF_bigboi:
         num_samples = 100
     )
 
-    """ Weights and Biases (Wandb) """
-    use_wandb_logging = False
-
     """ Dataset """
     dataset = MinimalOTF
     dataset_params = dict()
