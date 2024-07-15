@@ -1406,14 +1406,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             print("\nAverage Validation Accuracy = {}".format(avg_acc_valid))
             print("Average Training Accuracy = {}".format(avg_acc_train))
             print("ROC Area Under the Curve (ROC-AUC) = {}".format(roc_auc))
-            
-            
-            """ Early Stopping """
-            if epoch_validation_loss['tot'] > 1.1*epoch_training_loss['tot'] and cfg.early_stopping:
-                overfitting_check += 1
-                if overfitting_check > 3:
-                    print("\nThe current model may be overfitting! Terminating.")
-                    break
 
             """ Stop run if stop folder made in export directory """
             stop_dir = os.path.join(export_dir, 'stop')

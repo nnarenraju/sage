@@ -83,10 +83,10 @@ from ray.tune.schedulers import ASHAScheduler
     
 """ CUSTOM MODELS FOR EXPERIMENTATION """
 
-class KaggleNetOTF_bigboi:
+class SageNetOTF:
     
     """ Data storage """
-    name = "KaggleNet50_CBAM_OTF_Feb03_bigboi"
+    name = "SageNet50_CBAM_OTF_Feb03"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
     repo_abspath = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -130,10 +130,10 @@ class KaggleNetOTF_bigboi:
     model = KappaModel_ResNet_CBAM
 
     model_params = dict(
-        # Res2net152
+        # ResNet50
         filter_size = 32,
         kernel_size = 64,
-        resnet_size = 152,
+        resnet_size = 50,
         store_device = 'cuda:0',
     )
 
@@ -161,6 +161,7 @@ class KaggleNetOTF_bigboi:
     weights_path = 'weights_loss.pt'
     
     """ Parameter Estimation """
+    # Options depend on model
     parameter_estimation = ('norm_tc', 'norm_mchirp', )
 
     """ Optimizer """
@@ -172,9 +173,6 @@ class KaggleNetOTF_bigboi:
     ## Cosine Annealing with Warm Restarts
     scheduler = CosineAnnealingWarmRestarts
     scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
-    
-    # Early stoppping
-    early_stopping = False
 
     """ Evaluation Metric """
     eval_metric = None
@@ -351,7 +349,7 @@ class KaggleNetOTF_bigboi:
     verbose = True
 
 
-class KaggleNetOTF_BOY(KaggleNetOTF_bigboi):
+class KaggleNetOTF_BOY(SageNetOTF):
     """ Data storage """
     # WARNING: For optimal detection sensitivity, you have to pronounce "BOY" the way Kratos does in God of War 
     name = "KaggleNet50_CBAM_OTF_Feb03_BOY"
@@ -380,7 +378,7 @@ class KaggleNetOTF_BOY(KaggleNetOTF_bigboi):
     testing_device = 'cuda:0'
 
 
-class KaggleNetOTF_BOY_rerun(KaggleNetOTF_bigboi):
+class KaggleNetOTF_BOY_rerun(SageNetOTF):
     """ Data storage """
     # WARNING: For optimal detection sensitivity, you have to pronounce "BOY" the way Kratos does in God of War
     # Apr21 IMRPhenomD completed at 50 epochs. Rerun with checkpoint file from last epoch.
@@ -424,7 +422,7 @@ class KaggleNetOTF_BOY_rerun(KaggleNetOTF_bigboi):
 ### FINAL EXPERIMENTS ###
 
 # DONE (BEST 24/06/24)
-class SageNetOTF_uTau_SNR02(KaggleNetOTF_bigboi):
+class SageNetOTF_uTau_SNR02(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     ### SNR02 - SNR Experiment 02
     # 1. 113 days of O3b data (**VARIATION**)
@@ -530,7 +528,7 @@ class SageNetOTF_uTau_SNR02(KaggleNetOTF_bigboi):
 
 
 # RUNNING (I actually have high hopes for this one)
-class SageNetOTF_metric_density(KaggleNetOTF_bigboi):
+class SageNetOTF_metric_density(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
@@ -646,7 +644,7 @@ class SageNetOTF_metric_density(KaggleNetOTF_bigboi):
 
 
 # ABLATION 1 - small network resnet50
-class SageNetOTF_metric_lowvar(KaggleNetOTF_bigboi):
+class SageNetOTF_metric_lowvar(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
@@ -765,7 +763,7 @@ class SageNetOTF_metric_lowvar(KaggleNetOTF_bigboi):
 
 
 # RUNNING (High hopes as well)
-class SageNetOTF_metric_density_noCheatyPSDaug(KaggleNetOTF_bigboi):
+class SageNetOTF_metric_density_noCheatyPSDaug(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
@@ -882,7 +880,7 @@ class SageNetOTF_metric_density_noCheatyPSDaug(KaggleNetOTF_bigboi):
 
 
 # RUNNING
-class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift(KaggleNetOTF_bigboi):
+class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
