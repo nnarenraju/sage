@@ -42,25 +42,25 @@ class LossWrapper:
 
 class BCEWithPEregLoss(LossWrapper):
     
-    def __init__(self, gw_criterion=None, mse_alpha=0.2):
+    def __init__(self, gw_loss=None, mse_alpha=1.0):
         
         super().__init__()
         # MSE Loss is always ON with PE
         assert mse_alpha >= 0.0, 'mse_alpha must be greater than or equal to 0.0'
         # Set generic params
         self.mse_alpha = mse_alpha
-        self.gw_criterion = gw_criterion
+        self.gw_loss = gw_loss
     
     def __str__(self):
         # Display details of loss function
-        str = "Loss function = {}".format(self.gw_criterion.__class__.__name__)
+        str = "Loss function = {}".format(self.gw_loss.__class__.__name__)
         return str
 
     def forward(self, outputs, targets, source_params, pe):
         # BCE to check whether the signal contains GW or is pure noise
         # MSE for calculation of correct 'tc'
         custom_loss = {}
-        BCEgw = self.gw_criterion(outputs['raw'], targets['gw'])
+        BCEgw = self.gw_loss(outputs['raw'], targets['gw'])
         custom_loss['gw'] = BCEgw
         
         """
