@@ -31,17 +31,11 @@ import numpy as np
 """ WRAPPERS """
 
 class LossWrapper:
-    def __init__(self, always_apply=True):
-        self.always_apply = always_apply
-        
-    def forward(self, outputs, targets, source_params, pe):
-        raise NotImplementedError
+    def __init__(self):
+        pass
     
     def __call__(self, outputs, targets, source_params, pe):
-        if self.always_apply:
-            return self.forward(outputs, targets, source_params, pe)
-        else:
-            pass
+        return self.forward(outputs, targets, source_params, pe)
 
 
 """ CUSTOM LOSS FUNCTIONS """
@@ -58,7 +52,7 @@ class BCEWithPEregLoss(LossWrapper):
                  dchirp_conditions=None,
                  variance_loss=False):
         
-        super().__init__(always_apply)
+        super().__init__()
 
         # Prelim
         self.keyword_limits = {'min_noise':None, 'max_noise':None, 
