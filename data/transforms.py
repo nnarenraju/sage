@@ -87,6 +87,10 @@ class Unify:
 class UnifySignal:
     def __init__(self, transforms: list):
         self.transforms = transforms
+    
+    def __str__(self):
+        get_vars = lambda cls: {key:val for key, val in cls.__dict__.items() if not key.startswith('__') and not callable(key)}
+        return [get_vars(foo) for foo in self.transforms]
 
     def __call__(self, y: np.ndarray, params: dict, special: dict, debug=None):
         for transform in self.transforms:
@@ -921,7 +925,9 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
                  use_beta=False, a=2, b=5,
                  use_add5=False,
                  use_halfnorm=False,
-                 use_mc_func=False):
+                 snr_lower_limit=5.0,
+                 snr_upper_limit=15.0):
+        
         super().__init__(always_apply)
         # If rescale is False, AUG method returns original network_snr, norm_snr and signal
         self.rescale = rescale
@@ -932,20 +938,8 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         self.a = a
         self.b = b
         self.use_halfnorm = use_halfnorm
-        self.use_mc_func = use_mc_func
-
-        # SNR as a function of chirp mass
-        lowest_mc_snr_mean = 10.0
-        highest_mc_snr_mean = 7.0
-        # Chirp mass limits
-        ml = 7.0 # Msun
-        mu = 50.0 # Msun
-        min_mchirp = (ml*ml / (ml+ml)**2.)**(3./5) * (ml + ml)
-        max_mchirp = (mu*mu / (mu+mu)**2.)**(3./5) * (mu + mu)
-        # Get line params
-        slope = (highest_mc_snr_mean-lowest_mc_snr_mean)/(max_mchirp-min_mchirp)
-        const = lowest_mc_snr_mean - (slope*min_mchirp)
-        self.mean_snr_given_mc = lambda mc: slope * mc + const
+        self.snr_lower_limit = snr_lower_limit
+        self.snr_upper_limit = snr_upper_limit
 
     def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
@@ -960,8 +954,8 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         if self.rescale or not training:
             if aux == -1:
                 # Rescaling the SNR to a uniform distribution within a given range
-                rescaled_snr_lower = cfg.rescaled_snr_lower
-                rescaled_snr_upper = cfg.rescaled_snr_upper
+                rescaled_snr_lower = self.snr_lower_limit
+                rescaled_snr_upper = self.snr_upper_limit
                     
                 # Uniform on SNR range
                 if self.use_uniform:
@@ -975,10 +969,7 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
                     target_snr = prelim_network_snr + 5.0
                 elif self.use_halfnorm:
                     target_snr = halfnorm.rvs() * 4.0 + 5.0
-                elif self.use_mc_func:
-                    # Get mean SNR for given chirp mass
-                    mean_snr = self.mean_snr_given_mc(params['mchirp'])
-                    target_snr = np.random.normal(loc=mean_snr, scale=1.1)
+
             elif aux in [0, 2]:
                 target_snr = 5.0
             elif aux in [1, 3]:
