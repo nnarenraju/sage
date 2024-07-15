@@ -194,19 +194,8 @@ class SageNetOTF:
     persistent_workers = True
 
     """ Loss Function """
-    # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
-    # Extra losses cannot be used without BCEWithLogitsLoss()
     # All parameter estimation is done only using MSE loss at the moment
     loss_function = BCEWithPEregLoss(gw_loss=torch.nn.BCEWithLogitsLoss(), mse_alpha=1.0)
-
-    # These params must be present in target dict
-    # Make sure that params of PE are also included within this (generalise this!)
-    weighted_bce_loss_params = ('mchirp', 'tc', 'q', )
-    
-    # Rescaling the SNR (mapped into uniform distribution)
-    rescale_snr = True
-    rescaled_snr_lower = 5.0
-    rescaled_snr_upper = 15.0
     
     # Calculate the network SNR for pure noise samples as well
     # If used with parameter estimation, custom loss function should have network_snr_for_noise option toggled
@@ -256,7 +245,7 @@ class SageNetOTF:
 
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True),
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
