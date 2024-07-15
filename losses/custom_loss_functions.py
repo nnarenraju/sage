@@ -46,7 +46,7 @@ class LossWrapper:
 
 """ CUSTOM LOSS FUNCTIONS """
 
-class pe_regularised_BCELoss(LossWrapper):
+class BCEWithPEregLoss(LossWrapper):
     
     def __init__(self, always_apply=True, gw_criterion=None, 
                  weighted_bce_loss=False, mse_alpha=0.2,
@@ -326,7 +326,7 @@ class pe_regularised_BCELoss(LossWrapper):
         return custom_loss
 
 
-class BCEgw_MSEtc(LossWrapper):
+class Experimental(LossWrapper):
     
     def __init__(self, always_apply=True, gw_criterion=None, 
                  weighted_bce_loss=False, mse_alpha=0.2,
