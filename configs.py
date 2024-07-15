@@ -140,7 +140,7 @@ class KaggleNetOTF_bigboi:
     """ Epochs and Batches """
     num_epochs = 500
     batch_size = 64
-    validation_plot_freq = 1
+    validation_plot_freq = 1 # every n epochs
     
     """ Weight Types """
     weight_types = ['loss', 'accuracy', 'roc_auc', 'low_far_nsignals']
@@ -159,9 +159,6 @@ class KaggleNetOTF_bigboi:
     
     pretrained = False
     weights_path = 'weights_loss.pt'
-    
-    # This is automatically written in export_dir
-    output_loss_file = "losses.txt"
     
     """ Parameter Estimation """
     parameter_estimation = ('norm_tc', 'norm_mchirp', )

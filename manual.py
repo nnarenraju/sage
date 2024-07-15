@@ -878,7 +878,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
         optional = {}
         
         # Setting the filepath to write epoch info
-        loss_filepath = os.path.join(export_dir, cfg.output_loss_file)
+        loss_filepath = os.path.join(export_dir, 'losses.txt')
         
         start_epoch = int(checkpoint['epoch'])+1 if cfg.resume_from_checkpoint else 0
         for nep in range(start_epoch, cfg.num_epochs):
