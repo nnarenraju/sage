@@ -71,7 +71,7 @@ from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, Unif
 from data.transforms import Whiten, MultirateSampling, Normalise
 from data.transforms import AugmentOptimalNetworkSNR
 from data.transforms import Recolour
-from data.transforms import FastGenerateWaveform, GlitchAugmentGWSPY, RandomNoiseSlice, MultipleFileRandomNoiseSlice
+from data.transforms import FastGenerateWaveform, RandomNoiseSlice, MultipleFileRandomNoiseSlice
 from losses.custom_loss_functions import BCEgw_MSEtc
 
 # RayTune
@@ -91,7 +91,7 @@ class KaggleNetOTF_bigboi:
     debug_dir = "./DEBUG"
     repo_abspath = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
 
-    """ RayTune """
+    """ RayTune (Untested) """
     # Placed before initialising any relevant tunable parameter
     # WARNING: Required compute is prohibitively large for large models
     rtune_optimise = False
@@ -115,7 +115,6 @@ class KaggleNetOTF_bigboi:
         # Reporter
         reporter = CLIReporter,
         reporter_params = dict(
-            # parameter_columns=["l1", "l2", "lr", "batch_size"],
             metric_columns=["loss", "accuracy", "low_far_nsignals", "training_iteration"]
         ),
         # To sample multiple times/run multiple trials
