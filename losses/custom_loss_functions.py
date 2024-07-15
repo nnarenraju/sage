@@ -2,13 +2,13 @@
 #!/usr/bin/env python
 
 """
-Filename        = Foobar.py
-Description     = Lorem ipsum dolor sit amet
+Filename        = custom_loss_functions.py
+Description     = Repository of custom loss functions
 
 Created on Fri Jan 28 19:08:44 2022
 
 __author__      = nnarenraju
-__copyright__   = Copyright 2021, ProjectName
+__copyright__   = Copyright 2021, Sage
 __credits__     = nnarenraju
 __license__     = MIT Licence
 __version__     = 0.0.1
