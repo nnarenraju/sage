@@ -56,6 +56,7 @@ model_params = dict(
 
 # PACKAGES
 import os
+import torch
 import subprocess
 import numpy as np
 import torch.optim as optim
@@ -72,7 +73,7 @@ from data.transforms import Whiten, MultirateSampling, Normalise
 from data.transforms import AugmentOptimalNetworkSNR
 from data.transforms import Recolour
 from data.transforms import FastGenerateWaveform, RandomNoiseSlice, MultipleFileRandomNoiseSlice
-from losses.custom_loss_functions import BCEgw_MSEtc
+from losses.custom_loss_functions import BCEWithPEregLoss
 
 # RayTune
 from ray import tune
@@ -183,8 +184,8 @@ class SageNetOTF:
     do_AMP = False
 
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
 
     """ Dataloader params """
     num_workers = 32
@@ -196,14 +197,7 @@ class SageNetOTF:
     # If gw_critetion is set to None, torch.nn.BCEWithLogitsLoss() is used by default
     # Extra losses cannot be used without BCEWithLogitsLoss()
     # All parameter estimation is done only using MSE loss at the moment
-    loss_function = BCEgw_MSEtc(gw_criterion=None, weighted_bce_loss=False, mse_alpha=1.0,
-                                emphasis_type='raw',
-                                noise_emphasis=False, noise_conditions=[('min_noise', 'max_noise', 0.5),],
-                                signal_emphasis=False, signal_conditions=[('min_signal', 'max_signal', 1.0),],
-                                snr_loss=False, snr_conditions=[(5.0, 10.0, 0.3),],
-                                mchirp_loss=False, mchirp_conditions=[(25.0, 45.0, 0.3),],
-                                dchirp_conditions=[(130.0, 350.0, 1.0),],
-                                variance_loss=False)
+    loss_function = BCEWithPEregLoss(gw_loss=torch.nn.BCEWithLogitsLoss(), mse_alpha=1.0)
 
     # These params must be present in target dict
     # Make sure that params of PE are also included within this (generalise this!)
