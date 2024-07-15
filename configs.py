@@ -134,13 +134,13 @@ class KaggleNetOTF_bigboi:
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 152,
-        store_device = 'cuda:1',
+        store_device = 'cuda:0',
     )
 
     """ Epochs and Batches """
     num_epochs = 500
     batch_size = 64
-    save_freq = 1
+    validation_plot_freq = 1
     
     """ Save samples """
     num_sample_save = 100

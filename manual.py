@@ -1098,7 +1098,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
 
                     # Params for storing labels and outputs
-                    if nep % cfg.save_freq == 0:
+                    if nep % cfg.validation_plot_freq == 0:
                         
                         # Move labels and outputs from cuda to cpu
                         # Detach to remove gradient information from tensors (is this required?)
@@ -1120,7 +1120,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 sample_params = dict((key, np.concatenate(tuple(val))) for key, val in dd.items()) 
 
 
-                if nep % cfg.save_freq == 0:
+                if nep % cfg.validation_plot_freq == 0:
 
                     """ ROC Curve save data """
                     roc_auc, fpr, tpr = roc_curve(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
