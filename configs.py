@@ -173,11 +173,6 @@ class SageNetOTF:
     ## Cosine Annealing with Warm Restarts
     scheduler = CosineAnnealingWarmRestarts
     scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
-
-    """ Evaluation Metric """
-    eval_metric = None
-    # Normalised threshold for accuracy
-    accuracy_thresh = 0.5
     
     """ Gradient Clipping """
     clip_norm = 10000

@@ -783,7 +783,7 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
         training_loss.backward()
     
     # Accuracy calculation
-    accuracy = calculate_accuracy(training_output['pred_prob'], training_labels['gw'], cfg.accuracy_thresh)
+    accuracy = calculate_accuracy(training_output['pred_prob'], training_labels['gw'], 0.5)
     # Clip gradients to make convergence somewhat easier
     torch.nn.utils.clip_grad_norm_(Network.parameters(), max_norm=cfg.clip_norm)
     # Make the actual optimizer step and save the batch loss
@@ -811,7 +811,7 @@ def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samp
             all_losses = loss_function(validation_output, validation_labels, source_params, cfg.parameter_estimation)
     
     # Accuracy calculation
-    accuracy = calculate_accuracy(validation_output['pred_prob'], validation_labels['gw'], cfg.accuracy_thresh)
+    accuracy = calculate_accuracy(validation_output['pred_prob'], validation_labels['gw'], 0.5)
     # Returning quantities if saving data
     return (all_losses, accuracy, validation_output)
 
