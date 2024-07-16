@@ -708,39 +708,6 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     plt.close()
 
 
-def batchshuffle_noise(training_labels, training_samples, nbatch, nep): 
-    # Shuffle the samples between detectors (ONLY FOR PURE NOISE)
-    # This procedure should **NOT** be done for signal samples
-    noise_idx = np.argwhere(training_labels['gw'].numpy() == 0).flatten()
-    if len(noise_idx) > 0:
-        # assert len(noise_idx) > 0, "No noise samples found in this batch! Looks a bit sus."
-        det1 = np.copy(noise_idx)
-        det2 = np.copy(noise_idx)
-        seed1 = int((nep+1)*1e6 + nbatch + 1)
-        np.random.seed(seed1)
-        np.random.shuffle(det1)
-        seed2 = int((nep+1)*1e6 + nbatch)
-        np.random.seed(seed2)
-        np.random.shuffle(det2)
-        assert seed1 != seed2, "Noise idx have not been shuffled properly. Seeds are the same for detectors!"
-        shuffler = {foo: (d1, d2) for foo, d1, d2 in zip(noise_idx, det1, det2)}
-        # Shuffle the noise samples within a given detector
-        shuffled_training_samples = []
-        for bidx in range(training_samples.shape[0]):
-            if bidx in noise_idx:
-                d1, d2 = shuffler[bidx]
-                shuffled_training_samples.append([training_samples[d1][0].numpy(), training_samples[d2][1].numpy()])
-            else:
-                shuffled_training_samples.append([training_samples[bidx][0].numpy(), training_samples[bidx][1].numpy()])
-                    
-        # Convert the entire batch back to tensors
-        shuffled_training_samples = np.array(shuffled_training_samples)
-        shuffled_training_samples = torch.from_numpy(shuffled_training_samples)
-        return shuffled_training_samples
-    else:
-        return training_samples
-
-
 def consolidated_display(train_time, total_time):
     # Display wall clock time statistics
     print('\n----------------------------------------------------------------------')
@@ -928,10 +895,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 assert cfg.network_io and vd.plot_on_first_batch, "NETWORK_IO option does not work without plot_on_first_batch (validation)"
             
             for nbatch, (training_samples, training_labels, source_params, plot_batch) in enumerate(pbar):
-                
-                # BatchShuffle Noise samples for an extra dimension of augmentation
-                if cfg.batchshuffle_noise:
-                    training_samples = batchshuffle_noise(training_labels, training_samples, nbatch, nep)
                 
                 # Update params
                 if scheduler:
