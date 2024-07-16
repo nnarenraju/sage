@@ -307,8 +307,7 @@ class SageNetOTF:
     testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
     far_scaling_factor = 2592000.0
 
-    # When debug is False the following plots are not made
-    # SAMPLES, DEBUG, CNN_OUTPUT
+    # Debugging
     debug = False
     debug_size = 10000
 
