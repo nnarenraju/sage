@@ -1537,7 +1537,6 @@ class RandomNoiseSlice():
         self.slide_buffer = 240.0
         self.dt = 1./2048.
         
-        """
         # Keep all required noise files open
         self.O3a_real_noise = h5py.File(self.real_noise_path, 'r')
         # Get detectors used
@@ -1581,7 +1580,6 @@ class RandomNoiseSlice():
                 os.makedirs(self.debug_dir)
             save_txt = os.path.join(debug_dir, 'random_noise_slice.txt')
             self.tmp_debug = open(save_txt, "a")
-        """
 
     def _load_segments(self):
         tmp_dir = "./tmp"
