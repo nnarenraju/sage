@@ -314,10 +314,9 @@ class SageNetOTF:
     verbose = True
 
 
-class KaggleNetOTF_BOY(SageNetOTF):
+class SageNetOTF_Feb24_Yukon(SageNetOTF):
     """ Data storage """
-    # WARNING: For optimal detection sensitivity, you have to pronounce "BOY" the way Kratos does in God of War 
-    name = "KaggleNet50_CBAM_OTF_Feb03_BOY"
+    name = "SageNet50_CBAM_OTF_Feb03_Yukon"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
 
     """ Dataset """
@@ -343,11 +342,10 @@ class KaggleNetOTF_BOY(SageNetOTF):
     testing_device = 'cuda:0'
 
 
-class KaggleNetOTF_BOY_rerun(SageNetOTF):
+class SageNetOTF_Feb24_Yukon_rerun(SageNetOTF):
     """ Data storage """
-    # WARNING: For optimal detection sensitivity, you have to pronounce "BOY" the way Kratos does in God of War
     # Apr21 IMRPhenomD completed at 50 epochs. Rerun with checkpoint file from last epoch.
-    name = "KaggleNet50_CBAM_IMRPhenomD_OTF_May01_BOY"
+    name = "SageNet50_CBAM_IMRPhenomD_OTF_May01_Yukon_rerun"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
 
     """ Dataset """
@@ -387,14 +385,13 @@ class KaggleNetOTF_BOY_rerun(SageNetOTF):
 ### FINAL EXPERIMENTS ###
 
 # DONE (BEST 24/06/24)
-class SageNetOTF_uTau_SNR02(SageNetOTF):
+class SageNetOTF_May24_Russet(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
-    ### SNR02 - SNR Experiment 02
     # 1. 113 days of O3b data (**VARIATION**)
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "SageNet50_halfnormSNR_May17_BOY"
+    name = "SageNet50_halfnormSNR_May17_Russet"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
 
@@ -493,7 +490,7 @@ class SageNetOTF_uTau_SNR02(SageNetOTF):
 
 
 # RUNNING (I actually have high hopes for this one)
-class SageNetOTF_metric_density(SageNetOTF):
+class SageNetOTF_metric_density_Desiree(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
@@ -503,6 +500,8 @@ class SageNetOTF_metric_density(SageNetOTF):
     name = "SageNet50_metric_density_Jun26"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
 
     """ Dataset """
     dataset = MinimalOTF
@@ -609,7 +608,7 @@ class SageNetOTF_metric_density(SageNetOTF):
 
 
 # ABLATION 1 - small network resnet50
-class SageNetOTF_metric_lowvar(SageNetOTF):
+class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
@@ -728,7 +727,7 @@ class SageNetOTF_metric_lowvar(SageNetOTF):
 
 
 # RUNNING (High hopes as well)
-class SageNetOTF_metric_density_noCheatyPSDaug(SageNetOTF):
+class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
@@ -845,7 +844,7 @@ class SageNetOTF_metric_density_noCheatyPSDaug(SageNetOTF):
 
 
 # RUNNING
-class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift(SageNetOTF):
+class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
     # 2. SNR halfnorm (not variation)
