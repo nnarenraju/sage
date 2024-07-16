@@ -116,9 +116,6 @@ class MinimalOTF(Dataset):
         self.epoch = -1
         self.cflag = -1
         self.aux = aux
-        self.plot_on_first_batch = self.cfg.plot_on_first_batch
-        self.nplot_on_first_batch = 0
-        self.plot_batch_fnames = []
 
         if training:
             self.total_samples_per_epoch = self.data_cfg.num_training_samples
@@ -533,20 +530,5 @@ class MinimalOTF(Dataset):
         # Tensorification
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
-        # First batch processes
-        if self.plot_on_first_batch:
-            # NOTE: Structured arrays are faster but PyTorch does not support them.
-            #       Dictionaries are slower but they do the job.
-            # Convert all samples into float16 for the sake of saving memory
-            # Also, use .copy() for some arrays as PyTorch does not support data with negative stride
-            white = (sample_transforms['Whiten']).astype(np.float16).copy()
-            nsamp = white
-            hpass = white
-            msamp = (sample_transforms['MultirateSampling']).astype(np.float16).copy()
-            plot_batch = [nsamp, hpass, white, msamp]
-            self.plot_batch_fnames = ['PureSample', 'HighPass', 'Whiten', 'MRSampling']
-            self.nplot_on_first_batch = len(self.plot_batch_fnames)
-        else:
-            plot_batch = [None] * self.nplot_on_first_batch
         
-        return (sample, all_targets, source_params, plot_batch)
+        return (sample, all_targets, source_params)

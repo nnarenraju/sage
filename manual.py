@@ -634,7 +634,7 @@ def pairwise(iterable):
 
 def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_step, 
                    loss_function, training_samples, training_labels, source_params,
-                   optional, plot_batch, export_dir):
+                   optional, export_dir):
     # Optimizer step on a single batch of training data
     # Set zero_grad to apply None values instead of zeroes
     optimizer.zero_grad(set_to_none = True)
@@ -662,7 +662,7 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
 
 
 def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samples, validation_labels,
-                     source_params, optional, plot_batch, export_dir):
+                     source_params, optional, export_dir):
     # Evaluation of a single validation batch
     with torch.cuda.amp.autocast() if cfg.do_AMP else nullcontext():
         # Gradient evaluation is not required for validation and testing
@@ -747,11 +747,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             
             # Update epoch number in dataset object for training and validation
             nepoch.value = nep
-
-            # Update first batch plotting tasks toggler
-            # TODO: Use this for validation phase as well
-            if cfg.plot_on_first_batch:
-                td.plot_on_first_batch = True
             
             # Prettification string
             epoch_string = "\n" + "="*65 + " Epoch {} ".format(nep) + "="*65
@@ -782,7 +777,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             start = time.time()
             train_times = []
             
-            for nbatch, (training_samples, training_labels, source_params, plot_batch) in enumerate(pbar):
+            for nbatch, (training_samples, training_labels, source_params) in enumerate(pbar):
                 
                 # Update params
                 if scheduler:
@@ -817,14 +812,12 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                                          loss_function, 
                                                          training_samples, training_labels,
                                                          source_params, optional,
-                                                         plot_batch, export_dir)
+                                                         export_dir)
                 
                 ## Display stuff
                 loss = np.around(training_loss['total_loss'].clone().cpu().item(), 8)
                 # Update pbar with loss, acc
                 pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, nbatch, loss))
-                # Stop all first batch processes
-                td.plot_on_first_batch = False
                 # Update losses and accuracy
                 training_batches = nbatch
                 acc_train.append(accuracy)
@@ -866,7 +859,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 raw_output = np.array([])
                 
                 pbar = tqdm(validDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
-                for nbatch, (validation_samples, validation_labels, source_params, plot_batch) in enumerate(pbar):
+                for nbatch, (validation_samples, validation_labels, source_params) in enumerate(pbar):
                     
                     """ Set the device and dtype """
                     validation_samples = validation_samples.to(dtype=torch.float32, device=cfg.train_device)
@@ -879,7 +872,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                                                           loss_function,
                                                                           validation_samples, 
                                                                           validation_labels, source_params,
-                                                                          optional, plot_batch, export_dir)
+                                                                          optional, export_dir)
 
                     # Display stuff
                     loss = np.around(validation_loss['total_loss'].clone().cpu().item(), 8)
@@ -958,7 +951,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
                     print('AUX validation dataset {}'.format(cf))
                     pbar = tqdm(auxDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
-                    for nbatch, (aux_samples, aux_labels, source_params, plot_batch) in enumerate(pbar):
+                    for nbatch, (aux_samples, aux_labels, source_params) in enumerate(pbar):
                         
                         """ Set the device and dtype """
                         aux_samples = aux_samples.to(dtype=torch.float32, device=cfg.train_device)
@@ -971,7 +964,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                                                  loss_function,
                                                                  aux_samples, 
                                                                  aux_labels, source_params,
-                                                                 optional, plot_batch, export_dir)
+                                                                 optional, export_dir)
 
                         # Display stuff
                         loss = np.around(aux_loss['total_loss'].clone().cpu().item(), 8)

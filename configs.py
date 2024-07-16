@@ -278,15 +278,6 @@ class SageNetOTF:
     )
 
     """ Optional things to do during training """
-    # Plots the input to the network (including transformations) 
-    # and output from the network
-    network_io = False
-    permitted_models = ['KappaModel', 'KappaModelPE', 'KappaModel_ResNet_CBAM', 
-                        'KappaModel_Res2Net']
-    # Extremes only plot
-    extremes_io = False
-    # Plotting on first batch
-    plot_on_first_batch = False
     # Testing on a small 64000s dataset at the end of each epoch
     epoch_testing = False
     epoch_testing_dir = "/local/scratch/igr/nnarenraju/testing_64000_D4_seeded"
