@@ -34,7 +34,7 @@ from architectures.zoo.dain import DAIN_Layer
 from architectures.zoo.resnet_cbam import resnet50_cbam, resnet152_cbam, resnet34_cbam
 from architectures.zoo.res2net_v1b import res2net101_v1b_26w_4s, res2net50_v1b_26w_4s, res2net152_v1b_26w_4s
 from architectures.zoo.osnet1d import osnet_ain_custom as osnet1d
-from architectures.zoo.kaggle import ConvBlock
+from architectures.zoo.kaggle import ConvBlock, _initialize_weights
 
 # Datatype for storage
 data_type=torch.float32
