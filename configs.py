@@ -90,7 +90,8 @@ class SageNetOTF:
     name = "SageNet50_CBAM_OTF_Feb03_dummy"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
-    repo_abspath = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
 
     """ RayTune (Untested) """
     # Placed before initialising any relevant tunable parameter
