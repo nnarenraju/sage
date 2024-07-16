@@ -498,9 +498,9 @@ if __name__ == "__main__":
                         help="Uses the pipeline architecture as described in configs.py")
     parser.add_argument("--data-config", type=str, default='Default',
                         help="Creates or uses a particular dataset as provided in data_configs.py")
-    parser.add_argument("--test-background", type=bool, default=True,
+    parser.add_argument("--no-test-background", action='store_true',
                         help="Option to test background file of testing dataset")
-    parser.add_argument("--test_foreground", type=bool, default=True,
+    parser.add_argument("--no-test_foreground", action='store_true',
                         help="Option to test foreground file of testing dataset")
     
     opts = parser.parse_args()
@@ -541,8 +541,8 @@ if __name__ == "__main__":
     # Weights are essentially allowed to change during the testing phase
     # Since there are more noise samples than signals, this will skew the results significantly
     Network.eval()
-    
-    if opts.test_background:
+
+    if not opts.no_test_background:
         testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
         evalfile = os.path.join(cfg.testing_dir, cfg.test_background_output)
         print('\nInitiating the testing module for background data')
@@ -551,7 +551,7 @@ if __name__ == "__main__":
                 trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
                 batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
     
-    if opts.test_foreground:
+    if not opts.no_test_foreground:
         testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
         evalfile = os.path.join(cfg.testing_dir, cfg.test_foreground_output)
         print('\nInitiating the testing module for foreground data')
