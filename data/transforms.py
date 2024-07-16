@@ -87,12 +87,11 @@ class Unify:
 class UnifySignal:
     def __init__(self, transforms: list):
         self.transforms = transforms
-    
-    def __str__(self):
-        get_vars = lambda cls: {key:val for key, val in cls.__dict__.items() if not key.startswith('__') and not callable(key)}
-        return [get_vars(foo) for foo in self.transforms]
 
-    def __call__(self, y: np.ndarray, params: dict, special: dict, debug=None):
+    def __call__(self, y: np.ndarray, params: dict, special: dict, debug=None, return_metadata=False):
+        if return_metadata:
+            get_vars = lambda cls: {key:val for key, val in cls.__dict__.items() if not key.startswith('__') and not callable(key)}
+            return {foo.__class__.__name__: get_vars(foo) for foo in self.transforms}
         for transform in self.transforms:
             y, params, special = transform(y, params, special, debug)
         return (y, params, special)
