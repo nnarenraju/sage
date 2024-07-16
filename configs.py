@@ -239,11 +239,6 @@ class SageNetOTF:
     )
     
     """ Transforms """
-    # Adding a random noise realisation during the data loading process
-    # Procedure should be available within dataset object
-    # Fixed noise realisation method has been deprecated
-    add_random_noise_realisation = True
-
     transforms = dict(
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
@@ -432,11 +427,6 @@ class SageNetOTF_May24_Russet(SageNetOTF):
     )
 
     """ Transforms """
-    # Adding a random noise realisation during the data loading process
-    # Procedure should be available within dataset object
-    # Fixed noise realisation method has been deprecated
-    add_random_noise_realisation = True
-
     transforms = dict(
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
@@ -546,11 +536,6 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
     )
 
     """ Transforms """
-    # Adding a random noise realisation during the data loading process
-    # Procedure should be available within dataset object
-    # Fixed noise realisation method has been deprecated
-    add_random_noise_realisation = True
-
     transforms = dict(
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
@@ -663,11 +648,6 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
     )
 
     """ Transforms """
-    # Adding a random noise realisation during the data loading process
-    # Procedure should be available within dataset object
-    # Fixed noise realisation method has been deprecated
-    add_random_noise_realisation = True
-
     transforms = dict(
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
@@ -781,11 +761,6 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
     )
 
     """ Transforms """
-    # Adding a random noise realisation during the data loading process
-    # Procedure should be available within dataset object
-    # Fixed noise realisation method has been deprecated
-    add_random_noise_realisation = True
-
     transforms = dict(
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
@@ -898,11 +873,6 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
     )
 
     """ Transforms """
-    # Adding a random noise realisation during the data loading process
-    # Procedure should be available within dataset object
-    # Fixed noise realisation method has been deprecated
-    add_random_noise_realisation = True
-
     transforms = dict(
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),

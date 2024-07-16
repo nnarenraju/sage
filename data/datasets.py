@@ -413,7 +413,7 @@ class MinimalOTF(Dataset):
     
     def _noise_realisation_(self, sample, targets, seed=None):
         """ Finding random noise realisation for signal """
-        if self.cfg.add_random_noise_realisation and targets['gw']:
+        if targets['gw']:
             # Read the noise data
             pure_noise, targets_noise, params_noise = self.generate_data(seed=seed, return_noise=True)
             target_noise = targets_noise['gw']
