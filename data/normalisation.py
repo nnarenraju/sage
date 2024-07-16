@@ -1,3 +1,5 @@
+import numpy as np
+
 class Normalise:
     """
     Normalise the parameter using prior ranges
