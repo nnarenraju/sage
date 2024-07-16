@@ -87,7 +87,7 @@ from ray.tune.schedulers import ASHAScheduler
 class SageNetOTF:
     
     """ Data storage """
-    name = "SageNet50_CBAM_OTF_Feb03"
+    name = "SageNet50_CBAM_OTF_Feb03_dummy"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
     repo_abspath = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
