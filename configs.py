@@ -277,10 +277,6 @@ class SageNetOTF:
         target=None
     )
 
-    # Do not set this to True
-    # RandomNoiseSlice does the same thing but better
-    batchshuffle_noise = False
-
     """ Optional things to do during training """
     # Plots the input to the network (including transformations) 
     # and output from the network
