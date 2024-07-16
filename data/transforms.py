@@ -1074,10 +1074,9 @@ class Recolour(NoiseWrapper):
                  debug_dir=""):
         
         super().__init__(always_apply)
-        # Warnings (if required)
-        if use_precomputed:
-            warnings.warn('Using precomputed PSDs. Make sure that they do not include PSDs from testing dataset.')
-            warnings.warn('Unless using a robust set of PSDs, this method is bound by the limitations of supervised learning')
+        # Warnings
+        # Using precomputed PSDs. Make sure that they do not include PSDs from testing dataset.
+        # Unless using a robust set of PSDs, this method is bound by the limitations of supervised learning
         
         # Using precomputed (using 81 days of O3a noise)
         # WARNING: This is a cheaty method if this uses testing data PSDs for training.
