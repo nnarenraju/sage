@@ -309,6 +309,7 @@ class SageNetOTF:
     verbose = True
 
 
+# No rerun planned (will not be a part of bug fixes)
 class SageNetOTF_Feb24_Yukon(SageNetOTF):
     """ Data storage """
     name = "SageNet50_CBAM_OTF_Feb03_Yukon"
@@ -337,6 +338,7 @@ class SageNetOTF_Feb24_Yukon(SageNetOTF):
     testing_device = 'cuda:0'
 
 
+# No rerun planned (will not be a part of bug fixes)
 class SageNetOTF_Feb24_Yukon_rerun(SageNetOTF):
     """ Data storage """
     # Apr21 IMRPhenomD completed at 50 epochs. Rerun with checkpoint file from last epoch.
@@ -389,6 +391,8 @@ class SageNetOTF_May24_Russet(SageNetOTF):
     name = "SageNet50_halfnormSNR_May17_Russet"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
 
     """ Dataset """
     dataset = MinimalOTF
@@ -538,12 +542,12 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
-                             h1_psds_hdf="./notebooks/tmp/psds_H1_30days.hdf",
-                             l1_psds_hdf="./notebooks/tmp/psds_L1_30days.hdf",
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
                              p_recolour=0.3829,
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
@@ -604,6 +608,8 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
     name = "SageNet50_metric_lowvar_Jul00"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
 
     """ Dataset """
     dataset = MinimalOTF
@@ -650,12 +656,12 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
-                             h1_psds_hdf="./notebooks/tmp/psds_H1_30days.hdf",
-                             l1_psds_hdf="./notebooks/tmp/psds_L1_30days.hdf",
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
                              p_recolour=0.3829,
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
@@ -717,6 +723,8 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
     name = "SageNet50_metric_density_noCheatyPSDaug_Jun26"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
 
     """ Dataset """
     dataset = MinimalOTF
@@ -763,13 +771,13 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
                              use_shifted=True, shift_up_factor=10, shift_down_factor=1,
-                             h1_psds_hdf="./notebooks/tmp/psds_H1_latter51days_20s.hdf",
-                             l1_psds_hdf="./notebooks/tmp/psds_L1_latter51days_20s.hdf",
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_latter51days_20s.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_latter51days_20s.hdf"),
                              p_recolour=0.3829,
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
@@ -829,6 +837,8 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
     name = "SageNet50_metric_density_noCheatyPSDaug_noPSDshift_Jun26"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
     debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
 
     """ Dataset """
     dataset = MinimalOTF
@@ -880,8 +890,8 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
                              use_shifted=False, shift_up_factor=10, shift_down_factor=1,
-                             h1_psds_hdf="./notebooks/tmp/psds_H1_latter51days_20s.hdf",
-                             l1_psds_hdf="./notebooks/tmp/psds_L1_latter51days_20s.hdf",
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_latter51days_20s.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_latter51days_20s.hdf"),
                              p_recolour=0.3829,
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
