@@ -60,8 +60,6 @@ def get_normalisations(cfg, data_cfg):
     metadata = cfg.transforms['signal'](np.ndarray, {}, {}, return_metadata=True)
     snr_lower_limit = metadata['AugmentOptimalNetworkSNR']['snr_lower_limit']
     snr_upper_limit = metadata['AugmentOptimalNetworkSNR']['snr_upper_limit']
-    print(snr_lower_limit, snr_upper_limit)
-    raise
     norm_snr = Normalise(min_val=snr_lower_limit,
                          max_val=snr_upper_limit)
     
