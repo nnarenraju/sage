@@ -132,16 +132,6 @@ class ConvBlock(nn.Module):
         x = self.conv3(x).unsqueeze(1)
         return x
 
-
-class ConvBlock_Apr21(nn.Module):
-    def __init__(self, filters_start=32, kernel_start=64):
-        super().__init__()
-        raise NotImplemented('Not implemented.')
-        
-    def forward(self, x):
-        return 0
-
-
 def _initialize_weights(self):
     # Initialising weights to all layers
     for m in self.modules():
