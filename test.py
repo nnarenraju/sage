@@ -498,6 +498,10 @@ if __name__ == "__main__":
                         help="Uses the pipeline architecture as described in configs.py")
     parser.add_argument("--data-config", type=str, default='Default',
                         help="Creates or uses a particular dataset as provided in data_configs.py")
+    parser.add_argument("--test-background", type=bool, default=True,
+                        help="Option to test background file of testing dataset")
+    parser.add_argument("--test_foreground", type=bool, default=True,
+                        help="Option to test foreground file of testing dataset")
     
     opts = parser.parse_args()
     
@@ -538,31 +542,27 @@ if __name__ == "__main__":
     # Since there are more noise samples than signals, this will skew the results significantly
     Network.eval()
     
-    """ 
-    testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
-    evalfile = os.path.join(cfg.testing_dir, cfg.test_foreground_output)
-    print('\nInitiating the testing module for foreground data')
-    run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-            step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
-            trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
-            batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
-    """
+    if opts.test_background:
+        testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
+        evalfile = os.path.join(cfg.testing_dir, cfg.test_background_output)
+        print('\nInitiating the testing module for background data')
+        run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
+                step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
+                trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
+                batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
     
-    testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
-    evalfile = os.path.join(cfg.testing_dir, cfg.test_background_output)
-    print('\nInitiating the testing module for background data')
-    run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-             step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
-             trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
-             batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
+    if opts.test_foreground:
+        testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
+        evalfile = os.path.join(cfg.testing_dir, cfg.test_foreground_output)
+        print('\nInitiating the testing module for foreground data')
+        run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
+                step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
+                trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
+                batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
     
-    testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
-    evalfile = os.path.join(cfg.testing_dir, cfg.test_foreground_output)
-    print('\nInitiating the testing module for foreground data')
-    run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-            step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
-            trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
-            batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
+    if not opts.test_background and not opts.test_foreground:
+        print('WARNING: Choosing to not test foreground or background file')
+        print('Assuming that testing directory contains previous testing outputs')
     
     # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
     output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
