@@ -394,71 +394,6 @@ def diagonal_compare(nep, outputs, labels, network_snrs, export_dir):
         plt.close(fig_gt8)
 
 
-def plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels, epoch, mode, extremes_io=False, snrs=None):
-    # Plotting the network io of any layer used (provide non MR sample as input)
-    dir_name = 'EXTREMES_IO' if extremes_io else 'NETWORK_IO'
-    parent_dir = os.path.join(export_dir, dir_name)
-    if not os.path.isdir(parent_dir):
-        os.makedirs(parent_dir, exist_ok=False)
-    # Training and validation dir
-    save_dir = os.path.join(parent_dir, '{}/epoch_{}'.format(mode, epoch))
-    if not os.path.isdir(save_dir):
-        os.makedirs(save_dir, exist_ok=False)
-
-    # Outputs to be plotted
-    normed = training_output['normed']
-    network_input = training_output['input']
-    raws = training_output['raw']
-    pred_probs = training_output['pred_prob']
-    cnn_output = training_output['cnn_output']
-
-    for n, data in enumerate(zip(training_labels, raws, pred_probs, snrs, normed, network_input, cnn_output)):
-        ## Analysing normed output of the pipeline
-        # Convert all tensors to numpy arrays
-        label, raw, pred_prob, snr, norm, netinpt, cnnopt = [foo.cpu().detach().numpy() for foo in data]
-        # Checking for the effect of normalisation layers used
-        nrows = 4 + len(plot_batch)
-        pblen = len(plot_batch)
-        fig, ax = plt.subplots(nrows, 2, figsize=(12.0*2, 8.0*nrows))
-        raw = np.around(raw, 3)
-        pred_prob = np.around(pred_prob, 3)
-        
-        plt.suptitle('raw={}, pred_prob={}, label={}, snr={}'.format(raw, pred_prob, label, snr))
-        ndet = 2
-        pbdat = [plot_batch[i][n] for i in range(pblen)]
-        for i in range(ndet):
-            # Input data without MR sampling
-            for npb, pbi in enumerate(pbdat):
-                ax[npb][i].plot(pbi[i], label='Transform {}'.format(npb))
-                ax[npb][i].grid()
-                ax[npb][i].legend()
-            ## All plots after plot_batch
-            # Spectrogram of input sample
-            f, t, Sxx = signal.spectrogram(pbdat[2][i], 2048.)
-            ax[pblen][i].pcolormesh(t, f, Sxx, shading='gouraud')
-            ax[pblen][i].set_ylabel('Frequency [Hz]')
-            ax[pblen][i].set_xlabel('Time [sec]')
-            ax[pblen][i].grid()
-            # Network input (after MR sampling)
-            ax[pblen+1][i].plot(netinpt[i], label='Network input')
-            ax[pblen+1][i].grid()   
-            ax[pblen+1][i].legend() 
-            # Normed output of the sample
-            ax[pblen+2][i].plot(norm[i], label='Normed output')
-            ax[pblen+2][i].grid()
-            ax[pblen+2][i].legend()
-            # CNN output
-            ax[pblen+3][i].imshow(cnnopt[i])
-            ax[pblen+3][i].grid()
-        
-        name = "noise" if label == 0.0 else "signal"
-        savefile_name = 'extremes_io' if extremes_io else 'network_io'
-        save_path = os.path.join(save_dir, '{}_{}_{}.png'.format(savefile_name, name, n))
-        fig.subplots_adjust(top=0.95)
-        plt.savefig(save_path)
-        plt.close()
-
-
 def outputbin_param_distribution(cfg, export_dir, network_output, labels, sample_params, epoch):
     ## Distribution of bin of network output, compared to entire distribution
     parent_dir = os.path.join(export_dir, 'OUTBIN_PARAM_DISTR')
@@ -535,36 +470,6 @@ def outputbin_param_distribution(cfg, export_dir, network_output, labels, sample
         save_path = os.path.join(outdir, "binned_network_output.png")
         plt.savefig(save_path)
         plt.close()
-        
-        """
-        ## Save the corner plot version of the above plot for each bin range
-        chainLabels = ["Binned"]
-        samples_binned = []
-        samples_all = []
-        names = []
-        flag = 0
-        for (param, distr) in sample_params.items():
-            names.append(param)
-            masked_distr = distr[signal_mask]
-            samples_binned.append(masked_distr[idxs])
-            samples_all.append(masked_distr)
-            if len(masked_distr[idxs]) == 0:
-                flag = 1
-        
-        if flag:
-            continue
-        # Make the corner plot and save
-        samples_binned = np.stack(samples_binned, axis=0).T
-        samples_all = np.stack(samples_all, axis=0).T
-        names = np.array(names)
-
-        save_path = os.path.join(outdir, "outbin_corner_plot.pdf")
-        GTC = pygtc.plotGTC(chains=[samples_binned],
-                            paramNames=names,
-                            chainLabels=chainLabels,
-                            figureSize='MNRAS_page',
-                            plotName=save_path)
-        """
 
 
 def paramfrac_detected_above_thresh(cfg, export_dir, network_output, labels, sample_params, epoch):
@@ -737,12 +642,6 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
     with torch.cuda.amp.autocast() if cfg.do_AMP else nullcontext():
         # Obtain training output from network
         training_output = Network(training_samples)
-        
-        # Plotting cnn_output in debug mode
-        if optional['network_io'] and cfg.model.__name__ in cfg.permitted_models:
-            plot_network_io(cfg, export_dir, plot_batch, training_output, training_labels['gw'], nep, 'training', False, source_params['network_snr'])
-            optional['network_io'] = False
-
         # Loss calculation
         all_losses = loss_function(training_output, training_labels, source_params, cfg.parameter_estimation)
         # Backward propogation using loss_function
@@ -770,10 +669,6 @@ def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samp
         # Make sure that we don't do a .backward() function anywhere inside this scope
         with torch.no_grad():
             validation_output = Network(validation_samples)
-            # Plotting the normed outputs
-            if optional['network_io'] and cfg.model.__name__ in cfg.permitted_models:
-                plot_network_io(cfg, export_dir, plot_batch, validation_output, validation_labels['gw'], nep, 'validation', False, source_params['network_snr'])
-                optional['network_io'] = False
             # Calculate validation loss with params if required
             all_losses = loss_function(validation_output, validation_labels, source_params, cfg.parameter_estimation)
     
@@ -887,13 +782,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             start = time.time()
             train_times = []
             
-            # Optional things to do during training
-            optional['network_io'] = cfg.network_io
-            # Sanity check
-            if cfg.network_io:
-                assert cfg.network_io and td.plot_on_first_batch, "NETWORK_IO option does not work without plot_on_first_batch (training)"
-                assert cfg.network_io and vd.plot_on_first_batch, "NETWORK_IO option does not work without plot_on_first_batch (validation)"
-            
             for nbatch, (training_samples, training_labels, source_params, plot_batch) in enumerate(pbar):
                 
                 # Update params
@@ -963,15 +851,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             # Evaluation on the validation dataset
             Network.eval()
             with torch.no_grad():
-
-                # Optional things to do during training
-                optional['network_io'] = cfg.network_io
-                optional['extremes_io'] = cfg.extremes_io
-
-                # Extremes IO
-                if optional['extremes_io']:
-                    best_epoch_samples = {'signal': {'stat': torch.tensor(-999_999.0)}, 'noise': {'stat': torch.tensor(999_999.0)}}
-                    worst_epoch_samples = {'signal': {'stat': torch.tensor(999_999.0)}, 'noise': {'stat': torch.tensor(-999_999.0)}}
                 
                 # Update validation loss dict
                 validation_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
@@ -1011,54 +890,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     acc_valid.append(accuracy)
                     for key in validation_running_loss.keys():
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
-                    
-                    ## Update extremes
-                    if optional['extremes_io']:
-                        enum = validation_labels['gw'].new_tensor(np.arange(len(validation_labels['gw'])))
-                        noise_mask = torch.eq(validation_labels['gw'], 0.0)
-                        signal_mask = torch.eq(validation_labels['gw'], 1.0)
-                        noise_stats = torch.masked_select(voutput['raw'], noise_mask)
-                        signal_stats = torch.masked_select(voutput['raw'], signal_mask)
-                        ## Signal stats
-                        if len(signal_stats)!=0:
-                            # Save signal stats
-                            if torch.max(signal_stats) > best_epoch_samples['signal']['stat']:
-                                maxarg = int(torch.masked_select(enum, signal_mask)[torch.argmax(signal_stats)].item())
-                                best_epoch_samples['signal']['stat'] = torch.max(signal_stats)
-                                best_epoch_samples['signal']['plot_batch'] = [foo[maxarg:maxarg+1] for foo in plot_batch]
-                                best_epoch_samples['signal']['vout_slice'] = slice(maxarg, maxarg+1)
-                                best_epoch_samples['signal']['vlabels'] = validation_labels['gw'][maxarg:maxarg+1]
-                                best_epoch_samples['signal']['snr'] = source_params['network_snr'][maxarg:maxarg+1]
-                            
-                            if torch.min(signal_stats) < worst_epoch_samples['signal']['stat']:
-                                minarg = int(torch.masked_select(enum, signal_mask)[torch.argmin(signal_stats)].item())
-                                worst_epoch_samples['signal']['stat'] = torch.min(signal_stats)
-                                worst_epoch_samples['signal']['plot_batch'] = [foo[minarg:minarg+1] for foo in plot_batch]
-                                worst_epoch_samples['signal']['vout_slice'] = slice(minarg, minarg+1)
-                                worst_epoch_samples['signal']['vlabels'] = validation_labels['gw'][minarg:minarg+1]
-                                worst_epoch_samples['signal']['snr'] = source_params['network_snr'][minarg:minarg+1]
-
-                        ## Noise stats
-                        # Possible error: RuntimeError: min(): Expected reduction dim to be specified for input.numel() == 0. 
-                        # Specify the reduction dim with the 'dim' argument.
-                        # This error means that the argument to min or max is empty.
-                        if len(noise_stats)!=0:
-                            if torch.min(noise_stats) < best_epoch_samples['noise']['stat']: 
-                                minarg = int(torch.masked_select(enum, noise_mask)[torch.argmin(noise_stats)].item())
-                                best_epoch_samples['noise']['stat'] = torch.min(noise_stats)
-                                best_epoch_samples['noise']['plot_batch'] = [foo[minarg:minarg+1] for foo in plot_batch]
-                                best_epoch_samples['noise']['vout_slice'] = slice(minarg, minarg+1)
-                                best_epoch_samples['noise']['vlabels'] = validation_labels['gw'][minarg:minarg+1]
-                                best_epoch_samples['noise']['snr'] = source_params['network_snr'][minarg:minarg+1]
-
-                            if torch.max(noise_stats) > worst_epoch_samples['noise']['stat']: 
-                                maxarg = int(torch.masked_select(enum, noise_mask)[torch.argmax(noise_stats)].item())
-                                worst_epoch_samples['noise']['stat'] = torch.max(noise_stats)
-                                worst_epoch_samples['noise']['plot_batch'] = [foo[maxarg:maxarg+1] for foo in plot_batch]
-                                worst_epoch_samples['noise']['vout_slice'] = slice(maxarg, maxarg+1)
-                                worst_epoch_samples['noise']['vlabels'] = validation_labels['gw'][maxarg:maxarg+1]
-                                worst_epoch_samples['noise']['snr'] = source_params['network_snr'][maxarg:maxarg+1]
-
 
                     # Params for storing labels and outputs
                     if nep % cfg.validation_plot_freq == 0:
@@ -1102,31 +933,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     
                     """ Value VS Value Plots for PE """
                     diagonal_compare(nep, epoch_outputs, epoch_labels, sample_params['network_snr'], export_dir)
-
-                    """ Extremes IO """
-                    if optional['extremes_io']:
-                        tmp = {'best_signal': {}, 'best_noise': {}, 'worst_signal': {}, 'worst_noise': {}}
-                        # Used to store voutput dictionary at specific idx
-                        for key, value in voutput.items():
-                            tmp['best_signal'][key] = value[best_epoch_samples['signal']['vout_slice']]
-                            tmp['best_noise'][key] = value[best_epoch_samples['noise']['vout_slice']]
-                            tmp['worst_signal'][key] = value[worst_epoch_samples['signal']['vout_slice']]
-                            tmp['worst_noise'][key] = value[worst_epoch_samples['noise']['vout_slice']]
-                        
-                        # BEST
-                        plot_network_io(cfg, export_dir, best_epoch_samples['signal']['plot_batch'], tmp['best_signal'], 
-                                        best_epoch_samples['signal']['vlabels'], nep, 'best_signal', extremes_io=True, 
-                                        snrs=best_epoch_samples['signal']['snr'])
-                        plot_network_io(cfg, export_dir, best_epoch_samples['noise']['plot_batch'], tmp['best_noise'], 
-                                        best_epoch_samples['noise']['vlabels'], nep, 'best_noise', extremes_io=True,
-                                        snrs=best_epoch_samples['noise']['snr'])
-                        # WORST
-                        plot_network_io(cfg, export_dir, worst_epoch_samples['signal']['plot_batch'], tmp['worst_signal'], 
-                                        worst_epoch_samples['signal']['vlabels'], nep, 'worst_signal', extremes_io=True,
-                                        snrs=worst_epoch_samples['signal']['snr'])
-                        plot_network_io(cfg, export_dir, worst_epoch_samples['noise']['plot_batch'], tmp['worst_noise'], 
-                                        worst_epoch_samples['noise']['vlabels'], nep, 'worst_noise', extremes_io=True,
-                                        snrs=worst_epoch_samples['noise']['snr'])
                     
                     """ Param distribution of network raw output bins """
                     outputbin_param_distribution(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
@@ -1414,25 +1220,10 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
         pred_path = os.path.join(export_dir, os.path.join(pred_dir, pred_file))
         shutil.copy(pred_path, os.path.join(best_dir, pred_file))
         
-        permitted_models = ['KappaModel', 'KappaModelPE']
-        if cfg.debug and cfg.model.__name__ in permitted_models:
-            # Move best CNN features
-            src_best_features = os.path.join(export_dir, 'CNN_OUTPUT/epoch_{}'.format(best_epoch))
-            dst_best_features = os.path.join(best_dir, 'CNN_features_epoch_{}'.format(best_epoch))
-            copy_tree(src_best_features, dst_best_features)
-        
         # Move best diagonal plots
         src_best_diagonals = os.path.join(export_dir, 'DIAGONAL/epoch_{}'.format(best_epoch))
         dst_best_diagonals = os.path.join(best_dir, 'diagonal_epoch_{}'.format(best_epoch))
         copy_tree(src_best_diagonals, dst_best_diagonals)
-        # Move network_io and learn params
-        if cfg.network_io:
-            src_best_networkio = os.path.join(export_dir, 'NETWORK_IO/training/epoch_{}'.format(best_epoch))
-            dst_best_networkio = os.path.join(best_dir, 'network_io/training/epoch_{}'.format(best_epoch))
-            copy_tree(src_best_networkio, dst_best_networkio)
-            src_best_networkio = os.path.join(export_dir, 'NETWORK_IO/validation/epoch_{}'.format(best_epoch))
-            dst_best_networkio = os.path.join(best_dir, 'network_io/validation/epoch_{}'.format(best_epoch))
-            copy_tree(src_best_networkio, dst_best_networkio)
         # Learn params
         src_best_learn = os.path.join(export_dir, 'LEARN_PARAMS/epoch_{}'.format(best_epoch))
         dst_best_learn = os.path.join(best_dir, 'learn_params_epoch_{}'.format(best_epoch))
