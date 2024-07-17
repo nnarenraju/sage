@@ -432,10 +432,10 @@ class MultirateSampling(TransformWrapperPerChannel):
 class FastGenerateWaveform():
     ## Used to augment on all parameters (uses GPU-accelerated IMRPhenomPv2 waveform generation)
     ## Link to Ripple: https://github.com/tedwards2412/ripple
-    def __init__(self, sample_length=15.0, fix_epoch=False):
+    def __init__(self, fix_epoch=False):
         # Generate the frequency grid (default values)
-        self.f_lower = 20.
-        self.f_upper = 2048.
+        self.f_lower = 0.0 # Hz
+        self.f_upper = 0.0 # Hz
         self.delta_f = 0.25
         self.delta_t = 1./2048.
         self.sample_length_in_s = 1./self.delta_f
@@ -467,6 +467,8 @@ class FastGenerateWaveform():
         self.signal_length = sample_length # seconds
         self.whiten_padding = 5.0 # seconds
         self.error_padding_in_s = 0.5 # seconds
+    
+
     
     def __str__(self):
         data = "f_lower = {}, f_upper = {}, \n \
@@ -670,6 +672,8 @@ class FastGenerateWaveform():
         # Set lal.Detector object as global as workaround for MP methods
         # Project wave does not work with DataLoader otherwise
         setattr(self, 'dets', special['dets'])
+        # Get data config params
+        data_cfg = special['data_cfg']
         # Augmentation on all params
         hp, hc = self.generate(params)
         # Make hp, hc into proper injection (adjust to tc and zero pad)
@@ -677,150 +681,14 @@ class FastGenerateWaveform():
         # Convert hp, hc into h(t) using antenna pattern (H1, L1 considered)
         out = self.project(hp, hc, special, params)
         # Debug waveform generation
-        #self.debug_waveform_generate(data=[out[0], out[1]],
-        #                             labels=['H1', 'L1'])
+        # self.debug_waveform_generate(data=[out[0], out[1]],
+        #                              labels=['H1', 'L1'])
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         return out
     
 
 
 """ Signal only Transformations """
-
-
-class GenerateWaveform(SignalWrapper):
-    ## WARNING: might be too slow, very inefficiently written!
-    ## Used to augment on all parameters
-    # Produces a new set of h_plus and h_cross arrays
-    # Make batch_size priots in dataset object and pass waveform_kwargs one by one
-    # Other signal augmentation methods are not required unless it changes the prior distribution.
-    def __init__(self, always_apply=True):
-        super().__init__(always_apply)
-        self.waveform_kwargs = {}
-        self.waveform_kwargs['delta_t'] = 1./2048.
-        self.waveform_kwargs['f_lower'] = 20.0 # Hz
-        self.waveform_kwargs['approximant'] = 'IMRPhenomXPHM'
-        self.waveform_kwargs['f_ref'] = 20.0 # Hz
-
-        self.signal_length = 12.0 # seconds 
-        self.whiten_padding = 5.0 # seconds
-        self.sample_rate = 2048. # Hz
-        self.sample_length_in_s = self.signal_length + self.whiten_padding # seconds
-        self.sample_length_in_num = round(self.sample_length_in_s * self.sample_rate)
-        self.error_padding_in_s = 0.5 # seconds
-        self.error_padding_in_num = round(self.error_padding_in_s * self.sample_rate)
-        self.signal_low_freq_cutoff = 20.0 # Hz
-
-    def optimise_fmin(self, h_pol):
-        # Use self.waveform_kwargs to calculate the fmin for given params
-        # Such that the length of the sample is atleast 20s by the time it reaches fmin
-        # This DOES NOT mean we produce signals that are exactly 20s long
-        current_start_time = -1*h_pol.get_sample_times()[0]
-        req_start_time = self.signal_length - h_pol.get_sample_times()[-1]
-        fmin = self.signal_low_freq_cutoff*(current_start_time/req_start_time)**(3./8.)
-        
-        while True:
-            # fmin_new is the fmin required for the current params to produce 20.0s signal
-            self.waveform_kwargs['f_lower'] = fmin
-            h_plus, h_cross = pycbc.waveform.get_td_waveform(**self.waveform_kwargs)
-            # Sanity check to verify the new signal length
-            new_signal_length = len(h_plus)/self.sample_rate
-            if new_signal_length > self.signal_length:
-                break
-            else:
-                fmin = fmin - 3.0
-            
-        # Return new signal
-        return h_plus, h_cross
-
-    def generate(self, prior_values):
-        # Convert np.record object to dict and append to waveform_kwargs dict
-        self.waveform_kwargs.update(prior_values)
-        
-        ## Injection
-        # Generate the full waveform
-        h_plus, h_cross = pycbc.waveform.get_td_waveform(**self.waveform_kwargs)
-        # If the signal is smaller than 20s, we change fmin such that it is atleast 20s
-        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] < self.signal_length:
-            # Pass h_plus or h_cross
-            h_plus, h_cross = self.optimise_fmin(h_plus)
-        
-        # If it is longer than signal_length, slice out the required region
-        if -1*h_plus.get_sample_times()[0] + h_plus.get_sample_times()[-1] > self.signal_length:
-            new_end = h_plus.get_sample_times()[-1]
-            new_start = -1*(self.signal_length - new_end)
-            h_plus = h_plus.time_slice(start=new_start, end=new_end)
-            h_cross = h_cross.time_slice(start=new_start, end=new_end)
-        
-        ## Properly time and project the waveform
-        start_time = prior_values['injection_time'] + h_plus.get_sample_times()[0]
-        end_time = prior_values['injection_time'] + h_plus.get_sample_times()[-1]
-        
-        # Calculate the number of zeros to append or prepend
-        # Whitening padding will be corrupt and removed in whiten transformation
-        start_samp = prior_values['tc'] + (self.whiten_padding/2.0)
-        start_interval = prior_values['injection_time'] - start_samp
-        # subtract delta value for length error (0.001 if needed)
-        end_padding = self.whiten_padding/2.0
-        post_merger = self.signal_length - prior_values['tc']
-        end_interval = prior_values['injection_time'] + post_merger + end_padding
-        
-        # Calculate the difference (if any) between two time sets
-        diff_start = start_time - start_interval
-        diff_end = end_interval - end_time
-        # Convert num seconds to num samples
-        diff_end_num = int(diff_end * self.sample_rate)
-        diff_start_num = int(diff_start * self.sample_rate)
-        
-        expected_length = ((end_interval-start_interval) + self.error_padding_in_s*2.0) * self.sample_rate
-        observed_length = len(h_plus) + (diff_start_num + diff_end_num + self.error_padding_in_num*2.0)
-        diff_length = expected_length - observed_length
-        if diff_length != 0:
-            diff_end_num += diff_length
-            
-        # If any positive difference exists, add padding on that side
-        # Pad h_plus and h_cross with zeros on both end for slicing
-        if diff_end > 0.0:
-            # Append zeros if we need samples after signal ends
-            h_plus.append_zeros(int(diff_end_num + self.error_padding_in_num))
-            h_cross.append_zeros(int(diff_end_num + self.error_padding_in_num))
-        
-        if diff_start > 0.0:
-            # Prepend zeros if we need samples before signal begins
-            # prepend_zeros arg must be an integer
-            h_plus.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
-            h_cross.prepend_zeros(int(diff_start_num + self.error_padding_in_num))
-
-        elif diff_start < 0.0:
-            h_plus = h_plus.crop(left=-1*((diff_start_num + self.error_padding_in_num)/2048.), right=0.0)
-            h_cross = h_cross.crop(left=-1*((diff_start_num + self.error_padding_in_num)/2048.), right=0.0)
-        
-        assert len(h_plus) == self.sample_length_in_num + self.error_padding_in_num*2.0
-        assert len(h_cross) == self.sample_length_in_num + self.error_padding_in_num*2.0
-        
-        # Setting the start_time, sets epoch and end_time as well within the TS
-        # Set the start time of h_plus and h_plus after accounting for prepended zeros
-        h_plus.start_time = start_interval - self.error_padding_in_s
-        h_cross.start_time = start_interval - self.error_padding_in_s
-        # Use project_wave and random realisation of polarisation angle, ra, dec to obtain augmented signal
-        strains = [det.project_wave(h_plus, h_cross, prior_values['ra'], prior_values['dec'], prior_values['polarization'], method='constant') for det in self.dets]
-        # Put both strains together
-        time_interval = (start_interval, end_interval)
-        signal = np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
-
-        return signal
-
-    def apply(self, y: np.ndarray, params: dict, special: dict, debug=None):
-        # Sanity check for validation
-        if not special['training']:
-            return (y, params, special)
-        # Set lal.Detector object as global as workaround for MP methods
-        # Project wave does not work with DataLoader otherwise
-        setattr(self, 'dets', special['dets'])
-        # Augmentation on all params
-        out = self.generate(params)
-        # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
-        # Shape remains the same, so reading in dataset object won't be a problem
-        return (out, params, special)
 
 
 class AugmentPolSky(SignalWrapper):
