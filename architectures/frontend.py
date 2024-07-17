@@ -668,13 +668,13 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
         ## Convert network into given dtype and store in proper device 
         # Primary outputs
         self.signal_or_noise = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(512, 2)
-        self.chirp_distance = nn.Linear(512, 2)
-        self.chirp_mass = nn.Linear(512, 2)
-        self.distance = nn.Linear(512, 2)
-        self.mass_ratio = nn.Linear(512, 2)
-        self.inv_mass_ratio = nn.Linear(512, 2)
-        self.snr = nn.Linear(512, 2)
+        self.coalescence_time = nn.Linear(512, 1)
+        self.chirp_distance = nn.Linear(512, 1)
+        self.chirp_mass = nn.Linear(512, 1)
+        self.distance = nn.Linear(512, 1)
+        self.mass_ratio = nn.Linear(512, 1)
+        self.inv_mass_ratio = nn.Linear(512, 1)
+        self.snr = nn.Linear(512, 1)
         # Mod layers
         self.signal_or_noise.to(dtype=data_type, device=self.store_device)
         self.coalescence_time.to(dtype=data_type, device=self.store_device)
@@ -708,16 +708,12 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
             normed = self.layernorm(x)
         elif self.norm_layer == 'instancenorm':
             normed = self.instancenorm(x)
-        
-        # Upsampling of input normed data
-        if self.upsample_factor != 1.0:
-            normed = torch.cat([self.upsample(normed[:, 0:1]), self.upsample(normed[:, 1:2])], dim=1)
 
-        # Conv Backend
+        # 1D CNN Frontend
         cnn_output = torch.cat([self.backend['det1'](normed[:, 0:1]), self.backend['det2'](normed[:, 1:2])], dim=1)
 
-        # Timm Frontend
-        out = self.frontend(cnn_output) # (batch_size, 512)
+        # ResNet CBAM Backend
+        out = self.frontend(cnn_output) # (batch_size, embedding_size)
         out = self.flatten_d1(self.avg_pool_1d(out))
         ## Output necessary params
         raw = self.flatten_d0(self.signal_or_noise(out))
@@ -725,49 +721,33 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
 
         ## Parameter Estimation
         # Time of Coalescence
-        tc_ = self.coalescence_time(out)
-        tc = self.flatten_d0(tc_[:,0])
+        tc = self.flatten_d0(self.coalescence_time(out))
         norm_tc = self.sigmoid(tc)
-        tc_var = self.Tanh(self.flatten_d0(tc_[:,1]))
         # Chirp Distance
-        dchirp_ = self.chirp_distance(out)
-        dchirp = self.flatten_d0(dchirp_[:,0])
+        dchirp = self.flatten_d0(self.chirp_distance(out))
         norm_dchirp = self.sigmoid(dchirp)
-        dchirp_var = self.flatten_d0(dchirp_[:,1])
         # Chirp Mass
-        mchirp_ = self.chirp_mass(out)
-        mchirp = self.flatten_d0(mchirp_[:,0])
+        mchirp = self.flatten_d0(self.chirp_mass(out))
         norm_mchirp = self.sigmoid(mchirp)
-        mchirp_var = self.Tanh(self.flatten_d0(mchirp_[:,1]))
         # Distance
-        dist_ = self.distance(out)
-        dist = self.flatten_d0(dist_[:,0])
+        dist = self.flatten_d0(self.distance(out))
         norm_dist = self.sigmoid(dist)
-        dist_var = self.flatten_d0(dist_[:,1])
         # Mass Ratio
-        q_ = self.mass_ratio(out)
-        q = self.flatten_d0(q_[:,0])
+        q = self.flatten_d0(self.mass_ratio(out))
         norm_q = self.sigmoid(q)
-        q_var = self.flatten_d0(q_[:,1])
         # Inverse Mass Ratio
-        invq_ = self.inv_mass_ratio(out)
-        invq = self.flatten_d0(invq_[:,0])
+        invq = self.flatten_d0(self.inv_mass_ratio(out))
         norm_invq = self.sigmoid(invq)
-        invq_var = self.flatten_d0(invq_[:,1])
         # SNR
-        snr_ = self.snr(out)
-        snr = self.flatten_d0(snr_[:,0])
+        snr = self.flatten_d0(self.snr(out))
         norm_snr = self.sigmoid(snr)
-        snr_var = self.flatten_d0(snr_[:,1])
         
         # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
         return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': norm_tc, 'norm_dchirp': norm_dchirp, 'norm_mchirp': norm_mchirp,
                 'norm_dist': norm_dist, 'norm_q': norm_q, 'norm_invq': norm_invq, 'norm_snr': norm_snr,
                 'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
-                'norm_tc_sigma': tc_var, 'norm_mchirp_sigma': mchirp_var, 'norm_snr_sigma': snr_var,
-                'norm_q_sigma': q_var, 'norm_invq_sigma': invq_var, 'norm_dist_sigma': dist_var,
-                'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed}
+                'input': x, 'normed': normed}
 
 
 class KappaModel_ResNet_small(torch.nn.Module):
