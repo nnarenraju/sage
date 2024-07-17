@@ -445,6 +445,7 @@ class FastGenerateWaveform():
         self.f_upper = 0.0 # Hz
         self.delta_t = 0.0 # seconds
         self.f_ref = 0.0 # Hz
+        self.sample_rate = 0.0 # Hz
         # Clean-up params
         self.rwrap = rwrap
         # Tapering params
@@ -481,12 +482,7 @@ class FastGenerateWaveform():
         self.kmin = int(self.tmp_f_lower / self.tmp_delta_f)
         self.kmax = self.kmin + self.winlen//2
 
-    """ ONE-OFF FUNCTIONS (Dont't require JAX or to be jitted in any way) """
-    def ms_to_Mc_eta(self, masses):
-        ## Converts binary component masses to chirp mass and symmetric mass ratio.
-        m1, m2 = masses
-        return (m1 * m2) ** (3 / 5) / (m1 + m2) ** (1 / 5), m1 * m2 / (m1 + m2) ** 2
-
+    """ ONE-OFF FUNCTIONS """
     def get_imr_duration(self, theta, f_lower):
         # This function is applicable for IMRPhenomD and IMRPhenomPv2
         # Multiplying by a factor of 1.1 for overestimate of signal duration
@@ -531,17 +527,7 @@ class FastGenerateWaveform():
 
         return (tmp_f_lower, tmp_delta_f, fsize)
     
-    """ NON-JITTABLES """
-    # Using jnp and jitting this function caused significant slowdown
-    # Might have something to do with multiple compilations
-    def ripple_cleanup(self, hpol):
-        # Add the 0th frequency bin back into the fseries
-        hpol = np.insert(hpol, 0, 0)
-        # ad-hoc high pass filtering
-        hpol[self.clean_idx] = 0.0
-        return hpol
-    
-    """ JITTABLES (JAX/JIT implementation removed in Dec 2023) """
+    """ JITTABLES """
     # Jitting these functions require the first argument (self) to be defined as static
     def convert_to_timeseries(self, hpol):
         ## Convert frequency series to time series
@@ -559,33 +545,24 @@ class FastGenerateWaveform():
         return hpol * self.cshift
 
     def resize(self, hpol):
-        # Use jnp to speed things up
         return hpol[0:self.fsize]
-
-    def get_theta_ripple(self, theta):
-        # Convert the prior values to jnp array
-        # Following params are required for IMRPhenomPv2
-        # m1_msun, m2_msun, s1x, s1y, s1z, s2x, s2y, s2z, distance_mpc, tc, phiRef, inclination
-        Mc, eta = self.ms_to_Mc_eta(np.array([theta[0], theta[1]]))
-        theta_ripple = np.append(np.array([Mc, eta]), np.array(theta[2:]))
-        return theta_ripple
     
     def get_theta_pycbc(self, theta):
         # Add required params to waveform kwargs
         theta['f_lower'] = self.tmp_f_lower
         theta['delta_f'] = self.tmp_delta_f
         theta['delta_t'] = self.delta_t
-        theta['f_final'] = 2048.0
+        theta['f_final'] = self.f_upper
         return theta
     
     def get_pycbc_hphc(self, theta):
-        # Get the IMRPhenomPv2 waveform using PyCBC
+        # Get frequency domain waveform
         return pycbc.waveform.get_fd_waveform(**theta)
 
     """ MAIN """
     def make_injection(self, hp, hc, params):
         # Get the required sample length and tc
-        sample_length_in_s = len(hp)/2048.
+        sample_length_in_s = len(hp)/self.sample_rate
         tc_obs = sample_length_in_s - self.rwrap
         tc_req = params['tc']
         start_time = tc_obs - tc_req
@@ -594,13 +571,13 @@ class FastGenerateWaveform():
         start_time -= (self.whiten_padding/2.0 + self.error_padding_in_s)
         end_time += (self.whiten_padding/2.0 + self.error_padding_in_s)
         # Pad hpol with zeros (append or prepend) if necessary
-        left_pad = int(-start_time * 2048.) if start_time < 0.0 else 0
-        right_pad = int((end_time-sample_length_in_s) * 2048.) if end_time > sample_length_in_s else 0
+        left_pad = int(-start_time * self.sample_rate) if start_time < 0.0 else 0
+        right_pad = int((end_time-sample_length_in_s) * self.sample_rate) if end_time > sample_length_in_s else 0
         hp = np.pad(hp, (left_pad, right_pad), 'constant', constant_values=(0.0, 0.0))
         hc = np.pad(hc, (left_pad, right_pad), 'constant', constant_values=(0.0, 0.0))
         # Slice the required section out of hpol
-        start_idx = int(start_time*2048.) if start_time > 0.0 else 0
-        end_idx = int(end_time*2048.) + int(left_pad)
+        start_idx = int(start_time*self.sample_rate) if start_time > 0.0 else 0
+        end_idx = int(end_time*self.sample_rate) + int(left_pad)
         slice_idx = slice(start_idx, end_idx)
         hp = hp[slice_idx]
         hc = hc[slice_idx]
