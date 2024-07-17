@@ -437,7 +437,8 @@ class FastGenerateWaveform():
                  beta_taper = 8, 
                  pad_duration_estimate = 1.1, 
                  min_mass = 5.0, 
-                 fix_epoch = False
+                 fix_epoch = False,
+                 debug_me = False
                 ):
 
         # Generate the frequency grid (default values)
@@ -458,6 +459,7 @@ class FastGenerateWaveform():
         self.error_padding_in_s = 0.0 # seconds
         # Other        
         self.min_mass = min_mass
+        self.debug_me = debug_me
 
     def precompute_common_params(self):
         # Pick the longest waveform from priors to make some params static
@@ -631,7 +633,7 @@ class FastGenerateWaveform():
 
         return hp_td, hc_td
     
-    def debug_waveform_generate(self, data, labels):
+    def debug_waveform_generate(self, data, labels, cfg):
         # Plotting debug recoloured
         # NOTE to self: figsize is (width, height)
         fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
@@ -643,9 +645,10 @@ class FastGenerateWaveform():
             axs[n][0].legend()
         # Other
         filename = 'waveform_{}.png'.format(uuid.uuid4().hex)
-        if not os.path.exists("./DEBUG"):
-            os.makedirs("./DEBUG")
-        save = os.path.join("./DEBUG", filename)
+        save_path = os.path.join(cfg.export_dir, "DEBUG/waveform_generation")
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        save = os.path.join(save_path, filename)
         plt.savefig(save)
         plt.close()
     
@@ -653,8 +656,6 @@ class FastGenerateWaveform():
         # Set lal.Detector object as global as workaround for MP methods
         # Project wave does not work with DataLoader otherwise
         setattr(self, 'dets', special['dets'])
-        # Get data config params
-        data_cfg = special['data_cfg']
         # Augmentation on all params
         hp, hc = self.generate(params)
         # Make hp, hc into proper injection (adjust to tc and zero pad)
@@ -662,8 +663,10 @@ class FastGenerateWaveform():
         # Convert hp, hc into h(t) using antenna pattern (H1, L1 considered)
         out = self.project(hp, hc, special, params)
         # Debug waveform generation
-        # self.debug_waveform_generate(data=[out[0], out[1]],
-        #                              labels=['H1', 'L1'])
+        if self.debug_me:
+            self.debug_waveform_generate(data=[out[0], out[1]],
+                                         labels=['H1', 'L1'],
+                                         special['cfg'])
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         return out
     
