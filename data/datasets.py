@@ -140,6 +140,7 @@ class MinimalOTF(Dataset):
         self.waveform_generation.signal_length = data_cfg.signal_length
         self.waveform_generation.whiten_padding = data_cfg.whiten_padding
         self.waveform_generation.error_padding_in_s = data_cfg.error_padding_in_s
+        self.waveform_generation.sample_rate = data_cfg.sample_rate
         # Precompute common params for waveform generation
         self.waveform_generation.precompute_common_params()
 
