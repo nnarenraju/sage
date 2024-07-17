@@ -436,9 +436,7 @@ class FastGenerateWaveform():
         # Generate the frequency grid (default values)
         self.f_lower = 0.0 # Hz
         self.f_upper = 0.0 # Hz
-        self.delta_f = 0.25
         self.delta_t = 1./2048.
-        self.sample_length_in_s = 1./self.delta_f
         self.f_ref = self.f_lower
         # Clean-up params
         self.rwrap = 3.0
