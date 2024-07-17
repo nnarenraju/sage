@@ -131,6 +131,18 @@ class MinimalOTF(Dataset):
         if bool(re.search('cuda', self.cfg.store_device)):
             setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
         
+        """ Set default waveform generation params """
+        # Use data_cfg to set waveform generation class attributes
+        self.waveform_generation.f_lower = data_cfg.signal_low_freq_cutoff
+        self.waveform_generation.f_upper = data_cfg.sample_rate
+        self.waveform_generation.delta_t = 1./data_cfg.sample_rate
+        self.waveform_generation.f_ref = data_cfg.reference_freq
+        self.waveform_generation.signal_length = data_cfg.signal_length
+        self.waveform_generation.whiten_padding = data_cfg.whiten_padding
+        self.waveform_generation.error_padding_in_s = data_cfg.error_padding_in_s
+        # Precompute common params for waveform generation
+        self.waveform_generation.precompute_common_params()
+
         """ PSD Handling (used in whitening) """
         # Store the PSD files here in RAM. This reduces the overhead when whitening.
         # Read all psds in the data_dir and store then as FrequencySeries
