@@ -985,9 +985,10 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
             rescaled_dchirp = self._dchirp_from_dist(rescaled_distance, params['mchirp'])
             # Update targets and params with new rescaled distance is not possible
             # We do not know the priors of network_snr properly
-            parameter_estimation = cfg.model_params['parameter_estimation']
-            if 'norm_dist' in parameter_estimation or 'norm_dchirp' in parameter_estimation:
-                raise RuntimeError('rescale_snr option cannot be used with dist/dchirp PE!')
+            if 'parameter_estimation' in cfg.model_params.keys():
+                parameter_estimation = cfg.model_params['parameter_estimation']
+                if 'norm_dist' in parameter_estimation or 'norm_dchirp' in parameter_estimation:
+                    raise RuntimeError('rescale_snr option cannot be used with dist/dchirp PE!')
             # Update the params dictionary with new rescaled distances
             params['distance'] = rescaled_distance
             params['dchirp'] = rescaled_dchirp
