@@ -631,6 +631,7 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
         self.filter_size = filter_size
         self.kernel_size = kernel_size
         self.norm_layer = norm_layer
+        self.parameter_estimation = parameter_estimation
         
         """ Backend """
         # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
