@@ -432,21 +432,41 @@ class MultirateSampling(TransformWrapperPerChannel):
 class FastGenerateWaveform():
     ## Used to augment on all parameters (uses GPU-accelerated IMRPhenomPv2 waveform generation)
     ## Link to Ripple: https://github.com/tedwards2412/ripple
-    def __init__(self, fix_epoch=False):
+    def __init__(self, 
+                 rwrap = 3.0, 
+                 beta_taper = 8, 
+                 pad_duration_estimate = 1.1, 
+                 min_mass = 5.0, 
+                 fix_epoch = False
+                ):
+
         # Generate the frequency grid (default values)
         self.f_lower = 0.0 # Hz
         self.f_upper = 0.0 # Hz
-        self.delta_t = 1./2048.
-        self.f_ref = self.f_lower
+        self.delta_t = 0.0 # seconds
+        self.f_ref = 0.0 # Hz
         # Clean-up params
-        self.rwrap = 3.0
+        self.rwrap = rwrap
         # Tapering params
         beta = 8
-        # Condition for optimise f_min
-        self.duration_padfactor = 1.1
+        # Condition for optimising f_min
+        self.duration_padfactor = pad_duration_estimate
+        # Projection params
+        self.signal_length = 0.0 # seconds
+        self.whiten_padding = 0.0 # seconds
+        self.error_padding_in_s = 0.0 # seconds
+        # Other        
+        self.min_mass = min_mass
+
+    def precompute_common_params(self):
         # Pick the longest waveform from priors to make some params static
-        # Below params are for m1 = 5.01, m2 = 5.0 and with aligned spins s1z, s2z = 0.99
-        _theta = {'mass1': 5.01, 'mass2': 5.0, 'spin1z': 0.99, 'spin2z': 0.99}
+        # Default params are for m1 = 5.01, m2 = 5.0 and with aligned spins s1z, s2z = 0.99
+        # Minimum mass is chosen to be below prior minimum mass (just in case)
+        ## Sanity check
+        assert not any([self.f_lower, self.f_upper, self.delta_t, \
+                        self.f_ref, self.signal_length, self.whiten_padding])
+        ## End
+        _theta = {'mass1': self.min_mass+0.01, 'mass2': self.min_mass, 'spin1z': 0.99, 'spin2z': 0.99}
         self.tmp_f_lower, self.tmp_delta_f, self.fsize = self.optimise_fmin(_theta)
         # Get the fseries over which we get the waveform in FD
         self.fseries = np.arange(0.0, self.f_upper, self.tmp_delta_f)
@@ -460,20 +480,6 @@ class FastGenerateWaveform():
         self.window = np.array(get_window(('kaiser', beta), self.winlen))
         self.kmin = int(self.tmp_f_lower / self.tmp_delta_f)
         self.kmax = self.kmin + self.winlen//2
-
-        # Projection params
-        self.signal_length = sample_length # seconds
-        self.whiten_padding = 5.0 # seconds
-        self.error_padding_in_s = 0.5 # seconds
-    
-
-    
-    def __str__(self):
-        data = "f_lower = {}, f_upper = {}, \n \
-        delta_f = {}, delta_t = {}, f_ref = {}, \n \
-        rwrap = {}".format(self.f_lower, self.f_upper, self.delta_f,
-                                   self.delta_t, self.f_ref, self.rwrap)
-        return data
 
     """ ONE-OFF FUNCTIONS (Dont't require JAX or to be jitted in any way) """
     def ms_to_Mc_eta(self, masses):
