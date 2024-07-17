@@ -579,8 +579,8 @@ def loss_and_accuracy_curves(cfg, filepath, export_dir, best_epoch=-1):
     plt.close()
     
     ## Parameter Estimation Loss Curves
-    tsearch_names = [foo+'_tloss' for foo in cfg.parameter_estimation+('gw', )]
-    vsearch_names = [foo+'_vloss' for foo in cfg.parameter_estimation+('gw', )]
+    tsearch_names = [foo+'_tloss' for foo in cfg.model_params['parameter_estimation']+('gw', )]
+    vsearch_names = [foo+'_vloss' for foo in cfg.model_params['parameter_estimation']+('gw', )]
     ax, _ = figure(title="PE Loss Curves")
     # Colour map
     numc = len(tsearch_names)
@@ -643,7 +643,7 @@ def training_phase(nep, cfg, data_cfg, Network, optimizer, scheduler, scheduler_
         # Obtain training output from network
         training_output = Network(training_samples)
         # Loss calculation
-        all_losses = loss_function(training_output, training_labels, source_params, cfg.parameter_estimation)
+        all_losses = loss_function(training_output, training_labels, source_params, cfg.model_params['parameter_estimation'])
         # Backward propogation using loss_function
         training_loss = all_losses['total_loss']
         training_loss.backward()
@@ -670,7 +670,7 @@ def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samp
         with torch.no_grad():
             validation_output = Network(validation_samples)
             # Calculate validation loss with params if required
-            all_losses = loss_function(validation_output, validation_labels, source_params, cfg.parameter_estimation)
+            all_losses = loss_function(validation_output, validation_labels, source_params, cfg.model_params['parameter_estimation'])
     
     # Accuracy calculation
     accuracy = calculate_accuracy(validation_output['pred_prob'], validation_labels['gw'], 0.5)
@@ -756,7 +756,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             Network.train()
             
             # Necessary save and update params
-            training_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
+            training_running_loss = dict(zip(cfg.model_params['parameter_estimation'], [0.0]*len(cfg.model_params['parameter_estimation'])))
             training_running_loss.update({'total_loss': 0.0, 'gw': 0.0})
             training_batches = 0
             # Store accuracy params
@@ -846,15 +846,15 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             with torch.no_grad():
                 
                 # Update validation loss dict
-                validation_running_loss = dict(zip(cfg.parameter_estimation, [0.0]*len(cfg.parameter_estimation)))
+                validation_running_loss = dict(zip(cfg.model_params['parameter_estimation'], [0.0]*len(cfg.model_params['parameter_estimation'])))
                 validation_running_loss.update({'total_loss': 0.0, 'gw': 0.0})
                 validation_batches = 0
                 
                 # Other params for plotting and logging
                 # Creating a defaultdict of lists (logging outputs)
                 dd = defaultdict(list)
-                epoch_labels = {foo: np.array([]) for foo in cfg.parameter_estimation + ('gw', )}
-                epoch_outputs = {foo: np.array([]) for foo in cfg.parameter_estimation + ('gw', )}
+                epoch_labels = {foo: np.array([]) for foo in cfg.model_params['parameter_estimation'] + ('gw', )}
+                epoch_outputs = {foo: np.array([]) for foo in cfg.model_params['parameter_estimation'] + ('gw', )}
                 sample_params = None
                 raw_output = np.array([])
                 
@@ -899,7 +899,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                             dd[key].append(source_params[key].cpu())
                         
                         # Add parameter estimation actual and observed values
-                        for param in cfg.parameter_estimation:
+                        for param in cfg.model_params['parameter_estimation']:
                             epoch_labels[param] = np.concatenate([epoch_labels[param], validation_labels[param].cpu()])
                             epoch_outputs[param] = np.concatenate([epoch_outputs[param], voutput[param].cpu()])
                 
@@ -1154,14 +1154,14 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             print("Average losses in Validation Phase:")
             print("Total Loss = {}".format(epoch_validation_loss['tot']))
             print("1. GW Loss = {}".format(epoch_validation_loss['gw']))
-            for n, param in enumerate(cfg.parameter_estimation):
+            for n, param in enumerate(cfg.model_params['parameter_estimation']):
                 print("{}. {} Loss = {}".format(n+2, param, epoch_validation_loss[param]))
             
             print('----+----+----+----+----+----+----+----+----')
             print("Average losses in Training Phase:")
             print("Total Loss = {}".format(epoch_training_loss['tot']))
             print("1. GW Loss = {}".format(epoch_training_loss['gw']))
-            for n, param in enumerate(cfg.parameter_estimation):
+            for n, param in enumerate(cfg.model_params['parameter_estimation']):
                 print("{}. {} Loss = {}".format(n+2, param, epoch_training_loss[param]))
             print('----------------------------------------------------------------------')
             
