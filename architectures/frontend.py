@@ -619,7 +619,7 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
                  filter_size: int = 32,
                  kernel_size: int = 64,
                  resnet_size: int = 50,
-                 parameter_estimation: tuple = (,),
+                 parameter_estimation: tuple = (),
                  norm_layer: str = 'instancenorm',
                  store_device: str = 'cpu',
                  **kwargs):
