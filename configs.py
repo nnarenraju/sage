@@ -461,12 +461,12 @@ class SageNetOTF_May24_Russet(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
-                             h1_psds_hdf="./notebooks/tmp/psds_H1_30days.hdf",
-                             l1_psds_hdf="./notebooks/tmp/psds_L1_30days.hdf",
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
                              p_recolour=0.3829,
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
@@ -933,7 +933,7 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True),
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
