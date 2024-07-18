@@ -28,6 +28,8 @@ import os
 import h5py
 import torch
 import shutil
+import configparser
+
 import numpy as np
 import pandas as pd
 import torch.utils.data as D
@@ -46,6 +48,21 @@ from data.multirate_sampling import get_sampling_rate_bins_type1, get_sampling_r
 from data.multirate_sampling import multirate_sampling
 
 
+def _cfg_to_ini_():
+    # Name conversion from data_cfg to pycbc ini
+    cfg_to_ini = {}
+    cfg_to_ini['reference_freq'] = [('f_ref', 'static_params')]
+    cfg_to_ini['signal_low_freq_cutoff'] = [('f_lower', 'static_params')]
+    cfg_to_ini['signal_approximant'] = [('approximant', 'static_params')]
+    cfg_to_ini['tc_inject_lower'] = [('min-tc', 'prior-tc')]
+    cfg_to_ini['tc_inject_upper'] = [('max-tc', 'prior-tc')]
+    cfg_to_ini['prior_low_mass'] = [('min-mass1', 'prior-mass1'), ('min-mass2', 'prior-mass2')]
+    cfg_to_ini['prior_high_mass'] = [('max-mass1', 'prior-mass1'), ('max-mass2', 'prior-mass2')]
+    cfg_to_ini['prior_low_chirp_dist'] = [('min-chirp_distance', 'prior-chirp_distance')]
+    cfg_to_ini['prior_high_chirp_dist'] = [('max-chirp_distance', 'prior-chirp_distance')]
+    return cfg_to_ini
+
+
 class DataModule:
     """
     Module to handle dataset preparation.
@@ -62,6 +79,9 @@ class DataModule:
     get_data_loader -
     
     """
+
+    def __init__(self):
+        pass
 
     def configure_pipeline(opts):
         """ 
@@ -83,7 +103,7 @@ class DataModule:
         # This creates a new instance, handle this in run.py
         cfg = eval(opts.config)
         return cfg
-    
+
     
     def configure_dataset(opts):
         """ 
@@ -100,14 +120,28 @@ class DataModule:
             model object from data_config.py
             
         """
-        
-        # cfg contains the model class (see config.py)
-        cfg = eval(opts.data_config)
-        return cfg
+
+        # data_cfg contains the dataset configuration
+        data_cfg = eval(opts.data_config)
+        # Generating pycbc ini file from template
+        cfg_to_ini = _cfg_to_ini_()
+        config = configparser.ConfigParser()
+        ini_template_path = './ini_files/templates/ds{}_template.ini'.format(data_cfg.dataset)
+        ini_file_path = './ini_files/ds{}.ini'.format(data_cfg.dataset)
+        config.read(ini_template_path)
+        for cfg_mdata, ini_mdata in cfg_to_ini.items():
+            for varname, clsname in ini_mdata:
+                value = str(getattr(data_cfg, cfg_mdata))
+                config.set(clsname, varname, value)
+
+        with open(ini_file_path, 'w') as configfile:
+            config.write(configfile)
+
+        return data_cfg
     
     
     def make_export_dir(cfg):
-        # Results directory (preferred: /mnt/nnarenraju)
+        # Results directory
         if not os.path.exists(cfg.export_dir):
             cfg.export_dir.mkdir(parents=True, exist_ok=False)
         else:
