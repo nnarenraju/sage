@@ -152,10 +152,10 @@ def run_trainer():
     
     
     """ Prepare Data """
-    # Get model configuration
-    cfg = dat.configure_pipeline(opts)
     # Get data creation/usage configuration
     data_cfg = dat.configure_dataset(opts)
+    # Get model configuration
+    cfg = dat.configure_pipeline(opts)
 
     # Get input data length
     # Used in torch summary and to initialise norm layers
