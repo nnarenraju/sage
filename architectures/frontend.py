@@ -27,19 +27,20 @@ class Conv1dSame(nn.Conv1d):
                 groups, bias)
         super(Conv1dSame, self).__init__(*args)
     
-    def get_same_padding(x: int, k: int, s: int, d: int):
+    def get_same_padding(self, x: int, k: int, s: int, d: int):
         # Calculate asymmetric TensorFlow-like 'SAME' padding
         return max((math.ceil(x / s) - 1) * s + (k - 1) * d + 1 - x, 0)
 
-    def pad_same(x, k: int, s: int, d: int = 1, value: float = 0):
+    def pad_same(self, x, k: int, s: int, d: int = 1, value: float = 0):
         # Dynamically pad input x with 'SAME' padding for conv
         iw = x.size()[-1]
-        pad_w = get_same_padding(iw, k, s, d)
+        pad_w = self.get_same_padding(iw, k, s, d)
         if pad_w > 0:
             x = pad(x, [pad_w // 2, pad_w - pad_w // 2], value=value)
         return x
 
     def conv1d_same(
+        self,
         x, 
         weight: torch.Tensor, 
         bias: Optional[torch.Tensor] = None, 
@@ -48,11 +49,11 @@ class Conv1dSame(nn.Conv1d):
         dilation: int = 1, 
         groups: int = 1,
     ):
-        x = pad_same(x, weight.shape[-1], stride, dilation)
+        x = self.pad_same(x, weight.shape[-1], stride, dilation)
         return conv1d(x, weight, bias, stride, padding, dilation, groups)
 
     def forward(self, x):
-        return conv1d_same(x, self.weight, self.bias, self.stride[0], 
+        return self.conv1d_same(x, self.weight, self.bias, self.stride[0], 
                            self.padding[0], self.dilation[0], self.groups)
 
 
