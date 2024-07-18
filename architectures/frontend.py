@@ -24,1068 +24,305 @@ Documentation
 
 """
 
-# PACKAGES
-import timm
+# Future imports
+from __future__ import annotations
+
+# Modules
+import math
+
+from collections.abc import Callable
+
+# PyTorch imports
 import torch
-from torch import nn
+import torch.nn as nn
+import pytorch_lightning as pl
 
-# Importing architecture snippets from zoo
-from architectures.zoo.dain import DAIN_Layer
-from architectures.zoo.resnet_cbam import resnet50_cbam, resnet152_cbam, resnet34_cbam
-from architectures.zoo.res2net_v1b import res2net101_v1b_26w_4s, res2net50_v1b_26w_4s, res2net152_v1b_26w_4s
-from architectures.zoo.osnet1d import osnet_ain_custom as osnet1d
-from architectures.zoo.kaggle import ConvBlock, _initialize_weights
-
-# Datatype for storage
-data_type=torch.float32
+from torch import conv1d
+from typing import Optional
+from torch.nn import MaxPool1d, BatchNorm1d
+from torch.nn.functional import pad
 
 
 
-## Models without point parameter estimation ##
-
-class GammaModel(torch.nn.Module):
+class CNN_1D(pl.LightningModule):
     """
-    Gamma-type Model Architecture
+    3-Channel 1D CNN Model
     
-    Description - consists of a 2-channel simple NN frontend (no backend)
+    Calculating the output shape:
+        output_dim = ((W-K+2.0*P)/S)+1
+        W - Input volume
+        K - Kernel size
+        P - Padding
+        S - Stride
+        (Round-down if the result is not an integer)
+    
+    Example for G2NET dataset:
+        2 second time-series sampled at 2048 Hz
+        W = 4096 samples
+        K = 5 kernel size
+        P = (5 - 1)//2 = 2
+        S = 4
+        output_dim = ((4096-5+2.0*2)/4.0)+1 = 1024.75 = 1024 (round-down)
+        output_shape = (3 channels, 128 out_channels, 1024 output_dim)
+                     = (3, 128, 1024) for each batch
+    
+    Stride Selection for down-sampling:
+        0.1 seconds = (1/10) * 2048 = 204.8 samples
+        To keep loss to a minium, set stride = 2 (max.)
+        Keep stride = 1 to preserve input shape
+        If padding == "same", no striding is allowed
+    
+    Working with MaxPool1d:
+        Input size = (N, C, L)
+        Output size = (N, C, Lout)
+        
+        Lout = ((Lin + 2.0*padding - dilation * (kernel_size - 1) - 1)/stride) + 1
+    
+    Link to Weight-Initialisation Techniques:
+    https://machinelearningmastery.com/weight-initialization-for-deep-learning-neural-networks/
+    TL;DR:
+        [1] Use Xavier and normalised Xavier for Sigmoid and Tanh activation
+        [2] Use Kaiming Normal (aka. He Weight Initialisation) for ReLU activation
     
     Parameters
     ----------
-    model_name  = 'simple' : string
-        Simple NN model name for Frontend. Save model with this name as attribute.
-    in_channels = 2 : int
-        Number of input channels (number of detectors)
-    out_channels = 2 : int
-        Number of output channels (signal, noise)
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-        
+    in_channels : int
+        Number of input channels
+    out_channels : int
+        Number of output channels
+    num_channels : tuple
+        Number of channels in each hidden layer
+    kernel_size : int
+        Kernel size for all layers that use it (set to odd num by convention)
+    stride : int
+        Stride for layers that require it
+    force_out_size : int | tuple
+        Force output size of CNN using AdaptiveAvgPool2d
+    check_out_size : bool
+        Display output size once for sanity check
+    conv : Callable
+        CNN main layer. Set to Conv1d. Changing this may result in errors.
+    disable_AMP : bool
+        Enable/disable Automatic Mixed Precision
+    weight_init : bool
+        Initialise weights for Conv1d and BatchNorm layers
+    
     """
 
-    def __init__(self, 
-                 model_name='simple', 
-                 in_channels: int = 2,
-                 out_channels: int = 2,
-                 flatten_size: int = 1088,
-                 store_device: str = 'cpu'):
-        
+    def __init__(self,
+                 in_channels: int = 3,
+                 out_channels: int = 3,
+                 num_channels: tuple = (32, 64, 128), 
+                 kernel_size: int = 3, 
+                 stride: int = 2,
+                 force_out_size: int | tuple = None,
+                 check_out_size: bool = False,
+                 conv: Callable = nn.Conv1d,
+                 disable_AMP: bool = False, 
+                 weight_init: bool = True):
+
         super().__init__()
         
-        self.model_name = model_name
-        self.in_channels = in_channels
+        # Set variables
         self.out_channels = out_channels
-        self.flatten_size = flatten_size
-        self.store_device = store_device
+        self.num_layers = len(num_channels)
+        self.force_out_size = force_out_size
+        self.check_out_size = check_out_size
+        self.disable_AMP = disable_AMP
+        # Create module list object for backend
+        self.backend = nn.ModuleList()
         
-        # Initialise Frontend Model
-        # Add the following line as last layer if softmax is needed
-        # torch.nn.Softmax(dim=1) --> (signal, noise)
-        self.frontend = torch.nn.Sequential(                # Shapes
-                torch.nn.BatchNorm1d(self.in_channels),     #  2x2048
-                torch.nn.Conv1d(2, 4, 64),                  #  4x1985
-                torch.nn.ELU(),                             #  4x1985
-                torch.nn.Conv1d(4, 4, 32),                  #  4x1954
-                torch.nn.MaxPool1d(4),                      #  4x 489
-                torch.nn.ELU(),                             #  4x 489
-                torch.nn.Conv1d(4, 8, 32),                  #  8x 458
-                torch.nn.ELU(),                             #  8x 458
-                torch.nn.Conv1d(8, 8, 16),                  #  8x 443
-                torch.nn.MaxPool1d(3),                      #  8x 147
-                torch.nn.ELU(),                             #  8x 147
-                torch.nn.Conv1d(8, 16, 16),                 # 16x 132
-                torch.nn.ELU(),                             # 16x 132
-                torch.nn.Conv1d(16, 16, 16),                # 16x 117
-                torch.nn.MaxPool1d(4),                      # 16x  29
-                torch.nn.ELU(),                             # 16x  29
-                torch.nn.Flatten(),                         #      xx
-                torch.nn.Linear(self.flatten_size, 32),     #      32
-                torch.nn.Dropout(p=0.5),                    #      32
-                torch.nn.ELU(),                             #      32
-                torch.nn.Linear(32, 16),                    #      16
-                torch.nn.Dropout(p=0.5),                    #      16
-                torch.nn.ELU(),                             #      16
-                torch.nn.Linear(16, self.out_channels),     #       2/1
+        
+        """" Create the Model Architecture """
+        for channel_num in range(self.out_channels):
+            # For each channel the tmp_block init should be the same
+            """ Input Layer (CNN-1D) """
+            tmp_block = [
+                conv(
+                   in_channels, 
+                   num_channels[0],
+                   kernel_size=kernel_size,
+                   padding='same')
+                ]    
+            
+            """ All hidden layers and output layer """
+            # Limit is set to num_layers - 1 as tmp_block is included
+            # Last layer will have output channels = num_channels[-1]
+            for layer_num in range(self.num_layers-1):
+                # Append layers together
+                tmp_block = tmp_block + [
+                    nn.BatchNorm1d(num_channels[layer_num]),
+                    nn.SiLU(inplace=True),
+                    nn.MaxPool1d(kernel_size=3, stride=4),
+                    conv(
+                        num_channels[layer_num], 
+                        num_channels[layer_num+1],
+                        kernel_size=kernel_size,
+                        padding='same')
+                ]
+                
+            self.backend.append(nn.Sequential(*tmp_block))
+        
+        """ Force output size """
+        if self.force_out_size is not None:
+            if isinstance(self.force_out_size, int):
+                # Use this to preserve number of one dimension
+                self.pool = nn.AdaptiveAvgPool2d((None, self.force_out_size))
+            else:
+                # force_out_size is a tuple
+                self.pool = nn.AdaptiveAvgPool2d(self.force_out_size)
+            
+        """ Weight-initialisation """
+        if weight_init:
+            # self.modules is a part of super
+            for module in self.modules():
+                if isinstance(module, nn.Conv1d):
+                    # Since we have ReLU activation, use He init
+                    nn.init.kaiming_normal_(module.weight)
+                    if module.bias is not None:
+                        module.bias.data.zero_()
+                elif isinstance(module, nn.BatchNorm1d):
+                    # Initialise with mean = 1, variance = 0
+                    nn.init.constant_(module.weight, 1)
+                    nn.init.constant_(module.bias, 0)
+
+
+    def forward(self, x):
+        out = []
+        """ Enable/disable Automatic Mixed Precision """
+        # (if enabled) np.float16 and np.float32 is used for modules that need it
+        # (disabled) computation may be slower
+        if self.disable_AMP: 
+            with torch.cuda.amp.autocast(enabled=False):
+                for channel_num in range(self.out_channels):
+                    out.append(self.backend[channel_num](x))
+        else:
+            for channel_num in range(self.out_channels):
+                out.append(self.backend[channel_num](x))
+        
+        """ Stack output of all channels together """
+        out = torch.stack(out, dim=1)
+        
+        """ Force output size """
+        if self.force_out_size is not None:
+            out = self.pool(out)
+            
+        # Checking size of output
+        if self.check_out_size:
+            print("\nOutput shape from frontend = {}".format(out.shape))
+            self.check_out_size = False
+        
+        return out
+
+
+
+""" 
+Kaggle G2NET (2021) 1st Place Architecture
+Credits to:
+    1. Denis Kanonik (kaggle master)
+    2. Selim Seferkov (kaggle grandmaster)
+
+Modified for MLMDC1 usage: Narenraju Nagarajan (PGR - UofG)
+
+"""
+
+# Calculate asymmetric TensorFlow-like 'SAME' padding for a convolution
+def get_same_padding(x: int, k: int, s: int, d: int):
+    return max((math.ceil(x / s) - 1) * s + (k - 1) * d + 1 - x, 0)
+
+# Dynamically pad input x with 'SAME' padding for conv with specified args
+def pad_same(x, k: int, s: int, d: int = 1, value: float = 0):
+    iw = x.size()[-1]
+    pad_w = get_same_padding(iw, k, s, d)
+    if pad_w > 0:
+        x = pad(x, [pad_w // 2, pad_w - pad_w // 2], value=value)
+    return x
+
+def conv1d_same(
+        x, weight: torch.Tensor, bias: Optional[torch.Tensor] = None, stride: int = 1,
+        padding=0, dilation: int = 1, groups: int = 1):
+    x = pad_same(x, weight.shape[-1], stride, dilation)
+    return conv1d(x, weight, bias, stride, 0, dilation, groups)
+
+class Conv1dSame(nn.Conv1d):
+    """ Tensorflow like 'SAME' convolution wrapper for 2D convolutions """
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
+                 padding=0, dilation=1, groups=1, bias=True):
+        super(Conv1dSame, self).__init__(
+            in_channels, out_channels, kernel_size, stride, 0, dilation, groups, bias)
+
+    def forward(self, x):
+        return conv1d_same(x, self.weight, self.bias, self.stride[0], self.padding[0], self.dilation[0], self.groups)
+
+class ConcatBlockConv5(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, act=nn.SiLU):
+        super().__init__()
+        self.c1 = nn.Sequential(
+            Conv1dSame(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias),
+            BatchNorm1d(out_channels),
+            act())
+        self.c2 = nn.Sequential(
+            Conv1dSame(in_channels, out_channels, kernel_size * 2, stride, padding, dilation, groups, bias),
+            BatchNorm1d(out_channels),
+            act())
+        self.c3 = nn.Sequential(
+            Conv1dSame(in_channels, out_channels, kernel_size // 2, stride, padding, dilation, groups, bias),
+            BatchNorm1d(out_channels),
+            act())
+        self.c4 = nn.Sequential(
+            Conv1dSame(in_channels, out_channels, kernel_size // 4, stride, padding, dilation, groups, bias),
+            BatchNorm1d(out_channels),
+            act())
+        self.c5 = nn.Sequential(
+            Conv1dSame(in_channels, out_channels, kernel_size * 4, stride, padding, dilation, groups, bias),
+            BatchNorm1d(out_channels),
+            act())
+        self.c6 = nn.Sequential(
+            Conv1dSame(out_channels * 5 + in_channels, out_channels, 1, stride, padding, dilation, groups, bias),
+            BatchNorm1d(out_channels),
+            act())
+
+    def forward(self, x):
+        x = torch.cat([self.c1(x), self.c2(x), self.c3(x), self.c4(x), self.c5(x), x], dim=1)
+        x = self.c6(x)
+        return x
+
+class ConvBlock(nn.Module):
+    def __init__(self, filters_start=32, kernel_start=64, in_channels=1):
+        super().__init__()
+        self.conv1 = nn.Sequential(
+            ConcatBlockConv5(in_channels, filters_start, kernel_start, bias=False),
+            ConcatBlockConv5(filters_start, filters_start, kernel_start // 2 + 1, bias=False),
+            MaxPool1d(kernel_size=8, stride=8)
+        )
+        self.conv2 = nn.Sequential(
+            ConcatBlockConv5(filters_start, filters_start * 2, kernel_start // 2 + 1,
+                             bias=False),
+            ConcatBlockConv5(filters_start * 2, filters_start * 2, kernel_start // 4 + 1, bias=False),
+            MaxPool1d(kernel_size=4, stride=4)
+        )
+        self.conv3 = nn.Sequential(
+            ConcatBlockConv5(filters_start * 2, filters_start * 4, kernel_start // 4 + 1, bias=False),
+            ConcatBlockConv5(filters_start * 4, filters_start * 4, kernel_start // 4 + 1, bias=False),
         )
         
-        # Convert network into given dtype and store in proper device
-        self.frontend.to(dtype=data_type, device=self.store_device)
-        self.sigmoid = torch.nn.Sigmoid()
-    
-    # x.shape: (batch size, wave channel, length of wave)
     def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        # Simple NN frontend (no backend)
-        raw = self.frontend(x)
-        pred_prob = self.sigmoid(raw)
-        return {'pred_prob': pred_prob, 'raw': raw}
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x).unsqueeze(1)
+        return x
 
-
-
-## Models with point parameter estimation ##
-
-class GammaModelPE(torch.nn.Module):
-    """
-    Gamma-type Model PE Architecture
-    
-    Description - consists of a 2-channel simple NN frontend (no backend)
-    
-    Parameters
-    ----------
-    model_name  = 'simple' : string
-        Simple NN model name for Frontend. Save model with this name as attribute.
-    in_channels = 2 : int
-        Number of input channels (number of detectors)
-    out_channels = 2 : int
-        Number of output channels (signal, noise)
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-        
-    """
-
-    def __init__(self, 
-                 model_name='simple', 
-                 in_channels: int = 2,
-                 out_channels: int = 2,
-                 store_device: str = 'cpu'):
-        
-        super().__init__()
-        
-        self.model_name = model_name
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.store_device = store_device
-        
-        # Initialise Frontend Model
-        # Add the following line as last layer if softmax is needed
-        # torch.nn.Softmax(dim=1) --> (signal, noise)
-        self.frontend = torch.nn.Sequential(                # Shapes
-                torch.nn.BatchNorm1d(self.in_channels),     #  2x2048
-                torch.nn.Conv1d(2, 4, 64),                  #  4x1985
-                torch.nn.ELU(),                             #  4x1985
-                torch.nn.Conv1d(4, 4, 32),                  #  4x1954
-                torch.nn.MaxPool1d(4),                      #  4x 489
-                torch.nn.ELU(),                             #  4x 489
-                torch.nn.Conv1d(4, 8, 32),                  #  8x 458
-                torch.nn.ELU(),                             #  8x 458
-                torch.nn.Conv1d(8, 8, 16),                  #  8x 443
-                torch.nn.MaxPool1d(3),                      #  8x 147
-                torch.nn.ELU(),                             #  8x 147
-                torch.nn.Conv1d(8, 16, 16),                 # 16x 132
-                torch.nn.ELU(),                             # 16x 132
-                torch.nn.Conv1d(16, 16, 16),                # 16x 117
-                torch.nn.MaxPool1d(4),                      # 16x  29
-                torch.nn.ELU(),                             # 16x  29
-                torch.nn.Flatten(),                         #     464
-                torch.nn.Linear(1088, 32),                  #      32 - 1088 for 3712 sample len
-                torch.nn.Dropout(p=0.5),                    #      32
-                torch.nn.ELU(),                             #      32
-                torch.nn.Linear(32, 16),                    #      16
-                torch.nn.Dropout(p=0.5),                    #      16
-                torch.nn.ELU()                              #      16
-        )
-        
-        # Mod layers
-        self.softmax = nn.Softmax(dim=1)
-        self.sigmoid = nn.Sigmoid()
-        # PE layers
-        self.signal_to_noise = nn.Linear(16, self.out_channels)
-        self.coalescence_time = nn.Linear(16, 1)
-        self.distance = nn.Linear(16, 1)
-        self.chirp_mass = nn.Linear(16, 1)
-        
-        # Convert network into given dtype and store in proper device
-        self.signal_to_noise.to(dtype=data_type, device=self.store_device)
-        self.coalescence_time.to(dtype=data_type, device=self.store_device)
-        self.distance.to(dtype=data_type, device=self.store_device)
-        self.chirp_mass.to(dtype=data_type, device=self.store_device)
-        self.frontend.to(dtype=data_type, device=self.store_device)
-    
-    # x.shape: (batch size, wave channel, length of wave)
-    def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        # Simple NN frontend (no backend)
-        x = self.frontend(x)
-        # Outputs
-        pred_prob = self.softmax(self.signal_to_noise(x))
-        tc = self.sigmoid(self.coalescence_time(x))
-        distance = self.sigmoid(self.distance(x))
-        mchirp = self.sigmoid(self.chirp_mass(x))
-        # Return all outputs as dict
-        return {'pred_prob': pred_prob, 'tc': tc, 'distance': distance, 'mchirp': mchirp}
-
-
-
-class KappaModel_Res2Net(torch.nn.Module):
-    """
-    Kappa-type Model PE Architecture with Res2Net Block
-    
-    Description - consists of a 2-channel ConvBlock backend and a Timm model frontend
-                  this Model-type can be used to test the Kaggle architectures
-    
-    Parameters
-    ----------
-    model_name  = 'simple' : string
-        Simple NN model name for Frontend. Save model with this name as attribute.
-    pretrained  = False : Bool
-        Pretrained option for saved models
-        If True, weights are stored under the model_name in saved_models dir
-        If model name already exists, throws an error (safety)
-    in_channels = 2 : int
-        Number of input channels (number of detectors)
-    out_channels = 2 : int
-        Number of output channels (signal, noise)
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-    weights_path = '' : str
-        Absolute path to the weights.pt file. Used when pretrained == True
-        
-    """
-
-    def __init__(self, 
-                 model_name='trainable_backend_and_frontend', 
-                 filter_size: int = 32,
-                 kernel_size: int = 64,
-                 resnet_size: int = 50,
-                 norm_layer: str = 'instancenorm',
-                 _input_length: int = 6111,
-                 _decimated_bins = None,
-                 store_device: str = 'cpu',
-                 **kwargs):
-        
-        super().__init__()
-        
-        self.model_name = model_name
-        self.store_device = store_device
-        self.filter_size = filter_size
-        self.kernel_size = kernel_size
-        self.norm_layer = norm_layer
-        self._decimated_bins = _decimated_bins
-        
-        """ Backend """
-        # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
-        # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
-        self._det1 = ConvBlock(self.filter_size, self.kernel_size)
-        self._det2 = ConvBlock(self.filter_size, self.kernel_size)
-        _initialize_weights(self)
-        
-        """ Frontend """
-        # resnet50 --> Based on Res2Net blocks
-        # Pretrained model is for 3-channels. We use 2 channels.
-        if resnet_size == 50:
-            self.frontend = res2net50_v1b_26w_4s(pretrained=False, num_classes=512)
-        elif resnet_size == 101:
-            self.frontend = res2net101_v1b_26w_4s(pretrained=False, num_classes=512)
-        elif resnet_size == 152:
-            self.frontend = res2net152_v1b_26w_4s(pretrained=False, num_classes=512)
-        
-        """ Mods """
-        # Manipulation layers
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
-        self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
-        self.batchnorm = nn.BatchNorm1d(2)
-        self.groupnorm  = nn.GroupNorm(num_groups=2, num_channels=2)
-        self.dain = DAIN_Layer(mode='full', input_dim=2)
-        self.layernorm = nn.LayerNorm([2, _input_length])
-        # self.layernorm_cnn = nn.LayerNorm([2, 128, int(_input_length/32.)])
-        self.layernorm_cnn = nn.LayerNorm([2, 128, 169])
-        self.instancenorm = nn.InstanceNorm1d(2, affine=True)
-        self.flatten_d1 = nn.Flatten(start_dim=1)
-        self.flatten_d0 = nn.Flatten(start_dim=0)
-        self.dropout = nn.Dropout(0.25)
-        self.sigmoid = torch.nn.Sigmoid()
-        self.softmax = torch.nn.Softmax(dim=1)
-        self.ReLU = nn.ReLU()
-        self.Tanh = nn.Tanh()
-
-        # Primary outputs
-        self.signal_or_noise = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(512, 2)
-        self.chirp_distance = nn.Linear(512, 2)
-        self.chirp_mass = nn.Linear(512, 2)
-        self.distance = nn.Linear(512, 2)
-        self.mass_ratio = nn.Linear(512, 2)
-        self.inv_mass_ratio = nn.Linear(512, 2)
-        self.snr = nn.Linear(512, 2)
-        # Mod layers
-        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
-        self.coalescence_time.to(dtype=data_type, device=self.store_device)
-        self.chirp_distance.to(dtype=data_type, device=self.store_device)
-        self.chirp_mass.to(dtype=data_type, device=self.store_device)
-        self.distance.to(dtype=data_type, device=self.store_device)
-        self.mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.snr.to(dtype=data_type, device=self.store_device)
-        
-        ## Convert network into given dtype and store in proper device
-        # Manipulation layers
-        self.batchnorm.to(dtype=data_type, device=self.store_device)
-        self.dain.to(dtype=data_type, device=self.store_device)
-        self.layernorm.to(dtype=data_type, device=self.store_device)
-        self.layernorm_cnn.to(dtype=data_type, device=self.store_device)
-        self.instancenorm.to(dtype=data_type, device=self.store_device)
-        self.groupnorm.to(dtype=data_type, device=self.store_device)
-        # Main layers
-        self._det1.to(dtype=data_type, device=self.store_device)
-        self._det2.to(dtype=data_type, device=self.store_device)
-        self.backend = {'det1': self._det1, 'det2': self._det2}
-        self.frontend.to(dtype=data_type, device=self.store_device)
-    
-    # x.shape: (batch size, wave channel, length of wave)
-    def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        if self.norm_layer == 'batchnorm':
-            normed = self.batchnorm(x)
-        elif self.norm_layer == 'dain':
-            normed, gate = self.dain(x)
-        elif self.norm_layer == 'layernorm':
-            normed = self.layernorm(x)
-        elif self.norm_layer == 'instancenorm':
-            normed = self.instancenorm(x)
-        elif self.norm_layer == 'groupnorm':
-            normed = self.groupnorm(x)
-        
-        # Conv Backend
-        cnn_output = torch.cat([self.backend['det1'](normed[:, 0:1]), self.backend['det2'](normed[:, 1:2])], dim=1)
-         
-        # Timm Frontend
-        out = self.frontend(cnn_output).squeeze() # (batch_size, 512)
-        ## Output necessary params
-        raw = self.signal_or_noise(out).squeeze()
-        pred_prob = self.sigmoid(raw)
-
-        ## Parameter Estimation
-        # Time of Coalescence
-        tc_ = self.coalescence_time(out)
-        tc = self.flatten_d0(tc_[:,0])
-        norm_tc = self.sigmoid(tc)
-        tc_var = self.Tanh(self.flatten_d0(tc_[:,1]))
-        # Chirp Distance
-        dchirp_ = self.chirp_distance(out)
-        dchirp = self.flatten_d0(dchirp_[:,0])
-        norm_dchirp = self.sigmoid(dchirp)
-        dchirp_var = self.flatten_d0(dchirp_[:,1])
-        # Chirp Mass
-        mchirp_ = self.chirp_mass(out)
-        mchirp = self.flatten_d0(mchirp_[:,0])
-        norm_mchirp = self.sigmoid(mchirp)
-        mchirp_var = self.Tanh(self.flatten_d0(mchirp_[:,1]))
-        # Distance
-        dist_ = self.distance(out)
-        dist = self.flatten_d0(dist_[:,0])
-        norm_dist = self.sigmoid(dist)
-        dist_var = self.flatten_d0(dist_[:,1])
-        # Mass Ratio
-        q_ = self.mass_ratio(out)
-        q = self.flatten_d0(q_[:,0])
-        norm_q = self.sigmoid(q)
-        q_var = self.flatten_d0(q_[:,1])
-        # Inverse Mass Ratio
-        invq_ = self.inv_mass_ratio(out)
-        invq = self.flatten_d0(invq_[:,0])
-        norm_invq = self.sigmoid(invq)
-        invq_var = self.flatten_d0(invq_[:,1])
-        # SNR
-        snr_ = self.snr(out)
-        snr = self.flatten_d0(snr_[:,0])
-        norm_snr = self.sigmoid(snr)
-        snr_var = self.flatten_d0(snr_[:,1])
-        
-        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
-        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
-                'norm_tc': norm_tc, 'norm_dchirp': norm_dchirp, 'norm_mchirp': norm_mchirp,
-                'norm_dist': norm_dist, 'norm_q': norm_q, 'norm_invq': norm_invq, 'norm_snr': norm_snr,
-                'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
-                'norm_tc_var': tc_var, 'norm_mchirp_var': mchirp_var, 'norm_snr_var': snr_var,
-                'norm_q_var': q_var, 'norm_invq_var': invq_var, 'norm_dist_var': dist_var,
-                'norm_dchirp_var': dchirp_var, 'input': x, 'normed': normed}
-
-
-
-class KappaModel_ResNet_CBAM(torch.nn.Module):
-    """
-    Kappa-type Model PE Architecture with ResNet and CBAM
-    
-    Description - consists of a 2-channel ConvBlock backend and a Timm model frontend
-                  this Model-type can be used to test the Kaggle architectures
-    
-    Parameters
-    ----------
-    model_name  = 'simple' : string
-        Simple NN model name for Frontend. Save model with this name as attribute.
-    pretrained  = False : Bool
-        Pretrained option for saved models
-        If True, weights are stored under the model_name in saved_models dir
-        If model name already exists, throws an error (safety)
-    in_channels = 2 : int
-        Number of input channels (number of detectors)
-    out_channels = 2 : int
-        Number of output channels (signal, noise)
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-    weights_path = '' : str
-        Absolute path to the weights.pt file. Used when pretrained == True
-        
-    """
-
-    def __init__(self, 
-                 model_name='trainable_backend_and_frontend', 
-                 filter_size: int = 32,
-                 kernel_size: int = 64,
-                 resnet_size: int = 50,
-                 norm_layer: str = 'instancenorm',
-                 upsample_factor: float = 1.0,
-                 _input_length: int = 4254, # 4859
-                 _decimated_bins = None,
-                 store_device: str = 'cpu',
-                 **kwargs):
-        
-        super().__init__()
-        
-        self.model_name = model_name
-        self.store_device = store_device
-        self.filter_size = filter_size
-        self.kernel_size = kernel_size
-        self.norm_layer = norm_layer
-        self.upsample_factor = upsample_factor
-        self._decimated_bins = _decimated_bins
-        
-        """ Backend """
-        # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
-        # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
-        self._det1 = ConvBlock(self.filter_size, self.kernel_size)
-        self._det2 = ConvBlock(self.filter_size, self.kernel_size)
-        _initialize_weights(self)
-        
-        """ Frontend """
-        # resnet50 --> Based on Res2Net blocks
-        # Pretrained model is for 3-channels. We use 2 channels.
-        if resnet_size == 50:
-            self.frontend = resnet50_cbam(pretrained=False)
-        elif resnet_size == 152:
-            self.frontend = resnet152_cbam(pretrained=False)
-        
-        """ Mods """
-        # Manipulation layers
-        self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
-        self.batchnorm = nn.BatchNorm1d(2)
-        self.dain = DAIN_Layer(mode='full', input_dim=2)
-        self.layernorm = nn.LayerNorm([2, _input_length])
-        #self.layernorm_cnn = nn.LayerNorm([2, 128, int(_input_length/32.)])
-        self.instancenorm = nn.InstanceNorm1d(2, affine=True)
-        self.flatten_d1 = nn.Flatten(start_dim=1)
-        self.flatten_d0 = nn.Flatten(start_dim=0)
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
-        self.dropout = nn.Dropout(0.25)
-        self.sigmoid = torch.nn.Sigmoid()
-        self.softmax = torch.nn.Softmax(dim=1)
-        self.ReLU = nn.ReLU()
-        self.Tanh = nn.Tanh()
-        self.upsample = nn.Upsample(scale_factor=self.upsample_factor, mode='bicubic')
-        
-        ## Convert network into given dtype and store in proper device 
-        # Primary outputs
-        self.signal_or_noise = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(512, 2)
-        self.chirp_distance = nn.Linear(512, 2)
-        self.chirp_mass = nn.Linear(512, 2)
-        self.distance = nn.Linear(512, 2)
-        self.mass_ratio = nn.Linear(512, 2)
-        self.inv_mass_ratio = nn.Linear(512, 2)
-        self.snr = nn.Linear(512, 2)
-        # Mod layers
-        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
-        self.coalescence_time.to(dtype=data_type, device=self.store_device)
-        self.chirp_distance.to(dtype=data_type, device=self.store_device)
-        self.chirp_mass.to(dtype=data_type, device=self.store_device)
-        self.distance.to(dtype=data_type, device=self.store_device)
-        self.mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.snr.to(dtype=data_type, device=self.store_device)
-
-        # Manipulation layers
-        self.batchnorm.to(dtype=data_type, device=self.store_device)
-        self.dain.to(dtype=data_type, device=self.store_device)
-        self.layernorm.to(dtype=data_type, device=self.store_device)
-        #self.layernorm_cnn.to(dtype=data_type, device=self.store_device)
-        self.instancenorm.to(dtype=data_type, device=self.store_device)
-        # Main layers
-        self._det1.to(dtype=data_type, device=self.store_device)
-        self._det2.to(dtype=data_type, device=self.store_device)
-        self.backend = {'det1': self._det1, 'det2': self._det2}
-        self.frontend.to(dtype=data_type, device=self.store_device)
-    
-    # x.shape: (batch size, wave channel, length of wave)
-    def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        if self.norm_layer == 'batchnorm':
-            normed = self.batchnorm(x)
-        elif self.norm_layer == 'dain':
-            normed, gate = self.dain(x)
-        elif self.norm_layer == 'layernorm':
-            normed = self.layernorm(x)
-        elif self.norm_layer == 'instancenorm':
-            normed = self.instancenorm(x)
-        
-        # Upsampling of input normed data
-        if self.upsample_factor != 1.0:
-            normed = torch.cat([self.upsample(normed[:, 0:1]), self.upsample(normed[:, 1:2])], dim=1)
-
-        # Conv Backend
-        cnn_output = torch.cat([self.backend['det1'](normed[:, 0:1]), self.backend['det2'](normed[:, 1:2])], dim=1)
-
-        # Timm Frontend
-        out = self.frontend(cnn_output) # (batch_size, 512)
-        out = self.flatten_d1(self.avg_pool_1d(out))
-        ## Output necessary params
-        raw = self.flatten_d0(self.signal_or_noise(out))
-        pred_prob = self.sigmoid(raw)
-
-        ## Parameter Estimation
-        # Time of Coalescence
-        tc_ = self.coalescence_time(out)
-        tc = self.flatten_d0(tc_[:,0])
-        norm_tc = self.sigmoid(tc)
-        tc_var = self.Tanh(self.flatten_d0(tc_[:,1]))
-        # Chirp Distance
-        dchirp_ = self.chirp_distance(out)
-        dchirp = self.flatten_d0(dchirp_[:,0])
-        norm_dchirp = self.sigmoid(dchirp)
-        dchirp_var = self.flatten_d0(dchirp_[:,1])
-        # Chirp Mass
-        mchirp_ = self.chirp_mass(out)
-        mchirp = self.flatten_d0(mchirp_[:,0])
-        norm_mchirp = self.sigmoid(mchirp)
-        mchirp_var = self.Tanh(self.flatten_d0(mchirp_[:,1]))
-        # Distance
-        dist_ = self.distance(out)
-        dist = self.flatten_d0(dist_[:,0])
-        norm_dist = self.sigmoid(dist)
-        dist_var = self.flatten_d0(dist_[:,1])
-        # Mass Ratio
-        q_ = self.mass_ratio(out)
-        q = self.flatten_d0(q_[:,0])
-        norm_q = self.sigmoid(q)
-        q_var = self.flatten_d0(q_[:,1])
-        # Inverse Mass Ratio
-        invq_ = self.inv_mass_ratio(out)
-        invq = self.flatten_d0(invq_[:,0])
-        norm_invq = self.sigmoid(invq)
-        invq_var = self.flatten_d0(invq_[:,1])
-        # SNR
-        snr_ = self.snr(out)
-        snr = self.flatten_d0(snr_[:,0])
-        norm_snr = self.sigmoid(snr)
-        snr_var = self.flatten_d0(snr_[:,1])
-        
-        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
-        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
-                'norm_tc': norm_tc, 'norm_dchirp': norm_dchirp, 'norm_mchirp': norm_mchirp,
-                'norm_dist': norm_dist, 'norm_q': norm_q, 'norm_invq': norm_invq, 'norm_snr': norm_snr,
-                'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
-                'norm_tc_sigma': tc_var, 'norm_mchirp_sigma': mchirp_var, 'norm_snr_sigma': snr_var,
-                'norm_q_sigma': q_var, 'norm_invq_sigma': invq_var, 'norm_dist_sigma': dist_var,
-                'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed}
-
-
-
-class Dummy_ResNet_CBAM(torch.nn.Module):
-    """
-    Kappa-type Model PE Architecture with ResNet and CBAM
-    
-    Description - consists of a 2-channel ConvBlock backend and a Timm model frontend
-                  this Model-type can be used to test the Kaggle architectures
-    
-    Parameters
-    ----------
-    model_name  = 'simple' : string
-        Simple NN model name for Frontend. Save model with this name as attribute.
-    pretrained  = False : Bool
-        Pretrained option for saved models
-        If True, weights are stored under the model_name in saved_models dir
-        If model name already exists, throws an error (safety)
-    in_channels = 2 : int
-        Number of input channels (number of detectors)
-    out_channels = 2 : int
-        Number of output channels (signal, noise)
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-    weights_path = '' : str
-        Absolute path to the weights.pt file. Used when pretrained == True
-        
-    """
-
-    def __init__(self, 
-                 model_name='ResNet_CBAM', 
-                 filter_size: int = 32,
-                 kernel_size: int = 64,
-                 resnet_size: int = 50,
-                 parameter_estimation: tuple = (),
-                 norm_layer: str = 'instancenorm',
-                 store_device: str = 'cpu',
-                 **kwargs):
-        
-        super().__init__()
-        
-        self.model_name = model_name
-        self.store_device = store_device
-        self.filter_size = filter_size
-        self.kernel_size = kernel_size
-        self.norm_layer = norm_layer
-        self.parameter_estimation = parameter_estimation
-        
-        """ Backend """
-        # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
-        # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
-        self._det1 = ConvBlock(self.filter_size, self.kernel_size)
-        self._det2 = ConvBlock(self.filter_size, self.kernel_size)
-        _initialize_weights(self)
-        
-        """ Frontend """
-        # resnet50 --> Based on Res2Net blocks
-        # Pretrained model is for 3-channels. We use 2 channels.
-        if resnet_size == 50:
-            self.frontend = resnet50_cbam(pretrained=False)
-        elif resnet_size == 152:
-            self.frontend = resnet152_cbam(pretrained=False)
-        
-        """ Mods """
-        # Normalisation layers
-        self.batchnorm = nn.BatchNorm1d(2)
-        self.dain = DAIN_Layer(mode='full', input_dim=2)
-        self.layernorm = nn.LayerNorm([2, _input_length])
-        self.instancenorm = nn.InstanceNorm1d(2, affine=True)
-        # Shape manipulation
-        self.flatten_d1 = nn.Flatten(start_dim=1)
-        self.flatten_d0 = nn.Flatten(start_dim=0)
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
-        # Value transformation
-        self.sigmoid = torch.nn.Sigmoid()
-        self.softmax = torch.nn.Softmax(dim=1)
-        self.ReLU = nn.ReLU()
-        self.Tanh = nn.Tanh()
-        # Regularisation layers
-        self.dropout = nn.Dropout(0.25)
-        
-        ## Convert network into given dtype and store in proper device 
-        # Primary outputs
-        self.signal_or_noise = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(512, 1)
-        self.chirp_distance = nn.Linear(512, 1)
-        self.chirp_mass = nn.Linear(512, 1)
-        self.distance = nn.Linear(512, 1)
-        self.mass_ratio = nn.Linear(512, 1)
-        self.inv_mass_ratio = nn.Linear(512, 1)
-        self.snr = nn.Linear(512, 1)
-        # Mod layers
-        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
-        self.coalescence_time.to(dtype=data_type, device=self.store_device)
-        self.chirp_distance.to(dtype=data_type, device=self.store_device)
-        self.chirp_mass.to(dtype=data_type, device=self.store_device)
-        self.distance.to(dtype=data_type, device=self.store_device)
-        self.mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.snr.to(dtype=data_type, device=self.store_device)
-
-        # Manipulation layers
-        self.batchnorm.to(dtype=data_type, device=self.store_device)
-        self.dain.to(dtype=data_type, device=self.store_device)
-        self.layernorm.to(dtype=data_type, device=self.store_device)
-        #self.layernorm_cnn.to(dtype=data_type, device=self.store_device)
-        self.instancenorm.to(dtype=data_type, device=self.store_device)
-        # Main layers
-        self._det1.to(dtype=data_type, device=self.store_device)
-        self._det2.to(dtype=data_type, device=self.store_device)
-        self.backend = {'det1': self._det1, 'det2': self._det2}
-        self.frontend.to(dtype=data_type, device=self.store_device)
-    
-    # x.shape: (batch size, wave channel, length of wave)
-    def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        if self.norm_layer == 'batchnorm':
-            normed = self.batchnorm(x)
-        elif self.norm_layer == 'dain':
-            normed, gate = self.dain(x)
-        elif self.norm_layer == 'layernorm':
-            normed = self.layernorm(x)
-        elif self.norm_layer == 'instancenorm':
-            normed = self.instancenorm(x)
-
-        # 1D CNN Frontend
-        cnn_output = torch.cat([self.backend['det1'](normed[:, 0:1]), self.backend['det2'](normed[:, 1:2])], dim=1)
-
-        # ResNet CBAM Backend
-        out = self.frontend(cnn_output) # (batch_size, embedding_size)
-        out = self.flatten_d1(self.avg_pool_1d(out))
-        ## Output necessary params
-        raw = self.flatten_d0(self.signal_or_noise(out))
-        pred_prob = self.sigmoid(raw)
-
-        ## Parameter Estimation
-        # Time of Coalescence
-        tc = self.flatten_d0(self.coalescence_time(out))
-        norm_tc = self.sigmoid(tc)
-        # Chirp Distance
-        dchirp = self.flatten_d0(self.chirp_distance(out))
-        norm_dchirp = self.sigmoid(dchirp)
-        # Chirp Mass
-        mchirp = self.flatten_d0(self.chirp_mass(out))
-        norm_mchirp = self.sigmoid(mchirp)
-        # Distance
-        dist = self.flatten_d0(self.distance(out))
-        norm_dist = self.sigmoid(dist)
-        # Mass Ratio
-        q = self.flatten_d0(self.mass_ratio(out))
-        norm_q = self.sigmoid(q)
-        # Inverse Mass Ratio
-        invq = self.flatten_d0(self.inv_mass_ratio(out))
-        norm_invq = self.sigmoid(invq)
-        # SNR
-        snr = self.flatten_d0(self.snr(out))
-        norm_snr = self.sigmoid(snr)
-        
-        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
-        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
-                'norm_tc': norm_tc, 'norm_dchirp': norm_dchirp, 'norm_mchirp': norm_mchirp,
-                'norm_dist': norm_dist, 'norm_q': norm_q, 'norm_invq': norm_invq, 'norm_snr': norm_snr,
-                'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
-                'input': x, 'normed': normed}
-
-
-class KappaModel_ResNet_small(torch.nn.Module):
-    """
-    Kappa-type Model PE Architecture with ResNet50
-    
-    Description - consists of a 2-channel ConvBlock backend and a Timm model frontend
-                  this Model-type can be used to test the Kaggle architectures
-    
-    Parameters
-    ----------
-    model_name  = 'simple' : string
-        Simple NN model name for Frontend. Save model with this name as attribute.
-    pretrained  = False : Bool
-        Pretrained option for saved models
-        If True, weights are stored under the model_name in saved_models dir
-        If model name already exists, throws an error (safety)
-    in_channels = 2 : int
-        Number of input channels (number of detectors)
-    out_channels = 2 : int
-        Number of output channels (signal, noise)
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-    weights_path = '' : str
-        Absolute path to the weights.pt file. Used when pretrained == True
-        
-    """
-
-    def __init__(self, 
-                 model_name='smallnet',
-                 timm_params: dict = {'model_name': 'resnet50', 'pretrained': False, 'in_chans': 2, 'drop_rate': 0.25},
-                 norm_layer: str = 'instancenorm',
-                 _input_length: int = 4254,
-                 _decimated_bins = None,
-                 store_device: str = 'cpu',
-                 **kwargs):
-        
-        super().__init__()
-        
-        self.model_name = model_name
-        self.store_device = store_device
-        self.norm_layer = norm_layer
-        
-        """ Frontend """
-        # Pretrained model is for 3-channels. We use 2 channels.
-        self.frontend = timm.create_model(**timm_params)
-        
-        # reset_classifier edits the number of outputs that Timm produces
-        # The following is set if we need a two-class output from Timm
-        # This can be set to a larger value and connected to a linear layer
-        self.frontend.reset_classifier(1)
-        
-        """ Mods """
-        # Manipulation layers
-        self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
-        self.batchnorm = nn.BatchNorm1d(2)
-        self.instancenorm = nn.InstanceNorm1d(2, affine=True)
-        self.flatten_d1 = nn.Flatten(start_dim=1)
-        self.flatten_d0 = nn.Flatten(start_dim=0)
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
-        self.dropout = nn.Dropout(0.25)
-        self.sigmoid = torch.nn.Sigmoid()
-        self.softmax = torch.nn.Softmax(dim=1)
-        self.ReLU = nn.ReLU()
-        self.Tanh = nn.Tanh()
-        self.upsample = nn.Upsample(scale_factor=self.upsample_factor, mode='bicubic')
-        
-        ## Convert network into given dtype and store in proper device 
-        # Primary outputs
-        self.signal_or_noise = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(512, 2)
-        self.chirp_distance = nn.Linear(512, 2)
-        self.chirp_mass = nn.Linear(512, 2)
-        self.distance = nn.Linear(512, 2)
-        self.mass_ratio = nn.Linear(512, 2)
-        self.inv_mass_ratio = nn.Linear(512, 2)
-        self.snr = nn.Linear(512, 2)
-        # Mod layers
-        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
-        self.coalescence_time.to(dtype=data_type, device=self.store_device)
-        self.chirp_distance.to(dtype=data_type, device=self.store_device)
-        self.chirp_mass.to(dtype=data_type, device=self.store_device)
-        self.distance.to(dtype=data_type, device=self.store_device)
-        self.mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.snr.to(dtype=data_type, device=self.store_device)
-
-        # Manipulation layers
-        self.batchnorm.to(dtype=data_type, device=self.store_device)
-        self.dain.to(dtype=data_type, device=self.store_device)
-        self.layernorm.to(dtype=data_type, device=self.store_device)
-        #self.layernorm_cnn.to(dtype=data_type, device=self.store_device)
-        self.instancenorm.to(dtype=data_type, device=self.store_device)
-        # Main layers
-        self._det1.to(dtype=data_type, device=self.store_device)
-        self._det2.to(dtype=data_type, device=self.store_device)
-        self.backend = {'det1': self._det1, 'det2': self._det2}
-        self.frontend.to(dtype=data_type, device=self.store_device)
-    
-    # x.shape: (batch size, wave channel, length of wave)
-    def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        if self.norm_layer == 'batchnorm':
-            normed = self.batchnorm(x)
-        elif self.norm_layer == 'instancenorm':
-            normed = self.instancenorm(x)
-        
-        # Upsampling of input normed data
-        if self.upsample_factor != 1.0:
-            normed = torch.cat([self.upsample(normed[:, 0:1]), self.upsample(normed[:, 1:2])], dim=1)
-
-        # Conv Backend
-        cnn_output = torch.cat([self.backend['det1'](normed[:, 0:1]), self.backend['det2'](normed[:, 1:2])], dim=1)
-
-        # Timm Frontend
-        out = self.frontend(cnn_output) # (batch_size, 512)
-        out = self.flatten_d1(self.avg_pool_1d(out))
-        ## Output necessary params
-        raw = self.flatten_d0(self.signal_or_noise(out))
-        pred_prob = self.sigmoid(raw)
-
-        ## Parameter Estimation
-        # Time of Coalescence
-        tc_ = self.coalescence_time(out)
-        tc = self.flatten_d0(tc_[:,0])
-        norm_tc = self.sigmoid(tc)
-        tc_var = self.Tanh(self.flatten_d0(tc_[:,1]))
-        # Chirp Distance
-        dchirp_ = self.chirp_distance(out)
-        dchirp = self.flatten_d0(dchirp_[:,0])
-        norm_dchirp = self.sigmoid(dchirp)
-        dchirp_var = self.flatten_d0(dchirp_[:,1])
-        # Chirp Mass
-        mchirp_ = self.chirp_mass(out)
-        mchirp = self.flatten_d0(mchirp_[:,0])
-        norm_mchirp = self.sigmoid(mchirp)
-        mchirp_var = self.Tanh(self.flatten_d0(mchirp_[:,1]))
-        # Distance
-        dist_ = self.distance(out)
-        dist = self.flatten_d0(dist_[:,0])
-        norm_dist = self.sigmoid(dist)
-        dist_var = self.flatten_d0(dist_[:,1])
-        # Mass Ratio
-        q_ = self.mass_ratio(out)
-        q = self.flatten_d0(q_[:,0])
-        norm_q = self.sigmoid(q)
-        q_var = self.flatten_d0(q_[:,1])
-        # Inverse Mass Ratio
-        invq_ = self.inv_mass_ratio(out)
-        invq = self.flatten_d0(invq_[:,0])
-        norm_invq = self.sigmoid(invq)
-        invq_var = self.flatten_d0(invq_[:,1])
-        # SNR
-        snr_ = self.snr(out)
-        snr = self.flatten_d0(snr_[:,0])
-        norm_snr = self.sigmoid(snr)
-        snr_var = self.flatten_d0(snr_[:,1])
-        
-        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
-        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
-                'norm_tc': norm_tc, 'norm_dchirp': norm_dchirp, 'norm_mchirp': norm_mchirp,
-                'norm_dist': norm_dist, 'norm_q': norm_q, 'norm_invq': norm_invq, 'norm_snr': norm_snr,
-                'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
-                'norm_tc_sigma': tc_var, 'norm_mchirp_sigma': mchirp_var, 'norm_snr_sigma': snr_var,
-                'norm_q_sigma': q_var, 'norm_invq_sigma': invq_var, 'norm_dist_sigma': dist_var,
-                'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed}
-
-
-
-class SigmaModel(torch.nn.Module):
-    """
-    Sigma-type Model PE Architecture with ResNet and CBAM
-    Sigma = sum of all hard work.
-    
-    Description - consists of two separate OSnet frontend for feature extraction
-                  and a ResNet CBAM as backend for classification.
-    
-    Parameters
-    ----------
-    model_name  = 'simple' : string
-        Model name for architecture.
-    
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-        
-    """
-
-    def __init__(self, 
-                 model_name='sigmanet',
-                 channels=[16, 32, 64, 128],
-                 kernel_sizes=[
-                    [[3,3,3,3,3], [3,3,3,3,3]], [[3,3,3,3,3], [3,3,3,3,3]],
-                    [[3,3,3,3,3], [3,3,3,3,3]]
-                 ], 
-                 strides=[2,2,8,4],
-                 stacking=True,
-                 initial_dim_reduction=False,
-                 channel_gate_reduction=8,
-                 resnet_size: int = 50,
-                 norm_layer: str = 'instancenorm',
-                 store_device: str = 'cpu',
-                 **kwargs):
-        
-        super().__init__()
-        
-        self.model_name = model_name
-        self.store_device = store_device
-        self.norm_layer = norm_layer
-        
-        """ Frontend """
-        self._det1 = osnet1d(channels=channels,
-                             kernel_sizes=kernel_sizes, 
-                             strides=strides, 
-                             stacking=stacking, 
-                             initial_dim_reduction=initial_dim_reduction,
-                             channel_gate_reduction=channel_gate_reduction)
-
-        self._det2 = osnet1d(channels=channels,
-                             kernel_sizes=kernel_sizes, 
-                             strides=strides, 
-                             stacking=stacking, 
-                             initial_dim_reduction=initial_dim_reduction,
-                             channel_gate_reduction=channel_gate_reduction)
-        
-        """ Backend """
-        # resnet50 --> Based on ResNetCBAM blocks
-        # Pretrained model is for 3-channels. We use 2 channels.
-        if resnet_size == 50:
-            self.backend = resnet50_cbam(pretrained=False)
-        elif resnet_size == 152:
-            self.backend = resnet152_cbam(pretrained=False)
-        
-        """ Mods """
-        ## Manipulation layers
-        # Normalisation
-        self.batchnorm = nn.BatchNorm1d(2)
-        self.dain = DAIN_Layer(mode='full', input_dim=2)
-        self.instancenorm = nn.InstanceNorm1d(2, affine=True)
-        # Flattening
-        self.flatten_d1 = nn.Flatten(start_dim=1)
-        self.flatten_d0 = nn.Flatten(start_dim=0)
-        # Others
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
-        self.sigmoid = torch.nn.Sigmoid()
-        
-        ## Convert network into given dtype and store in proper device 
-        # Primary outputs
-        self.signal_or_noise = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(512, 2)
-        self.chirp_distance = nn.Linear(512, 2)
-        self.chirp_mass = nn.Linear(512, 2)
-        self.distance = nn.Linear(512, 2)
-        self.mass_ratio = nn.Linear(512, 2)
-        self.inv_mass_ratio = nn.Linear(512, 2)
-        self.snr = nn.Linear(512, 2)
-        # Mod layers
-        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
-        self.coalescence_time.to(dtype=data_type, device=self.store_device)
-        self.chirp_distance.to(dtype=data_type, device=self.store_device)
-        self.chirp_mass.to(dtype=data_type, device=self.store_device)
-        self.distance.to(dtype=data_type, device=self.store_device)
-        self.mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.snr.to(dtype=data_type, device=self.store_device)
-
-        # Manipulation layers
-        self.batchnorm.to(dtype=data_type, device=self.store_device)
-        self.dain.to(dtype=data_type, device=self.store_device)
-        self.instancenorm.to(dtype=data_type, device=self.store_device)
-        # Main layers
-        self._det1.to(dtype=data_type, device=self.store_device)
-        self._det2.to(dtype=data_type, device=self.store_device)
-        self.frontend = {'det1': self._det1, 'det2': self._det2}
-        self.backend.to(dtype=data_type, device=self.store_device)
-    
-    # x.shape: (batch size, wave channel, length of wave)
-    def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        if self.norm_layer == 'batchnorm':
-            normed = self.batchnorm(x)
-        elif self.norm_layer == 'dain':
-            normed, gate = self.dain(x)
-        elif self.norm_layer == 'instancenorm':
-            normed = self.instancenorm(x)
-
-        # Conv Backend (batch_size, 128, 128) for sample length = 4096
-        osnet_output = torch.cat([self.frontend['det1'](normed[:, 0:1]), self.frontend['det2'](normed[:, 1:2])], dim=1)
-
-        # Timm Frontend
-        out = self.backend(osnet_output) # (batch_size, 512)
-        out = self.flatten_d1(self.avg_pool_1d(out))
-        ## Output necessary params
-        raw = self.flatten_d0(self.signal_or_noise(out))
-        pred_prob = self.sigmoid(raw)
-
-        ## Parameter Estimation
-        # Time of Coalescence
-        tc_ = self.coalescence_time(out)
-        tc = self.flatten_d0(tc_[:,0])
-        norm_tc = self.sigmoid(tc)
-        tc_var = self.flatten_d0(tc_[:,1])
-        # Chirp Distance
-        dchirp_ = self.chirp_distance(out)
-        dchirp = self.flatten_d0(dchirp_[:,0])
-        norm_dchirp = self.sigmoid(dchirp)
-        dchirp_var = self.flatten_d0(dchirp_[:,1])
-        # Chirp Mass
-        mchirp_ = self.chirp_mass(out)
-        mchirp = self.flatten_d0(mchirp_[:,0])
-        norm_mchirp = self.sigmoid(mchirp)
-        mchirp_var = self.flatten_d0(mchirp_[:,1])
-        # Distance
-        dist_ = self.distance(out)
-        dist = self.flatten_d0(dist_[:,0])
-        norm_dist = self.sigmoid(dist)
-        dist_var = self.flatten_d0(dist_[:,1])
-        # Mass Ratio
-        q_ = self.mass_ratio(out)
-        q = self.flatten_d0(q_[:,0])
-        norm_q = self.sigmoid(q)
-        q_var = self.flatten_d0(q_[:,1])
-        # Inverse Mass Ratio
-        invq_ = self.inv_mass_ratio(out)
-        invq = self.flatten_d0(invq_[:,0])
-        norm_invq = self.sigmoid(invq)
-        invq_var = self.flatten_d0(invq_[:,1])
-        # SNR
-        snr_ = self.snr(out)
-        snr = self.flatten_d0(snr_[:,0])
-        norm_snr = self.sigmoid(snr)
-        snr_var = self.flatten_d0(snr_[:,1])
-        
-        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
-        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': osnet_output,
-                'norm_tc': norm_tc, 'norm_dchirp': norm_dchirp, 'norm_mchirp': norm_mchirp,
-                'norm_dist': norm_dist, 'norm_q': norm_q, 'norm_invq': norm_invq, 'norm_snr': norm_snr,
-                'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
-                'norm_tc_sigma': tc_var, 'norm_mchirp_sigma': mchirp_var, 'norm_snr_sigma': snr_var,
-                'norm_q_sigma': q_var, 'norm_invq_sigma': invq_var, 'norm_dist_sigma': dist_var,
-                'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed}
+def _initialize_weights(self):
+    # Initialising weights to all layers
+    for m in self.modules():
+        if isinstance(m, nn.Conv1d):
+            m.weight.data = nn.init.kaiming_normal_(m.weight.data)
+            if m.bias is not None:
+                m.bias.data.zero_()
+        elif isinstance(m, nn.BatchNorm1d):
+            m.weight.data.fill_(1)
+            m.bias.data.zero_()
+        elif isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, 0, 0.01)
+            nn.init.constant_(m.bias, 0)
