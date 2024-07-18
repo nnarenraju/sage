@@ -80,6 +80,23 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
+# Consistancy between pycbc ini file and config files
+# Naming convention for frontend and backend
+# Moving kaggle frontend into frontend file
+# Rewriting kaggle frontend using OSNet arch
+# Cleanup model arguments
+# Move models into models file
+# Move unit tests into diagnostics folder (I like the name better)
+# Remove unwanted architectures from zoo
+# segments.csv should be placed in appropriate location
+# All tmp files must be placed in a single location
+# code to produce all tmp files must be consolidated
+# code to download noise files for full experimentation must be consolidated
+# Change all debug folders to exist within export_dir
+# Clean unify noise gen
+
+# Add documentation to all classes and functions
+# Add diagnostic tests with at least 90% coverage
 
     
 """ CUSTOM MODELS FOR EXPERIMENTATION """
@@ -129,7 +146,7 @@ class SageNetOTF:
     dataset_params = dict()
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM
+    model = KappaModel_ResNet_CBAM # Change name for pe options
 
     model_params = dict(
         # ResNet50
@@ -137,6 +154,9 @@ class SageNetOTF:
         kernel_size = 64,
         resnet_size = 50,
         store_device = 'cuda:0',
+        # Options: 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+        # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
 
     """ Epochs and Batches """
@@ -145,6 +165,7 @@ class SageNetOTF:
     validation_plot_freq = 1 # every n epochs
     
     """ Weight Types """
+    # Lowest loss, highest accuracy, highest auc, highest low_far_nsignals found
     weight_types = ['loss', 'accuracy', 'roc_auc', 'low_far_nsignals']
     
     # Save weights for particular epochs
@@ -161,10 +182,6 @@ class SageNetOTF:
     
     pretrained = False
     weights_path = 'weights_loss.pt'
-    
-    """ Parameter Estimation """
-    # Options depend on model
-    parameter_estimation = ('norm_tc', 'norm_mchirp', )
 
     """ Optimizer """
     ## Adam 
@@ -210,29 +227,35 @@ class SageNetOTF:
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    FastGenerateWaveform(sample_length=12.0),
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
+                    # Auxilliary noise data (only used for training, not for validation)
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
                                                             H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
                                                             L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
-                                                 sample_length=17.0,
                                                  debug_me=False,
                                                  debug_dir=""
                     ),
-                    pfixed = 0.689, # 113/164 days for extra O3b noise
+                    paux = 0.689, # 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
@@ -402,17 +425,23 @@ class SageNetOTF_May24_Russet(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    FastGenerateWaveform(sample_length=12.0),
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
@@ -420,11 +449,10 @@ class SageNetOTF_May24_Russet(SageNetOTF):
                                                             H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
                                                             L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
-                                                 sample_length=17.0,
                                                  debug_me=False,
                                                  debug_dir=""
                     ),
-                    pfixed = 0.689, # 113/164 days for extra O3b noise
+                    paux = 0.689, # 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
@@ -511,17 +539,23 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    FastGenerateWaveform(sample_length=12.0),
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
@@ -529,11 +563,10 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
                                                             H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
                                                             L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
-                                                 sample_length=17.0,
                                                  debug_me=False,
                                                  debug_dir=""
                     ),
-                    pfixed = 0.689, # 113/164 days for extra O3b noise
+                    paux = 0.689, # 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
@@ -625,17 +658,23 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    FastGenerateWaveform(sample_length=12.0),
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
@@ -643,11 +682,10 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
                                                             H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
                                                             L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
-                                                 sample_length=17.0,
                                                  debug_me=False,
                                                  debug_dir=""
                     ),
-                    pfixed = 0.689, # 113/164 days for extra O3b noise
+                    paux = 0.689, # 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
@@ -740,17 +778,23 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    FastGenerateWaveform(sample_length=12.0),
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
@@ -758,11 +802,10 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
                                                             H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
                                                             L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
-                                                 sample_length=17.0,
                                                  debug_me=False,
                                                  debug_dir=""
                     ),
-                    pfixed = 0.689, # 113/164 days for extra O3b noise
+                    paux = 0.689, # 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
@@ -854,17 +897,23 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    FastGenerateWaveform(sample_length=12.0),
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    sample_length=17.0, segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
@@ -872,11 +921,10 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
                                                             H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
                                                             L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
-                                                 sample_length=17.0,
                                                  debug_me=False,
                                                  debug_dir=""
                     ),
-                    pfixed = 0.689, # 113/164 days for extra O3b noise
+                    paux = 0.689, # 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
