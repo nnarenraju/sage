@@ -133,7 +133,8 @@ class MinimalOTF(Dataset):
         
         """ Set default waveform generation params """
         # Use data_cfg to set waveform generation class attributes
-        wgen = [foo for foo in self.waveform_generation.generations if foo.__class__.__name__=='FastGenerateWaveform'][0]
+        get_class = lambda clist, cname: [foo for foo in clist if foo.__class__.__name__==cname][0]
+        wgen = get_class(self.waveform_generation.generations, 'FastGenerateWaveform')
         wgen.f_lower = data_cfg.signal_low_freq_cutoff
         wgen.f_upper = data_cfg.sample_rate
         wgen.delta_t = 1./data_cfg.sample_rate
@@ -145,8 +146,22 @@ class MinimalOTF(Dataset):
         # Precompute common params for waveform generation
         wgen.precompute_common_params()
 
-        """ Set default recolour transformation params """
-        self.transforms['noise'].
+        """ Set default noise generation params """
+        for name in ['training', 'validation']:
+            self.noise_generation.generations[name].sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
+            self.noise_generation.generations[name].min_segment_duration = data_cfg.signal_length + data_cfg.whiten_padding # seconds
+            self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
+            self.noise_generation.generations[name].precompute_common_params()
+
+        self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding
+
+        """ Set default recolour transformation params """ 
+        recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
+        recolour.fs = data_cfg.sample_rate # Hz
+        recolour.sample_length_in_s = data_cfg.signal_length + data_cfg.whiten_padding # seconds
+        recolour.noise_low_freq_cutoff = data_cfg.noise_low_freq_cutoff # Hz
+        reocolour.signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff # Hz
+        recolour.whiten_padding = data_cfg.whiten_padding # seconds
 
         """ PSD Handling (used in whitening) """
         # Store the PSD files here in RAM. This reduces the overhead when whitening.
