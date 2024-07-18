@@ -219,7 +219,7 @@ class MinimalOTF(Dataset):
                        'spin2x': -1, 'spin2y': -1, 'spin2z': -1, 'distance': -1, 'tc': -1,
                        'coa_phase': -1,  'inclination': -1}
         
-        ini_parent = './data/ini_files'
+        ini_parent = './ini_files'
         dataset = 4 # MinimalOTF made specifically for dataset 4
         CONFIG_PATH = "{}/ds{}.ini".format(ini_parent, dataset)
         self.randomsampler, self.waveform_transforms = read_config(path=CONFIG_PATH)
