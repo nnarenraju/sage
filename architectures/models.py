@@ -34,7 +34,8 @@ from architectures.zoo.dain import DAIN_Layer
 from architectures.zoo.resnet_cbam import resnet50_cbam, resnet152_cbam, resnet34_cbam
 from architectures.zoo.res2net_v1b import res2net101_v1b_26w_4s, res2net50_v1b_26w_4s, res2net152_v1b_26w_4s
 from architectures.zoo.osnet1d import osnet_ain_custom as osnet1d
-from architectures.frontend import ConvBlock, _initialize_weights
+# from architectures.frontend import ConvBlock, _initialize_weights
+from architectures.frontend import MSFeatureExtractor
 
 # Datatype for storage
 data_type=torch.float32
@@ -452,9 +453,11 @@ class KappaModel_ResNet_CBAM(torch.nn.Module):
         """ Backend """
         # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
         # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
-        self._det1 = ConvBlock(self.filter_size, self.kernel_size)
-        self._det2 = ConvBlock(self.filter_size, self.kernel_size)
-        _initialize_weights(self)
+        #self._det1 = ConvBlock(self.filter_size, self.kernel_size)
+        #self._det2 = ConvBlock(self.filter_size, self.kernel_size)
+        #_initialize_weights(self)
+        self._det1 = MSFeatureExtractor()
+        self._det2 = MSFeatureExtractor()
         
         """ Frontend """
         # resnet50 --> Based on Res2Net blocks
