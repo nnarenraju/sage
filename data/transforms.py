@@ -466,8 +466,8 @@ class FastGenerateWaveform():
         # Default params are for m1 = 5.01, m2 = 5.0 and with aligned spins s1z, s2z = 0.99
         # Minimum mass is chosen to be below prior minimum mass (just in case)
         ## Sanity check
-        assert not any([self.f_lower, self.f_upper, self.delta_t, \
-                        self.f_ref, self.signal_length, self.whiten_padding])
+        assert any([self.f_lower, self.f_upper, self.delta_t, \
+                    self.f_ref, self.signal_length, self.whiten_padding])
         ## End
         _theta = {'mass1': self.min_mass+0.01, 'mass2': self.min_mass, 'spin1z': 0.99, 'spin2z': 0.99}
         self.tmp_f_lower, self.tmp_delta_f, self.fsize = self.optimise_fmin(_theta)
