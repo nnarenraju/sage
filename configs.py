@@ -80,22 +80,22 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
-# Moving kaggle frontend into frontend file
-# Rewriting kaggle frontend using OSNet arch
+# TASKS
 # Cleanup model arguments
-# Move models into models file
 # Move unit tests into diagnostics folder (I like the name better)
 # Remove unwanted architectures from zoo
-# segments.csv should be placed in appropriate location
-# All tmp files must be placed in a single location
+# All tmp files must be placed in a single location (eg. segments.csv)
 # code to produce all tmp files must be consolidated
 # code to download noise files for full experimentation must be consolidated
 # Change all debug folders to exist within export_dir
 # Clean unify noise gen
-# Move all external data into one directory (data_dir)
+# Move all external data into one directory (psds, O3 noise, etc.)
+# Add verbosity to all modules
 
+# Add logging to all modules
 # Add documentation to all classes and functions
 # Add diagnostic tests with at least 90% coverage
+# Add Sage logo to output
 
     
 """ CUSTOM MODELS FOR EXPERIMENTATION """
@@ -992,3 +992,5 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
 # 2. uniform on (tau0, q)
 # 3. power law on (tau0, q)
 # 4. uniform + power law on (tau0, q)
+# 5. Anneal from U(m1, m2) to template placement metric
+# 6. Anneal from template placement metric to U(m1, m2)
