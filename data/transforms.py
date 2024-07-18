@@ -450,7 +450,7 @@ class FastGenerateWaveform():
         # Clean-up params
         self.rwrap = rwrap
         # Tapering params
-        beta = 8
+        self.beta = beta_taper
         # Condition for optimising f_min
         self.duration_padfactor = pad_duration_estimate
         # Projection params
@@ -480,7 +480,7 @@ class FastGenerateWaveform():
         # Windowing params
         self.width = self.f_lower - self.tmp_f_lower
         self.winlen = int(2. * (self.width / self.tmp_delta_f))
-        self.window = np.array(get_window(('kaiser', beta), self.winlen))
+        self.window = np.array(get_window(('kaiser', self.beta), self.winlen))
         self.kmin = int(self.tmp_f_lower / self.tmp_delta_f)
         self.kmax = self.kmin + self.winlen//2
 
@@ -1390,6 +1390,11 @@ class RandomNoiseSlice():
         # Values set using parameters from MLGWSC-1
         self.segment_ends_buffer = 0.0 # seconds
         self.slide_buffer = 240.0
+        # Other
+        self.segment_llimit = segment_llimit
+        self.segment_ulimit = segment_ulimit
+        self.debug_me = debug_me
+        self.debug_dir = debug_dir
     
     def precompute_common_params(self):
         # Keep all required noise files open
@@ -1402,15 +1407,15 @@ class RandomNoiseSlice():
         self.psegment = {}
         segdurs = np.empty(len(ligo_segments), dtype=np.float64)
         # limit check
-        if segment_ulimit == -1:
-            segment_ulimit = len(ligo_segments)
+        if self.segment_ulimit == -1:
+            self.segment_ulimit = len(ligo_segments)
         
         lookup = np.load("./notebooks/tmp/segdurs_all.npy")
         for n, seg in enumerate(ligo_segments):
             key_time = str(load_times[seg][0])
             _key = f'{self.detectors[0]}/{key_time}'
             # Sanity check if _key is present in noise file
-            if n >= segment_llimit and n <= segment_ulimit:
+            if n >= self.segment_llimit and n <= self.segment_ulimit:
                 segment_length = lookup[:,1][n]
                 seg_start_idx = 0 + self.segment_ends_buffer
                 seg_end_idx = segment_length - (self.sample_length + self.segment_ends_buffer)*(1./self.dt)
@@ -1428,12 +1433,10 @@ class RandomNoiseSlice():
         self.segment_choice = lambda _: np.random.choice(seg_idx, 1, p=segprob)[0]
 
         # Debugging
-        self.debug_me = debug_me
-        if debug_me:
-            self.debug_dir = debug_dir
+        if self.debug_me:
             if not os.path.exists(self.debug_dir):
                 os.makedirs(self.debug_dir)
-            save_txt = os.path.join(debug_dir, 'random_noise_slice.txt')
+            save_txt = os.path.join(self.debug_dir, 'random_noise_slice.txt')
             self.tmp_debug = open(save_txt, "a")
 
 
