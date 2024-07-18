@@ -66,8 +66,8 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 # LOCAL
 from data.datasets import MinimalOTF
-from architectures.frontend import KappaModel_ResNet_CBAM
-from architectures.frontend import KappaModel_ResNet_small
+from architectures.models import KappaModel_ResNet_CBAM
+from architectures.models import KappaModel_ResNet_small
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
 from data.transforms import Whiten, MultirateSampling, Normalise
 from data.transforms import AugmentOptimalNetworkSNR
@@ -80,8 +80,6 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
-# Consistancy between pycbc ini file and config files
-# Naming convention for frontend and backend
 # Moving kaggle frontend into frontend file
 # Rewriting kaggle frontend using OSNet arch
 # Cleanup model arguments
