@@ -33,7 +33,7 @@ Major Modifications && Notes:
 3. Extracting features using large kernels (Link: https://openaccess.thecvf.com/content_cvpr_2017/papers/Peng_Large_Kernel_Matters_CVPR_2017_paper.pdf)
 4. Making the network fully convolutional (no fully connected layers) and removing global pooling layers (both localisation and classification is better)
 5. Using a more stable activation function (getting rid of ReLU -> probably Leaky ReLU, SiLU or GELU)
-6. Input has been manufactured to be exactly 4096 samples in length. Set strides to get it down to 128 (x32 compression).
+6. Input has been manufactured to be exactly 4096 samples in length. Set strides to get it down to 128 across one dimension.
 7. 20 Hz (signal low freq cutoff) at 220 Hz sampling freq will require at least kernel size = 11 to capture one full cycle.
 8. AveragePool or MaxPool or both (currently this in OSnet)? Maybe even MinPool for funsies.
    Thinking about it more: MaxPool gets bright features from darker images. MinPool should do the opposite.
