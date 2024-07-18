@@ -500,7 +500,7 @@ if __name__ == "__main__":
                         help="Creates or uses a particular dataset as provided in data_configs.py")
     parser.add_argument("--no-test-background", action='store_true',
                         help="Option to test background file of testing dataset")
-    parser.add_argument("--no-test_foreground", action='store_true',
+    parser.add_argument("--no-test-foreground", action='store_true',
                         help="Option to test foreground file of testing dataset")
     
     opts = parser.parse_args()
@@ -560,7 +560,7 @@ if __name__ == "__main__":
                 trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
                 batch_size = cfg.batch_size, device=cfg.testing_device, verbose=cfg.verbose)
     
-    if not opts.test_background and not opts.test_foreground:
+    if opts.no_test_background and opts.no_test_foreground:
         print('WARNING: Choosing to not test foreground or background file')
         print('Assuming that testing directory contains previous testing outputs')
     
