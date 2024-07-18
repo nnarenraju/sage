@@ -94,6 +94,7 @@ from ray.tune.schedulers import ASHAScheduler
 # code to download noise files for full experimentation must be consolidated
 # Change all debug folders to exist within export_dir
 # Clean unify noise gen
+# Move all external data into one directory (data_dir)
 
 # Add documentation to all classes and functions
 # Add diagnostic tests with at least 90% coverage
