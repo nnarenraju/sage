@@ -333,7 +333,7 @@ class DefaultOTF:
     noise_low_freq_cutoff = 15.0 # Hz
     noise_high_freq_cutoff = 1024.8 # Hz
     delta_f = 1./sample_length_in_s
-    # psd_len = round(noise_high_freq_cutoff/delta_f) -> definition depricated
+    # psd_len = round(noise_high_freq_cutoff/delta_f) -> definition deprecated
     # Following definition of psd_len taken from:
     # https://pycbc.org/pycbc/latest/html/_modules/pycbc/types/timeseries.html#TimeSeries.to_frequencyseries
     # Got an error in transforms where signal.to_frequencyseries did not have the correct length
@@ -470,7 +470,7 @@ class LongerOTF:
     noise_low_freq_cutoff = 15.0 # Hz
     noise_high_freq_cutoff = 1024.8 # Hz
     delta_f = 1./sample_length_in_s
-    # psd_len = round(noise_high_freq_cutoff/delta_f) -> definition depricated
+    # psd_len = round(noise_high_freq_cutoff/delta_f) -> definition deprecated
     # Following definition of psd_len taken from:
     # https://pycbc.org/pycbc/latest/html/_modules/pycbc/types/timeseries.html#TimeSeries.to_frequencyseries
     # Got an error in transforms where signal.to_frequencyseries did not have the correct length
