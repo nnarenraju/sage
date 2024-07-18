@@ -118,11 +118,11 @@ class UnifyNoise:
 
 
 class UnifyNoiseGen:
-    def __init__(self, generations, fixed, pfixed, debug_me=False, debug_dir=""):
+    def __init__(self, generations, aux, paux, debug_me=False, debug_dir=""):
         self.generations = generations
-        self.fixed = fixed
-        # Probability of selecting a generation or fixed
-        self.pfixed = pfixed
+        self.aux = aux
+        # Probability of selecting primary generation method or aux
+        self.paux = paux
         # Debugging
         self.debug_me = debug_me
         if debug_me:
@@ -150,10 +150,10 @@ class UnifyNoiseGen:
     def __call__(self, special: dict):
         det_only = "none"
         if special['training']:
-            do_fixed = np.random.rand() < self.pfixed
-            if do_fixed:
+            do_aux = np.random.rand() < self.paux
+            if do_aux:
                 # Has probability to set one or more dets to zeros
-                y = self.fixed.apply(special)
+                y = self.aux.apply(special)
                 # If both detectors are set to zeros
                 if not np.any(y[0]) and not np.any(y[1]):
                     y = self.generations['training'].apply(special)
@@ -666,7 +666,7 @@ class FastGenerateWaveform():
         if self.debug_me:
             self.debug_waveform_generate(data=[out[0], out[1]],
                                          labels=['H1', 'L1'],
-                                         special['cfg'])
+                                         cfg=special['cfg'])
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         return out
     
@@ -917,13 +917,9 @@ class Recolour(NoiseWrapper):
     # Whitening module removes corrupted bits due to possible edge effects.
     def __init__(self, always_apply=True,
                  use_precomputed=False, h1_psds_hdf="", l1_psds_hdf="",
-                 use_shifted=False, shift_up_factor=10, shift_down_factor=1, udr=0.5,
+                 use_shifted=False, shift_up_factor=10, shift_down_factor=1,
                  p_recolour=0.3,
-                 sample_length_in_s=17.0,
-                 noise_low_freq_cutoff=15.0,
-                 signal_low_freq_cutoff=20.0,
                  trunc_method='hann',
-                 whiten_padding=5.0,
                  debug_me=False,
                  debug_dir=""):
         
@@ -943,17 +939,16 @@ class Recolour(NoiseWrapper):
         self.use_shifted = use_shifted
         self.shift_up_factor = shift_up_factor
         self.shift_down_factor = shift_down_factor
-        self.udr = udr # up to down ratio
         # Probability of being recoloured
         self.p_recolour = p_recolour
 
         # Other params
         self.fs = 2048. #Hz
-        self.sample_length_in_s = sample_length_in_s
-        self.noise_low_freq_cutoff = noise_low_freq_cutoff
-        self.signal_low_freq_cutoff = signal_low_freq_cutoff
+        self.sample_length_in_s = 0.0 # seconds
+        self.noise_low_freq_cutoff = 0.0 # Hz
+        self.signal_low_freq_cutoff = 0.0 # Hz
+        self.whiten_padding = 0.0 # seconds
         self.trunc_method = trunc_method
-        self.whiten_padding = whiten_padding # seconds
 
         # DEBUGGER
         self.debug_me = debug_me
@@ -1026,12 +1021,12 @@ class Recolour(NoiseWrapper):
         # Shift new PSD along y axis
         H1_shift_up_factor = np.random.uniform(1, self.shift_up_factor)
         H1_shift_down_factor = np.random.uniform(1, self.shift_down_factor)**-1
-        H1_up_or_down = 1 if np.random.random() < self.udr else 0
+        H1_up_or_down = 1 if np.random.random() < 0.5 else 0
         if H1['is_recolour']:
             H1['new_psd'] *= H1_shift_up_factor if H1_up_or_down else H1_shift_down_factor
         L1_shift_up_factor = np.random.uniform(1, self.shift_up_factor)
         L1_shift_down_factor = np.random.uniform(1, self.shift_down_factor)**-1
-        L1_up_or_down = 1 if np.random.random() < self.udr else 0
+        L1_up_or_down = 1 if np.random.random() < 0.5 else 0
         if L1['is_recolour']:
             L1['new_psd'] *= L1_shift_up_factor if L1_up_or_down else L1_shift_down_factor
         return (H1, L1)
@@ -1304,12 +1299,11 @@ class MultipleFileRandomNoiseSlice():
                     H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
                     L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                  ),
-                 sample_length=17.0,
                  debug_me=False,
                  debug_dir=""):
 
         # Noise data files
-        self.sample_length = sample_length
+        self.sample_length = 0.0 # seconds
         self.noise_files = {}
         self.lengths = {}
         for name in noise_dirs.keys():
@@ -1381,15 +1375,23 @@ class MultipleFileRandomNoiseSlice():
 class RandomNoiseSlice():
     """ Used to augment the start time of noise samples from continuous noise .hdf file """
     # This will become the primary noise reading function
-    def __init__(self, real_noise_path="", sample_length=17.0,
-                 segment_llimit=None, segment_ulimit=None, debug_me=False, debug_dir=""):
-        self.sample_length = sample_length
-        self.min_segment_duration = self.sample_length
+    def __init__(self, 
+                 real_noise_path = "", 
+                 segment_llimit = None, 
+                 segment_ulimit = None, 
+                 debug_me = False, 
+                 debug_dir = ""
+                ):
+        
+        self.sample_length = 0.0 # seconds
+        self.min_segment_duration = 0.0 # seconds
+        self.dt = 0.0 # seconds
         self.real_noise_path = real_noise_path
+        # Values set using parameters from MLGWSC-1
         self.segment_ends_buffer = 0.0 # seconds
         self.slide_buffer = 240.0
-        self.dt = 1./2048.
-        
+    
+    def precompute_common_params(self):
         # Keep all required noise files open
         self.O3a_real_noise = h5py.File(self.real_noise_path, 'r')
         # Get detectors used
@@ -1433,6 +1435,7 @@ class RandomNoiseSlice():
                 os.makedirs(self.debug_dir)
             save_txt = os.path.join(debug_dir, 'random_noise_slice.txt')
             self.tmp_debug = open(save_txt, "a")
+
 
     def _load_segments(self):
         tmp_dir = "./tmp"
