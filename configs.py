@@ -105,7 +105,7 @@ class SageNetOTF:
     
     """ Data storage """
     name = "SageNet50_CBAM_OTF_Feb03_dummy"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
     repo_abspath = git_revparse.stdout.strip('\n')
@@ -336,7 +336,7 @@ class SageNetOTF:
 class SageNetOTF_Feb24_Yukon(SageNetOTF):
     """ Data storage """
     name = "SageNet50_CBAM_OTF_Feb03_Yukon"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
 
     """ Dataset """
     dataset = MinimalOTF
@@ -366,7 +366,7 @@ class SageNetOTF_Feb24_Yukon_rerun(SageNetOTF):
     """ Data storage """
     # Apr21 IMRPhenomD completed at 50 epochs. Rerun with checkpoint file from last epoch.
     name = "SageNet50_CBAM_IMRPhenomD_OTF_May01_Yukon_rerun"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
 
     """ Dataset """
     dataset = MinimalOTF
@@ -412,7 +412,7 @@ class SageNetOTF_May24_Russet(SageNetOTF):
 
     """ Data storage """
     name = "SageNet50_halfnormSNR_May17_Russet"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
     repo_abspath = git_revparse.stdout.strip('\n')
@@ -520,7 +520,7 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
 
     """ Data storage """
     name = "SageNet50_metric_density_Jun26"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
     repo_abspath = git_revparse.stdout.strip('\n')
@@ -639,7 +639,7 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
 
     """ Data storage """
     name = "SageNet50_metric_lowvar_Jul00"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
     repo_abspath = git_revparse.stdout.strip('\n')
@@ -759,7 +759,7 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
 
     """ Data storage """
     name = "SageNet50_metric_density_noCheatyPSDaug_Jun26"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
     repo_abspath = git_revparse.stdout.strip('\n')
@@ -878,7 +878,7 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
 
     """ Data storage """
     name = "SageNet50_metric_density_noCheatyPSDaug_noPSDshift_Jun26"
-    export_dir = Path("/home/nnarenraju/Research/ORChiD/DEBUGGING") / name
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
     repo_abspath = git_revparse.stdout.strip('\n')
