@@ -196,7 +196,7 @@ class MSFeatureExtractor(nn.Module):
         all_modules = []
         in_chans = in_channels
         # Iterating through feature extractor blocks
-        for (block, out_chans, base_kernels, comp) in zip(block_metadata):
+        for (block, out_chans, base_kernels, comp) in zip(*block_metadata):
             # Iterating through each multi-scale block within
             for msb, oc, bk in zip(block, out_chans, base_kernels):
                 all_modules.append(msb(scales, in_chans, oc, bk))
