@@ -205,7 +205,7 @@ class MSFeatureExtractor(nn.Module):
                 # Pooling does not change num channels
                 in_chans = oc
             # Adding compression blocks if required
-            if not comp:
+            if comp != 0:
                 all_modules.append(MaxPool1d(kernel_size=comp, stride=comp))
 
         # All modules can be put into one Sequential module
