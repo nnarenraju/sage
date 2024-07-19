@@ -26,8 +26,10 @@ Documentation: NULL
 
 # PACKAGES
 import timm
+import json
 import torch
 from torch import nn
+from datetime import date
 
 # Importing architecture snippets from zoo
 from architectures.zoo.dain import DAIN_Layer
@@ -37,8 +39,9 @@ from architectures.zoo.osnet1d import osnet_ain_custom as osnet1d
 from architectures.zoo.kaggle import ConvBlock, _initialize_weights
 from architectures.frontend import MSFeatureExtractor, MultiScaleBlock
 
-# Decorators
+# Code Review
 from utils.decorators import unreviewed_model
+from utils.review import set_review_date
 
 # Datatype for storage
 data_type=torch.float32
@@ -403,36 +406,22 @@ class KappaModel_Res2Net(torch.nn.Module):
 
 
 
-@unreviewed_model
-class KappaModel_ResNet_CBAM(torch.nn.Module):
+class Rigatoni_MS_ResNetCBAM(torch.nn.Module):
     """
-    Kappa-type Model PE Architecture with ResNet and CBAM
+    Rigatoni-type model with multi-scale feature extractor && ResNet-CBAM
     
-    Description - consists of a 2-channel MSFeatureExtractor frontend and a 
-                  ResNet-CBAM model backend this Model-type can be used to test 
-                  the Kaggle architectures
+    Description - Consists of a MSFeatureExtractor frontend for each detector and a 
+                  ResNet-CBAM model backend. Capable of PE point estimate 
+                  regularisation.
     
     Parameters
     ----------
-    model_name  = 'simple' : string
-        Simple NN model name for Frontend. Save model with this name as attribute.
-    pretrained  = False : Bool
-        Pretrained option for saved models
-        If True, weights are stored under the model_name in saved_models dir
-        If model name already exists, throws an error (safety)
-    in_channels = 2 : int
-        Number of input channels (number of detectors)
-    out_channels = 2 : int
-        Number of output channels (signal, noise)
-    store_device = 'cpu' : str
-        Storage device for network (NOTE: make sure data is also stored in the same device)
-    weights_path = '' : str
-        Absolute path to the weights.pt file. Used when pretrained == True
+    
         
     """
 
     def __init__(self, 
-                 model_name: str = 'ResNet_CBAM',
+                 model_name: str = 'Rigatoni_MS_ResNetCBAM',
                  scales: list = [1, 2, 4, 0.5, 0.25],
                  blocks: list = [
                         [MultiScaleBlock, MultiScaleBlock], 
@@ -451,24 +440,33 @@ class KappaModel_ResNet_CBAM(torch.nn.Module):
                  parameter_estimation: tuple = (),
                  norm_layer: str = 'instancenorm',
                  store_device: str = 'cpu',
+                 review: bool = False,
                  **kwargs):
         
         super().__init__()
         
+        # Saving last review date
+        if review:
+            last_review_date = date.today()
+            model_name = self.__class__.__name__
+            parent_name = "models"
+            set_review_date(parent_name, model_name, last_review_date)
+
         self.model_name = model_name
-        self.store_device = store_device
         self.norm_layer = norm_layer
         self.parameter_estimation = parameter_estimation
+        self.store_device = store_device
         
         """ Backend """
+        # Initialisation of weights and biases performed upon call
         self._det1 = MSFeatureExtractor(scales, blocks, out_channels, base_kernel_sizes, 
                                         compression_factor, in_channels)
         self._det2 = MSFeatureExtractor(scales, blocks, out_channels, base_kernel_sizes, 
                                         compression_factor, in_channels)
         
         """ Frontend """
-        # resnet50 --> Based on Res2Net blocks
         # Pretrained model is for 3-channels. We use 2 channels.
+        # When training  on HLV, we can use pretrained model.
         if resnet_size == 50:
             self.backend = resnet50_cbam(pretrained=False)
         elif resnet_size == 152:
@@ -477,7 +475,6 @@ class KappaModel_ResNet_CBAM(torch.nn.Module):
         """ Mods """
         # Normalisation layers
         self.batchnorm = nn.BatchNorm1d(2)
-        self.dain = DAIN_Layer(mode='full', input_dim=2)
         self.instancenorm = nn.InstanceNorm1d(2, affine=True)
         # Shape manipulation
         self.flatten_d1 = nn.Flatten(start_dim=1)
@@ -513,7 +510,6 @@ class KappaModel_ResNet_CBAM(torch.nn.Module):
 
         # Manipulation layers
         self.batchnorm.to(dtype=data_type, device=self.store_device)
-        self.dain.to(dtype=data_type, device=self.store_device)
         self.instancenorm.to(dtype=data_type, device=self.store_device)
         # Main layers
         self._det1.to(dtype=data_type, device=self.store_device)
@@ -526,13 +522,12 @@ class KappaModel_ResNet_CBAM(torch.nn.Module):
         # batch_size, channel, signal_length = s.shape
         if self.norm_layer == 'batchnorm':
             normed = self.batchnorm(x)
-        elif self.norm_layer == 'dain':
-            normed, gate = self.dain(x)
         elif self.norm_layer == 'instancenorm':
             normed = self.instancenorm(x)
 
         # 1D CNN Frontend
-        cnn_output = torch.cat([self.frontend['det1'](normed[:, 0:1]), self.frontend['det2'](normed[:, 1:2])], dim=1)
+        cnn_output = torch.cat([self.frontend['det1'](normed[:, 0:1]), 
+                                self.frontend['det2'](normed[:, 1:2])], dim=1)
 
         # ResNet CBAM Backend
         out = self.backend(cnn_output) # (batch_size, embedding_size)
