@@ -28,5 +28,6 @@ def unreviewed_model(cls):
     # Decorator to mark unreviewed models
     def mark_as_unreviewed(*args, **kwargs):
         print('UNREVIEWED: {} model has not be examined for issues'.format(cls.__name__))
+        print('Use at your own discretion!')
         return cls(*args, **kwargs)
     return mark_as_unreviewed
