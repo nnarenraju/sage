@@ -64,15 +64,20 @@ import torch.optim as optim
 from pathlib import Path
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-# LOCAL
+## LOCAL
+# Dataset objects
 from data.datasets import MinimalOTF
-from architectures.models import KappaModel_ResNet_CBAM
+# Architectures
+from architectures.models import Rigatoni_MS_ResNetCBAM
 from architectures.models import KappaModel_ResNet_small
+from architectures.frontend import MultiScaleBlock
+# Transforms, augmentation and generation
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
 from data.transforms import Whiten, MultirateSampling, Normalise
 from data.transforms import AugmentOptimalNetworkSNR
 from data.transforms import Recolour
 from data.transforms import FastGenerateWaveform, RandomNoiseSlice, MultipleFileRandomNoiseSlice
+# Loss functions
 from losses.custom_loss_functions import BCEWithPEregLoss
 
 # RayTune
@@ -81,8 +86,6 @@ from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
 # TASKS
-# Cleanup model arguments
-# Move unit tests into diagnostics folder (I like the name better)
 # Remove unwanted architectures from zoo
 # All tmp files must be placed in a single location (eg. segments.csv)
 # code to produce all tmp files must be consolidated
@@ -145,17 +148,31 @@ class SageNetOTF:
     dataset_params = dict()
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM # Change name for pe options
+    model = Rigatoni_MS_ResNetCBAM
 
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        # ResNet50
-        filter_size = 32,
-        kernel_size = 64,
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
         resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
         store_device = 'cuda:0',
-        # Options: 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
-        # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
-        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+        review = True
     )
 
     """ Epochs and Batches """
@@ -342,14 +359,31 @@ class SageNetOTF_Feb24_Yukon(SageNetOTF):
     dataset_params = dict()
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM
+    model = Rigatoni_MS_ResNetCBAM
 
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        # Res2net152
-        filter_size = 32,
-        kernel_size = 64,
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
         resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
         store_device = 'cuda:0',
+        review = False
     )
 
     """ Storage Devices """
@@ -372,14 +406,31 @@ class SageNetOTF_Feb24_Yukon_rerun(SageNetOTF):
     dataset_params = dict()
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM
+    model = Rigatoni_MS_ResNetCBAM
 
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        # Res2net152
-        filter_size = 32,
-        kernel_size = 64,
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
         resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
         store_device = 'cuda:0',
+        review = False
     )
 
     """ Checkpoints """
@@ -492,14 +543,31 @@ class SageNetOTF_May24_Russet(SageNetOTF):
     )
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM
+    model = Rigatoni_MS_ResNetCBAM
 
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
         resnet_size = 50,
-        store_device = 'cuda:2',
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
+        store_device = 'cuda:0',
+        review = False
     )
 
     """ Storage Devices """
@@ -606,14 +674,31 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
     )
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM
+    model = Rigatoni_MS_ResNetCBAM
 
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
         resnet_size = 50,
-        store_device = 'cuda:1',
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
+        store_device = 'cuda:0',
+        review = False
     )
 
     """ Storage Devices """
@@ -846,14 +931,31 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
     )
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM
+    model = Rigatoni_MS_ResNetCBAM
 
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
         resnet_size = 50,
-        store_device = 'cuda:2',
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
+        store_device = 'cuda:0',
+        review = False
     )
 
     """ Storage Devices """
@@ -965,14 +1067,31 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
     )
     
     """ Architecture """
-    model = KappaModel_ResNet_CBAM
+    model = Rigatoni_MS_ResNetCBAM
 
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
         resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
         store_device = 'cuda:0',
+        review = False
     )
 
     """ Storage Devices """
