@@ -50,7 +50,7 @@ class Conv1dSame(nn.Conv1d):
         groups: int = 1,
     ):
         x = self.pad_same(x, weight.shape[-1], stride, dilation)
-        return conv1d(x, weight, bias, stride, padding, dilation, groups)
+        return conv1d(x, weight, bias, stride, 0, dilation, groups)
 
     def forward(self, x):
         return self.conv1d_same(x, self.weight, self.bias, self.stride[0], 

@@ -34,7 +34,7 @@ from architectures.zoo.dain import DAIN_Layer
 from architectures.zoo.resnet_cbam import resnet50_cbam, resnet152_cbam, resnet34_cbam
 from architectures.zoo.res2net_v1b import res2net101_v1b_26w_4s, res2net50_v1b_26w_4s, res2net152_v1b_26w_4s
 from architectures.zoo.osnet1d import osnet_ain_custom as osnet1d
-# from architectures.frontend import ConvBlock, _initialize_weights
+from architectures.zoo.kaggle import ConvBlock, _initialize_weights
 from architectures.frontend import MSFeatureExtractor
 
 # Datatype for storage
@@ -655,7 +655,6 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
         # Normalisation layers
         self.batchnorm = nn.BatchNorm1d(2)
         self.dain = DAIN_Layer(mode='full', input_dim=2)
-        self.layernorm = nn.LayerNorm([2, _input_length])
         self.instancenorm = nn.InstanceNorm1d(2, affine=True)
         # Shape manipulation
         self.flatten_d1 = nn.Flatten(start_dim=1)
@@ -692,8 +691,6 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
         # Manipulation layers
         self.batchnorm.to(dtype=data_type, device=self.store_device)
         self.dain.to(dtype=data_type, device=self.store_device)
-        self.layernorm.to(dtype=data_type, device=self.store_device)
-        #self.layernorm_cnn.to(dtype=data_type, device=self.store_device)
         self.instancenorm.to(dtype=data_type, device=self.store_device)
         # Main layers
         self._det1.to(dtype=data_type, device=self.store_device)
@@ -708,8 +705,6 @@ class Dummy_ResNet_CBAM(torch.nn.Module):
             normed = self.batchnorm(x)
         elif self.norm_layer == 'dain':
             normed, gate = self.dain(x)
-        elif self.norm_layer == 'layernorm':
-            normed = self.layernorm(x)
         elif self.norm_layer == 'instancenorm':
             normed = self.instancenorm(x)
 
@@ -1093,3 +1088,4 @@ class SigmaModel(torch.nn.Module):
                 'norm_tc_sigma': tc_var, 'norm_mchirp_sigma': mchirp_var, 'norm_snr_sigma': snr_var,
                 'norm_q_sigma': q_var, 'norm_invq_sigma': invq_var, 'norm_dist_sigma': dist_var,
                 'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed}
+
