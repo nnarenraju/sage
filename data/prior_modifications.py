@@ -205,6 +205,15 @@ class BoundedPriors:
             upper_boundary_q = self.mu/self.ml
         return upper_boundary_q
     
+    # Sampling uniform on (tau0, tau3)
+    def _check_tau0_tau3_(self, t0, t3):
+        lb_tau3 = self.tau3_lower_boundary_from_tau0(t0)
+        ub_tau3 = self.tau3_upper_boundary_from_tau0(t0)
+        if lb_tau3 <= t3 <= ub_tau3:
+            return True
+        else:
+            return False
+    
 
     ### ALL METHODS
 
@@ -255,15 +264,6 @@ class BoundedPriors:
         # Common steps
         mass1, mass2, q, mchirp = self._common_umc_utau(tau)
         return (mass1, mass2, q, mchirp, tau)
-    
-    # Sampling uniform on (tau0, tau3)
-    def _check_tau0_tau3_(self, t0, t3):
-        lb_tau3 = self.tau3_lower_boundary_from_tau0(t0)
-        ub_tau3 = self.tau3_upper_boundary_from_tau0(t0)
-        if lb_tau3 <= t3 <= ub_tau3:
-            return True
-        else:
-            return False
 
     def get_bounded_gwparams_from_template_placement_metric(self):
         # Rejection sampling method (13.37% efficiency)
@@ -289,7 +289,6 @@ class BoundedPriors:
         mchirp = mchirp_from_mass1_mass2(mass1, mass2)
         q = mass1/mass2
         return (mass1, mass2, q, mchirp, atau0)
-
     
     def get_bounded_gwparams_from_uniform_in_mchirp_q(self):
         # No cubic roots involved!
