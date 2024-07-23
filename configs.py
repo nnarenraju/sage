@@ -201,6 +201,7 @@ class SageNetOTF:
     checkpoint_path = ""
     
     pretrained = False
+    freeze_for_transfer = False
     weights_path = 'weights_loss.pt'
 
     """ Optimizer """
@@ -1100,6 +1101,7 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
     test_background_output = "testing_boutput_noCheaty_noShift.hdf"
 
 
+# RUNNING
 class Russet_to_Desiree_Annealed(SageNetOTF):
     # Freezing Russet BEST except embedding layer
     # Transfer-learning using Desiree metric density
@@ -1107,7 +1109,7 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
     # Russet has long duration signals, so earlier layers of frozen net should be fine
 
     """ Data storage """
-    name = "SageNet50_halfnormSNR_May17_Russet"
+    name = "Russet_to_Desiree_Annealed_July23"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1117,8 +1119,19 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
     dataset = MinimalOTF
     dataset_params = dict()
 
-    pretrained = False
-    weights_path = "/home/nnarenraju/Research/ORChiD/RUNS/SageNet50_halfnormSNR_May17_Russet/checkpoint_epoch_39.pt"
+    pretrained = True
+    freeze_for_transfer = True
+    weights_path = "/home/nnarenraju/Research/ORChiD/RUNS/transfer/weights_Russet_BEST_epoch_39.pt"
+
+    """ Optimizer """
+    ## Adam 
+    optimizer = optim.Adam
+    optimizer_params = dict(lr=1e-5, weight_decay=1e-6)
+
+    """ Scheduler """
+    ## Cosine Annealing with Warm Restarts
+    scheduler = CosineAnnealingWarmRestarts
+    scheduler_params = dict(T_0=5, T_mult=1, eta_min=1e-6)
 
     """ Generation """
     # Augmentation using GWSPY glitches happens only during training (not for validation)
@@ -1210,10 +1223,13 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
     testing_device = 'cuda:0'
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_BEST_June.hdf"    
-    test_background_output = "testing_boutput_BEST_June.hdf"
+    test_foreground_output = "testing_foutput_Annealed_Russet_to_Desiree.hdf"
+    test_background_output = "testing_boutput_Annealed_Russet_to_Desiree.hdf"
 
 
+# Anneal from U(m1, m2) to template placement metric
+class Kennebec_Annealed(SageNetOTF):
+    pass
 
 ### POTENTIAL RUNS ###
 # 1. uniform on (mchirp, q)
