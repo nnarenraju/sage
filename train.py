@@ -72,8 +72,25 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
             weights = torch.load(cfg.weights_path, cfg.store_device)
             Network.load_state_dict(weights)
             del weights; gc.collect()
+            summary(Network, (2, 4096), batch_size=cfg.batch_size)
+            # Freezing
+            if cfg.freeze_for_transfer:
+                # Freeze all layers
+                # Frozen layers should have no grad before and after backward() call
+                # Check using print(model.layer.weight.grad) before and after backward
+                for param in Network.parameters():
+                    param.requires_grad = False
+                # Unfreeze required layers
+                # FIX ME!!! Add this to cfg as option
+                layer_names = ['signal_or_noise', 'chirp_mass', 'coalescence_time']
+                layer_params = [getattr(Network, foo).parameters() for foo in layer_names]
+                for layer in layer_params:
+                    for param in layer:
+                        param.requires_grad = True
+
         else:
             raise ValueError("train.py: cfg.weights_path does not exist!")
+
     elif cfg.pretrained and cfg.weights_path=='':
         raise ValueError("CFG: pretrained==True, but no weights path provided!")
     
