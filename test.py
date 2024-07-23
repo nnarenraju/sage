@@ -332,7 +332,7 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                              data_cfg=data_cfg)
         
         data_loader = torch.utils.data.DataLoader(slicer, batch_size=64, shuffle=False, 
-                                                  num_workers=16, pin_memory=cfg.pin_memory, 
+                                                  num_workers=48, pin_memory=cfg.pin_memory, 
                                                   prefetch_factor=100, 
                                                   persistent_workers=cfg.persistent_workers)
 
