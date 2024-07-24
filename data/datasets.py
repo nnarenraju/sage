@@ -240,9 +240,18 @@ class MinimalOTF(Dataset):
 
         """ Prior Modifications """
         self.bprior = BoundedPriors(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, self.data_cfg.signal_low_freq_cutoff)
+        # Set modification probabilities for epochs
+        _modprobs = zip(self.data_cfg.mod_start_probability, self.data_cfg.mod_end_probability)
+        self.modprobs = {}
+        start_epoch, end_epoch = self.data_cfg.anneal_epochs
+        anneal_epochs = np.arange(start_epoch, end_epoch, 1)
+        for mod_method, probs in zip(cfg.modification, _modprobs):
+            nsplit = end_epoch - start_epoch
+            probs = np.linspace(probs[0], probs[1], nsplit)
+            self.modprobs[mod_method] = {epoch:prob for epoch, prob in zip(anneal_epochs, probs)}
 
-        # Messages
-        # print('WARNING: Using fundamental modes (2, |2|) only for data generation!')
+        # Temporary Messages
+        # print('WARNING: ')
 
     def __len__(self):
         return self.total_samples_per_epoch
@@ -261,7 +270,7 @@ class MinimalOTF(Dataset):
 
 
     def apply_prior_mods(self, priors):
-        if (self.data_cfg.modification != None and isinstance(self.data_cfg.modification, str)) or self.aux:
+        if (self.data_cfg.modification != None and isinstance(self.data_cfg.modification, list)) or self.aux:
             ## Check for known modifications
             # 1. bounded uniform signal duration (bounded_utau)
             # 2. bounded uniform chirp mass (bounded_umc)
@@ -282,49 +291,59 @@ class MinimalOTF(Dataset):
                     mchirp_lower = 25.0
                 mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_mchirp_given_limits(mchirp_lower, mchirp_upper)
 
-            if self.data_cfg.modification in ['bounded_utau']:
-                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_tau()
-            
-            elif self.data_cfg.modification in ['bounded_itau']:
-                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_importance_tau()
+            # Pick the modification based on probability provided
+            # Sum of probabilities must sum to 1
+            if self.epoch in self.modprobs[self.data_cfg.modification[0]]:
+                current_probabilities = [self.modprobs[foo][self.epoch] for foo in self.data_cfg.modification]
+                mod_thresholds = np.cumsum(self.data_cfg.mod_start_probability)
+                current_mod_idx = np.digitize(np.random.rand(1), mod_thresholds)[0]
+                current_modification = self.data_cfg.modification[current_mod_idx]
 
-            elif self.data_cfg.modification in ['bounded_umc']:
-                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_mchirp()
-            
-            elif self.data_cfg.modification in ['bounded_pltau']:
-                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_powerlaw_tau()
+                if current_modification in ['bounded_utau']:
+                    mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_tau()
                 
-            elif self.data_cfg.modification in ['bounded_plmc']:
-                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_powerlaw_mchirp()
-            
-            elif self.data_cfg.modification in ['template_placement_metric']:
-                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_template_placement_metric()
-            
-            elif self.data_cfg.modification in ['bounded_umcq']:
-                mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_in_mchirp_q()
-            
-            elif self.data_cfg.modification in ['unbounded_utau', 'unbounded_umc']:
-                _mass1, _mass2 = get_uniform_masses_with_mass1_gt_mass2(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, 1)
-                # Masses used for mass ratio will not be used later as mass1 and mass2
-                # We calculate them again after getting chirp mass
-                q = q_from_mass1_mass2(_mass1, _mass2)
-                # uniform signal duration
-                if self.data_cfg.modification in ['unbounded_utau']:
-                    tau_lower, tau_upper = get_tau_priors(self.data_cfg.prior_low_mass, 
-                                                          self.data_cfg.prior_high_mass, 
-                                                          self.data_cfg.signal_low_freq_cutoff)
-                    # Get chirp mass
-                    tau = np.random.uniform(tau_lower, tau_upper, 1)
-                    mchirp = chirp_mass_from_signal_duration(tau, self.data_cfg.signal_low_freq_cutoff)
-                # uniform chirp mass
-                elif self.data_cfg.modification in ['unbounded_umc']:
-                    mchirp_lower, mchirp_upper = get_mchirp_priors(self.data_cfg.prior_low_mass, 
-                                                                   self.data_cfg.prior_high_mass)
-                    # Get chirp mass
-                    mchirp = np.random.uniform(mchirp_lower, mchirp_upper, 1)
+                elif current_modification in ['bounded_itau']:
+                    mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_importance_tau()
+
+                elif current_modification in ['bounded_umc']:
+                    mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_mchirp()
                 
-                # Common
-                mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
+                elif current_modification in ['bounded_pltau']:
+                    mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_powerlaw_tau()
+                    
+                elif current_modification in ['bounded_plmc']:
+                    mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_powerlaw_mchirp()
+                
+                elif current_modification in ['template_placement_metric']:
+                    mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_template_placement_metric()
+                
+                elif current_modification in ['bounded_umcq']:
+                    mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_in_mchirp_q()
+                
+                elif current_modification in ['unbounded_utau', 'unbounded_umc']:
+                    _mass1, _mass2 = get_uniform_masses_with_mass1_gt_mass2(self.data_cfg.prior_low_mass, self.data_cfg.prior_high_mass, 1)
+                    # Masses used for mass ratio will not be used later as mass1 and mass2
+                    # We calculate them again after getting chirp mass
+                    q = q_from_mass1_mass2(_mass1, _mass2)
+                    # uniform signal duration
+                    if self.data_cfg.modification in ['unbounded_utau']:
+                        tau_lower, tau_upper = get_tau_priors(self.data_cfg.prior_low_mass, 
+                                                            self.data_cfg.prior_high_mass, 
+                                                            self.data_cfg.signal_low_freq_cutoff)
+                        # Get chirp mass
+                        tau = np.random.uniform(tau_lower, tau_upper, 1)
+                        mchirp = chirp_mass_from_signal_duration(tau, self.data_cfg.signal_low_freq_cutoff)
+                    # uniform chirp mass
+                    elif self.data_cfg.modification in ['unbounded_umc']:
+                        mchirp_lower, mchirp_upper = get_mchirp_priors(self.data_cfg.prior_low_mass, 
+                                                                    self.data_cfg.prior_high_mass)
+                        # Get chirp mass
+                        mchirp = np.random.uniform(mchirp_lower, mchirp_upper, 1)
+                    
+                    # Common
+                    mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
+                
+                # mass1, mass2, q, mchirp, _
             
             else:
                 if not self.aux:
@@ -361,7 +380,7 @@ class MinimalOTF(Dataset):
         # Apply parameter transformation.
         prior = transforms.apply_transforms(prior, self.waveform_transforms)
         # Apply modifications to prior (uniform signal duration/ uniform chirp mass)
-        if self.training and np.random.random() <= self.data_cfg.modification_probability:
+        if self.training and np.random.random() <= self.data_cfg.modification_toggle_probability:
             prior = self.apply_prior_mods(prior)
         if not self.training and self.aux:
             prior = self.apply_prior_mods(prior)
