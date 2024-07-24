@@ -26,6 +26,8 @@ Documentation: NULL
 # LOCAL
 # from data.MPB_make_default_dataset import make as make_MPB_default_dataset
 
+import numpy as np
+
 # Calculating fudge factor
 from pycbc.detector import Detector
 from pycbc.conversions import tau_from_final_mass_spin, get_final_from_initial
@@ -326,8 +328,16 @@ class DefaultOTF:
     # Possible mods: ('bounded_utau', 'bounded_umc', 'unbounded_utau', 'unbounded_umc', 
     #                 'bounded_plmc', 'bounded_pltau', 'template_placement_metric', 'bounded_umcq')
     # NOTE: Set to None if not required
-    modification = 'template_placement_metric'
-    modification_probability = 1.0
+    modification = [None, 'template_placement_metric']
+    # Both start and end list must sum to 1
+    mod_start_probability = [1.0, 0.0]
+    mod_end_probability = [0.0, 1.0]
+    # Annealing is done linear between start and end prob
+    # Feature creep: Other functions can be used to move from start to end
+    # Annealing is done within the given epoch numbers
+    anneal_epochs = [10, 30] # [start, end]
+    # Modification off = None option
+    modification_toggle_probability = 1.0
     
     """ PSD Params """
     noise_low_freq_cutoff = 15.0 # Hz
