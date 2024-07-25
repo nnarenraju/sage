@@ -1229,7 +1229,136 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
 
 # Anneal from U(m1, m2) to template placement metric
 class Kennebec_Annealed(SageNetOTF):
-    pass
+    # Hopefully we can keep both noise rejection capabilities and unbiased representation
+
+    """ Data storage """
+    name = "Kennebec_Annealed_training_Jul25"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
+                                ),
+                    },
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                                                        ),
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    paux = 0.689, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM
+
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
+    model_params = dict(
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
+        resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
+        store_device = 'cuda:1',
+        review = False
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+
+    # Run device for testing phase
+    testing_device = 'cuda:1'
+    
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_annealed_training.hdf"    
+    test_background_output = "testing_boutput_annealed_training.hdf"
+
+
 
 ### POTENTIAL RUNS ###
 # 1. uniform on (mchirp, q)
