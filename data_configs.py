@@ -326,7 +326,8 @@ class DefaultOTF:
     ### MODS ###
     # Modifications to Dataset
     # Possible mods: ('bounded_utau', 'bounded_umc', 'unbounded_utau', 'unbounded_umc', 
-    #                 'bounded_plmc', 'bounded_pltau', 'template_placement_metric', 'bounded_umcq')
+    #                 'bounded_plmc', 'bounded_pltau', 'template_placement_metric', 'bounded_umcq',
+    #                 'bounded_um1m2')
     # NOTE: Set to None if not required
     modification = [None, 'template_placement_metric']
     # Both start and end list must sum to 1
