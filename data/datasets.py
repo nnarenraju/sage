@@ -319,9 +319,10 @@ class MinimalOTF(Dataset):
             # Pick the modification based on probability provided
             # Sum of probabilities must sum to 1
             current_probabilities = [self.modprobs[foo][self.epoch.value] for foo in self.data_cfg.modification]
-            mod_thresholds = np.cumsum(self.data_cfg.mod_start_probability)
+            mod_thresholds = np.cumsum(current_probabilities)
             current_mod_idx = np.digitize(np.random.rand(1), mod_thresholds)[0]
             current_modification = self.data_cfg.modification[current_mod_idx]
+            print(current_mod_idx)
 
             if current_modification == None:
                 return priors
