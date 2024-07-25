@@ -331,7 +331,7 @@ class DefaultOTF:
     # NOTE: Set to None if not required
     modification = [None, 'template_placement_metric']
     # Both start and end list must sum to 1
-    mod_start_probability = [0.5, 0.5]
+    mod_start_probability = [1.0, 0.0]
     mod_end_probability = [0.0, 1.0]
     # Annealing is done linear between start and end prob
     # Feature creep: Other functions can be used to move from start to end

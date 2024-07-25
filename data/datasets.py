@@ -322,7 +322,6 @@ class MinimalOTF(Dataset):
             mod_thresholds = np.cumsum(current_probabilities)
             current_mod_idx = np.digitize(np.random.rand(1), mod_thresholds)[0]
             current_modification = self.data_cfg.modification[current_mod_idx]
-            print(current_mod_idx)
 
             if current_modification == None:
                 return priors
