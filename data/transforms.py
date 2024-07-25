@@ -33,11 +33,13 @@ import time
 import random
 import warnings
 import numpy as np
+
 from scipy.signal import butter, sosfiltfilt, resample, get_window
 from scipy.signal import welch as scipy_welch
 from scipy.signal.windows import tukey
 from scipy.stats import beta
 from scipy.stats import halfnorm
+from numpy.random import RandomState
 
 # LOCAL
 from data.multirate_sampling import multirate_sampling
@@ -57,9 +59,13 @@ import lalsimulation as lalsim
 import requests
 import ligo.segments
 
+# Plotting
 import matplotlib.pyplot as plt
 
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+# This constant need to be constant to be able to recover identical results.
+BLOCK_SAMPLES = 1638400
 
 
 """ UTILS """
@@ -1581,14 +1587,87 @@ class RandomNoiseSlice():
         return noise
 
 
-class GenerateColouredNoise():
+class ColouredNoiseGenerator():
     """ Generate Dataset 3 -like noise for Sage training """
+    
+    def __init__(self, 
+                 delta_f=0.04,
+                 sample_rate=2048.0, 
+                 low_frequency_cutoff=15,
+                 detectors=['H1', 'L1']
+                ):
+        
+        self.sample_rate = sample_rate
+        self.low_frequency_cutoff = low_frequency_cutoff
+        self.detectors = detectors
+        self.fixed_asds = {det: None for det in self.detectors}
+        self.delta_f = delta_f
+        self.plen = int(self.sample_rate / self.delta_f) // 2 + 1
 
-    def __init__(self):
-        pass
+    def psd_to_asd(psd, start_time, end_time,
+                   sample_rate=2048.,
+                   low_frequency_cutoff=15.0,
+                   filter_duration=128):
+        
+        psd = psd.copy()
+
+        flen = int(sample_rate / psd.delta_f) // 2 + 1
+        oldlen = len(psd)
+        psd.resize(flen)
+
+        # Want to avoid zeroes in PSD.
+        max_val = psd.max()
+        for i in range(len(psd)):
+            if i >= (oldlen-1):
+                psd.data[i] = psd[oldlen - 2]
+            if psd[i] == 0:
+                psd.data[i] = max_val
+
+        fil_len = int(filter_duration * sample_rate)
+        wn_dur = int(end_time - start_time) + 2 * filter_duration
+        if psd.delta_f >= 1. / (2.*filter_duration):
+            # If the PSD is short enough, this method is less memory intensive than
+            # resizing and then calling inverse_spectrum_truncation
+            psd = pycbc.psd.interpolate(psd, 1.0 / (2. * filter_duration))
+            # inverse_spectrum_truncation truncates the inverted PSD. To truncate
+            # the non-inverted PSD we give it the inverted PSD to truncate and then
+            # invert the output.
+            psd = 1. / pycbc.psd.inverse_spectrum_truncation(
+                                    1./psd,
+                                    fil_len,
+                                    low_frequency_cutoff=low_frequency_cutoff,
+                                    trunc_method='hann')
+            psd = psd.astype(complex_same_precision_as(psd))
+            # Zero-pad the time-domain PSD to desired length. Zeroes must be added
+            # in the middle, so some rolling between a resize is used.
+            psd = psd.to_timeseries()
+            psd.roll(fil_len)
+            psd.resize(int(wn_dur * sample_rate))
+            psd.roll(-fil_len)
+            # As time series is still mirrored the complex frequency components are
+            # 0. But convert to real by using abs as in inverse_spectrum_truncate
+            psd = psd.to_frequencyseries()
+
+        kmin = int(low_frequency_cutoff / psd.delta_f)
+        psd[:kmin].clear()
+        asd = (psd.squared_norm())**0.25
+        return asd
 
     def generate(self):
-        pass
-    
-    def apply(self, special):
+        psd = FrequencySeries(psd, delta_f=1./sample_length_in_s)
+        psd = interpolate(psd, 1./sample_length_in_s)
+        max_filter_len = int(round(0.1 * fs))
+        psd = inv_spec_trunc(psd, max_filter_len)
+        asd = psd_to_asd(psd, 0.0, 20.0,
+                        sample_rate=2048.,
+                        low_frequency_cutoff=15.0,
+                        filter_duration=20.0)
+        # Create noise realisation with given PSD
+        noise = noise_generator(2.5, 2.5+sample_length_in_s, seed=cidx, asd=asd)
+        noise = noise.numpy()
+        # Cropping
+        crop = slice(int(whiten_padding/2.*fs), -int(whiten_padding/2.*fs))
+        noise = noise[crop]
+
+    def apply(self):
         pass
