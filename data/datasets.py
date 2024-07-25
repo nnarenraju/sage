@@ -260,7 +260,7 @@ class MinimalOTF(Dataset):
         
         # Plotting modification probabilites for all epochs
         if self.training:
-            save_modprobs = os.path.join(cfg.export_dir, 'prior_modifications.png')
+            save_modprobs = os.path.join(cfg.export_dir, 'prior_modification_probs.png')
             plt.figure(figsize=(9.0, 9.0))
             for method, probdata in self.modprobs.items():
                 plot_epochs = list(probdata.keys())
