@@ -247,8 +247,8 @@ class MinimalOTF(Dataset):
         anneal_epochs = np.arange(start_epoch, end_epoch, 1)
         for mod_method, probs in zip(data_cfg.modification, _modprobs):
             nsplit = end_epoch - start_epoch
-            probs = np.linspace(probs[0], probs[1], nsplit)
-            self.modprobs[mod_method] = {epoch:prob for epoch, prob in zip(anneal_epochs, probs)}
+            all_probs = np.linspace(probs[0], probs[1], nsplit)
+            self.modprobs[mod_method] = {epoch:prob for epoch, prob in zip(anneal_epochs, all_probs)}
             # Add padding probs if needed
             leftover_epochs_before = np.arange(0, start_epoch, 1)
             before_update = {epoch:probs[0] for epoch in leftover_epochs_before}
@@ -269,6 +269,8 @@ class MinimalOTF(Dataset):
                 foo = foo[foo[:,0].argsort()]
                 method = 'U(m1, m2)' if method == None else method
                 plt.plot(foo[:,0], foo[:,1], label=method, linewidth=3.0)
+            plt.xlabel('Number of Epochs')
+            plt.ylabel('Probability of Choosing')
             plt.xlim(0, 100) # limit num epochs
             plt.legend()
             plt.savefig(save_modprobs)
