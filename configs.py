@@ -88,10 +88,6 @@ from ray.tune.schedulers import ASHAScheduler
 # TASKS
 # Cleanup prior modifications
 # All tmp files must be placed in a single location (eg. segments.csv)
-    # durs_H1_O3b_all_noise - DONE
-    # durs_L1_O3b_all_noise - DONE
-    # 
-    #
 # code to produce all tmp files must be consolidated (add to utils)
 # code to download noise files for full experimentation must be consolidated (add to utils)
 # Change all debug folders to exist within export_dir
