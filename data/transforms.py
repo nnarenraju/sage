@@ -1579,3 +1579,16 @@ class RandomNoiseSlice():
         noise = self.get_noise_segment(special, segdeets, det_only)
         # Return noise data
         return noise
+
+
+class GenerateColouredNoise():
+    """ Generate Dataset 3 -like noise for Sage training """
+
+    def __init__(self):
+        pass
+
+    def generate(self):
+        pass
+    
+    def apply(self, special):
+        pass
