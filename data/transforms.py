@@ -1621,7 +1621,7 @@ class ColouredNoiseGenerator():
                                 filter_duration=self.sample_length)
                 self.complex_asds[det].append(foo)
 
-    def psd_to_asd(psd, start_time, end_time,
+    def psd_to_asd(self, psd, start_time, end_time,
                    sample_rate=2048.,
                    low_frequency_cutoff=15.0,
                    filter_duration=128):
