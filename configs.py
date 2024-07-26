@@ -1454,16 +1454,16 @@ class Norland_D3_template_density(SageNetOTF):
         resnet_size = 50,
         parameter_estimation = ('norm_tc', 'norm_mchirp', ),
         norm_layer = 'instancenorm',
-        store_device = 'cuda:0',
+        store_device = 'cuda:2',
         review = False
     )
 
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:2'
+    train_device = 'cuda:2'
 
     # Run device for testing phase
-    testing_device = 'cuda:0'
+    testing_device = 'cuda:2'
     
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
     test_foreground_output = "testing_foutput_D3_SageNet.hdf"    
