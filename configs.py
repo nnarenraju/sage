@@ -1398,8 +1398,6 @@ class Norland_D3_template_density(SageNetOTF):
                     'training': ColouredNoiseGenerator(psds_dir=os.path.join(repo_abspath, "data/psds")),
                     'validation': ColouredNoiseGenerator(psds_dir=os.path.join(repo_abspath, "data/psds")),
                     },
-                    debug_me=True, 
-                    debug_dir=debug_dir
                 )
     )
 
