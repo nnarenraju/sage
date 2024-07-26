@@ -1611,7 +1611,7 @@ class ColouredNoiseGenerator():
         self.complex_asds = {det:[] for det in self.psd_options.keys()}
         for i, det in enumerate(self.psd_options.keys()):
             # Read all detector PSDs as frequency series with appropriate delta_f
-            for psd_det in psd_options[det]:
+            for psd_det in self.psd_options[det]:
                 psd = load_frequencyseries(psd_det)
                 psd = interpolate(psd, 1.0/sample_length)
                 # Convert PSD's to ASD's for colouring the white noise
