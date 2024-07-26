@@ -164,13 +164,14 @@ class MinimalOTF(Dataset):
 
         """ Set default recolour transformation params """
         
-        recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
-        if recolour != []:
-            recolour.fs = data_cfg.sample_rate # Hz
-            recolour.sample_length_in_s = data_cfg.signal_length + data_cfg.whiten_padding # seconds
-            recolour.noise_low_freq_cutoff = data_cfg.noise_low_freq_cutoff # Hz
-            recolour.signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff # Hz
-            recolour.whiten_padding = data_cfg.whiten_padding # seconds
+        if self.noise_only_transforms.transforms != None:
+            recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
+            if recolour != []:
+                recolour.fs = data_cfg.sample_rate # Hz
+                recolour.sample_length_in_s = data_cfg.signal_length + data_cfg.whiten_padding # seconds
+                recolour.noise_low_freq_cutoff = data_cfg.noise_low_freq_cutoff # Hz
+                recolour.signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff # Hz
+                recolour.whiten_padding = data_cfg.whiten_padding # seconds
 
         """ PSD Handling (used in whitening) """
         # Store the PSD files here in RAM. This reduces the overhead when whitening.
