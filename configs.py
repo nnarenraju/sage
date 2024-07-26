@@ -1122,7 +1122,8 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
 
     pretrained = True
     freeze_for_transfer = True
-    weights_path = "/home/nnarenraju/Research/ORChiD/RUNS/transfer/weights_Russet_BEST_epoch_39.pt"
+    # weights_path = "/home/nnarenraju/Research/ORChiD/RUNS/transfer/weights_Russet_BEST_epoch_39.pt"
+    weights_path = 'weights_loss.pt'
 
     """ Optimizer """
     ## Adam 
@@ -1360,6 +1361,7 @@ class Kennebec_Annealed(SageNetOTF):
     test_background_output = "testing_boutput_annealed_training.hdf"
 
 
+# RUNNING
 class Norland_D3_template_density(SageNetOTF):
     # Running D3 on template placement metric
     # Due to the abscence of blip glitches sensitivitiy should not suffer
