@@ -44,13 +44,14 @@ from numpy.random import RandomState
 # LOCAL
 from data.multirate_sampling import multirate_sampling
 from data.snr_calculation import get_network_snr
+from data.mlmdc_noise_generator import NoiseGenerator
 
 # PyCBC
 import pycbc
 from pycbc import DYN_RANGE_FAC
 from pycbc.filter import highpass as pycbc_highpass
 from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
-from pycbc.types import TimeSeries, FrequencySeries
+from pycbc.types import TimeSeries, FrequencySeries, load_frequencyseries
 
 # LALSimulation Packages
 import lalsimulation as lalsim
@@ -124,7 +125,7 @@ class UnifyNoise:
 
 
 class UnifyNoiseGen:
-    def __init__(self, generations, aux, paux, debug_me=False, debug_dir=""):
+    def __init__(self, generations, aux=None, paux=0.0, debug_me=False, debug_dir=""):
         self.generations = generations
         self.aux = aux
         # Probability of selecting primary generation method or aux
@@ -157,7 +158,7 @@ class UnifyNoiseGen:
         det_only = "none"
         if special['training']:
             do_aux = np.random.rand() < self.paux
-            if do_aux:
+            if do_aux and self.aux != None:
                 # Has probability to set one or more dets to zeros
                 y = self.aux.apply(special)
                 # If both detectors are set to zeros
@@ -1390,7 +1391,6 @@ class RandomNoiseSlice():
                 ):
         
         self.sample_length = 0.0 # seconds
-        self.min_segment_duration = 0.0 # seconds
         self.dt = 0.0 # seconds
         self.real_noise_path = real_noise_path
         # Values set using parameters from MLGWSC-1
@@ -1403,6 +1403,8 @@ class RandomNoiseSlice():
         self.debug_dir = debug_dir
     
     def precompute_common_params(self):
+        # Set minimum segment duration
+        self.min_segment_duration = self.sample_length # seconds
         # Keep all required noise files open
         self.O3a_real_noise = h5py.File(self.real_noise_path, 'r')
         # Get detectors used
@@ -1590,19 +1592,34 @@ class RandomNoiseSlice():
 class ColouredNoiseGenerator():
     """ Generate Dataset 3 -like noise for Sage training """
     
-    def __init__(self, 
-                 delta_f=0.04,
-                 sample_rate=2048.0, 
-                 low_frequency_cutoff=15,
-                 detectors=['H1', 'L1']
-                ):
-        
-        self.sample_rate = sample_rate
-        self.low_frequency_cutoff = low_frequency_cutoff
-        self.detectors = detectors
-        self.fixed_asds = {det: None for det in self.detectors}
-        self.delta_f = delta_f
-        self.plen = int(self.sample_rate / self.delta_f) // 2 + 1
+    def __init__(self, psds_dir: str = ""):
+        self.psds_dir = psds_dir
+        # H1 and L1 dirs expected inside psds parent directory
+        H1_dir = os.path.join(self.psds_dir, 'H1')
+        L1_dir = os.path.join(self.psds_dir, 'L1')
+        # Get all .hdf files containing one psd each
+        self.psd_options = {'H1': glob.glob(os.path.join(H1_dir, '*.hdf')),
+                            'L1': glob.glob(os.path.join(L1_dir, '*.hdf'))}
+        # Other params
+        self.sample_length = None
+        self.delta_f = None
+        self.noise_low_freq_cutoff = None
+        self.sample_rate = None
+    
+    def precompute_common_params(self):
+        # Compute ASD for chosen PSD
+        self.complex_asds = {det:[] for det in self.psd_options.keys()}
+        for i, det in enumerate(self.psd_options.keys()):
+            # Read all detector PSDs as frequency series with appropriate delta_f
+            for psd_det in psd_options[det]:
+                psd = load_frequencyseries(psd_det)
+                psd = interpolate(psd, 1.0/sample_length)
+                # Convert PSD's to ASD's for colouring the white noise
+                foo = self.psd_to_asd(psd, 0.0, sample_length,
+                                sample_rate=sample_rate,
+                                low_frequency_cutoff=noise_low_freq_cutoff,
+                                filter_duration=sample_length)
+                self.complex_asds[det].append(foo)
 
     def psd_to_asd(psd, start_time, end_time,
                    sample_rate=2048.,
@@ -1652,22 +1669,132 @@ class ColouredNoiseGenerator():
         psd[:kmin].clear()
         asd = (psd.squared_norm())**0.25
         return asd
+    
+    def colored_noise(self, asd, start_time, end_time,
+                      seed=42, sample_rate=2048.,
+                      filter_duration=128):
+        
+        """ Create noise from a PSD
+    
+        Return noise from the chosen PSD. Note that if unique noise is desired
+        a unique seed should be provided.
+    
+        Parameters
+        ----------
+        asd : pycbc.types.FrequencySeries
+            ASD to color the noise
+        start_time : int
+            Start time in GPS seconds to generate noise
+        end_time : int
+            End time in GPS seconds to generate noise
+        seed : {None, int}
+            The seed to generate the noise.
+        sample_rate: {16384, float}
+            The sample rate of the output data. Keep constant if you want to
+            ensure continuity between disjoint time spans.
+        filter_duration : {128, float}
+            The duration in seconds of the coloring filter
+    
+        Returns
+        --------
+        noise : TimeSeries
+            A TimeSeries containing gaussian noise colored by the given psd.
+        """
+        
+        white_noise = self.normal(start_time - filter_duration,
+                                  end_time + filter_duration,
+                                  seed=seed,
+                                  sample_rate=sample_rate)
+        white_noise = white_noise.to_frequencyseries()
+        
+        # Here we color. Do not want to duplicate memory here though so use '*='
+        white_noise *= asd
+        del asd
+        colored = white_noise.to_timeseries(delta_t=1.0/sample_rate)
+        del white_noise
+        return colored.time_slice(start_time, end_time)
+    
+    def normal(self, start, end, sample_rate=2048., seed=0):
+        """ Generate data with a white Gaussian (normal) distribution
+    
+        Parameters
+        ----------
+        start_time : int
+            Start time in GPS seconds to generate noise
+        end_time : int
+            End time in GPS seconds to generate noise
+        sample-rate: float
+            Sample rate to generate the data at. Keep constant if you want to
+            ensure continuity between disjoint time spans.
+        seed : {None, int}
+            The seed to generate the noise.
+    
+        Returns
+        --------
+        noise : TimeSeries
+            A TimeSeries containing gaussian noise
+        """
+        
+        # This is reproduceable because we used fixed seeds from known values
+        block_dur = BLOCK_SAMPLES / sample_rate
+        s = int(np.floor(start / block_dur))
+        e = int(np.floor(end / block_dur))
+    
+        # The data evenly divides so the last block would be superfluous
+        if end % block_dur == 0:
+            e -= 1
+    
+        sv = RandomState(seed).randint(-2**50, 2**50)
+        data = np.concatenate([self.block(i + sv, sample_rate)
+                                  for i in np.arange(s, e + 1, 1)])
+        ts = TimeSeries(data, delta_t=1.0 / sample_rate, epoch=(s * block_dur))
+        return ts.time_slice(start, end)
+    
+    def block(self, seed, sample_rate):
+        """ Return block of normal random numbers
+    
+        Parameters
+        ----------
+        seed : {None, int}
+            The seed to generate the noise.sd
+        sample_rate: float
+            Sets the variance of the white noise
+    
+        Returns
+        --------
+        noise : numpy.ndarray
+            Array of random numbers
+        """
+        num = BLOCK_SAMPLES
+        rng = RandomState(seed % 2**32)
+        variance = sample_rate / 2
+        return rng.normal(size=num, scale=variance**0.5)
 
-    def generate(self):
-        psd = FrequencySeries(psd, delta_f=1./sample_length_in_s)
-        psd = interpolate(psd, 1./sample_length_in_s)
-        max_filter_len = int(round(0.1 * fs))
-        psd = inv_spec_trunc(psd, max_filter_len)
-        asd = psd_to_asd(psd, 0.0, 20.0,
-                        sample_rate=2048.,
-                        low_frequency_cutoff=15.0,
-                        filter_duration=20.0)
-        # Create noise realisation with given PSD
-        noise = noise_generator(2.5, 2.5+sample_length_in_s, seed=cidx, asd=asd)
+    def choose_asd(self):
+        # Choose asd for each detector randomly
+        # Similar to D3 of MLGWSC-1
+        H1_asd = random.choice(self.complex_asds['H1'])
+        L1_asd = random.choice(self.complex_asds['L1'])
+        return (H1_asd, L1_asd)
+
+    def generate(self, asd, seed):
+        # Create noise realisation with given ASD
+        noise = self.colored_noise(asd,
+                                0.0,
+                                self.sample_length,
+                                seed=seed,
+                                sample_rate=self.sample_rate,
+                                filter_duration=1./self.delta_f)
         noise = noise.numpy()
-        # Cropping
-        crop = slice(int(whiten_padding/2.*fs), -int(whiten_padding/2.*fs))
-        noise = noise[crop]
+        return noise
 
-    def apply(self):
-        pass
+    def apply(self, special, det_only=''):
+        # choose a random asd from precomputed set
+        H1_asd, L1_asd = self.choose_asd()
+        # Generate coloured noise using random asd
+        rs = np.random.RandomState(seed=seed)
+        seeds = list(self.rs.randint(0, 2**32, 2)) # one for each detector
+        H1_noise = self.generate(H1_asd, seeds[0])
+        L1_noise = self.generate(L1_asd, seeds[1])
+        noise = np.stack([H1_noise, L1_noise], axis=0)
+        return noise
