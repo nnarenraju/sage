@@ -147,21 +147,30 @@ class MinimalOTF(Dataset):
         wgen.precompute_common_params()
 
         """ Set default noise generation params """
+        noigen_name = self.noise_generation.generations[name].__class__.__name__
         for name in ['training', 'validation']:
             self.noise_generation.generations[name].sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
-            self.noise_generation.generations[name].min_segment_duration = data_cfg.signal_length + data_cfg.whiten_padding # seconds
-            self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
+            if noigen_name == 'RandomNoiseSlice':
+                self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
+            elif noigen_name == 'ColouredNoiseGenerator':
+                self.noise_generation.generations[name].delta_f = self.data_cfg.delta_f
+                self.noise_generation.generations[name].noise_low_freq_cutoff = self.data_cfg.noise_low_freq_cutoff
+                self.noise_generation.generations[name].sample_rate = self.data_cfg.sample_rate
+            # Compute common params
             self.noise_generation.generations[name].precompute_common_params()
 
-        self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding
+        if self.noise_generation.aux != None:
+            self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding
 
-        """ Set default recolour transformation params """ 
+        """ Set default recolour transformation params """
+        
         recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
-        recolour.fs = data_cfg.sample_rate # Hz
-        recolour.sample_length_in_s = data_cfg.signal_length + data_cfg.whiten_padding # seconds
-        recolour.noise_low_freq_cutoff = data_cfg.noise_low_freq_cutoff # Hz
-        recolour.signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff # Hz
-        recolour.whiten_padding = data_cfg.whiten_padding # seconds
+        if recolour != []:
+            recolour.fs = data_cfg.sample_rate # Hz
+            recolour.sample_length_in_s = data_cfg.signal_length + data_cfg.whiten_padding # seconds
+            recolour.noise_low_freq_cutoff = data_cfg.noise_low_freq_cutoff # Hz
+            recolour.signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff # Hz
+            recolour.whiten_padding = data_cfg.whiten_padding # seconds
 
         """ PSD Handling (used in whitening) """
         # Store the PSD files here in RAM. This reduces the overhead when whitening.
@@ -565,6 +574,7 @@ class MinimalOTF(Dataset):
 
         # Setting the seed for iteration
         np.random.seed(seed)
+        self.special['sample_seed'] = seed
 
         ## Read the sample(s)
         sample, targets, params = self.generate_data(seed=seed)
