@@ -332,7 +332,7 @@ def get_triggers(Network, inputfile, step_size, trigger_threshold,
                              data_cfg=data_cfg)
         
         data_loader = torch.utils.data.DataLoader(slicer, batch_size=64, shuffle=False, 
-                                                  num_workers=48, pin_memory=cfg.pin_memory, 
+                                                  num_workers=16, pin_memory=cfg.pin_memory, 
                                                   prefetch_factor=100, 
                                                   persistent_workers=cfg.persistent_workers)
 
@@ -512,11 +512,9 @@ if __name__ == "__main__":
     data_cfg = dat.configure_dataset(opts)
     transforms = cfg.transforms['test']
     
-    
     # Initialise Network with best weight found in export dir
     if not os.path.exists(cfg.export_dir):
         raise IOError('Export directory does not exist. Cannot write testing output files.')
-    
     
     print('\nApplying best weights from the {} run to Network'.format(cfg.export_dir))
     check_dir = os.path.join(cfg.export_dir, 'BEST')
