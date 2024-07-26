@@ -163,8 +163,7 @@ class MinimalOTF(Dataset):
             self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding
 
         """ Set default recolour transformation params """
-        
-        if self.noise_only_transforms.transforms != None:
+        if self.noise_only_transforms != None:
             recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
             if recolour != []:
                 recolour.fs = data_cfg.sample_rate # Hz
