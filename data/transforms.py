@@ -1792,9 +1792,12 @@ class ColouredNoiseGenerator():
         # choose a random asd from precomputed set
         H1_asd, L1_asd = self.choose_asd()
         # Generate coloured noise using random asd
+        start = time.time()
         rs = np.random.RandomState(seed=special['sample_seed'])
         seeds = list(rs.randint(0, 2**32, 2)) # one for each detector
         H1_noise = self.generate(H1_asd, seeds[0])
         L1_noise = self.generate(L1_asd, seeds[1])
         noise = np.stack([H1_noise, L1_noise], axis=0)
+        end = time.time() - start
+        print('Time taken = {} s'.format(end))
         return noise
