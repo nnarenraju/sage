@@ -67,16 +67,21 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 ## LOCAL
 # Dataset objects
 from data.datasets import MinimalOTF
+
 # Architectures
 from architectures.models import Rigatoni_MS_ResNetCBAM, Rigatoni_MS_ResNetCBAM_legacy
 from architectures.models import KappaModel_ResNet_small
 from architectures.frontend import MultiScaleBlock
+
 # Transforms, augmentation and generation
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
 from data.transforms import Whiten, MultirateSampling, Normalise
 from data.transforms import AugmentOptimalNetworkSNR
 from data.transforms import Recolour
-from data.transforms import FastGenerateWaveform, RandomNoiseSlice, MultipleFileRandomNoiseSlice
+# Generating signals and noise
+from data.transforms import FastGenerateWaveform
+from data.transforms import RandomNoiseSlice, MultipleFileRandomNoiseSlice, ColouredNoiseGenerator
+
 # Loss functions
 from losses.custom_loss_functions import BCEWithPEregLoss
 
@@ -350,7 +355,7 @@ class SageNetOTF:
 
 
 # No rerun planned (will not be a part of bug fixes)
-class SageNetOTF_Feb24_Yukon(SageNetOTF):
+class Yukon_Feb24(SageNetOTF):
     """ Data storage """
     name = "SageNet50_CBAM_OTF_Feb03_Yukon"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
@@ -396,7 +401,7 @@ class SageNetOTF_Feb24_Yukon(SageNetOTF):
 
 
 # No rerun planned (will not be a part of bug fixes)
-class SageNetOTF_Feb24_Yukon_rerun(SageNetOTF):
+class Yukon_Feb24_rerun(SageNetOTF):
     """ Data storage """
     # Apr21 IMRPhenomD completed at 50 epochs. Rerun with checkpoint file from last epoch.
     name = "SageNet50_CBAM_IMRPhenomD_OTF_May01_Yukon_rerun"
@@ -1294,6 +1299,114 @@ class Kennebec_Annealed(SageNetOTF):
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
                 ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM
+
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
+    model_params = dict(
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
+        resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
+        store_device = 'cuda:1',
+        review = False
+    )
+
+    """ Storage Devices """
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
+
+    # Run device for testing phase
+    testing_device = 'cuda:1'
+    
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_annealed_training.hdf"    
+    test_background_output = "testing_boutput_annealed_training.hdf"
+
+
+class Norland_D3(SageNetOTF):
+    # Running D3 on template placement metric
+    # Due to the abscence of blip glitches sensitivitiy should not suffer
+    # PSD distribution should match exactly between train and test
+
+    """ Data storage """
+    name = "Norland_D3_template_placement_metric_Jul26"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         fix_epoch = False,
+                                         debug_me = False
+                                        ),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': ColouredNoiseGenerator(psds_dir=os.path.join(repo_abspath, "data/psds")),
+                    'validation': ColouredNoiseGenerator(psds_dir=os.path.join(repo_abspath, "data/psds")),
+                    }
+                )
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=None,
         train=Unify({
                     'stage1':[
                             Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
