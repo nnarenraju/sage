@@ -1360,7 +1360,7 @@ class Kennebec_Annealed(SageNetOTF):
     test_background_output = "testing_boutput_annealed_training.hdf"
 
 
-class Norland_D3(SageNetOTF):
+class Norland_D3_template_density(SageNetOTF):
     # Running D3 on template placement metric
     # Due to the abscence of blip glitches sensitivitiy should not suffer
     # PSD distribution should match exactly between train and test
