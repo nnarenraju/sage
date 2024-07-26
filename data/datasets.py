@@ -147,8 +147,8 @@ class MinimalOTF(Dataset):
         wgen.precompute_common_params()
 
         """ Set default noise generation params """
-        noigen_name = self.noise_generation.generations[name].__class__.__name__
         for name in ['training', 'validation']:
+            noigen_name = self.noise_generation.generations[name].__class__.__name__
             self.noise_generation.generations[name].sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
             if noigen_name == 'RandomNoiseSlice':
                 self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
