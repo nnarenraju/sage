@@ -1613,12 +1613,12 @@ class ColouredNoiseGenerator():
             # Read all detector PSDs as frequency series with appropriate delta_f
             for psd_det in self.psd_options[det]:
                 psd = load_frequencyseries(psd_det)
-                psd = interpolate(psd, 1.0/sample_length)
+                psd = interpolate(psd, 1.0/self.sample_length)
                 # Convert PSD's to ASD's for colouring the white noise
-                foo = self.psd_to_asd(psd, 0.0, sample_length,
-                                sample_rate=sample_rate,
-                                low_frequency_cutoff=noise_low_freq_cutoff,
-                                filter_duration=sample_length)
+                foo = self.psd_to_asd(psd, 0.0, self.sample_length,
+                                sample_rate=self.sample_rate,
+                                low_frequency_cutoff=self.noise_low_freq_cutoff,
+                                filter_duration=self.sample_length)
                 self.complex_asds[det].append(foo)
 
     def psd_to_asd(psd, start_time, end_time,
