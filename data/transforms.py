@@ -51,7 +51,7 @@ import pycbc
 from pycbc import DYN_RANGE_FAC
 from pycbc.filter import highpass as pycbc_highpass
 from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
-from pycbc.types import TimeSeries, FrequencySeries, load_frequencyseries
+from pycbc.types import TimeSeries, FrequencySeries, load_frequencyseries, complex_same_precision_as
 
 # LALSimulation Packages
 import lalsimulation as lalsim
