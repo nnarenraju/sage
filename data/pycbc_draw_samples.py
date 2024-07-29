@@ -1,6 +1,6 @@
 ### This code was taken from the PyCBC documentation website
 ### Refer: https://pycbc.org/pycbc/latest/html/_modules/pycbc/distributions/utils.html
-### Code modified to suit ORChiD MinimalOTF dataset object
+### Code modified to suit Sage MinimalOTF dataset object
 
 # Copyright (C) 2021  Shichao Wu
 # This program is free software; you can redistribute it and/or modify it
