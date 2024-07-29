@@ -566,10 +566,8 @@ if __name__ == "__main__":
     output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
     raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
     raw_args += ['--foreground-events', os.path.join(cfg.testing_dir, cfg.test_foreground_output)]
-    #raw_args += ['--foreground-events', "/home/nnarenraju/Research/ORChiD/gw-detection-deep-learning/results_bad/fg.hdf"]
     raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
     raw_args += ['--background-events', os.path.join(cfg.testing_dir, cfg.test_background_output)]
-    #raw_args += ['--background-events', "/home/nnarenraju/Research/ORChiD/gw-detection-deep-learning/results_bad/bg.hdf"]
     out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
     raw_args += ['--output-file', out_eval]
     raw_args += ['--output-dir', output_testing_dir]
