@@ -512,7 +512,7 @@ def compare_plot_2(team_1, team_2, save_dir):
             if len(found_both) != 0:
                 ax[i][j].scatter(found_both[:,0], found_both[:,1], **kwargs)
 
-            print("{} FAR: {} vs {}, orchid_unique = {}, pycbc_unique = {}".format(thresh_name, param_1, param_2, len(unique_team1), len(unique_team2)))
+            print("{} FAR: {} vs {}, sage_unique = {}, pycbc_unique = {}".format(thresh_name, param_1, param_2, len(unique_team1), len(unique_team2)))
             
             ax[i][j].set_xlabel(param_1)
             ax[i][j].set_ylabel(param_2)
@@ -754,7 +754,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         fpevents = fgevents.T[fpidxs].T
         
         ## Update the returns dictionary
-        if team['name'] == "ORChiD":
+        if team['name'] == "Sage":
             ret['fg-events'] = fgevents
             ret['found-indices'] = np.arange(len(injtimes))[idxs]
             ret['missed-indices'] = np.setdiff1d(np.arange(len(injtimes)), ret['found-indices'])
@@ -772,7 +772,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         noise_stats_fg.sort()
         fgfar = len(noise_stats_fg) - np.arange(len(noise_stats_fg)) - 1
         fgfar = fgfar / duration
-        if team['name'] == "ORChiD":
+        if team['name'] == "Sage":
             ret['fg-far'] = fgfar
         
         # Calculate background FAR
@@ -781,7 +781,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         noise_stats.sort()
         far = len(noise_stats) - np.arange(len(noise_stats)) - 1
         far = far / duration
-        if team['name'] == "ORChiD":
+        if team['name'] == "Sage":
             ret['far'] = far
         
         # Find best true-positive for each injection
@@ -818,7 +818,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             mchirp_max = massc.max()
             # print('found_mchirp_total is the chirp mass of all found injections')
             # print('max = {}, min = {}, mean={}, median = {}'.format(max(found_mchirp_total), min(found_mchirp_total), np.mean(found_mchirp_total), np.median(found_mchirp_total)))
-            if team['name'] == "ORChiD":
+            if team['name'] == "Sage":
                 # Histogram of found injections vs all injections in 1-month testing dataset
                 found_param_plots(noise_stats, output_dir, injparams, found_injections)
                 # Plotting all param vs param
@@ -847,7 +847,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             fidxs = np.searchsorted(found_injections[1], noise_stats, side='right')
             # Plotting the network output
             network_output(found_injections, noise_stats, output_dir, team['name'])
-            if team['name'] == "ORChiD":
+            if team['name'] == "Sage":
                 # Parameter learning
                 parameter_learning(injparams, noise_stats, found_injections, output_dir)
             
@@ -877,7 +877,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         print('Radius or sensitive distance as calculated from the volume obtained ({})'.format(team['name']))
         print('min rad = {}, max rad = {}'.format(min(rad), max(rad)))
         
-        if team['name'] == "ORChiD":
+        if team['name'] == "Sage":
             ret['sensitive-volume'] = vol
             ret['sensitive-distance'] = rad
             ret['sensitive-volume-error'] = vol_err
@@ -945,7 +945,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     
     # Teams
     parser.add_argument('--team1', type=str, required=False,
-                        default="ORChiD",
+                        default="Sage",
                         help=("Team 1 to be compared using evalution plots"))
     parser.add_argument('--team2', type=str, required=False,
                         default="PyCBC",

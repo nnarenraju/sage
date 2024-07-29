@@ -194,7 +194,7 @@ class DataModule:
             else:
                 raise FileNotFoundError(f"prepare_data.get_summary: {check_dir} not found!")
         else:
-            print('Running ORChiD in OTF Mode')
+            print('Running Sage in OTF Mode')
             
     
     def get_metadata(cfg, data_cfg):

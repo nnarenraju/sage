@@ -92,6 +92,7 @@ from ray.tune.schedulers import ASHAScheduler
 
 # TASKS
 # Cleanup prior modifications
+# Change all mention on ORChiD to Sage
 # All tmp files must be placed in a single location (eg. segments.csv)
 # code to produce all tmp files must be consolidated (add to utils)
 # code to download noise files for full experimentation must be consolidated (add to utils)
