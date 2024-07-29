@@ -8,7 +8,7 @@ Description     = Handling Dataset 4 real O3a noise for training and testing dat
 Created on Tue Jan 24 13:55:47 2023
 
 __author__      = nnarenraju
-__copyright__   = Copyright 2022, ORChiD
+__copyright__   = Copyright 2022, Sage
 __credits__     = nnarenraju
 __license__     = MIT Licence
 __version__     = 0.0.1
