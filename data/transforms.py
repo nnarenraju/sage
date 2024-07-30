@@ -1672,7 +1672,7 @@ class ColouredNoiseGenerator():
     
     def colored_noise(self, asd, start_time, end_time,
                       seed=42, sample_rate=2048.,
-                      filter_duration=128):
+                      filter_duration=128, det=None):
         
         """ Create noise from a PSD
     
@@ -1705,8 +1705,9 @@ class ColouredNoiseGenerator():
                                   end_time + filter_duration,
                                   seed=seed,
                                   sample_rate=sample_rate)
+
         white_noise = white_noise.to_frequencyseries()
-        
+
         # Here we color. Do not want to duplicate memory here though so use '*='
         white_noise *= asd
         del asd
@@ -1745,8 +1746,11 @@ class ColouredNoiseGenerator():
             e -= 1
     
         sv = RandomState(seed).randint(-2**50, 2**50)
+        start = time.time()
         data = np.concatenate([self.block(i + sv, sample_rate)
                                   for i in np.arange(s, e + 1, 1)])
+        end = time.time() - start
+        print('Time taken for normal = {} seconds'.format(end))
         ts = TimeSeries(data, delta_t=1.0 / sample_rate, epoch=(s * block_dur))
         return ts.time_slice(start, end)
     
@@ -1777,27 +1781,26 @@ class ColouredNoiseGenerator():
         L1_asd = random.choice(self.complex_asds['L1'])
         return (H1_asd, L1_asd)
 
-    def generate(self, asd, seed):
+    def generate(self, asd, seed, det):
         # Create noise realisation with given ASD
         noise = self.colored_noise(asd,
                                 0.0,
                                 self.sample_length,
                                 seed=seed,
                                 sample_rate=self.sample_rate,
-                                filter_duration=1./self.delta_f)
+                                filter_duration=1./self.delta_f,
+                                det=det)
         noise = noise.numpy()
         return noise
 
     def apply(self, special, det_only=''):
         # choose a random asd from precomputed set
+        time_1 = time.time()
         H1_asd, L1_asd = self.choose_asd()
         # Generate coloured noise using random asd
-        start = time.time()
         rs = np.random.RandomState(seed=special['sample_seed'])
         seeds = list(rs.randint(0, 2**32, 2)) # one for each detector
-        H1_noise = self.generate(H1_asd, seeds[0])
-        L1_noise = self.generate(L1_asd, seeds[1])
+        H1_noise = self.generate(H1_asd, seeds[0], 'H1')
+        L1_noise = self.generate(L1_asd, seeds[1], 'L1')
         noise = np.stack([H1_noise, L1_noise], axis=0)
-        end = time.time() - start
-        print('Time taken = {} s'.format(end))
         return noise
