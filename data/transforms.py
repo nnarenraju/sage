@@ -1706,13 +1706,11 @@ class ColouredNoiseGenerator():
                                   seed=seed,
                                   sample_rate=sample_rate)
 
+        asd = interpolate(asd, 1.0/(len(white_noise)/2048.))
         white_noise = white_noise.to_frequencyseries()
-
         # Here we color. Do not want to duplicate memory here though so use '*='
         white_noise *= asd
-        del asd
         colored = white_noise.to_timeseries(delta_t=1.0/sample_rate)
-        del white_noise
         return colored.time_slice(start_time, end_time)
     
     def normal(self, start, end, sample_rate=2048., seed=0):
@@ -1735,44 +1733,10 @@ class ColouredNoiseGenerator():
         noise : TimeSeries
             A TimeSeries containing gaussian noise
         """
-        
-        # This is reproduceable because we used fixed seeds from known values
-        block_dur = BLOCK_SAMPLES / sample_rate
-        s = int(np.floor(start / block_dur))
-        e = int(np.floor(end / block_dur))
-    
-        # The data evenly divides so the last block would be superfluous
-        if end % block_dur == 0:
-            e -= 1
-    
-        sv = RandomState(seed).randint(-2**50, 2**50)
-        start = time.time()
-        data = np.concatenate([self.block(i + sv, sample_rate)
-                                  for i in np.arange(s, e + 1, 1)])
-        end = time.time() - start
-        print('Time taken for normal = {} seconds'.format(end))
-        ts = TimeSeries(data, delta_t=1.0 / sample_rate, epoch=(s * block_dur))
-        return ts.time_slice(start, end)
-    
-    def block(self, seed, sample_rate):
-        """ Return block of normal random numbers
-    
-        Parameters
-        ----------
-        seed : {None, int}
-            The seed to generate the noise.sd
-        sample_rate: float
-            Sets the variance of the white noise
-    
-        Returns
-        --------
-        noise : numpy.ndarray
-            Array of random numbers
-        """
-        num = BLOCK_SAMPLES
-        rng = RandomState(seed % 2**32)
-        variance = sample_rate / 2
-        return rng.normal(size=num, scale=variance**0.5)
+
+        np.random.seed(seed)
+        data = np.random.normal(size=int((end-start)*sample_rate), scale=(sample_rate/2.)**0.5)
+        return TimeSeries(data, delta_t=1.0/sample_rate)
 
     def choose_asd(self):
         # Choose asd for each detector randomly
@@ -1788,7 +1752,7 @@ class ColouredNoiseGenerator():
                                 self.sample_length,
                                 seed=seed,
                                 sample_rate=self.sample_rate,
-                                filter_duration=1./self.delta_f,
+                                filter_duration=1.0,
                                 det=det)
         noise = noise.numpy()
         return noise
