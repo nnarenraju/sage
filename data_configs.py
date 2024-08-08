@@ -330,10 +330,10 @@ class DefaultOTF:
     #                 'bounded_um1m2')
     # NOTE: Set to None if not required
     # modification = [None, 'template_placement_metric']
-    modification = ['template_placement_metric']
+    modification = [None]
     # Both start and end list must sum to 1
-    mod_start_probability = [1.0, 0.0]
-    mod_end_probability = [1.0, 0.0]
+    mod_start_probability = [1.0]
+    mod_end_probability = [1.0]
     # Annealing is done linear between start and end prob
     # Feature creep: Other functions can be used to move from start to end
     # Annealing is done within the given epoch numbers
