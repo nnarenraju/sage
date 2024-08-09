@@ -152,7 +152,9 @@ class MinimalOTF(Dataset):
             if recolour != []:
                 set_noise_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
             else:
-                set_noise_length = data_cfg.signal_length # seconds
+                set_noise_length = data_cfg.signal_length # seconds    
+        else:
+            set_noise_length = data_cfg.signal_length # seconds
 
         for name in ['training', 'validation']:
             noigen_name = self.noise_generation.generations[name].__class__.__name__
