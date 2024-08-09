@@ -765,7 +765,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 training_running_loss = {}
 
             training_running_loss.update({'total_loss': 0.0, 'gw': 0.0})
-            training_batches = 0
+            training_batches = 1
             # Store accuracy params
             acc_train = []
             acc_valid = []
@@ -824,7 +824,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 ## Display stuff
                 loss = np.around(training_loss['total_loss'].clone().cpu().item(), 8)
                 # Update pbar with loss, acc
-                pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, nbatch, loss))
+                pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, nbatch+1, loss))
                 # Update losses and accuracy
                 training_batches = nbatch
                 acc_train.append(accuracy)
@@ -861,7 +861,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     pe_params = ()
 
                 validation_running_loss.update({'total_loss': 0.0, 'gw': 0.0})
-                validation_batches = 0
+                validation_batches = 1
                 
                 # Other params for plotting and logging
                 # Creating a defaultdict of lists (logging outputs)
@@ -893,7 +893,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, validation_batches, loss))
                     
                     # Update losses and accuracy
-                    validation_batches = nbatch
+                    validation_batches = nbatch+1
                     acc_valid.append(accuracy)
                     for key in validation_running_loss.keys():
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
