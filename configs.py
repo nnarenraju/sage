@@ -1593,17 +1593,17 @@ class Vitelotte_FixedDataset(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         debug_me = True
+                                         debug_me = False
                                         ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=True
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=True
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
                                 ),
                     }
                 )
@@ -1644,22 +1644,22 @@ class Vitelotte_FixedDataset(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = 'cuda:0',
+        store_device = 'cuda:1',
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
     
     """ Dataloader params """
-    num_workers = 2
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 4
     persistent_workers = True
 
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
 
     # Run device for testing phase
-    testing_device = 'cuda:0'
+    testing_device = 'cuda:1'
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
     test_foreground_output = "testing_foutput_fixed_dataset.hdf"
