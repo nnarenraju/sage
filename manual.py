@@ -962,7 +962,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     cflag.value = cf
 
                     # Update validation loss dict
-                    aux_val_batches = 0
+                    aux_val_batches = 1
 
                     print('AUX validation dataset {}'.format(cf))
                     pbar = tqdm(auxDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
@@ -983,7 +983,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
                         # Display stuff
                         loss = np.around(aux_loss['total_loss'].clone().cpu().item(), 8)
-                        pbar.set_description("AUX Epoch {}, batch {} - loss = {}".format(nep, aux_val_batches, loss))
+                        pbar.set_description("AUX Epoch {}, batch {} - loss = {}".format(nep, aux_val_batches+1, loss))
                         
                         # Update losses and accuracy
                         aux_val_batches = nbatch
