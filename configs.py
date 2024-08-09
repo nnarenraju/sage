@@ -1483,7 +1483,7 @@ class Russet_TrainingRecolour(SageNetOTF):
     # 3. Recoloured using training data (51 days)
 
     """ Data storage """
-    name = "Russet_TrainingRecolour_Aug08"
+    name = "Russet_TrainingRecolour_Aug09"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1573,6 +1573,7 @@ class Russet_TrainingRecolour(SageNetOTF):
         kernel_size = 64,
         resnet_size = 50,
         store_device = 'cuda:0',
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
     
     """ Storage Devices """
