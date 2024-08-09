@@ -602,6 +602,7 @@ class Rigatoni_MS_ResNetCBAM_legacy(torch.nn.Module):
                  resnet_size: int = 50,
                  norm_layer: str = 'instancenorm',
                  upsample_factor: float = 1.0,
+                 parameter_estimation = ('norm_tc', 'norm_mchirp', ),
                  _input_length: int = 4254, # 4859
                  _decimated_bins = None,
                  store_device: str = 'cpu',
