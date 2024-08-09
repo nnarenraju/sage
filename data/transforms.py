@@ -641,8 +641,9 @@ class FastGenerateWaveform():
 
         return hp_td, hc_td
     
-    def debug_waveform_generate(self, data, labels, cfg):
+    def debug_waveform_generate(self, data, labels, special):
         # Plotting debug recoloured
+        cfg = special['cfg']
         # NOTE to self: figsize is (width, height)
         fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
         fig.suptitle('Debugging Waveform Generation Module')
@@ -653,7 +654,9 @@ class FastGenerateWaveform():
             axs[n][0].legend()
         # Other
         filename = 'waveform_{}.png'.format(uuid.uuid4().hex)
-        save_path = os.path.join(cfg.export_dir, "DEBUG/waveform_generation")
+        dirname = 'training' if special['training'] else 'validation'
+        epoch = special['epoch']
+        save_path = os.path.join(cfg.export_dir, "DEBUG/waveform_generation/{}/{}".format(epoch, dirname))
         if not os.path.exists(save_path):
             os.makedirs(save_path)
         save = os.path.join(save_path, filename)
@@ -674,7 +677,7 @@ class FastGenerateWaveform():
         if self.debug_me:
             self.debug_waveform_generate(data=[out[0], out[1]],
                                          labels=['H1', 'L1'],
-                                         cfg=special['cfg'])
+                                         special=special)
         # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         return out
     
@@ -1389,8 +1392,7 @@ class RandomNoiseSlice():
                  real_noise_path = "", 
                  segment_llimit = None, 
                  segment_ulimit = None, 
-                 debug_me = False, 
-                 debug_dir = ""
+                 debug_me = False
                 ):
         
         self.sample_length = 0.0 # seconds
@@ -1403,7 +1405,6 @@ class RandomNoiseSlice():
         self.segment_llimit = segment_llimit
         self.segment_ulimit = segment_ulimit
         self.debug_me = debug_me
-        self.debug_dir = debug_dir
     
     def precompute_common_params(self):
         # Set minimum segment duration
@@ -1443,9 +1444,7 @@ class RandomNoiseSlice():
 
         # Debugging
         if self.debug_me:
-            if not os.path.exists(self.debug_dir):
-                os.makedirs(self.debug_dir)
-            save_txt = os.path.join(self.debug_dir, 'random_noise_slice.txt')
+            save_txt = os.path.join('./tmp', 'random_noise_slice.txt')
             self.tmp_debug = open(save_txt, "a")
     
     def get_segment_choice(self, seed):
@@ -1507,7 +1506,7 @@ class RandomNoiseSlice():
             
         return ligo_segments, load_times
     
-    def debug_random_noise_slice(self, data, labels):
+    def debug_random_noise_slice(self, data, labels, special):
         # Plotting debug recoloured
         # NOTE to self: figsize is (width, height)
         fig, axs = plt.subplots(len(labels), 1, figsize=(9.0, 9.0*len(labels)), squeeze=False)
@@ -1519,7 +1518,13 @@ class RandomNoiseSlice():
             axs[n][0].legend()
         # Other
         filename = 'random_noise_slice_{}.png'.format(uuid.uuid4().hex)
-        save = os.path.join(self.debug_dir, filename)
+        dirname = 'training' if special['training'] else 'validation'
+        epoch = special['epoch']
+        cfg = special['cfg']
+        save_path = os.path.join(cfg.export_dir, "DEBUG/noise_generation_d4/{}/{}".format(epoch, dirname))
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        save = os.path.join(save_path, filename)
         plt.savefig(save)
         plt.close()
     
@@ -1576,8 +1581,11 @@ class RandomNoiseSlice():
         
         # Debugging
         if self.debug_me:
-            self.debug_random_noise_slice(data=noise, labels=['H1 noise', 'L1 noise'])
-            foo = 'H1, {}, {}, L1, {}, {}'.format(tmp_key_times[0], tmp_start_idxs[0], tmp_key_times[1], tmp_start_idxs[1])
+            self.debug_random_noise_slice(data=noise, labels=['H1 noise', 'L1 noise'], special)
+            dirname = 'training' if special['training'] else 'validation'
+            epoch = special['epoch']
+            debug_args = (epoch, dirname, tmp_key_times[0], tmp_start_idxs[0], tmp_key_times[1], tmp_start_idxs[1])
+            foo = '{}, {}, H1, {}, {}, L1, {}, {}'.format(*args)
             self.tmp_debug.write(foo)
         # Convert noise into np.ndarray, suitable for other transformations
         noise = np.stack(noise, axis=0)
