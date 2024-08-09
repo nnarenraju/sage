@@ -254,7 +254,6 @@ class SageNetOTF:
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -489,7 +488,6 @@ class SageNetOTF_May24_Russet(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -607,7 +605,6 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -743,7 +740,6 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -863,7 +859,6 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -999,7 +994,6 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -1144,7 +1138,6 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -1262,7 +1255,6 @@ class Kennebec_Annealed(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -1396,7 +1388,6 @@ class Norland_D3_template_density(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -1503,7 +1494,6 @@ class Russet_TrainingRecolour(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = False
                                         ),
                 ]),
@@ -1621,7 +1611,6 @@ class Vitelotte_FixedDataset(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         fix_epoch = False,
                                          debug_me = True
                                         ),
                 ]),
