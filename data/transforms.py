@@ -1528,11 +1528,14 @@ class RandomNoiseSlice():
         np.random.seed(seed)
         return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
 
-    def get_noise_segment(self, special, segdeets, det_only):
+    def get_noise_segment(self, special, segdeets, det_only, recolour):
         ## Get noise sample from given O3a real noise segment
-        # If not in training phase, don't worry about Recolour being on
+        # For validation, recolour is always off
         if special['training']:
-            recolour_pad = int(special['data_cfg'].whiten_padding*special['data_cfg'].sample_rate)
+            if recolour:
+                recolour_pad = int(special['data_cfg'].whiten_padding*special['data_cfg'].sample_rate)
+            else:
+                recolour_pad = 0
         else:
             recolour_pad = 0
 
@@ -1592,10 +1595,16 @@ class RandomNoiseSlice():
 
     def apply(self, special, det_only=''):
         ## Get noise sample with random start time from O3a real noise
+        # Check whether recolour is done
+        if special['cfg'].transforms['noise'] != None:
+            recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
+            recolour_flag = True if recolour != [] else False
+        else:
+            recolour_flag = False
         # Toss a biased die and retrieve the segment to use
         segdeets = self.pick_segment(special['sample_seed'])
         # Get noise sample with random start time (uniform within segment)
-        noise = self.get_noise_segment(special, segdeets, det_only)
+        noise = self.get_noise_segment(special, segdeets, det_only, recolour_flag)
         # Return noise data
         return noise
 
