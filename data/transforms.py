@@ -598,6 +598,7 @@ class FastGenerateWaveform():
         tc = params['tc']
         tc_gps = params['injection_time']
         ## Get random value (with a given prior) for polarisation angle, ra, dec
+        np.random.seed(special['sample_seed'])
         # Polarisation angle
         pol_angle = special['distrs']['pol'].rvs()[0][0]
         # Right ascension, declination
@@ -804,8 +805,9 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         # Returns the chirp distance given the luminosity distance and chirp mass.
         return dist * (2.**(-1./5) * ref_mass / mchirp)**(5./6)
 
-    def get_rescaled_signal(self, signal, psds, params, cfg, debug, training, aux, epoch):
+    def get_rescaled_signal(self, signal, psds, params, cfg, debug, training, aux, epoch, seed):
         # params: This will contain params var found in __getitem__ method of custom dataset object
+        np.random.seed(seed)
         # Get original network SNR
         prelim_network_snr = get_network_snr(signal, psds, params, cfg.export_dir, debug)
         
@@ -868,8 +870,9 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         aux = special['aux']
         norms = special['norm']
         epoch = special['epoch']
+        seed = special['seed']
         # Augmentation on optimal network SNR
-        out, params = self.get_rescaled_signal(y, psds, params, cfg, debug, training, aux, epoch)
+        out, params = self.get_rescaled_signal(y, psds, params, cfg, debug, training, aux, epoch, seed)
         # Update params
         params.update(params)
         # Update special
@@ -1435,10 +1438,8 @@ class RandomNoiseSlice():
                 self.psegment[n] = [-1, -1, -1]
 
         # Get probabilties of using segment using segment durations
-        seg_idx = np.arange(len(segdurs))
-        segprob = list(segdurs/np.sum(segdurs))
-        # Get one choice from seg_idx based on probalities obtained from seg durations
-        self.segment_choice = lambda _: np.random.choice(seg_idx, 1, p=segprob)[0]
+        self.seg_idx = np.arange(len(segdurs))
+        self.segprob = list(segdurs/np.sum(segdurs))
 
         # Debugging
         if self.debug_me:
@@ -1446,7 +1447,11 @@ class RandomNoiseSlice():
                 os.makedirs(self.debug_dir)
             save_txt = os.path.join(self.debug_dir, 'random_noise_slice.txt')
             self.tmp_debug = open(save_txt, "a")
-
+    
+    def get_segment_choice(self, seed):
+        # Get one choice from seg_idx based on probalities obtained from seg durations
+        np.random.seed(seed)
+        return np.random.choice(self.seg_idx, 1, p=self.segprob)[0]
 
     def _load_segments(self):
         tmp_dir = "./tmp"
@@ -1518,8 +1523,9 @@ class RandomNoiseSlice():
         plt.savefig(save)
         plt.close()
     
-    def _make_sample_start_time(self, seg_start_idx, seg_end_idx):
+    def _make_sample_start_time(self, seg_start_idx, seg_end_idx, seed):
         # Make a sample start time that is uniformly distributed within segdur
+        np.random.seed(seed)
         return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
 
     def get_noise_segment(self, special, segdeets, det_only):
@@ -1529,18 +1535,21 @@ class RandomNoiseSlice():
             recolour_pad = int(special['data_cfg'].whiten_padding*special['data_cfg'].sample_rate)
         else:
             recolour_pad = 0
+
         # Get random noise segment
+        rs = np.random.RandomState(seed=special['sample_seed'])
+        seeds = list(rs.randint(0, 2**32, len(self.detectors)))
         noise = []
         tmp_key_times = []
         tmp_start_idxs = []
-        for det, segdeet in zip(self.detectors, segdeets):
+        for det, segdeet, seed in zip(self.detectors, segdeets, seeds):
             if det_only != '' and det_only != det:
                 continue
             key_time, seg_start_idx, seg_end_idx = segdeet
             seg_end_idx -= recolour_pad
             # Get sample_start_time using segment times
             # This start time will lie within a valid segment time interval
-            sample_start_idx = self._make_sample_start_time(seg_start_idx, seg_end_idx)
+            sample_start_idx = self._make_sample_start_time(seg_start_idx, seg_end_idx, seed)
             # Get the required portion of given segment
             sidx = sample_start_idx
             eidx = sample_start_idx + int(self.sample_length / self.dt)
@@ -1571,18 +1580,20 @@ class RandomNoiseSlice():
         noise = np.stack(noise, axis=0)
         return noise
     
-    def pick_segment(self):
+    def pick_segment(self, seed):
         # Pick a random segment to use based on probablities set using their duration
         # Picking two different segments and start times provides an extra layer of augmentation
-        idx1 = self.segment_choice(0)
-        idx2 = self.segment_choice(0)
+        rs = np.random.RandomState(seed=seed)
+        seeds = list(rs.randint(0, 2**32, len(self.detectors)))
+        idx1 = self.get_segment_choice(seeds[0])
+        idx2 = self.get_segment_choice(seeds[1])
         # Return the segment details of selected segment
         return (self.psegment[idx1], self.psegment[idx2])
 
     def apply(self, special, det_only=''):
         ## Get noise sample with random start time from O3a real noise
         # Toss a biased die and retrieve the segment to use
-        segdeets = self.pick_segment()
+        segdeets = self.pick_segment(special['sample_seed'])
         # Get noise sample with random start time (uniform within segment)
         noise = self.get_noise_segment(special, segdeets, det_only)
         # Return noise data
