@@ -1622,18 +1622,18 @@ class Vitelotte_FixedDataset(SageNetOTF):
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
                                          fix_epoch = False,
-                                         debug_me = False
+                                         debug_me = True
                                         ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=True,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                    segment_llimit=0, segment_ulimit=132, debug_me=True,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     }
