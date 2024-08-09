@@ -824,9 +824,9 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 ## Display stuff
                 loss = np.around(training_loss['total_loss'].clone().cpu().item(), 8)
                 # Update pbar with loss, acc
-                pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, nbatch+1, loss))
+                pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, training_batches, loss))
                 # Update losses and accuracy
-                training_batches = nbatch
+                training_batches+=1
                 acc_train.append(accuracy)
                 for key in training_running_loss.keys():
                     training_running_loss[key] += training_loss[key].clone().cpu().item()
@@ -893,7 +893,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, validation_batches, loss))
                     
                     # Update losses and accuracy
-                    validation_batches = nbatch+1
+                    validation_batches+=1
                     acc_valid.append(accuracy)
                     for key in validation_running_loss.keys():
                         validation_running_loss[key] += validation_loss[key].clone().cpu().item()
@@ -983,10 +983,10 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
                         # Display stuff
                         loss = np.around(aux_loss['total_loss'].clone().cpu().item(), 8)
-                        pbar.set_description("AUX Epoch {}, batch {} - loss = {}".format(nep, aux_val_batches+1, loss))
+                        pbar.set_description("AUX Epoch {}, batch {} - loss = {}".format(nep, aux_val_batches, loss))
                         
                         # Update losses and accuracy
-                        aux_val_batches = nbatch
+                        aux_val_batches+=1
                         aux_val_running_loss['aux_{}'.format(cf)] += aux_loss['gw'].clone().cpu().item()
                 
                 cflag.value = -1
