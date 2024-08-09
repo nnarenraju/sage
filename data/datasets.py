@@ -485,7 +485,6 @@ class MinimalOTF(Dataset):
     def _augmentation_(self, sample, target, params, mode=None):
         """ Signal and Noise only Augmentation """
         if target and self.signal_only_transforms and mode=='signal':
-            self.special['epoch'] = self.epoch.value
             # Debug dir set to empty str
             sample, params, _special = self.signal_only_transforms(sample, params, self.special, '')
             self.special.update(_special)
@@ -579,6 +578,8 @@ class MinimalOTF(Dataset):
         # Setting the seed for iteration
         np.random.seed(seed)
         self.special['sample_seed'] = seed
+        # Setting epoch number
+        self.special['epoch'] = self.epoch.value
 
         ## Read the sample(s)
         sample, targets, params = self.generate_data(seed=seed)
