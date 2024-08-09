@@ -443,8 +443,7 @@ class FastGenerateWaveform():
                  rwrap = 3.0, 
                  beta_taper = 8, 
                  pad_duration_estimate = 1.1, 
-                 min_mass = 5.0, 
-                 fix_epoch = False,
+                 min_mass = 5.0,
                  debug_me = False
                 ):
 
@@ -1581,7 +1580,7 @@ class RandomNoiseSlice():
         
         # Debugging
         if self.debug_me:
-            self.debug_random_noise_slice(data=noise, labels=['H1 noise', 'L1 noise'], special)
+            self.debug_random_noise_slice(data=noise, labels=['H1 noise', 'L1 noise'], special=special)
             dirname = 'training' if special['training'] else 'validation'
             epoch = special['epoch']
             debug_args = (epoch, dirname, tmp_key_times[0], tmp_start_idxs[0], tmp_key_times[1], tmp_start_idxs[1])
