@@ -260,13 +260,11 @@ class SageNetOTF:
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
                                 ),
                     },
                     # Auxilliary noise data (only used for training, not for validation)
@@ -494,13 +492,11 @@ class SageNetOTF_May24_Russet(SageNetOTF):
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -612,12 +608,10 @@ class SageNetOTF_metric_density_Desiree(SageNetOTF):
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -747,12 +741,10 @@ class SageNetOTF_metric_lowvar_Butterball(SageNetOTF):
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -866,12 +858,10 @@ class SageNetOTF_metric_density_noCheatyPSDaug_Desiree(SageNetOTF):
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -1001,12 +991,10 @@ class SageNetOTF_metric_density_noCheatyPSDaug_noPSDshift_Desiree(SageNetOTF):
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -1145,12 +1133,10 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -1262,12 +1248,10 @@ class Kennebec_Annealed(SageNetOTF):
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -1501,12 +1485,10 @@ class Russet_TrainingRecolour(SageNetOTF):
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -1617,13 +1599,11 @@ class Vitelotte_FixedDataset(SageNetOTF):
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=True,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_training')
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=True
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=True,
-                                    debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
+                                    segment_llimit=0, segment_ulimit=132, debug_me=True
                                 ),
                     }
                 )
