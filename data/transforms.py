@@ -1584,7 +1584,7 @@ class RandomNoiseSlice():
             dirname = 'training' if special['training'] else 'validation'
             epoch = special['epoch']
             debug_args = (epoch, dirname, tmp_key_times[0], tmp_start_idxs[0], tmp_key_times[1], tmp_start_idxs[1])
-            foo = '{}, {}, H1, {}, {}, L1, {}, {}'.format(*args)
+            foo = '{}, {}, H1, {}, {}, L1, {}, {}'.format(*debug_args)
             self.tmp_debug.write(foo)
         # Convert noise into np.ndarray, suitable for other transformations
         noise = np.stack(noise, axis=0)
