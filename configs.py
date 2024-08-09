@@ -1597,6 +1597,11 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
     # 3. Fixed dataset
 
+    ## What is a fixed dataset?
+    # 1. Sample seed does not change between epochs
+    # 2. Augmentation for signals is the same between epochs
+    # 3. No augmentation for noise
+
     """ Data storage """
     name = "Vitelotte_FixedDataset_Aug09"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
