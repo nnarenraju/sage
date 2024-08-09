@@ -1598,9 +1598,9 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # 3. Fixed dataset
 
     ## What is a fixed dataset?
-    # 1. Sample seed does not change between epochs
-    # 2. Augmentation for signals is the same between epochs
-    # 3. No augmentation for noise
+    # 1. Sample seed does not change between epochs (DONE)
+    # 2. Augmentation for signals is the same between epochs (DONE)
+    # 3. No augmentation for noise (DONE)
 
     """ Data storage """
     name = "Vitelotte_FixedDataset_Aug09"
@@ -1636,17 +1636,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
                                     debug_dir=os.path.join(debug_dir, 'RandomNoiseSlice_validation')
                                 ),
-                    },
-                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
-                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
-                                                        ),
-                                                 debug_me=False,
-                                                 debug_dir=""
-                    ),
-                    paux = 0.689, # 113/164 days for extra O3b noise
-                    debug_me=False,
-                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                    }
                 )
     )
 
@@ -1655,14 +1645,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
-        noise=UnifyNoise([
-                    Recolour(use_precomputed=True, 
-                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_latter51days_20s.hdf"),
-                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_latter51days_20s.hdf"),
-                             p_recolour=0.3829,
-                             debug_me=False,
-                             debug_dir=os.path.join(debug_dir, 'Recolour')),
-                ]),
+        noise=None,
         train=Unify({
                     'stage1':[
                             Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
@@ -1696,6 +1679,12 @@ class Vitelotte_FixedDataset(SageNetOTF):
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
     
+    """ Dataloader params """
+    num_workers = 2
+    pin_memory = True
+    prefetch_factor = 4
+    persistent_workers = True
+
     """ Storage Devices """
     store_device = 'cuda:0'
     train_device = 'cuda:0'
@@ -1704,8 +1693,8 @@ class Vitelotte_FixedDataset(SageNetOTF):
     testing_device = 'cuda:0'
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_training_recolour.hdf"
-    test_background_output = "testing_boutput_training_recolour.hdf"
+    test_foreground_output = "testing_foutput_fixed_dataset.hdf"
+    test_background_output = "testing_boutput_fixed_dataset.hdf"
 
 
 
