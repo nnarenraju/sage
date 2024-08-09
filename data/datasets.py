@@ -147,18 +147,9 @@ class MinimalOTF(Dataset):
         wgen.precompute_common_params()
 
         """ Set default noise generation params """
-        if self.noise_only_transforms != None:
-            recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
-            if recolour != []:
-                set_noise_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
-            else:
-                set_noise_length = data_cfg.signal_length # seconds    
-        else:
-            set_noise_length = data_cfg.signal_length # seconds
-
         for name in ['training', 'validation']:
             noigen_name = self.noise_generation.generations[name].__class__.__name__
-            self.noise_generation.generations[name].sample_length = set_noise_length
+            self.noise_generation.generations[name].sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
             if noigen_name == 'RandomNoiseSlice':
                 self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
             elif noigen_name == 'ColouredNoiseGenerator':
@@ -169,7 +160,7 @@ class MinimalOTF(Dataset):
             self.noise_generation.generations[name].precompute_common_params()
 
         if self.noise_generation.aux != None:
-            self.noise_generation.aux.sample_length = set_noise_length
+            self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
 
         """ Set default recolour transformation params """
         if self.noise_only_transforms != None:
