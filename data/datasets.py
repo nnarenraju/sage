@@ -567,10 +567,14 @@ class MinimalOTF(Dataset):
     def __getitem__(self, idx):
         
         # Setting the unique seed for given sample
-        if self.training:
+        if self.training and not self.fix_epoch_seeds:
             seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1)
-        else:
+        elif self.training and self.fix_epoch_seeds:
+            seed = int((self.total_samples_per_epoch) + idx+1)
+        elif not self.training and not self.fix_epoch_seeds:
             seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**30)
+        else not self.training and self.fix_epoch_seeds:
+            seed = int((self.total_samples_per_epoch) + idx+1 + 2**30)
 
         # Setting the seed for iteration
         np.random.seed(seed)
