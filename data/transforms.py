@@ -870,7 +870,7 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         aux = special['aux']
         norms = special['norm']
         epoch = special['epoch']
-        seed = special['seed']
+        seed = special['sample_seed']
         # Augmentation on optimal network SNR
         out, params = self.get_rescaled_signal(y, psds, params, cfg, debug, training, aux, epoch, seed)
         # Update params
