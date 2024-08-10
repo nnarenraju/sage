@@ -1562,7 +1562,7 @@ class Russet_TrainingRecolour(SageNetOTF):
     test_background_output = "testing_boutput_training_recolour.hdf"
 
 
-# ABLATION - fixed dataset
+# ABLATION - fixed dataset (RUNNNG)
 class Vitelotte_FixedDataset(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
@@ -1672,5 +1672,4 @@ class Vitelotte_FixedDataset(SageNetOTF):
 # 2. uniform on (tau0, q)
 # 3. power law on (tau0, q)
 # 4. uniform + power law on (tau0, q)
-# 5. Anneal from U(m1, m2) to template placement metric
-# 6. Anneal from template placement metric to U(m1, m2)
+# 5. Anneal from template placement metric to U(m1, m2)
