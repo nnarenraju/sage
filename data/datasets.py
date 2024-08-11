@@ -594,10 +594,11 @@ class MinimalOTF(Dataset):
         else:
             raise ValueError('Seed options incorrect!')
 
-        sample, targets, params = self.generate_data(target, seed=seed)
-        # Setting the seed for iteration
+        # Setting the seed for sample/iter
         np.random.seed(seed)
         self.special['sample_seed'] = seed
+        # Generate sample
+        sample, targets, params = self.generate_data(target, seed=seed)
         
         ## Signal Augmentation
         # Runs signal augmentation if sample is clean waveform
