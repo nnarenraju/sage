@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 
-""" 1D ResNet models in PyTorch """
+""" 
+1D ResNet models in PyTorch 
 
-import keras.backend
-import keras.layers
-import keras.models
-import keras.regularizers
+Original Code (2D): https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py
+Modified to 1D by Narenraju Nagarajan in Aug 2024 for Sage ablation study
 
-import keras_resnet.blocks
-import keras_resnet.layers
+"""
 
-
+import torch
 import torch.nn as nn
 
 
