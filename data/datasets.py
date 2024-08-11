@@ -110,7 +110,8 @@ class MinimalOTF(Dataset):
         self.train_device = train_device
         self.cfg = cfg
         self.data_cfg = data_cfg
-        self.fix_epoch_seeds = self.data_cfg.fix_epoch_seeds
+        self.fix_signal_seeds = self.data_cfg.fix_signal_seeds
+        self.fix_noise_seeds = self.data_cfg.fix_noise_seeds
         # Using this for now to get psds (TODO: move psd creation from datagen)
         self.data_loc = os.path.join(self.data_cfg.parent_dir, self.data_cfg.data_dir)
         self.epoch = -1
@@ -212,7 +213,8 @@ class MinimalOTF(Dataset):
         self.special['training'] = self.training
         self.special['aux'] = self.cflag
         self.special['limits'] = self.limits
-        self.special['fix_epoch_seeds'] = self.fix_epoch_seeds
+        self.special['fix_signal_seeds'] = self.fix_signal_seeds
+        self.special['fix_noise_seeds'] = self.fix_noise_seeds
         self.special['default_keys'] = self.special.keys()
 
         ## Ignore Params
@@ -442,12 +444,9 @@ class MinimalOTF(Dataset):
         return (waveform_kwargs, params)
 
 
-    def generate_data(self, seed, return_noise=False):
+    def generate_data(self, target, seed):
         ## Generate waveform or read noise sample for D4
-        # Are we generating noise or waveform?
         np.random.seed(seed)
-        target = 1 if np.random.rand() < self.data_cfg.signal_probability else 0
-        target = target if not return_noise else 0
         # Target can be set using probablity of hypothesis
         targets = {}
         targets['gw'] = target
@@ -499,7 +498,7 @@ class MinimalOTF(Dataset):
         """ Finding random noise realisation for signal """
         if targets['gw']:
             # Read the noise data
-            pure_noise, targets_noise, params_noise = self.generate_data(seed=seed, return_noise=True)
+            pure_noise, targets_noise, params_noise = self.generate_data(target=0, seed=seed)
             target_noise = targets_noise['gw']
             if self.training:
                 pure_noise, _ = self._augmentation_(pure_noise, target_noise, params_noise, mode='noise')
@@ -566,23 +565,39 @@ class MinimalOTF(Dataset):
     def __getitem__(self, idx):
         
         # Setting the unique seed for given sample
-        if self.training and not self.fix_epoch_seeds:
-            seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1)
-        elif self.training and self.fix_epoch_seeds:
-            seed = int((self.total_samples_per_epoch) + idx+1)
-        elif not self.training and not self.fix_epoch_seeds:
-            seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**30)
-        elif not self.training and self.fix_epoch_seeds:
-            seed = int((self.total_samples_per_epoch) + idx+1 + 2**30)
+        if self.training:
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1)
+            fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1)
+        elif not self.training:
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**30)
+            fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1 + 2**30)
 
-        # Setting the seed for iteration
-        np.random.seed(seed)
-        self.special['sample_seed'] = seed
         # Setting epoch number
         self.special['epoch'] = self.epoch.value
 
         ## Read the sample(s)
-        sample, targets, params = self.generate_data(seed=seed)
+        if self.data_cfg.fix_coin_seeds:
+            np.random.seed(fixed_epoch_seed)
+        else:
+            np.random.seed(unique_epoch_seed)
+        target = 1 if np.random.rand() < self.data_cfg.signal_probability else 0
+
+        # Setting sample seed
+        if target and self.data_cfg.fix_signal_seeds:
+            seed = fixed_epoch_seed
+        elif target and not self.data_cfg.fix_signal_seeds:
+            seed = unique_epoch_seed
+        elif not target and self.data_cfg.fix_noise_seeds:
+            seed = fixed_epoch_seed
+        elif not target and not self.data_cfg.fix_noise_seeds:
+            seed = unique_epoch_seed
+        else:
+            raise ValueError('Seed options incorrect!')
+
+        sample, targets, params = self.generate_data(target, seed=seed)
+        # Setting the seed for iteration
+        np.random.seed(seed)
+        self.special['sample_seed'] = seed
         
         ## Signal Augmentation
         # Runs signal augmentation if sample is clean waveform
