@@ -15,7 +15,7 @@ import torch.nn as nn
 
 
 
-class ResNet1D(keras.Model):
+class ResNet1D(nn.Module):
 
     def __init__(
         self,
@@ -25,20 +25,19 @@ class ResNet1D(keras.Model):
         include_top=True,
         classes=1000,
         freeze_bn=True,
-        *args,
-        **kwargs
-    ):
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
             
-        axis = 1
+        self.inplanes = 64
 
         ## Layers
-        self.zero_pad = nn.ZeroPad1d(padding=3)
-        # filters --> out_channels
-        # 
-        self.input_conv = nn.Conv1d(1, 33, 3, stride=2)
+        # filters --> out_channels, padding included within conv1d
+        # kernel_size and stride should be int (tuple given in keras version)
+        self.input_conv = nn.Conv1d(2, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        # Batch normalisation 1D
+        self.bn = norm_layer(self.inplanes)
 
-        x = keras.layers.ZeroPadding1D(padding=3, name="padding_conv1")(inputs)
-        x = keras.layers.Conv1D(64, (7, 7), strides=(2, 2), use_bias=False, name="conv1")(x)
+        
         x = keras_resnet.layers.BatchNormalization(axis=axis, epsilon=1e-5, freeze=freeze_bn, name="bn_conv1")(x)
         x = keras.layers.Activation("relu", name="conv1_relu")(x)
         x = keras.layers.MaxPooling1D((3, 3), strides=(2, 2), padding="same", name="pool1")(x)
