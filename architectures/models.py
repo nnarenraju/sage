@@ -758,9 +758,9 @@ class Rigatoni_MS_ResNetCBAM_legacy(torch.nn.Module):
 
 
 @unreviewed_model
-class KappaModel_ResNet_small(torch.nn.Module):
+class KappaModel_ResNet1D(torch.nn.Module):
     """
-    Kappa-type Model PE Architecture with ResNet50
+    Kappa-type Model PE Architecture with ResNet1D
     
     Description - consists of a 2-channel ConvBlock frontend and a Timm model backend
                   this Model-type can be used to test the Kaggle architectures
