@@ -160,6 +160,7 @@ class ResNet1D(nn.Module):
         ## INPUT
         # filters --> out_channels, padding included within conv1d
         # kernel_size and stride should be int (tuple given in keras version)
+        # Changing stride to 1 to reduce downsampling
         self.conv1 = nn.Conv1d(2, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         # Batch normalisation 1D
         self._norm_layer = norm_layer
