@@ -1575,7 +1575,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # 3. No augmentation for noise (DONE)
 
     """ Data storage """
-    name = "Vitelotte_FixedDataset_Aug09"
+    name = "Vitelotte_FixedDataset_Aug11"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1605,16 +1605,34 @@ class Vitelotte_FixedDataset(SageNetOTF):
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False
                                 ),
-                    }
+                    },
+                    # Auxilliary noise data (only used for training, not for validation)
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                                                        ),
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    paux = 0.689, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
     )
-
+    
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
-        noise=None,
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
         train=Unify({
                     'stage1':[
                             Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
