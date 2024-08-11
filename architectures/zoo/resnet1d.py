@@ -142,12 +142,11 @@ class ResNet1D(nn.Module):
 
     def __init__(
         self,
-        inputs,
-        blocks,
-        block,
-        include_top=True,
-        classes=1000,
-        freeze_bn=True,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        layers: List[int],
+        num_classes: int = 512,
+        groups: int = 1,
+        width_per_group: int = 64,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
     ) -> None:
             
@@ -257,17 +256,18 @@ class ResNet1D(nn.Module):
 def _resnet(
     block: Type[Union[BasicBlock, Bottleneck]],
     layers: List[int],
+    num_classes: int,
     **kwargs: Any,
 ) -> ResNet1D:
 
     return ResNet1D(block, layers, **kwargs)
 
 
-def resnet50(*, **kwargs: Any) -> ResNet:
+def resnet50(num_classes=512, **kwargs: Any) -> ResNet1D:
     """ 1D version of ResNet-50 from Deep Residual Learning for Image Recognition <https://arxiv.org/abs/1512.03385> """
-    return _resnet(Bottleneck, [3, 4, 6, 3], **kwargs)
+    return _resnet(Bottleneck, [3, 4, 6, 3], num_classes, **kwargs)
 
 
-def resnet101(*, **kwargs: Any) -> ResNet:
+def resnet101(num_classes=512, **kwargs: Any) -> ResNet1D:
     """ 1D version of ResNet-101 from Deep Residual Learning for Image Recognition <https://arxiv.org/abs/1512.03385> """
-    return _resnet(Bottleneck, [3, 4, 23, 3], **kwargs)
+    return _resnet(Bottleneck, [3, 4, 23, 3], num_classes, **kwargs)
