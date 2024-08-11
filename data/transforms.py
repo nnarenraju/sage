@@ -1604,7 +1604,8 @@ class RandomNoiseSlice():
         ## Get noise sample with random start time from O3a real noise
         # Check whether recolour is done
         if special['cfg'].transforms['noise'] != None:
-            recolour = get_class(self.noise_only_transforms.transforms, 'Recolour')
+            get_class = lambda clist, cname: [foo for foo in clist if foo.__class__.__name__==cname][0]
+            recolour = get_class(special['cfg'].transforms['noise'].transforms, 'Recolour')
             recolour_flag = True if recolour != [] else False
         else:
             recolour_flag = False
