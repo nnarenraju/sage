@@ -8,8 +8,12 @@ Modified to 1D by Narenraju Nagarajan in Aug 2024 for Sage ablation study
 
 """
 
+from functools import partial
+from typing import Any, Callable, List, Optional, Type, Union
+
 import torch
 import torch.nn as nn
+from torch import Tensor
 
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv1d:
@@ -148,6 +152,7 @@ class ResNet1D(nn.Module):
         groups: int = 1,
         width_per_group: int = 64,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
+        zero_init_residual = False,
     ) -> None:
             
         self.inplanes = 64
