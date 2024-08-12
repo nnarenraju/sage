@@ -1584,7 +1584,7 @@ class Butterball_ResNet1D(SageNetOTF):
     dataset_params = dict()
 
     """ Dataloader params """
-    num_workers = 2
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 4
     persistent_workers = True
@@ -1601,17 +1601,17 @@ class Butterball_ResNet1D(SageNetOTF):
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                 ),
                     'validation': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
-                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
+                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
                                                         ),
                                                  debug_me=False,
                                                  debug_dir=""
