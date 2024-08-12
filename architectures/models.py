@@ -783,7 +783,7 @@ class KappaModel_ResNet1D(torch.nn.Module):
         """ 1D ResNet """
         if resnet_size == 50:
             self.resnet = resnet50(num_classes=512)
-        elif resnet_size = 101:
+        elif resnet_size == 101:
             self.resnet = resnet101(num_classes=512)
         
         """ Mods """
