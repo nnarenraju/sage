@@ -1358,7 +1358,7 @@ class MultipleFileRandomNoiseSlice():
             recolour_flag = False
         
         if special['training']:
-            if recolour:
+            if recolour_flag:
                 recolour_pad = int(special['data_cfg'].whiten_padding*special['data_cfg'].sample_rate)
             else:
                 recolour_pad = 0
