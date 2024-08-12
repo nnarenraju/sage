@@ -1384,7 +1384,6 @@ class MultipleFileRandomNoiseSlice():
                 break
 
         # Augmented noise (Downsampled to 2048. Hz after downloading)
-        print(len(noise_H1), len(noise_L1), len(noise_H1)/2048., len(noise_L1)/2048.)
         noise = np.stack([noise_H1, noise_L1], axis=0)
         return noise
     
