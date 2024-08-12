@@ -1586,7 +1586,7 @@ class Butterball_ResNet1D(SageNetOTF):
     """ Dataloader params """
     num_workers = 16
     pin_memory = True
-    prefetch_factor = 4
+    prefetch_factor = 100
     persistent_workers = True
 
     """ Generation """
