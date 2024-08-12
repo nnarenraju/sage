@@ -1333,12 +1333,7 @@ class MultipleFileRandomNoiseSlice():
         # Make a sample start time that is uniformly distributed within segdur
         return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
 
-    def read_noise(self, hf, length, data_cfg, is_training):
-        # Check if training (worry about using recolour)
-        if is_training:
-            recolour_pad = int(data_cfg.whiten_padding*data_cfg.sample_rate)
-        else:
-            recolour_pad = 0
+    def read_noise(self, hf, length, data_cfg, recolour_pad):
         # Get random noise segment
         seg_start_idx, seg_end_idx = (0, length-1)
         seg_end_idx -= (recolour_pad + self.sample_length*data_cfg.sample_rate)
@@ -1355,9 +1350,18 @@ class MultipleFileRandomNoiseSlice():
 
     def apply(self, special, det_only=''):
         ## Get random noise sample for detector(s)
+        if special['cfg'].transforms['noise'] != None:
+            get_class = lambda clist, cname: [foo for foo in clist if foo.__class__.__name__==cname][0]
+            recolour = get_class(special['cfg'].transforms['noise'].transforms, 'Recolour')
+            recolour_flag = True if recolour != [] else False
+        else:
+            recolour_flag = False
+        
         if special['training']:
-            recolour_pad = int(special['data_cfg'].whiten_padding*
-                               special['data_cfg'].sample_rate)
+            if recolour:
+                recolour_pad = int(special['data_cfg'].whiten_padding*special['data_cfg'].sample_rate)
+            else:
+                recolour_pad = 0
         else:
             recolour_pad = 0
         # Is the detector going to be augmented with extra noise?
@@ -1368,14 +1372,14 @@ class MultipleFileRandomNoiseSlice():
         noise_H1 = np.zeros(int(special['data_cfg'].sample_length_in_num + recolour_pad))
         while True and is_augment['H1']:
             H1_file, H1_file_len = self.pick_noise_file('H1')
-            noise_H1 = self.read_noise(H1_file, H1_file_len, special['data_cfg'], special['training'])
+            noise_H1 = self.read_noise(H1_file, H1_file_len, special['data_cfg'], recolour_pad)
             if not any(np.isnan(noise_H1)):
                 break
         
         noise_L1 = np.zeros(int(special['data_cfg'].sample_length_in_num + recolour_pad))
         while True and is_augment['L1']:
             L1_file, L1_file_len = self.pick_noise_file('L1')
-            noise_L1 = self.read_noise(L1_file, L1_file_len, special['data_cfg'], special['training'])
+            noise_L1 = self.read_noise(L1_file, L1_file_len, special['data_cfg'], recolour_pad)
             if not any(np.isnan(noise_L1)):
                 break
 
