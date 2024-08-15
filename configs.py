@@ -1683,3 +1683,7 @@ class Butterball_ResNet1D(SageNetOTF):
 # 3. power law on (tau0, q)
 # 4. uniform + power law on (tau0, q)
 # 5. Anneal from template placement metric to U(m1, m2)
+
+# 1. Spectral bias with different frequencies (sin) and const tau
+# 2. Bias based on signal duration with const freq and different tau
+# 3. 
