@@ -280,8 +280,8 @@ class DefaultOTF:
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 500_000
-    num_auxilliary_samples = 125_000
+    num_validation_samples = 100_000
+    num_auxilliary_samples = 100
     
     """ Signal Params """
     ## these params may be used if make_dataset == False
