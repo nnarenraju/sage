@@ -1457,7 +1457,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # 3. No augmentation for noise (DONE)
 
     """ Data storage """
-    name = "Vitelotte_FixedDataset_Aug11"
+    name = "Vitelotte_FixedDataset_Aug16"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1475,17 +1475,17 @@ class Vitelotte_FixedDataset(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         debug_me = False
+                                         debug_me = True
                                         ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=True
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False
+                                    segment_llimit=0, segment_ulimit=132, debug_me=True
                                 ),
                     },
                     # Auxilliary noise data (only used for training, not for validation)
