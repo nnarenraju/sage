@@ -1326,7 +1326,7 @@ class Norland_D3_template_density(SageNetOTF):
     # Run device for testing phase
     testing_device = 'cuda:2'
     
-    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d3"
     test_foreground_output = "testing_foutput_D3_SageNet.hdf"    
     test_background_output = "testing_boutput_D3_SageNet.hdf"
 
