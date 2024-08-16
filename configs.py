@@ -1475,17 +1475,17 @@ class Vitelotte_FixedDataset(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         debug_me = True
+                                         debug_me = False
                                         ),
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=True
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=True
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
                                 ),
                     },
                     # Auxilliary noise data (only used for training, not for validation)
@@ -1551,7 +1551,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     """ Dataloader params """
     num_workers = 16
     pin_memory = True
-    prefetch_factor = 4
+    prefetch_factor = 8
     persistent_workers = True
 
     """ Storage Devices """
@@ -1686,4 +1686,4 @@ class Butterball_ResNet1D(SageNetOTF):
 
 # 1. Spectral bias with different frequencies (sin) and const tau
 # 2. Bias based on signal duration with const freq and different tau
-# 3. 
+# 3. Running on different waveform approximants
