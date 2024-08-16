@@ -274,14 +274,14 @@ class DefaultOTF:
     # This seed is used to generate the priors
     seed = 110798
     # Fix epoch seeds for lowering dataset variation
-    fix_coin_seeds = False
+    fix_coin_seeds = True
     fix_signal_seeds = False
-    fix_noise_seeds = False
+    fix_noise_seeds = True
 
     """ OTF Params """
-    num_training_samples = 2_000_000
-    num_validation_samples = 500_000
-    num_auxilliary_samples = 125_000
+    num_training_samples = 20
+    num_validation_samples = 20
+    num_auxilliary_samples = 10
     
     """ Signal Params """
     ## these params may be used if make_dataset == False
