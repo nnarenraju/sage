@@ -1428,20 +1428,20 @@ class Russet_TrainingRecolour(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = 'cuda:0',
+        store_device = 'cuda:2',
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
     
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:2'
+    train_device = 'cuda:2'
 
     # Run device for testing phase
-    testing_device = 'cuda:0'
+    testing_device = 'cuda:2'
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_training_recolour.hdf"
-    test_background_output = "testing_boutput_training_recolour.hdf"
+    test_foreground_output = "testing_foutput_training_recolour_Aug09.hdf"
+    test_background_output = "testing_boutput_training_recolour_Aug09.hdf"
 
 
 # ABLATION - fixed dataset (RUNNNG)
@@ -1687,3 +1687,4 @@ class Butterball_ResNet1D(SageNetOTF):
 # 1. Spectral bias with different frequencies (sin) and const tau
 # 2. Bias based on signal duration with const freq and different tau
 # 3. Running on different waveform approximants
+# 4. Norland D3 run on XPHM
