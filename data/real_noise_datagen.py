@@ -46,7 +46,7 @@ import ligo.segments
 
 from pycbc import DYN_RANGE_FAC
 from pycbc.types import TimeSeries
-from segments import OverlapSegment
+from data.segments import OverlapSegment
 
 # LOCAL
 from data.testdata_slicer import Slicer
