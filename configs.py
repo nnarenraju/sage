@@ -1457,7 +1457,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # 3. No augmentation for noise (DONE)
 
     """ Data storage """
-    name = "Vitelotte_FixedDataset_Aug16"
+    name = "Vitelotte_FixedDataset_Aug21"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
