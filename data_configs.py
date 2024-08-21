@@ -24,7 +24,7 @@ Documentation: NULL
 """
 
 # LOCAL
-# from data.MPB_make_default_dataset import make as make_MPB_default_dataset
+from data.MPB_make_default_dataset import make as make_MPB_default_dataset
 
 import numpy as np
 
@@ -65,18 +65,15 @@ def get_imr_chirp_time(m1, m2, s1z, s2z, fl):
 class Default:
 
     """ Make """
-    # Run ORChiD on OTF (on-the-fly data generation) mode
-    # Does not try to move extlinks.hdf from dataset dir
-    # FIXME: We still need a dataset dir for accessing the PSDs
-    OTF = True
+    OTF = False
     # To handle this: target = 1 if np.random.rand() < self.data_cfg.signal_probability else 0
     signal_probability = 0.5
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
-    make_dataset = False
+    make_dataset = True
     # Which module to use to create dataset
     # Here, we create a dataset using explicit pycbc functions
-    make_module = None # make_MPB_default_dataset
+    make_module = make_MPB_default_dataset
     
     """ Location (these params used if make_dataset == False, as search loc) """
     # Dataset location directory
@@ -84,7 +81,7 @@ class Default:
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
     # data_dir = "buffer_dataset_check"
-    data_dir = "dataset_D4_2e6_Nov28_seed2GW_combination"
+    data_dir = "dataset_D4_1e6_Aug21_vitelotte"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -110,10 +107,6 @@ class Default:
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
     # sum(chunk_size) must be a divisor of num_waveforms + num_noises
     chunk_size = [25000, 25000]
-
-    """ OTF Params """
-    num_training_samples = 2_000_000
-    num_validation_samples = 500_000
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
@@ -132,7 +125,7 @@ class Default:
     # Create a new class for a different problem instead of changing this config
     sample_rate = 2048. # Hz
     # (20.0 seconds max + 2.0 seconds of noise padding) would be better
-    signal_length = 20.0 # seconds
+    signal_length = 12.0 # seconds
     # whiten_padding is also known as max_filter_duration in some modules
     whiten_padding = 5.0 # seconds (padding/2.0 on each side of signal_length)
     sample_length_in_s = signal_length + whiten_padding # seconds
@@ -154,29 +147,14 @@ class Default:
     prior_low_chirp_dist = 130.0
     prior_high_chirp_dist = 350.0
     
-    tc_inject_lower = 18.0 # seconds
-    tc_inject_upper = 18.2 # seconds
+    tc_inject_lower = 11.0 # seconds
+    tc_inject_upper = 11.2 # seconds
 
     ### MODS ###
     # Modifications to Dataset
     # Possible mods: ('uniform_signal_duration', 'uniform_chirp_mass')
     # NOTE: Set to None if not required
     modification = None
-    # Option to use the priors for tau or mchirp below
-    # If False, we use ml and mu above to get limits instead
-    use_mod_priors = False
-    # Tau limits
-    prior_tau_lower = None
-    prior_tau_upper = None
-    # Mchirp limits
-    prior_mchirp_lower = 25.0
-    prior_mchirp_upper = 100.0
-
-    # Distance and dchirp options
-    # Priors are based on above-given data
-    # This can only be used when modifications is not None
-    uniform_distance = False
-    uniform_dchirp = False
     
     """ PSD Params """
     noise_low_freq_cutoff = 15.0 # Hz
