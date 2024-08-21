@@ -436,6 +436,25 @@ class MultirateSampling(TransformWrapperPerChannel):
 
 """ Waveform Generation """
 
+class SinusoidGenerator():
+    ## Used to create sinusoid with different parameters to test biases
+    ## Bias due to waveform frequency comes under spectral bias
+    ## Bias due to signal duration comes under lack of proper inductibe bias
+    def __init__(self):
+        # Sinusoidal wave parameters in general form
+        self.A = None
+        self.f = None
+        self.phi = None
+    
+    def generate(self):
+        yt = A * np.sin(2.*np.pi*f*t)
+        return yt
+
+    def apply(self, params: dict, special: dict):
+        pass
+
+
+
 class FastGenerateWaveform():
     ## Used to augment on all parameters (uses GPU-accelerated IMRPhenomPv2 waveform generation)
     ## Link to Ripple: https://github.com/tedwards2412/ripple
