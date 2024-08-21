@@ -187,7 +187,8 @@ class GenerateData:
                  'norm_tc', 'norm_dist', 'norm_dchirp', 'norm_mchirp', 'norm_q', 'norm_invq',
                  'complex_asds', 'psd_est_segment_length', 'psd_est_segment_stride', 'blackout_max_ratio',
                  'globtmp', 'network_sample_length', '_decimated_bins', 'corrupted_len',
-                 'mixed_noise', 'mix_ratio', 'use_d3_psds_for_d4', 'modification']
+                 'mixed_noise', 'mix_ratio', 'use_d3_psds_for_d4', 'modification', 'signal_probability', 
+                 'OTF', 'srbins_type']
     
     
     def __init__(self, **kwargs):
