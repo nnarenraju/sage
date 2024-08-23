@@ -577,27 +577,27 @@ class GenerateData:
                                           seed=random_seed)
         
         ## MODIFICATIONS ##
-        if self.modification != None and isinstance(self.modification, str):
+        if self.modification[0] != None and isinstance(self.modification[0], str):
             # Check for known modifications
-            if self.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
+            if self.modification[0] in ['uniform_signal_duration', 'uniform_chirp_mass']:
                 _mass1, _mass2 = get_uniform_masses_with_mass1_gt_mass2(self.prior_low_mass, self.prior_high_mass, self.num_waveforms)
                 # Masses used for mass ratio need not be used later as mass1 and mass2
                 # We calculate them again after getting chirp mass
                 q = q_from_mass1_mass2(_mass1, _mass2)
 
-            if self.modification == 'uniform_signal_duration':
+            if self.modification[0] == 'uniform_signal_duration':
                 # Get chirp mass from uniform signal duration
                 tau_lower, tau_upper = get_tau_priors(self.prior_low_mass, self.prior_high_mass, self.signal_low_freq_cutoff)
                 mchirp = chirp_mass_from_signal_duration(tau_lower, tau_upper, self.num_waveforms, self.signal_low_freq_cutoff)
 
-            elif self.modification == 'uniform_chirp_mass':
+            elif self.modification[0] == 'uniform_chirp_mass':
                 # Get uniform chirp mass
                 raise NotImplementedError('Might not ever be included.')
 
             else:
                 raise ValueError("get_priors: Unknown modification added to data_cfg.modification!")
 
-            if self.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
+            if self.modification[0] in ['uniform_signal_duration', 'uniform_chirp_mass']:
                 # Using mchirp and q, get mass1 and mass2
                 mass1, mass2 = mass1_mass2_from_mchirp_q(mchirp, q)
                 # Get chirp distances using the power law distribution
@@ -613,7 +613,7 @@ class GenerateData:
                 priors['chirp_distance'] = dchirp
                 priors['distance'] = distance
                 
-        elif self.modification != None and not isinstance(self.modification, str):
+        elif self.modification[0] != None and not isinstance(self.modification[0], str):
             raise ValueError("get_priors: Unknown data type used in data_cfg.modification!")
 
         ## Get normalisation params for certain output values ##
