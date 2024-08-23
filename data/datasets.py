@@ -550,6 +550,7 @@ class MinimalOTF(Dataset):
             params['distance'] = group['distance'][didx]
             params['mchirp'] = group['mchirp'][didx]
             params['tc'] = group['tc'][didx]
+            params['network_snr'] = 0.0
             # Target params
             targets['norm_mchirp'] = group['norm_mchirp'][didx]
             targets['norm_tc'] = group['norm_tc'][didx]
@@ -590,7 +591,7 @@ class MinimalOTF(Dataset):
                 pure_noise, _ = self._augmentation_(pure_noise, target_noise, params_noise, mode='noise')
             
             """ Adding noise to signals """
-            if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray): 
+            if isinstance(pure_noise, np.ndarray) and isinstance(sample, np.ndarray):
                 noisy_signal = sample + pure_noise
             else:
                 raise TypeError('pure_signal or pure_noise is not an np.ndarray!')
@@ -681,6 +682,7 @@ class MinimalOTF(Dataset):
             raise ValueError('Seed options incorrect!')
 
         # Setting the seed for sample/iter
+        seed = unique_epoch_seed
         np.random.seed(seed)
         self.special['sample_seed'] = seed
         # Generate sample / read sample
@@ -728,5 +730,9 @@ class MinimalOTF(Dataset):
         # Tensorification
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
+
+        if targets['gw']:
+            for rem in ['start_time', 'interval_lower', 'interval_upper', 'declination', 'right_ascension', 'polarisation_angle']:
+                source_params.pop(rem)
         
         return (sample, all_targets, source_params)
