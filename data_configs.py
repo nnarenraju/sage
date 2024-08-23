@@ -80,8 +80,7 @@ class Default:
     # Data storage drive or /mnt absolute path
     parent_dir = "/local/scratch/igr/nnarenraju"
     # Dataset directory within parent_dir
-    # data_dir = "buffer_dataset_check"
-    data_dir = "dataset_D4_1e6_Aug21_vitelotte"
+    data_dir = "dataset_D4_1e6_Aug23_vitelotte"
     
     """ Basic dataset options """
     # These options are used by generate_data.py
@@ -100,13 +99,13 @@ class Default:
     # For imbalanced dataset, change the class weights in loss function
     # instead of changing the data generation procedures.
     # Not used for OTF
-    num_waveforms = 800 # 1_250_000
-    num_noises = 800 # 1_250_000
+    num_waveforms = 1_250_000
+    num_noises = 1_250_000
     # For efficient RAM usage in data generation
     # Here too, keep both nums equal (Each chunk will be class balanced)
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
     # sum(chunk_size) must be a divisor of num_waveforms + num_noises
-    chunk_size = [80, 80]
+    chunk_size = [25_000, 25_000]
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
