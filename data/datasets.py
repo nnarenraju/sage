@@ -580,12 +580,12 @@ class MinimalOTF(Dataset):
             # Read the noise data
             if self.data_cfg.OTF:
                 pure_noise, targets_noise, params_noise = self.generate_data(target=0, seed=seed)
-                target_noise = targets_noise['gw']
             else:
                 random_noise_idx = random.choice(self.noise_idx)
                 random_noise_data_path = self.data_paths[random_noise_idx]
                 pure_noise, targets_noise, params_noise = self.read_data(random_noise_data_path)
-
+            
+            target_noise = targets_noise['gw']
             if self.training:
                 pure_noise, _ = self._augmentation_(pure_noise, target_noise, params_noise, mode='noise')
             
