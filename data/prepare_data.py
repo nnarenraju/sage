@@ -278,41 +278,41 @@ class DataModule:
                 return (train, folds, balance_params)
         
         ## Splitting
-        if cfg.splitter is not None:
-            # Function ensures equal ratio of all classes in each fold
-            folds = list(cfg.splitter.split(train, train['target'].values))
-        else:
-            # Splitting training and validation in 80-20 sections
-            # This essentially has all the data in 1 fold
-            idxs = np.arange(len(train))
-            # Use idxs as training data together with targets to stratify into train and test set
-            # This ensures a class balanced training and testing dataset
-            all_targets = train['target'].values
-            
-            if data_cfg.dataset in [1, 2, 3]:
-                X_train, X_valid, _, _ = train_test_split(idxs, all_targets, test_size=0.2, 
-                                                          random_state=42, stratify=all_targets)
-                # Save as folds for training and validation 
-                balance_params = None
-                folds = [(X_train, X_valid)]
-            
-            elif data_cfg.dataset == 4:
-                if cfg.subset_for_funsies: 
-                    # We need to ignore balanced dataset for this to work (can't be bothered to fix this)
-                    num_training = int(0.8*cfg.debug_size)
-                    num_validation = int(0.2*cfg.debug_size)
-                    training_data = train.loc[train['dstype'] == 'training'].head(num_training)
-                    balance_params = {'mchirp': training_data['mchirp'].values}
-                    validation_data = train.loc[train['dstype'] == 'validation'].head(num_validation)
-                    # Get the required number of samples from each
-                    train = pd.concat([training_data, validation_data])
-                    folds = [(np.arange(len(training_data)), np.arange(len(training_data), len(training_data)+len(validation_data)))]
-                else:
-                    training_data = train.loc[train['dstype'] == 'training']
-                    balance_params = {'mchirp': training_data['mchirp'].values}
-                    validation_data = train.loc[train['dstype'] == 'validation']
-                    # Get the required number of samples from each
-                    folds = [(training_data['id'].values, validation_data['id'].values)]
+        #if cfg.splitter is not None:
+        #    # Function ensures equal ratio of all classes in each fold
+        #    folds = list(cfg.splitter.split(train, train['target'].values))
+        
+        # Splitting training and validation in 80-20 sections
+        # This essentially has all the data in 1 fold
+        idxs = np.arange(len(train))
+        # Use idxs as training data together with targets to stratify into train and test set
+        # This ensures a class balanced training and testing dataset
+        all_targets = train['target'].values
+        
+        if data_cfg.dataset in [1, 2, 3]:
+            X_train, X_valid, _, _ = train_test_split(idxs, all_targets, test_size=0.2, 
+                                                        random_state=42, stratify=all_targets)
+            # Save as folds for training and validation 
+            balance_params = None
+            folds = [(X_train, X_valid)]
+        
+        elif data_cfg.dataset == 4:
+            if cfg.subset_for_funsies: 
+                # We need to ignore balanced dataset for this to work (can't be bothered to fix this)
+                num_training = int(0.8*cfg.debug_size)
+                num_validation = int(0.2*cfg.debug_size)
+                training_data = train.loc[train['dstype'] == 'training'].head(num_training)
+                balance_params = {'mchirp': training_data['mchirp'].values}
+                validation_data = train.loc[train['dstype'] == 'validation'].head(num_validation)
+                # Get the required number of samples from each
+                train = pd.concat([training_data, validation_data])
+                folds = [(np.arange(len(training_data)), np.arange(len(training_data), len(training_data)+len(validation_data)))]
+            else:
+                training_data = train.loc[train['dstype'] == 'training']
+                balance_params = {'mchirp': training_data['mchirp'].values}
+                validation_data = train.loc[train['dstype'] == 'validation']
+                # Get the required number of samples from each
+                folds = [(training_data['id'].values, validation_data['id'].values)]
                 
         return (train, folds, balance_params)
     
