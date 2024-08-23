@@ -195,9 +195,9 @@ def run_trainer():
         # Use folds for cross-validation
         for nfold, (train_idx, val_idx) in enumerate(folds):
             
-            if cfg.splitter != None:
-                raise NotImplementedError('K-fold cross validation method under construction!')
-                print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
+            #if cfg.splitter != None:
+            #    raise NotImplementedError('K-fold cross validation method under construction!')
+            #    print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
 
             train_fold = train.iloc[train_idx]
             val_fold = train.iloc[val_idx]
