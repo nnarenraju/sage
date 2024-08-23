@@ -584,7 +584,7 @@ class MinimalOTF(Dataset):
             else:
                 random_noise_idx = random.choice(self.noise_idx)
                 random_noise_data_path = self.data_paths[random_noise_idx]
-                pure_noise, targets_noise, params_noise = self._read_(random_noise_data_path)
+                pure_noise, targets_noise, params_noise = self.read_data(random_noise_data_path)
 
             if self.training:
                 pure_noise, _ = self._augmentation_(pure_noise, target_noise, params_noise, mode='noise')
@@ -689,10 +689,7 @@ class MinimalOTF(Dataset):
         else:
             # Get data paths for external link
             data_path = self.data_paths[idx]
-            # Get data from ExternalLink'ed lookup file
-            HDF5_Dataset, didx = os.path.split(data_path)
-            if (1 if bool(re.search('signal', HDF5_Dataset)) else 0):
-                sample, targets, params = self.read_data(data_path)
+            sample, targets, params = self.read_data(data_path)
         
         ## Signal Augmentation
         # Runs signal augmentation if sample is clean waveform
