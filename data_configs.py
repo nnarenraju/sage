@@ -124,7 +124,6 @@ class Default:
     ## these params may be used if make_dataset == False
     # Create a new class for a different problem instead of changing this config
     sample_rate = 2048. # Hz
-    # (20.0 seconds max + 2.0 seconds of noise padding) would be better
     signal_length = 12.0 # seconds
     # whiten_padding is also known as max_filter_duration in some modules
     whiten_padding = 5.0 # seconds (padding/2.0 on each side of signal_length)
