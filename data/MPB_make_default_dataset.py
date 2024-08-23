@@ -53,12 +53,16 @@ from pycbc.psd import interpolate, welch
 from pycbc.distributions.power_law import UniformRadius
 from pycbc.distributions.utils import draw_samples_from_config
 from pycbc.types import load_frequencyseries, complex_same_precision_as, FrequencySeries
+from pycbc import distributions
 
 # LOCAL
 from data.testdata_slicer import Slicer
-from data.prior_modifications import *
+from data.prior_modifications import get_uniform_masses_with_mass1_gt_mass2, q_from_mass1_mass2
+from data.prior_modifications import get_tau_priors, chirp_mass_from_signal_duration
+from data.prior_modifications import mass1_mass2_from_mchirp_q
 from data.mlmdc_noise_generator import NoiseGenerator
 from data.real_noise_datagen import RealNoiseGenerator
+from data.generate_waveform import PyCBCGenerateWaveform
 
 # Addressing HDF5 error with file locking (used to address PSD file read error)
 # Issue (October 1st, 2022): File locking takes place with MP even with this option
@@ -188,7 +192,9 @@ class GenerateData:
                  'complex_asds', 'psd_est_segment_length', 'psd_est_segment_stride', 'blackout_max_ratio',
                  'globtmp', 'network_sample_length', '_decimated_bins', 'corrupted_len',
                  'mixed_noise', 'mix_ratio', 'use_d3_psds_for_d4', 'modification', 'signal_probability', 
-                 'OTF', 'srbins_type']
+                 'OTF', 'srbins_type', 'pycbc_wavegen', 'special', 'fix_coin_seeds', 'fix_signal_seeds',
+                 'fix_noise_seeds', 'mod_start_probability', 'mod_end_probability', 'anneal_epochs', 
+                 'modification_toggle_probability']
     
     
     def __init__(self, **kwargs):
@@ -260,6 +266,27 @@ class GenerateData:
         self.hdf5_tree = []
         self.groups = ['2048']
         self.tmp = None
+
+        ## Waveform generation
+        self.pycbc_wavegen = PyCBCGenerateWaveform()
+        # Use data_cfg to set waveform generation class attributes
+        self.pycbc_wavegen.f_lower = self.signal_low_freq_cutoff
+        self.pycbc_wavegen.f_upper = self.sample_rate
+        self.pycbc_wavegen.delta_t = 1./self.sample_rate
+        self.pycbc_wavegen.f_ref = self.reference_freq
+        self.pycbc_wavegen.signal_length = self.signal_length
+        self.pycbc_wavegen.whiten_padding = self.whiten_padding
+        self.pycbc_wavegen.error_padding_in_s = self.error_padding_in_s
+        self.pycbc_wavegen.sample_rate = self.sample_rate
+        # Precompute common params for waveform generation
+        self.pycbc_wavegen.precompute_common_params()
+
+        self.special = {}
+        self.special['sample_seed'] = 0
+        self.special['dets'] = ('H1', 'L1')
+        self.special['distrs'] = {}
+        self.special['distrs']['pol'] = distributions.angular.UniformAngle(uniform_angle=(0., 2.0*np.pi))
+        self.special['distrs']['sky'] = distributions.sky_location.UniformSky()
         
         ## Names
         # All possible params to add into the chunk files
@@ -553,19 +580,19 @@ class GenerateData:
         if self.modification != None and isinstance(self.modification, str):
             # Check for known modifications
             if self.modification in ['uniform_signal_duration', 'uniform_chirp_mass']:
-                _mass1, _mass2 = get_uniform_masses(self.prior_low_mass, self.prior_high_mass, self.num_waveforms)
+                _mass1, _mass2 = get_uniform_masses_with_mass1_gt_mass2(self.prior_low_mass, self.prior_high_mass, self.num_waveforms)
                 # Masses used for mass ratio need not be used later as mass1 and mass2
                 # We calculate them again after getting chirp mass
-                q = q_from_uniform_mass1_mass2(_mass1, _mass2)
+                q = q_from_mass1_mass2(_mass1, _mass2)
 
             if self.modification == 'uniform_signal_duration':
                 # Get chirp mass from uniform signal duration
                 tau_lower, tau_upper = get_tau_priors(self.prior_low_mass, self.prior_high_mass, self.signal_low_freq_cutoff)
-                mchirp = mchirp_from_uniform_signal_duration(tau_lower, tau_upper, self.num_waveforms, self.signal_low_freq_cutoff)
+                mchirp = chirp_mass_from_signal_duration(tau_lower, tau_upper, self.num_waveforms, self.signal_low_freq_cutoff)
 
             elif self.modification == 'uniform_chirp_mass':
                 # Get uniform chirp mass
-                mchirp = get_uniform_mchirp(self.prior_low_mass, self.prior_high_mass, self.num_waveforms)
+                raise NotImplementedError('Might not ever be included.')
 
             else:
                 raise ValueError("get_priors: Unknown modification added to data_cfg.modification!")
@@ -811,16 +838,11 @@ class GenerateData:
             self.waveform_kwargs.update(dict(zip(prior_values.dtype.names, prior_values)))
             
             """ Injection """
-            h_plus, h_cross
-
+            h_plus, h_cross, time_interval = self.pycbc_wavegen.apply(self.waveform_kwargs, self.special)
+            start_interval, end_interval = time_interval
             
             assert len(h_plus) == self.sample_length_in_num + self.error_padding_in_num*2.0, 'Expected length = {}, actual length = {}'.format(self.sample_length_in_num + self.error_padding_in_num*2.0, len(h_plus))
             assert len(h_cross) == self.sample_length_in_num + self.error_padding_in_num*2.0, 'Expected length = {}, actual length = {}'.format(self.sample_length_in_num + self.error_padding_in_num*2.0, len(h_cross))
-
-            # Setting the start_time, sets epoch and end_time as well within the TS
-            # Set the start time of h_plus and h_plus after accounting for prepended zeros
-            h_plus.start_time = start_interval - self.error_padding_in_s
-            h_cross.start_time = start_interval - self.error_padding_in_s
             
             # h_plus and h_cross is stored for augmentation purposes
             sample['h_plus'] = h_plus
