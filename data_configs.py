@@ -100,18 +100,18 @@ class Default:
     # For imbalanced dataset, change the class weights in loss function
     # instead of changing the data generation procedures.
     # Not used for OTF
-    num_waveforms = 1_250_000
-    num_noises = 1_250_000
+    num_waveforms = 800 # 1_250_000
+    num_noises = 800 # 1_250_000
     # For efficient RAM usage in data generation
     # Here too, keep both nums equal (Each chunk will be class balanced)
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
     # sum(chunk_size) must be a divisor of num_waveforms + num_noises
-    chunk_size = [25000, 25000]
+    chunk_size = [80, 80]
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
     # chunk_size[0] and chunk_size[1] must be divisible exactly by num_queues_datasave
-    num_queues_datasave = 8
+    num_queues_datasave = 1
     num_cores_datagen = 24
     
     """ Save frequency """
@@ -138,6 +138,10 @@ class Default:
     signal_low_freq_cutoff = 20.0 # Hz
     signal_approximant = 'IMRPhenomPv2'
     reference_freq = 20.0 # Hz
+
+    fix_coin_seeds = False
+    fix_signal_seeds = False
+    fix_noise_seeds = False
     
     """ PRIORS """
     prior_low_mass = 7.0 # Msun
@@ -154,6 +158,16 @@ class Default:
     # Possible mods: ('uniform_signal_duration', 'uniform_chirp_mass')
     # NOTE: Set to None if not required
     modification = None
+
+    # Both start and end list must sum to 1
+    mod_start_probability = [1.0]
+    mod_end_probability = [1.0]
+    # Annealing is done linear between start and end prob
+    # Feature creep: Other functions can be used to move from start to end
+    # Annealing is done within the given epoch numbers
+    anneal_epochs = [20, 40] # [start, end]
+    # Modification off = None option
+    modification_toggle_probability = 1.0
     
     """ PSD Params """
     noise_low_freq_cutoff = 15.0 # Hz
