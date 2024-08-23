@@ -157,7 +157,7 @@ class Default:
     # Modifications to Dataset
     # Possible mods: ('uniform_signal_duration', 'uniform_chirp_mass')
     # NOTE: Set to None if not required
-    modification = None
+    modification = [None]
 
     # Both start and end list must sum to 1
     mod_start_probability = [1.0]
