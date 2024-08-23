@@ -13,7 +13,7 @@ from pycbc.types import TimeSeries
 import lalsimulation as lalsim
 
 
-class GenerateWaveform():
+class PyCBCGenerateWaveform:
     def __init__(self, 
                  rwrap = 3.0, 
                  beta_taper = 8, 
@@ -189,11 +189,9 @@ class GenerateWaveform():
         end_interval = tc_gps + post_merger + (self.whiten_padding/2.0)
         # Setting the start time for hp and hc
         hp.start_time = hc.start_time = start_interval - self.error_padding_in_s
-        # Project wave and find strains for detectors
-        strains = [det.project_wave(hp, hc, right_ascension, declination, pol_angle) for det in self.dets]
+        # Returns
         time_interval = (start_interval, end_interval)
-        strains = np.array([strain.time_slice(*time_interval, mode='nearest') for strain in strains])
-        return strains
+        return (hp, hc, time_interval)
 
     def generate(self, _theta):
         theta = _theta.copy()
@@ -225,5 +223,5 @@ class GenerateWaveform():
         hp, hc = self.make_injection(hp, hc, params)
         # Convert hp, hc into h(t) using antenna pattern (H1, L1 considered)
         out = self.project(hp, hc, special, params)
-        # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
+        # output: (h_plus, h_cross, time_interval)
         return out
