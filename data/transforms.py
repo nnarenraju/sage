@@ -454,7 +454,6 @@ class SinusoidGenerator():
         pass
 
 
-
 class FastGenerateWaveform():
     ## Used to augment on all parameters (uses GPU-accelerated IMRPhenomPv2 waveform generation)
     ## Link to Ripple: https://github.com/tedwards2412/ripple
