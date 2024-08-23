@@ -76,7 +76,7 @@ from architectures.frontend import MultiScaleBlock
 # Transforms, augmentation and generation
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
 from data.transforms import Whiten, MultirateSampling, Normalise
-from data.transforms import AugmentOptimalNetworkSNR
+from data.transforms import AugmentOptimalNetworkSNR, AugmentPolSky
 from data.transforms import Recolour
 # Generating signals and noise
 from data.transforms import FastGenerateWaveform
@@ -1457,7 +1457,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # 3. No augmentation for noise (DONE)
 
     """ Data storage """
-    name = "Vitelotte_FixedDataset_Aug21"
+    name = "Vitelotte_FixedDataset_Aug23"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1466,55 +1466,14 @@ class Vitelotte_FixedDataset(SageNetOTF):
     """ Dataset """
     dataset = MinimalOTF
     dataset_params = dict()
-
-    """ Generation """
-    # Augmentation using GWSPY glitches happens only during training (not for validation)
-    generation = dict(
-        signal = UnifySignalGen([
-                    FastGenerateWaveform(rwrap = 3.0, 
-                                         beta_taper = 8, 
-                                         pad_duration_estimate = 1.1, 
-                                         min_mass = 5.0, 
-                                         debug_me = False
-                                        ),
-                ]),
-        noise  = UnifyNoiseGen({
-                    'training': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
-                                ),
-                    'validation': RandomNoiseSlice(
-                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False
-                                ),
-                    },
-                    # Auxilliary noise data (only used for training, not for validation)
-                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
-                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
-                                                        ),
-                                                 debug_me=False,
-                                                 debug_dir=""
-                    ),
-                    paux = 0.689, # 113/164 days for extra O3b noise
-                    debug_me=False,
-                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
-                )
-    )
     
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
+                    AugmentPolSky(),
                     AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
-        noise=UnifyNoise([
-                    Recolour(use_precomputed=True, 
-                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
-                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
-                             p_recolour=0.3829,
-                             debug_me=False,
-                             debug_dir=os.path.join(debug_dir, 'Recolour')),
-                ]),
+        noise=None,
         train=Unify({
                     'stage1':[
                             Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
@@ -1683,8 +1642,9 @@ class Butterball_ResNet1D(SageNetOTF):
 # 3. power law on (tau0, q)
 # 4. uniform + power law on (tau0, q)
 # 5. Anneal from template placement metric to U(m1, m2)
+# 6. Uniform on q
 
-# 1. Spectral bias with different frequencies (sin) and const tau
-# 2. Bias based on signal duration with const freq and different tau
+# 1. Spectral bias with different frequencies (sin) and const tau (DEIMOS)
+# 2. Bias based on signal duration with const freq and different tau (DEIMOS)
 # 3. Running on different waveform approximants
 # 4. Norland D3 run on XPHM
