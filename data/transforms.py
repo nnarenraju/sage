@@ -653,7 +653,7 @@ class FastGenerateWaveform():
         # Cyclic time-shift
         hp = self.cyclic_time_shift(hp)
         hc = self.cyclic_time_shift(hc)
-        # Tapering and fd_to_td
+        # Tapering and convert from freq domain to time domain (fd_to_td)
         hp_td = self.fd_taper_left(hp)
         hc_td = self.fd_taper_left(hc)
 
