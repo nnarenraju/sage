@@ -100,6 +100,10 @@ class MinimalOTF(Dataset):
                  cfg=None, data_cfg=None):
         
         super().__init__()
+        # Non-OTF params
+        self.data_paths = data_paths
+        self.targets = targets
+        # Common params
         self.waveform_generation = waveform_generation
         self.noise_generation = noise_generation
         self.transforms = transforms
@@ -118,13 +122,22 @@ class MinimalOTF(Dataset):
         self.cflag = -1
         self.aux = aux
 
-        if training:
-            self.total_samples_per_epoch = self.data_cfg.num_training_samples
-        else:
-            if not self.aux:
-                self.total_samples_per_epoch = self.data_cfg.num_validation_samples
+        if self.data_cfg.OTF:
+            if training:
+                self.total_samples_per_epoch = self.data_cfg.num_training_samples
             else:
-                self.total_samples_per_epoch = self.data_cfg.num_auxilliary_samples
+                if not self.aux:
+                    self.total_samples_per_epoch = self.data_cfg.num_validation_samples
+                else:
+                    self.total_samples_per_epoch = self.data_cfg.num_auxilliary_samples
+        else:
+            if training:
+                self.total_samples_per_epoch = 0.8 * (self.data_cfg.num_waveforms + self.data_cfg.num_noises)
+            else:
+                if not self.aux:
+                    self.total_samples_per_epoch = 0.2 * (self.data_cfg.num_waveforms + self.data_cfg.num_noises)
+                else:
+                    self.total_samples_per_epoch = 0.1 * (self.data_cfg.num_waveforms + self.data_cfg.num_noises)
         
         self.training = training
         
@@ -201,6 +214,13 @@ class MinimalOTF(Dataset):
         """ Useful params """
         self.sample_rate = self.data_cfg.sample_rate
         self.noise_low_freq_cutoff = self.data_cfg.noise_low_freq_cutoff
+
+        """ Random noise realisation """
+        self.noise_idx = np.argwhere(self.targets == 0).flatten()
+        
+        """ Keep ExternalLink Lookup table open till end of run """
+        lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
+        self.extmain = h5py.File(lookup, 'r', libver='latest')
 
         ## SPECIAL
         self.special = {}
@@ -290,7 +310,10 @@ class MinimalOTF(Dataset):
         # print('WARNING: ')
 
     def __len__(self):
-        return self.total_samples_per_epoch
+        if self.data_cfg.OTF:
+            return self.total_samples_per_epoch
+        else:
+            return len(self.data_paths)
     
 
     def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
@@ -481,6 +504,63 @@ class MinimalOTF(Dataset):
         return (sample, targets, params)
     
 
+    def read_data(self, data_path):
+        
+        # Store all params within chunk file
+        params = {}
+        targets = {}
+        
+        # Get data from ExternalLink'ed lookup file
+        HDF5_Dataset, didx = os.path.split(data_path)
+        # Dataset Index should be an integer
+        didx = int(didx)
+        # Check whether data is signal or noise with target
+        target = 1 if bool(re.search('signal', HDF5_Dataset)) else 0
+        targets['gw'] = target
+        # Access group
+        group = self.extmain[HDF5_Dataset]
+        
+        if not target:
+            ## Read noise data
+            noise_1 = np.array(group['noise_1'][didx])
+            noise_2 = np.array(group['noise_2'][didx])
+            sample = np.stack([noise_1, noise_2], axis=0)
+            # Dummy noise params
+            targets['norm_mchirp'] = -1
+            targets['norm_tc'] = -1
+            # Dummy params
+            params['mass1'] = -1
+            params['mass2'] = -1
+            params['distance'] = -1
+            params['mchirp'] = -1
+            params['dchirp'] = -1
+            params['tc'] = -1
+            params['network_snr'] = -1
+        else:
+            ## Read signal data
+            h_plus = np.array(group['h_plus'][didx])
+            h_cross = np.array(group['h_cross'][didx])
+            sample = np.stack([h_plus, h_cross], axis=0)
+            # Signal params
+            params['start_time'] = group['start_time'][didx]
+            params['interval_lower'] = group['interval_lower'][didx]
+            params['interval_upper'] = group['interval_upper'][didx]
+            params['mass1'] = group['mass1'][didx]
+            params['mass2'] = group['mass2'][didx]
+            params['distance'] = group['distance'][didx]
+            params['mchirp'] = group['mchirp'][didx]
+            params['tc'] = group['tc'][didx]
+            # Target params
+            targets['norm_mchirp'] = group['norm_mchirp'][didx]
+            targets['norm_tc'] = group['norm_tc'][didx]
+        
+        # Generic params
+        params['sample_rate'] = self.sample_rate
+        params['noise_low_freq_cutoff'] = self.noise_low_freq_cutoff
+        
+        return (sample, targets, params)
+
+
     def _augmentation_(self, sample, target, params, mode=None):
         """ Signal and Noise only Augmentation """
         if target and self.signal_only_transforms and mode=='signal':
@@ -498,8 +578,14 @@ class MinimalOTF(Dataset):
         """ Finding random noise realisation for signal """
         if targets['gw']:
             # Read the noise data
-            pure_noise, targets_noise, params_noise = self.generate_data(target=0, seed=seed)
-            target_noise = targets_noise['gw']
+            if self.data_cfg.OTF:
+                pure_noise, targets_noise, params_noise = self.generate_data(target=0, seed=seed)
+                target_noise = targets_noise['gw']
+            else:
+                random_noise_idx = random.choice(self.noise_idx)
+                random_noise_data_path = self.data_paths[random_noise_idx]
+                pure_noise, targets_noise, params_noise = self._read_(random_noise_data_path)
+
             if self.training:
                 pure_noise, _ = self._augmentation_(pure_noise, target_noise, params_noise, mode='noise')
             
@@ -597,8 +683,16 @@ class MinimalOTF(Dataset):
         # Setting the seed for sample/iter
         np.random.seed(seed)
         self.special['sample_seed'] = seed
-        # Generate sample
-        sample, targets, params = self.generate_data(target, seed=seed)
+        # Generate sample / read sample
+        if self.data_cfg.OTF:
+            sample, targets, params = self.generate_data(target, seed=seed)
+        else:
+            # Get data paths for external link
+            data_path = self.data_paths[idx]
+            # Get data from ExternalLink'ed lookup file
+            HDF5_Dataset, didx = os.path.split(data_path)
+            if (1 if bool(re.search('signal', HDF5_Dataset)) else 0):
+                sample, targets, params = self.read_data(data_path)
         
         ## Signal Augmentation
         # Runs signal augmentation if sample is clean waveform
