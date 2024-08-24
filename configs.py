@@ -1472,6 +1472,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
+                    AugmentPolSky(),
                     AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=None,
