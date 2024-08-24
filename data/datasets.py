@@ -735,7 +735,9 @@ class MinimalOTF(Dataset):
         sample = torch.from_numpy(sample)
 
         if targets['gw']:
-            for rem in ['start_time', 'interval_lower', 'interval_upper', 'declination', 'right_ascension', 'polarisation_angle']:
-                source_params.pop(rem)
+            for rem in ['start_time', 'interval_lower', 'interval_upper', 
+                        'declination', 'right_ascension', 'polarisation_angle']:
+                if rem in source_params.keys():
+                    source_params.pop(rem)
         
         return (sample, all_targets, source_params)
