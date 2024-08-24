@@ -215,12 +215,13 @@ class MinimalOTF(Dataset):
         self.sample_rate = self.data_cfg.sample_rate
         self.noise_low_freq_cutoff = self.data_cfg.noise_low_freq_cutoff
 
-        """ Random noise realisation """
-        self.noise_idx = np.argwhere(self.targets == 0).flatten()
-        
-        """ Keep ExternalLink Lookup table open till end of run """
-        lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
-        self.extmain = h5py.File(lookup, 'r', libver='latest')
+        if not self.data_cfg.OTF:
+            """ Random noise realisation """
+            self.noise_idx = np.argwhere(self.targets == 0).flatten()
+            
+            """ Keep ExternalLink Lookup table open till end of run """
+            lookup = os.path.join(cfg.export_dir, 'extlinks.hdf')
+            self.extmain = h5py.File(lookup, 'r', libver='latest')
 
         ## SPECIAL
         self.special = {}
