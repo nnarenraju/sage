@@ -137,7 +137,7 @@ class MinimalOTF(Dataset):
                 if not self.aux:
                     self.total_samples_per_epoch = 0.2 * (self.data_cfg.num_waveforms + self.data_cfg.num_noises)
                 else:
-                    self.total_samples_per_epoch = 0.1 * (self.data_cfg.num_waveforms + self.data_cfg.num_noises)
+                    self.total_samples_per_epoch = 0.01 * (self.data_cfg.num_waveforms + self.data_cfg.num_noises)
         
         self.training = training
         
@@ -667,6 +667,8 @@ class MinimalOTF(Dataset):
             np.random.seed(fixed_epoch_seed)
         else:
             np.random.seed(unique_epoch_seed)
+        
+        # Set target for current iteration
         target = 1 if np.random.rand() < self.data_cfg.signal_probability else 0
 
         # Setting sample seed
