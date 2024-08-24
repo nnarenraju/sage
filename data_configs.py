@@ -70,7 +70,7 @@ class Default:
     signal_probability = 0.5
     # if True, a new dataset is created based on the options below
     # else, searches for existing dataset located at os.join(parent_dir, data_dir)
-    make_dataset = True
+    make_dataset = False
     # Which module to use to create dataset
     # Here, we create a dataset using explicit pycbc functions
     make_module = make_MPB_default_dataset
@@ -269,8 +269,8 @@ class DefaultOTF:
     fix_noise_seeds = False
 
     """ OTF Params """
-    num_training_samples = 2_000_000
-    num_validation_samples = 100_000
+    num_training_samples = 2_000
+    num_validation_samples = 100
     num_auxilliary_samples = 100
     
     """ Signal Params """
