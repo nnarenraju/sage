@@ -5,7 +5,7 @@
 Filename        = Foobar.py
 Description     = Lorem ipsum dolor sit amet
 
-Created on Fri Feb  4 22:12:11 2022
+Created on Fri Feb 4 22:12:11 2022
 
 __author__      = nnarenraju
 __copyright__   = Copyright 2021, ProjectName
@@ -953,9 +953,11 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
             
             ### Auxiliary validation set checks
+            aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
+            aux_val_batches = 1
+            """
             print('\nAUX validation phase')
             with torch.no_grad():
-                
                 aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
                 for cf in range(4):
                     # Change AUX label in dataloader
@@ -968,12 +970,12 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     pbar = tqdm(auxDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
                     for nbatch, (aux_samples, aux_labels, source_params) in enumerate(pbar):
                         
-                        """ Set the device and dtype """
+                        # Set the device and dtype
                         aux_samples = aux_samples.to(dtype=torch.float32, device=cfg.train_device)
                         for key, value in aux_labels.items():
                             aux_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
                             
-                        """ Call Validation Phase """
+                        # Call Validation Phase
                         # Run training phase and get loss and accuracy
                         aux_loss, accuracy, _ = validation_phase(nep, cfg, data_cfg, Network, 
                                                                  loss_function,
@@ -990,7 +992,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                         aux_val_running_loss['aux_{}'.format(cf)] += aux_loss['gw'].clone().cpu().item()
                 
                 cflag.value = -1
-
+            """
 
 
             """
