@@ -49,6 +49,7 @@ from data.mlmdc_noise_generator import NoiseGenerator
 # PyCBC
 import pycbc
 from pycbc import DYN_RANGE_FAC
+from pycbc.detector import Detector
 from pycbc.filter import highpass as pycbc_highpass
 from pycbc.psd import inverse_spectrum_truncation, welch, interpolate
 from pycbc.types import TimeSeries, FrequencySeries, load_frequencyseries, complex_same_precision_as
@@ -439,19 +440,83 @@ class MultirateSampling(TransformWrapperPerChannel):
 class SinusoidGenerator():
     ## Used to create sinusoid with different parameters to test biases
     ## Bias due to waveform frequency comes under spectral bias
-    ## Bias due to signal duration comes under lack of proper inductibe bias
-    def __init__(self):
+    ## Bias due to signal duration comes under lack of proper inductive bias
+    def __init__(self, 
+                 A, 
+                 phi, 
+                 spectral_bias = False,
+                 fixed_duration = 5.0,
+                 lower_freq = 0.0,
+                 upper_freq = 1024.0, 
+                 duration_bias = False,
+                 fixed_frequency = 100.0,
+                 lower_tau = 0.1,
+                 upper_tau = 12.0,
+    ):
         # Sinusoidal wave parameters in general form
-        self.A = None
-        self.f = None
-        self.phi = None
+        self.A = A
+        self.phi = phi
+        # Spectral Bias (same duration, different frequencies)
+        self.spectral_bias = spectral_bias
+        self.fixed_duration = fixed_duration
+        self.lower_freq = lower_freq
+        self.upper_freq = upper_freq
+        # Duration bias (same frequency, different durations)
+        self.duration_bias = duration_bias
+        self.fixed_frequency = fixed_frequency
+        self.lower_tau = lower_tau
+        self.upper_tau = upper_tau
     
-    def generate(self):
-        yt = A * np.sin(2.*np.pi*f*t)
-        return yt
+    def generate(self, f, t):
+        return self.A * np.sin(2.*np.pi*f*t + self.phi)
+
+    def get_time_shift(self, detectors):
+        # time shift signals based of detector choice
+        ifo1, ifo2 = detectors
+        dt = Detector(ifo1).light_travel_time_to_detector(Detector(ifo2))
+        return dt
+    
+    def add_zero_padding(self, signals, duration, sample_length, sample_rate):
+        # If random duration less than sample_length, add zero padding
+        if duration < sample_length:
+            diff = int((sample_length - duration) * sample_rate) 
+            left_pad = int(diff/2)
+            right_pad = diff - left_pad
+            signal_det1 = np.pad(signal_det1, (left_pad, right_pad), 'constant', constant_values=(0, 0))
+        
+
+    def testing_spectral_bias(self, sample_length, sample_rate, detectors):
+        # Generating sin waves with different frequencies but same duration
+        random_freq = np.random.uniform(low=self.lower_freq, high=self.upper_freq)
+        tseries = np.linspace(0.0, self.fixed_duration, int(self.fixed_duration*sample_rate))
+        # Get time shift between detectors
+        dt = self.get_time_shift(detectors)
+        signal_det1 = self.generate(random_freq, tseries)
+        signal_det2 = self.generate(random_freq, tseries+dt)
+        return np.stack((signal_det1, signal_det2), axis=0)
+
+    def testing_duration_bias(self, sample_length, sample_rate, detectors):
+        # Generating sin waves with different duration but same frequency
+        random_dur = np.random.uniform(low=self.lower_tau, high=self.upper_tau)
+        tseries = np.linspace(0.0, random_dur, int(random_dur*sample_rate))
+        # Get time shift between detectors
+        dt = self.get_time_shift(detectors)
+        signal_det1 = self.generate(self.fixed_frequency, tseries)
+        signal_det2 = self.generate(self.fixed_frequency, tseries+dt)
+
 
     def apply(self, params: dict, special: dict):
-        pass
+        ## Generate sin waves for testing biased learning
+        detectors = special['dets']
+        duration = special['data_cfg'].sample_length_in_s
+        sample_rate = special['data_cfg'].sample_rate
+        # Generate data based on required bias
+        if self.spectral_bias:
+            self.testing_spectral_bias(duration, sample_rate, detectors)
+        elif self.duration_bias:
+            self.testing_duration_bias(duration, sample_rate, detectors)
+            
+
 
 
 class FastGenerateWaveform():
