@@ -38,7 +38,6 @@ warnings.filterwarnings("ignore")
 
 # LOCAL
 from test import run_test
-from save_online import save
 from evaluator import main as evaluator
 from manual import train as manual_train
 from data.prepare_data import DataModule as dat
