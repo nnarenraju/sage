@@ -146,32 +146,35 @@ class MinimalOTF(Dataset):
             setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
         
         """ Set default waveform generation params """
-        # Use data_cfg to set waveform generation class attributes
         get_class = lambda clist, cname: [foo for foo in clist if foo.__class__.__name__==cname][0]
-        wgen = get_class(self.waveform_generation.generations, 'FastGenerateWaveform')
-        wgen.f_lower = data_cfg.signal_low_freq_cutoff
-        wgen.f_upper = data_cfg.sample_rate
-        wgen.delta_t = 1./data_cfg.sample_rate
-        wgen.f_ref = data_cfg.reference_freq
-        wgen.signal_length = data_cfg.signal_length
-        wgen.whiten_padding = data_cfg.whiten_padding
-        wgen.error_padding_in_s = data_cfg.error_padding_in_s
-        wgen.sample_rate = data_cfg.sample_rate
-        # Precompute common params for waveform generation
-        wgen.precompute_common_params()
+
+        if self.cfg.generation['signal'] != None:
+            # Use data_cfg to set waveform generation class attributes
+            wgen = get_class(self.waveform_generation.generations, 'FastGenerateWaveform')
+            wgen.f_lower = data_cfg.signal_low_freq_cutoff
+            wgen.f_upper = data_cfg.sample_rate
+            wgen.delta_t = 1./data_cfg.sample_rate
+            wgen.f_ref = data_cfg.reference_freq
+            wgen.signal_length = data_cfg.signal_length
+            wgen.whiten_padding = data_cfg.whiten_padding
+            wgen.error_padding_in_s = data_cfg.error_padding_in_s
+            wgen.sample_rate = data_cfg.sample_rate
+            # Precompute common params for waveform generation
+            wgen.precompute_common_params()
 
         """ Set default noise generation params """
-        for name in ['training', 'validation']:
-            noigen_name = self.noise_generation.generations[name].__class__.__name__
-            self.noise_generation.generations[name].sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
-            if noigen_name == 'RandomNoiseSlice':
-                self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
-            elif noigen_name == 'ColouredNoiseGenerator':
-                self.noise_generation.generations[name].delta_f = self.data_cfg.delta_f
-                self.noise_generation.generations[name].noise_low_freq_cutoff = self.data_cfg.noise_low_freq_cutoff
-                self.noise_generation.generations[name].sample_rate = self.data_cfg.sample_rate
-            # Compute common params
-            self.noise_generation.generations[name].precompute_common_params()
+        if self.cfg.generation['noise'] != None:
+            for name in ['training', 'validation']:
+                noigen_name = self.noise_generation.generations[name].__class__.__name__
+                self.noise_generation.generations[name].sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
+                if noigen_name == 'RandomNoiseSlice':
+                    self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
+                elif noigen_name == 'ColouredNoiseGenerator':
+                    self.noise_generation.generations[name].delta_f = self.data_cfg.delta_f
+                    self.noise_generation.generations[name].noise_low_freq_cutoff = self.data_cfg.noise_low_freq_cutoff
+                    self.noise_generation.generations[name].sample_rate = self.data_cfg.sample_rate
+                # Compute common params
+                self.noise_generation.generations[name].precompute_common_params()
 
         if self.noise_generation.aux != None:
             self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
@@ -585,7 +588,15 @@ class MinimalOTF(Dataset):
             else:
                 random_noise_idx = random.choice(self.noise_idx)
                 random_noise_data_path = self.data_paths[random_noise_idx]
-                pure_noise, targets_noise, params_noise = self.read_data(random_noise_data_path)
+
+                if self.data_cfg.check_generation:
+                    if self.cfg.generation['noise'] != None:
+                        pure_noise, targets_noise, params_noise = self.generate_data(target=0, seed=seed)
+                    else:
+                        pure_noise, targets_noise, params_noise = self.read_data(random_noise_data_path)
+                else:
+                    # Get data paths for external link
+                    pure_noise, targets_noise, params_noise = self.read_data(random_noise_data_path)
             
             target_noise = targets_noise['gw']
             if self.training:
@@ -692,9 +703,21 @@ class MinimalOTF(Dataset):
         if self.data_cfg.OTF:
             sample, targets, params = self.generate_data(target, seed=seed)
         else:
-            # Get data paths for external link
+            # Check if generation is present for signals or noise
             data_path = self.data_paths[idx]
-            sample, targets, params = self.read_data(data_path)
+            HDF5_Dataset, _ = os.path.split(data_path)
+            # Check whether data is signal or noise with target
+            current_target = 1 if bool(re.search('signal', HDF5_Dataset)) else 0
+            if self.data_cfg.check_generation:
+                cond_1 = self.cfg.generation['noise'] != None and not current_target
+                cond_2 = self.cfg.generation['signal'] != None and current_target
+                if cond_1 or cond_2:
+                    sample, targets, params = self.generate_data(current_target, seed=seed)
+                else:
+                    sample, targets, params = self.read_data(data_path)
+            else:
+                # Get data paths for external link
+                sample, targets, params = self.read_data(data_path)
         
         ## Signal Augmentation
         # Runs signal augmentation if sample is clean waveform
@@ -739,5 +762,9 @@ class MinimalOTF(Dataset):
                         'declination', 'right_ascension', 'polarisation_angle']:
                 if rem in source_params.keys():
                     source_params.pop(rem)
+        else:
+            source_params.update(self.params)
+        
+        print(source_params)
         
         return (sample, all_targets, source_params)
