@@ -768,6 +768,4 @@ class MinimalOTF(Dataset):
                 if rem in source_params.keys():
                     source_params.pop(rem)
         
-        print(source_params)
-        
         return (sample, all_targets, source_params)
