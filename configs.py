@@ -1846,15 +1846,11 @@ class Butterball_ResNet1D(SageNetOTF):
     test_background_output = "testing_boutput_resnet1d.hdf"
 
 
-### POTENTIAL RUNS ###
-# 1. uniform on (mchirp, q)
-# 2. uniform on (tau0, q)
-# 3. power law on (tau0, q)
-# 4. uniform + power law on (tau0, q)
-# 5. Anneal from template placement metric to U(m1, m2)
-# 6. Uniform on q
-
-# 1. Spectral bias with different frequencies (sin) and const tau (DEIMOS)
-# 2. Bias based on signal duration with const freq and different tau (DEIMOS)
-# 3. Running on different waveform approximants
+### NEXT RUNS ###
+# 1. Uniform on q (DEIMOS) - after Butterball finishes
+# 2. Bias runs (each for Sage and 1D Resnet-50)
+    # 2a. Spectral bias with different frequencies (sin) and const tau (WIAY)
+    # 2b. Bias based on signal duration with const freq and different tau (WIAY)
+# 3. Running BEST on different training seeds - 2 runs
 # 4. Norland D3 run on XPHM
+# 5. Without PE point estimate
