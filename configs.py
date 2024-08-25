@@ -1527,6 +1527,214 @@ class Vitelotte_FixedDataset(SageNetOTF):
     test_background_output = "testing_boutput_fixed_dataset.hdf"
 
 
+# ABLATION - All the noise, limited signals ()
+class Vitelotte_FixedDataset_Relax1(SageNetOTF):
+    ### Primary Deviations (Comparison to BOY) ###
+    # 1. 113 days of O3b data (**VARIATION**)
+    # 2. SNR halfnorm (**VARIATION**)
+    # 3. Fixed dataset
+    # 4. All the noise, limited signals
+
+    """ Data storage """
+    name = "Vitelotte_FixedDataset_Aug25_AlltheNoise"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    batchshuffle_noise = False
+    
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = None,
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                ),
+                    },
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                                                        ),
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    paux = 0.689, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentPolSky(),
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             use_shifted=False, shift_up_factor=10, shift_down_factor=1,
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days_20s.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days_20s.hdf"),
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM_legacy
+
+    model_params = dict(
+        # Resnet50
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = 'cuda:0',
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+    )
+    
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Storage Devices """
+    store_device = 'cuda:0'
+    train_device = 'cuda:0'
+
+    # Run device for testing phase
+    testing_device = 'cuda:0'
+
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_fixed_dataset_allnoise.hdf"
+    test_background_output = "testing_boutput_fixed_dataset_allnoise.hdf"
+
+
+# ABLATION - All the signals, limited noise ()
+class Vitelotte_FixedDataset_Relax2(SageNetOTF):
+    ### Primary Deviations (Comparison to BOY) ###
+    # 1. 113 days of O3b data (**VARIATION**)
+    # 2. SNR halfnorm (**VARIATION**)
+    # 3. Fixed dataset
+    # 4. All the signal, limited noise
+
+    """ Data storage """
+    name = "Vitelotte_FixedDataset_Aug25_AlltheSignals"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    batchshuffle_noise = True
+    
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         debug_me = False
+                                        ),
+                ]),
+        noise  = None
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=None,
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM_legacy
+
+    model_params = dict(
+        # Resnet50
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = 'cuda:2',
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+    )
+    
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Storage Devices """
+    store_device = 'cuda:2'
+    train_device = 'cuda:2'
+
+    # Run device for testing phase
+    testing_device = 'cuda:2'
+
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_fixed_dataset_allsignals.hdf"
+    test_background_output = "testing_boutput_fixed_dataset_allsignals.hdf"
+
+
 # ABLATION 1 - small network resnet50
 class Butterball_ResNet1D(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
