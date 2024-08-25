@@ -106,6 +106,8 @@ class Default:
     # chunk_size = [num_waveforms_chunk, num_noises_chunk]
     # sum(chunk_size) must be a divisor of num_waveforms + num_noises
     chunk_size = [25_000, 25_000]
+
+    check_generation = True
     
     """ Handling number of cores for task """
     # Used in MP and MPB dataset generation methods
