@@ -444,18 +444,22 @@ class SinusoidGenerator():
     def __init__(self, 
                  A, 
                  phi, 
+                 inject_lower = 2.0,
+                 inject_upper = 3.0,
                  spectral_bias = False,
                  fixed_duration = 5.0,
-                 lower_freq = 0.0,
+                 lower_freq = 20.0,
                  upper_freq = 1024.0, 
                  duration_bias = False,
                  fixed_frequency = 100.0,
                  lower_tau = 0.1,
-                 upper_tau = 12.0,
+                 upper_tau = 5.0,
     ):
         # Sinusoidal wave parameters in general form
         self.A = A
         self.phi = phi
+        self.inject_lower = inject_lower
+        self.inject_upper = inject_upper
         # Spectral Bias (same duration, different frequencies)
         self.spectral_bias = spectral_bias
         self.fixed_duration = fixed_duration
@@ -476,47 +480,69 @@ class SinusoidGenerator():
         dt = Detector(ifo1).light_travel_time_to_detector(Detector(ifo2))
         return dt
     
-    def add_zero_padding(self, signals, duration, sample_length, sample_rate):
-        # If random duration less than sample_length, add zero padding
-        if duration < sample_length:
-            diff = int((sample_length - duration) * sample_rate) 
-            left_pad = int(diff/2)
-            right_pad = diff - left_pad
-            signal_det1 = np.pad(signal_det1, (left_pad, right_pad), 'constant', constant_values=(0, 0))
-        
+    def add_zero_padding(self, signal, start_time, sample_length, sample_rate):
+        # if random duration less than sample_length, add zero padding
+        duration = len(signal)/sample_rate
+        left_pad = int(start_time * sample_rate)
+        right_pad = int((sample_length - (start_time + duration)) * sample_rate)
+        padded_signal = np.pad(signal, (left_pad, right_pad), 'constant', constant_values=(0, 0))
+        return padded_signal
 
-    def testing_spectral_bias(self, sample_length, sample_rate, detectors):
-        # Generating sin waves with different frequencies but same duration
+    def add_whiten_padding(self, signal, special):
+        # whiten padding added separately for ease of understanding
+        padding = special['data_cfg'].whiten_padding
+        left_pad = right_pad = int((padding/2.) * special['data_cfg'].sample_rate)
+        padded_signal = np.pad(signal, (left_pad, right_pad), 'constant', constant_values=(0, 0))
+        return padded_signal
+
+    def testing_spectral_bias(self, special):
+        ## Generating sin waves with different frequencies but same duration
+        # Params
+        detectors = special['dets']
+        sample_length = special['data_cfg'].sample_length # seconds
+        sample_rate = special['data_cfg'].sample_rate # Hz
+        # Simulating bias
         random_freq = np.random.uniform(low=self.lower_freq, high=self.upper_freq)
         tseries = np.linspace(0.0, self.fixed_duration, int(self.fixed_duration*sample_rate))
         # Get time shift between detectors
         dt = self.get_time_shift(detectors)
-        signal_det1 = self.generate(random_freq, tseries)
-        signal_det2 = self.generate(random_freq, tseries+dt)
+        signal = self.generate(random_freq, tseries)
+        start_time = np.random.uniform(self.inject_lower, self.inject_upper)
+        signal_det1 = self.add_zero_padding(signal, start_time, sample_length, sample_rate)
+        signal_det2 = self.add_zero_padding(signal, start_time+dt, sample_length, sample_rate)
+        # Add whiten padding separately
+        signal_det1 = self.add_whiten_padding(signal_det1, special)
+        signal_det2 = self.add_whiten_padding(signal_det2, special)
         return np.stack((signal_det1, signal_det2), axis=0)
 
-    def testing_duration_bias(self, sample_length, sample_rate, detectors):
-        # Generating sin waves with different duration but same frequency
+    def testing_duration_bias(self, special):
+        ## Generating sin waves with different duration but same frequency
+        # Params
+        detectors = special['dets']
+        sample_length = special['data_cfg'].sample_length # seconds
+        sample_rate = special['data_cfg'].sample_rate # Hz
+        # Simulating bias
         random_dur = np.random.uniform(low=self.lower_tau, high=self.upper_tau)
         tseries = np.linspace(0.0, random_dur, int(random_dur*sample_rate))
         # Get time shift between detectors
         dt = self.get_time_shift(detectors)
-        signal_det1 = self.generate(self.fixed_frequency, tseries)
-        signal_det2 = self.generate(self.fixed_frequency, tseries+dt)
-
+        signal = self.generate(self.fixed_frequency, tseries)
+        start_time = np.random.uniform(self.inject_lower, self.inject_upper)
+        signal_det1 = self.add_zero_padding(signal, start_time, sample_length, sample_rate)
+        signal_det2 = self.add_zero_padding(signal, start_time+dt, sample_length, sample_rate)
+        # Add whiten padding separately
+        signal_det1 = self.add_whiten_padding(signal_det1, special)
+        signal_det2 = self.add_whiten_padding(signal_det2, special)
+        return np.stack((signal_det1, signal_det2), axis=0)
 
     def apply(self, params: dict, special: dict):
         ## Generate sin waves for testing biased learning
-        detectors = special['dets']
-        duration = special['data_cfg'].sample_length_in_s
-        sample_rate = special['data_cfg'].sample_rate
         # Generate data based on required bias
         if self.spectral_bias:
-            self.testing_spectral_bias(duration, sample_rate, detectors)
+            signals = self.testing_spectral_bias(special)
         elif self.duration_bias:
-            self.testing_duration_bias(duration, sample_rate, detectors)
-            
-
+            signals = self.testing_duration_bias(special)
+        return signals
 
 
 class FastGenerateWaveform():
