@@ -176,8 +176,8 @@ class MinimalOTF(Dataset):
                 # Compute common params
                 self.noise_generation.generations[name].precompute_common_params()
 
-        if self.noise_generation.aux != None:
-            self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
+            if self.noise_generation.aux != None:
+                self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
 
         """ Set default recolour transformation params """
         if self.noise_only_transforms != None:
@@ -712,7 +712,6 @@ class MinimalOTF(Dataset):
                 cond_1 = self.cfg.generation['noise'] != None and not current_target
                 cond_2 = self.cfg.generation['signal'] != None and current_target
                 if cond_1 or cond_2:
-                    print('OTF gen for {}'.format(current_target))
                     sample, targets, params = self.generate_data(current_target, seed=seed)
                 else:
                     sample, targets, params = self.read_data(data_path)
