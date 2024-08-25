@@ -1846,6 +1846,7 @@ class Butterball_ResNet1D(SageNetOTF):
     test_background_output = "testing_boutput_resnet1d.hdf"
 
 
+# BIASES - Spectral Bias
 class Rooster_Aug25_SpectralBias(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
@@ -1959,6 +1960,7 @@ class Rooster_Aug25_SpectralBias(SageNetOTF):
     test_background_output = "testing_boutput_spectral_bias.hdf"
 
 
+# BIASES - Duration Bias
 class Rooster_Aug25_DurationBias(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
