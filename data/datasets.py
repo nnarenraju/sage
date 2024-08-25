@@ -757,15 +757,10 @@ class MinimalOTF(Dataset):
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
 
-        if targets['gw']:
-            for rem in ['start_time', 'interval_lower', 'interval_upper', 
-                        'declination', 'right_ascension', 'polarisation_angle']:
-                if rem in source_params.keys():
-                    source_params.pop(rem)
-        else:
-            source_params.update(self.params)
-            for rem in ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination']:
-                if rem in source_params.keys():
-                    source_params.pop(rem)
+        rem = ['start_time', 'interval_lower', 'interval_upper', 'declination', 'right_ascension', 'polarisation_angle']
+        rem += ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination']
+        for rm_param in rem:
+            if rm_param in source_params.keys():
+                source_params.pop(rm_param)
         
         return (sample, all_targets, source_params)
