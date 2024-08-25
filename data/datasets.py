@@ -764,6 +764,9 @@ class MinimalOTF(Dataset):
                     source_params.pop(rem)
         else:
             source_params.update(self.params)
+            for rem in ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination']:
+                if rem in source_params.keys():
+                    source_params.pop(rem)
         
         print(source_params)
         
