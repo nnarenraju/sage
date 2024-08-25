@@ -746,6 +746,7 @@ class FastGenerateWaveform():
         plt.close()
     
     def apply(self, params: dict, special: dict):
+        print('signal')
         # Set lal.Detector object as global as workaround for MP methods
         # Project wave does not work with DataLoader otherwise
         setattr(self, 'dets', special['dets'])
@@ -1183,6 +1184,7 @@ class Recolour(NoiseWrapper):
         return recoloured
 
     def apply(self, y: np.ndarray, debug=''):
+        print('recolour')
         # Apply given PSD augmentation technique
         ## Or not to recolour
         if np.random.rand() >= self.p_recolour:
@@ -1432,6 +1434,7 @@ class MultipleFileRandomNoiseSlice():
         return ts
 
     def apply(self, special, det_only=''):
+        print('O3b')
         ## Get random noise sample for detector(s)
         if special['cfg'].transforms['noise'] != None:
             get_class = lambda clist, cname: [foo for foo in clist if foo.__class__.__name__==cname][0]
@@ -1688,6 +1691,7 @@ class RandomNoiseSlice():
         return (self.psegment[idx1], self.psegment[idx2])
 
     def apply(self, special, det_only=''):
+        print('O3a')
         ## Get noise sample with random start time from O3a real noise
         # Check whether recolour is done
         if special['cfg'].transforms['noise'] != None:

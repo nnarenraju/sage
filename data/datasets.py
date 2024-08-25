@@ -712,6 +712,7 @@ class MinimalOTF(Dataset):
                 cond_1 = self.cfg.generation['noise'] != None and not current_target
                 cond_2 = self.cfg.generation['signal'] != None and current_target
                 if cond_1 or cond_2:
+                    print('OTF gen for {}'.format(current_target))
                     sample, targets, params = self.generate_data(current_target, seed=seed)
                 else:
                     sample, targets, params = self.read_data(data_path)
