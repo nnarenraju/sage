@@ -7,7 +7,7 @@ output = $(Cluster).$(Process).out
 # Fill in with your own script, arguments and input files
 # Note that you don't need to transfer any software
 executable = sage_env.sh
-arguments = train.py --config Rooster_Aug26_SpectralBias --data-config Default --manual
+arguments = train.py --config Rooster_Aug26_SpectralBias --data-config DefaultOTF --manual
 transfer_input_files = 
 
 # Resource requirements
