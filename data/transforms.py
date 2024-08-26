@@ -477,15 +477,15 @@ class SinusoidGenerator():
     def get_time_shift(self, detectors):
         # time shift signals based of detector choice
         ifo1, ifo2 = detectors
-        dt = Detector(ifo1).light_travel_time_to_detector(Detector(ifo2))
+        dt = ifo1.light_travel_time_to_detector(ifo2)
         return dt
     
     def add_zero_padding(self, signal, start_time, sample_length, sample_rate):
         # if random duration less than sample_length, add zero padding
-        duration = len(signal)/sample_rate
         left_pad = int(start_time * sample_rate)
-        right_pad = int((sample_length - (start_time + duration)) * sample_rate)
+        right_pad = int((sample_length*sample_rate - (left_pad + len(signal))))
         padded_signal = np.pad(signal, (left_pad, right_pad), 'constant', constant_values=(0, 0))
+
         return padded_signal
 
     def add_whiten_padding(self, signal, special):
@@ -499,7 +499,7 @@ class SinusoidGenerator():
         ## Generating sin waves with different frequencies but same duration
         # Params
         detectors = special['dets']
-        sample_length = special['data_cfg'].sample_length # seconds
+        sample_length = special['data_cfg'].signal_length # seconds
         sample_rate = special['data_cfg'].sample_rate # Hz
         # Simulating bias
         random_freq = np.random.uniform(low=self.lower_freq, high=self.upper_freq)
@@ -519,7 +519,7 @@ class SinusoidGenerator():
         ## Generating sin waves with different duration but same frequency
         # Params
         detectors = special['dets']
-        sample_length = special['data_cfg'].sample_length # seconds
+        sample_length = special['data_cfg'].signal_length # seconds
         sample_rate = special['data_cfg'].sample_rate # Hz
         # Simulating bias
         random_dur = np.random.uniform(low=self.lower_tau, high=self.upper_tau)
@@ -1429,7 +1429,7 @@ class MultipleFileRandomNoiseSlice():
         self.lengths = {}
         for name in noise_dirs.keys():
             self.noise_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(noise_dirs[name], "*.hdf"))]
-            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise.npy".format(name))
+            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise_deimos.npy".format(name))
 
     def pick_noise_file(self, det):
         # Pick a noise file for each detector
