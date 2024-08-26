@@ -146,21 +146,23 @@ class MinimalOTF(Dataset):
             setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
         
         """ Set default waveform generation params """
+        class_exists = lambda clist, cname: any([foo for foo in clist if foo.__class__.__name__==cname])
         get_class = lambda clist, cname: [foo for foo in clist if foo.__class__.__name__==cname][0]
 
         if self.cfg.generation['signal'] != None:
             # Use data_cfg to set waveform generation class attributes
-            wgen = get_class(self.waveform_generation.generations, 'FastGenerateWaveform')
-            wgen.f_lower = data_cfg.signal_low_freq_cutoff
-            wgen.f_upper = data_cfg.sample_rate
-            wgen.delta_t = 1./data_cfg.sample_rate
-            wgen.f_ref = data_cfg.reference_freq
-            wgen.signal_length = data_cfg.signal_length
-            wgen.whiten_padding = data_cfg.whiten_padding
-            wgen.error_padding_in_s = data_cfg.error_padding_in_s
-            wgen.sample_rate = data_cfg.sample_rate
-            # Precompute common params for waveform generation
-            wgen.precompute_common_params()
+            if class_exists(self.waveform_generation.generations, 'FastGenerateWaveform'):
+                wgen = get_class(self.waveform_generation.generations, 'FastGenerateWaveform')
+                wgen.f_lower = data_cfg.signal_low_freq_cutoff
+                wgen.f_upper = data_cfg.sample_rate
+                wgen.delta_t = 1./data_cfg.sample_rate
+                wgen.f_ref = data_cfg.reference_freq
+                wgen.signal_length = data_cfg.signal_length
+                wgen.whiten_padding = data_cfg.whiten_padding
+                wgen.error_padding_in_s = data_cfg.error_padding_in_s
+                wgen.sample_rate = data_cfg.sample_rate
+                # Precompute common params for waveform generation
+                wgen.precompute_common_params()
 
         """ Set default noise generation params """
         if self.cfg.generation['noise'] != None:
