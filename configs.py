@@ -1869,7 +1869,7 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    SinusoidGenerator(A=1e-19, 
+                    SinusoidGenerator(A=1e-22, 
                                       phi=0.0, 
                                       inject_lower = 0.0,
                                       inject_upper = 0.0,
@@ -1945,15 +1945,15 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = 'cuda:1',
+        store_device = torch.device("cuda"),
     )
     
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = torch.device("cuda")
+    train_device = torch.device("cuda")
 
     # Run device for testing phase
-    testing_device = 'cuda:1'
+    testing_device = torch.device("cuda")
 
     """ Dataloader params """
     num_workers = 16
