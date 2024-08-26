@@ -765,4 +765,9 @@ class MinimalOTF(Dataset):
             if rm_param in source_params.keys():
                 source_params.pop(rm_param)
         
+        plt.figure()
+        plt.plot(sample[0])
+        plt.savefig('./sample_{}.png'.format(idx))
+        plt.close()
+        
         return (sample, all_targets, source_params)
