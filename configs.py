@@ -1869,7 +1869,7 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    SinusoidGenerator(A=1e-17, 
+                    SinusoidGenerator(A=1e-19, 
                                       phi=0.0, 
                                       inject_lower = 0.0,
                                       inject_upper = 0.0,
@@ -1882,42 +1882,13 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
                                       lower_tau = 0.1,
                                       upper_tau = 5.0),
                 ]),
-        noise  = UnifyNoiseGen({
-                    'training': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
-                                ),
-                    'validation': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False
-                                ),
-                    },
-                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
-                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
-                                                        ),
-                                                 debug_me=False,
-                                                 debug_dir=""
-                    ),
-                    paux = 0.689, # 113/164 days for extra O3b noise
-                    debug_me=False,
-                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
-                )
+        noise = None
     )
 
     """ Transforms """
     transforms = dict(
-        signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
-                ]),
-        noise=UnifyNoise([
-                    Recolour(use_precomputed=True, 
-                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
-                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
-                             p_recolour=0.3829,
-                             debug_me=False,
-                             debug_dir=os.path.join(debug_dir, 'Recolour')),
-                ]),
+        signal=None,
+        noise=None,
         train=Unify({
                     'stage1':[
                             Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
