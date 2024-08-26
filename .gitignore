@@ -167,5 +167,5 @@ notebooks/tmp/L1_O3b.npy
 notebooks/snrs.npy
 notebooks/tmp/freq_psd.npy
 tmp/segments.csv
-weights/checkpoint_epoch_49_PhenomD_BOY.pt
-weights/weights_loss_BOY.pt
+*.err
+*.out
