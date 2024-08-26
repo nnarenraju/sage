@@ -282,6 +282,8 @@ class SageNetOTF:
     )
     
     """ Transforms """
+    batchshuffle_noise = False
+
     transforms = dict(
         signal=UnifySignal([
                     AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
