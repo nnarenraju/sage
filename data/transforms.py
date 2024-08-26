@@ -40,6 +40,7 @@ from scipy.signal.windows import tukey
 from scipy.stats import beta
 from scipy.stats import halfnorm
 from numpy.random import RandomState
+from scipy.signal import decimate
 
 # LOCAL
 from data.multirate_sampling import multirate_sampling
@@ -434,6 +435,23 @@ class MultirateSampling(TransformWrapperPerChannel):
         return multirate_sampling(y, special['data_cfg'])
 
 
+class MonorateSampling(TransformWrapperPerChannel):
+    def __init__(self, always_apply=True, sampling_rate=2048.):
+        super().__init__(always_apply)
+        self.new_sample_rate = sampling_rate
+
+    def decimate(self, signal, data_cfg):
+        decimation_factor = int(round(data_cfg.sample_rate/self.new_sample_rate))
+        # Decimation factor > 13 requires multiple sequential decimation
+        # See multirate_sampling.py for relevant code
+        assert decimation_factor <= 13, 'Decimation factor > 13! Not supported.'
+        return decimate(signal, decimation_factor)
+    
+    def apply(self, y: np.ndarray, channel: int, special: dict):
+        # Call multi-rate sampling module for usage
+        # This module is kept separate since further experimentation might be required
+        return self.decimate(y, special['data_cfg'])
+
 
 """ Waveform Generation """
 
@@ -509,7 +527,8 @@ class SinusoidGenerator():
         signal = self.generate(random_freq, tseries)
         start_time = np.random.uniform(self.inject_lower, self.inject_upper)
         signal_det1 = self.add_zero_padding(signal, start_time, sample_length, sample_rate)
-        signal_det2 = self.add_zero_padding(signal, start_time+dt, sample_length, sample_rate)
+        # Add dt to start time for detector offset
+        signal_det2 = self.add_zero_padding(signal, start_time, sample_length, sample_rate)
         # Add whiten padding separately
         signal_det1 = self.add_whiten_padding(signal_det1, special)
         signal_det2 = self.add_whiten_padding(signal_det2, special)
