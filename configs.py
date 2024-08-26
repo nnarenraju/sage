@@ -75,7 +75,7 @@ from architectures.frontend import MultiScaleBlock
 
 # Transforms, augmentation and generation
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
-from data.transforms import Whiten, MultirateSampling, Normalise
+from data.transforms import Whiten, MultirateSampling, Normalise, MonorateSampling
 from data.transforms import AugmentOptimalNetworkSNR, AugmentPolSky
 from data.transforms import Recolour
 # Generating signals and noise
@@ -1849,13 +1849,13 @@ class Butterball_ResNet1D(SageNetOTF):
 
 
 # BIASES - Spectral Bias
-class Rooster_Aug25_SpectralBias(SageNetOTF):
+class Rooster_Aug26_SpectralBias(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "Rooster_Aug25_SpectralBias"
+    name = "Rooster_Aug26_SpectralBias"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1869,12 +1869,12 @@ class Rooster_Aug25_SpectralBias(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    SinusoidGenerator(A=1e-20, 
+                    SinusoidGenerator(A=1e-17, 
                                       phi=0.0, 
-                                      inject_lower = 4.0,
-                                      inject_upper = 5.0,
+                                      inject_lower = 0.0,
+                                      inject_upper = 0.0,
                                       spectral_bias = True,
-                                      fixed_duration = 5.0,
+                                      fixed_duration = 12.0,
                                       lower_freq = 20.0,
                                       upper_freq = 1024.0, 
                                       duration_bias = False,
