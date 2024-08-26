@@ -1,0 +1,21 @@
+# Typical submit file options
+universe = vanilla
+log = $(Cluster).$(Process).log
+error = $(Cluster).$(Process).err
+output = $(Cluster).$(Process).out
+
+# Fill in with your own script, arguments and input files
+# Note that you don't need to transfer any software
+executable = sage_env.sh
+arguments = train.py --config Rooster_Aug26_SpectralBias --data-config Default --manual
+transfer_input_files = 
+
+# Resource requirements
+request_cpus = 16
+request_gpus = 1
+require_gpus = (DeviceName == "NVIDIA GeForce RTX 2080 Ti")
+request_memory = 10GB
+request_disk = 10GB
+
+# Number of jobs
+queue 1
