@@ -1882,13 +1882,40 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
                                       lower_tau = 0.1,
                                       upper_tau = 5.0),
                 ]),
-        noise = None
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
+                                ),
+                    },
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
+                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                                                        ),
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    paux = 0.0, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
     )
 
     """ Transforms """
     transforms = dict(
         signal=None,
-        noise=None,
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
+                             p_recolour=0.0,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
         train=Unify({
                     'stage1':[
                             Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
