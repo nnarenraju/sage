@@ -27,6 +27,7 @@ def _dist_from_dchirp(chirp_distance, mchirp, ref_mass=1.4):
 
 
 def get_normalisations(cfg, data_cfg):
+    norm = {}
     # Normalise time of coalescence
     norm_tc = Normalise(min_val=data_cfg.tc_inject_lower, max_val=data_cfg.tc_inject_upper)
 
@@ -57,20 +58,20 @@ def get_normalisations(cfg, data_cfg):
     norm_invq = Normalise(min_val=0.0, max_val=1.0)
     
     # Normalise the SNR
-    metadata = cfg.transforms['signal'](np.ndarray, {}, {}, return_metadata=True)
-    snr_lower_limit = metadata['AugmentOptimalNetworkSNR']['snr_lower_limit']
-    snr_upper_limit = metadata['AugmentOptimalNetworkSNR']['snr_upper_limit']
-    norm_snr = Normalise(min_val=snr_lower_limit,
-                         max_val=snr_upper_limit)
+    if cfg.transforms['signal'] != None:
+        metadata = cfg.transforms['signal'](np.ndarray, {}, {}, return_metadata=True)
+        snr_lower_limit = metadata['AugmentOptimalNetworkSNR']['snr_lower_limit']
+        snr_upper_limit = metadata['AugmentOptimalNetworkSNR']['snr_upper_limit']
+        norm_snr = Normalise(min_val=snr_lower_limit,
+                            max_val=snr_upper_limit)
+        norm['snr'] = norm_snr
     
     # All normalisation variables
-    norm = {}
     norm['dist'] = norm_dist
     norm['dchirp'] = norm_dchirp
     norm['mchirp'] = norm_mchirp
     norm['q'] = norm_q
     norm['invq'] = norm_invq
-    norm['snr'] = norm_snr
     norm['tc'] = norm_tc
 
     limits = {}
