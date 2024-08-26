@@ -142,8 +142,9 @@ class MinimalOTF(Dataset):
         self.training = training
         
         # Set CUDA device for pin_memory if needed
-        if bool(re.search('cuda', self.cfg.store_device)):
-            setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
+        if isinstance(self.cfg.store_device, torch.device):
+            # setattr(self, 'foo', torch.cuda.set_device(self.cfg.store_device))
+            setattr(self, 'foo', self.cfg.store_device)
         
         """ Set default waveform generation params """
         class_exists = lambda clist, cname: any([foo for foo in clist if foo.__class__.__name__==cname])
@@ -760,14 +761,9 @@ class MinimalOTF(Dataset):
         sample = torch.from_numpy(sample)
 
         rem = ['start_time', 'interval_lower', 'interval_upper', 'declination', 'right_ascension', 'polarisation_angle']
-        rem += ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination']
+        rem += ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination', 'network_snr']
         for rm_param in rem:
             if rm_param in source_params.keys():
                 source_params.pop(rm_param)
-        
-        plt.figure()
-        plt.plot(sample[0])
-        plt.savefig('./sample_{}.png'.format(idx))
-        plt.close()
         
         return (sample, all_targets, source_params)
