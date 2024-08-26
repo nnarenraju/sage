@@ -1336,7 +1336,7 @@ class Norland_D3_template_density(SageNetOTF):
 
 ### PAPER RUNS ###
 
-# RUNNING
+# DONE
 class Russet_TrainingRecolour(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
@@ -1529,7 +1529,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     test_background_output = "testing_boutput_fixed_dataset.hdf"
 
 
-# ABLATION - All the noise, limited signals ()
+# ABLATION - All the noise, limited signals (RUNNING)
 class Vitelotte_FixedDataset_Relax1(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
@@ -1644,7 +1644,7 @@ class Vitelotte_FixedDataset_Relax1(SageNetOTF):
     test_background_output = "testing_boutput_fixed_dataset_allnoise.hdf"
 
 
-# ABLATION - All the signals, limited noise ()
+# ABLATION - All the signals, limited noise (RUNNING)
 class Vitelotte_FixedDataset_Relax2(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
@@ -1737,7 +1737,7 @@ class Vitelotte_FixedDataset_Relax2(SageNetOTF):
     test_background_output = "testing_boutput_fixed_dataset_allsignals.hdf"
 
 
-# ABLATION 1 - small network resnet50
+# ABLATION 1 - small network resnet50 (DONE)
 class Butterball_ResNet1D(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
@@ -1848,7 +1848,7 @@ class Butterball_ResNet1D(SageNetOTF):
     test_background_output = "testing_boutput_resnet1d.hdf"
 
 
-# BIASES - Spectral Bias
+# BIASES - Spectral Bias (RUNNING)
 class Rooster_Aug26_SpectralBias(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
@@ -2080,12 +2080,14 @@ class Rooster_Aug25_DurationBias(SageNetOTF):
     test_background_output = "testing_boutput_duration_bias.hdf"
 
 
+# Uniform on q
+
+
+
 
 ### NEXT RUNS ###
-# 1. Uniform on q (DEIMOS) - after Butterball finishes
-# 2. Bias runs (each for Sage and 1D Resnet-50)
-    # 2a. Spectral bias with different frequencies (sin) and const tau (WIAY)
-    # 2b. Bias based on signal duration with const freq and different tau (WIAY)
-# 3. Running BEST on different training seeds - 2 runs
+# 1. Uniform on q (DEIMOS) - can run now
+# 2. Bias based on signal duration with const freq and different tau (WIAY) - can run now
+# 3. Running BEST on two different training seeds - can run now
 # 4. Norland D3 run on XPHM
 # 5. Without PE point estimate
