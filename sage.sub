@@ -13,7 +13,6 @@ transfer_input_files =
 # Resource requirements
 request_cpus = 16
 request_gpus = 1
-require_gpus = (DeviceName == "NVIDIA GeForce RTX 2080 Ti")
 request_memory = 10GB
 request_disk = 10GB
 
