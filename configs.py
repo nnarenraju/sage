@@ -1945,15 +1945,21 @@ class Rooster_Aug25_SpectralBias(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = 'cuda:0',
+        store_device = 'cuda:1',
     )
     
     """ Storage Devices """
-    store_device = 'cuda:0'
-    train_device = 'cuda:0'
+    store_device = 'cuda:1'
+    train_device = 'cuda:1'
 
     # Run device for testing phase
-    testing_device = 'cuda:0'
+    testing_device = 'cuda:1'
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
     test_foreground_output = "testing_foutput_spectral_bias.hdf"    
