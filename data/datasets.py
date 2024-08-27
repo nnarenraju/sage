@@ -668,10 +668,10 @@ class MinimalOTF(Dataset):
         
         # Setting the unique seed for given sample
         if self.training:
-            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1)
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2*26)
             fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1)
         elif not self.training:
-            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**30)
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**29)
             fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1 + 2**30)
 
         # Setting epoch number
@@ -760,10 +760,11 @@ class MinimalOTF(Dataset):
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
 
-        rem = ['start_time', 'interval_lower', 'interval_upper', 'declination', 'right_ascension', 'polarisation_angle']
-        rem += ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination', 'network_snr']
-        for rm_param in rem:
-            if rm_param in source_params.keys():
-                source_params.pop(rm_param)
+        if not self.data_cfg.OTF:
+            rem = ['start_time', 'interval_lower', 'interval_upper', 'declination', 'right_ascension', 'polarisation_angle']
+            rem += ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination']
+            for rm_param in rem:
+                if rm_param in source_params.keys():
+                    source_params.pop(rm_param)
         
         return (sample, all_targets, source_params)
