@@ -264,7 +264,7 @@ class DefaultOTF:
     dataset = 4
     # Random seed provided to generate_data script
     # This seed is used to generate the priors
-    seed = 110798
+    seed = 110798+1
     # Fix epoch seeds for lowering dataset variation
     fix_coin_seeds = False
     fix_signal_seeds = False
@@ -272,7 +272,7 @@ class DefaultOTF:
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 500_000
+    num_validation_samples = 100_000
     num_auxilliary_samples = 125_000
     
     """ Signal Params """
