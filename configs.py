@@ -1907,14 +1907,7 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=None,
-        noise=UnifyNoise([
-                    Recolour(use_precomputed=True, 
-                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
-                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
-                             p_recolour=0.0,
-                             debug_me=False,
-                             debug_dir=os.path.join(debug_dir, 'Recolour')),
-                ]),
+        noise=None,
         train=Unify({
                     'stage1':[
                             Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
@@ -2024,9 +2017,7 @@ class Rooster_Aug25_DurationBias(SageNetOTF):
 
     """ Transforms """
     transforms = dict(
-        signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
-                ]),
+        signal=None,
         noise=None,
         train=Unify({
                     'stage1':[
@@ -2179,17 +2170,17 @@ class SageNetOTF_Aug27_Russet(SageNetOTF):
     testing_device = torch.device("cuda")
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_BEST_June_diff_seed_1.hdf"    
-    test_background_output = "testing_boutput_BEST_June_diff_seed_1.hdf"
+    test_foreground_output = "testing_foutput_BEST_June_noPE.hdf"    
+    test_background_output = "testing_boutput_BEST_June_noPE.hdf"
 
 
-class SageNetOTF_Aug27_Russet_another(SageNetOTF):
+class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "SageNet50_halfnormSNR_Aug27_Russet_diff_seed_2"
+    name = "SageNet50_halfnormSNR_Aug27_Russet_diffseed_run1"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2279,6 +2270,7 @@ class SageNetOTF_Aug27_Russet_another(SageNetOTF):
         kernel_size = 64,
         resnet_size = 50,
         store_device = torch.device("cuda:0"),
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
 
     """ Dataloader params """
@@ -2295,14 +2287,12 @@ class SageNetOTF_Aug27_Russet_another(SageNetOTF):
     testing_device = torch.device("cuda:0")
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_BEST_June_diff_seed_2.hdf"    
-    test_background_output = "testing_boutput_BEST_June_diff_seed_2.hdf"
+    test_foreground_output = "testing_foutput_BEST_June_diff_seed_1.hdf"    
+    test_background_output = "testing_boutput_BEST_June_diff_seed_1.hdf"
 
 
 
 ### NEXT RUNS ###
-# 1. Uniform on q (DEIMOS) - can run now
-# 2. Bias based on signal duration with const freq and different tau (WIAY) - can run now
-# 3. Bias on signal frequency run on standard resnet-50 - can run now
-# 4. Norland D3 run on XPHM
-# 5. Without PE point estimate
+# 1. Bias based on signal duration with const freq and different tau (WIAY) - can run now
+# 2. Bias on signal frequency run on standard resnet-50 - can run now
+# 3. Norland D3 run on XPHM
