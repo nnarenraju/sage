@@ -34,6 +34,7 @@ import random
 import logging
 import requests
 import itertools
+import subprocess
 import tracemalloc
 import numpy as np
 import configparser
@@ -124,8 +125,10 @@ def psd_to_asd(psd, start_time, end_time,
 def get_complex_asds():
     # Save complex PSDs or ASDs as global variables
     # Since this is not within the multiprocessing block, it will not be counted towards shared RAM
-    psd_options = {'H1': [f'./data/psds/H1/psd-{i}.hdf' for i in range(20)],
-                   'L1': [f'./data/psds/L1/psd-{i}.hdf' for i in range(20)]}
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+    psd_options = {'H1': [os.path.join(repo_abspath, 'data/psds/H1/psd-{}.hdf'.format(i)) for i in range(20)],
+                   'L1': [os.path.join(repo_abspath, 'data/psds/L1/psd-{}.hdf'.format(i)) for i in range(20)]}
     # Iterate through all PSD files for detector and compute the median PSD
     complex_asds = {'H1': [], 'L1': []}
     detectors_abbr = ['H1', 'L1']
