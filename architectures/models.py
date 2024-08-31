@@ -771,6 +771,7 @@ class KappaModel_ResNet1D(torch.nn.Module):
                  model_name='resnet1d',
                  resnet_size: int = 50,
                  norm_layer: str = 'instancenorm',
+                 parameter_estimation = ('norm_tc', 'norm_mchirp', ),
                  store_device: str = 'cpu',
                  **kwargs):
         
