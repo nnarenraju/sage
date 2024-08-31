@@ -487,6 +487,7 @@ class MinimalOTF(Dataset):
             # Dummy noise params
             params = self.params.copy()
             params['mchirp'] = -1
+            params['freq'] = -1
             # Dummy targets
             targets['norm_mchirp'] = -1
             targets['norm_tc'] = -1
@@ -501,6 +502,7 @@ class MinimalOTF(Dataset):
             m1, m2 = params['mass1'], params['mass2']
             mchirp = (m1*m2 / (m1+m2)**2.)**(3./5) * (m1 + m2)
             params['mchirp'] = mchirp
+            params['freq'] = -1
             targets['norm_mchirp'] = self.norm['mchirp'].norm(mchirp)
             targets['norm_tc'] = self.norm['tc'].norm(params['tc'])
         
@@ -668,10 +670,10 @@ class MinimalOTF(Dataset):
         
         # Setting the unique seed for given sample
         if self.training:
-            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2*26)
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2*25)
             fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1)
         elif not self.training:
-            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**29)
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**28)
             fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1 + 2**30)
 
         # Setting epoch number
@@ -723,7 +725,6 @@ class MinimalOTF(Dataset):
                 sample, targets, params = self.read_data(data_path)
         
         ## Signal Augmentation
-        print(params)
         # Runs signal augmentation if sample is clean waveform
         pure_sample, params = self._augmentation_(sample, targets['gw'], params, mode='signal')
 
