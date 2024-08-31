@@ -723,6 +723,7 @@ class MinimalOTF(Dataset):
                 sample, targets, params = self.read_data(data_path)
         
         ## Signal Augmentation
+        print(params)
         # Runs signal augmentation if sample is clean waveform
         pure_sample, params = self._augmentation_(sample, targets['gw'], params, mode='signal')
 
