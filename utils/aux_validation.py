@@ -439,6 +439,8 @@ def paramfrac_detected_above_thresh(cfg, export_dir, network_output, labels, sam
     ## Make n bins of parameter space for each parameter
     # We need to ignore all values of -1
     for param, distr in sample_params.items():
+        if param != 'signal_duration':
+            continue
         # Dir handling
         out_dir = os.path.join(save_dir, param)
         os.makedirs(out_dir, exist_ok=False)
@@ -458,8 +460,6 @@ def paramfrac_detected_above_thresh(cfg, export_dir, network_output, labels, sam
         border = 8
         y_min, y_max = 0.0, max(fill_count) + border
         # Random colours we like, woooo
-        # Shoutout to ORChiD. woooo
-        # ...Why am I like this?
         colours = ['gold', 'forestgreen', 'orchid', 'royalblue', 'orangered', 'gray']
 
         for n in range(len(bin_edges)-1):
@@ -668,25 +668,25 @@ def validate(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function
                 if nep % cfg.validation_plot_freq == 0:
 
                     """ ROC Curve save data """
-                    roc_auc, fpr, tpr = roc_curve(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
+                    #roc_auc, fpr, tpr = roc_curve(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
                     
                     """ Confusion Matrix and FPR,TPR,FNR,TNR Evolution """
                     # Confusion matrix and rate evolution plots have been deprecated as of June 10, 2022
                     # Confusion matrix and rate evolution plots have been reinstated as of May 09, 2023
 
                     """ Prediction Probabilitiy OR Raw Value histograms  """
-                    low_far_nsignals = prediction_raw(nep, raw_output, epoch_labels['gw'], export_dir)
-                    prediction_probability(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
+                    #low_far_nsignals = prediction_raw(nep, raw_output, epoch_labels['gw'], export_dir)
+                    #prediction_probability(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
                     
                     """ Source parameter vs prediction probabilities OR raw values """
-                    learning_parameter_prior(nep, sample_params, raw_output, epoch_labels['gw'], 'raw_value', export_dir)
-                    learning_parameter_prior(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], 'pred_prob', export_dir)
+                    #learning_parameter_prior(nep, sample_params, raw_output, epoch_labels['gw'], 'raw_value', export_dir)
+                    #learning_parameter_prior(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], 'pred_prob', export_dir)
                     
                     """ Value VS Value Plots for PE """
-                    diagonal_compare(nep, epoch_outputs, epoch_labels, sample_params['network_snr'], export_dir)
+                    #diagonal_compare(nep, epoch_outputs, epoch_labels, sample_params['network_snr'], export_dir)
                     
                     """ Param distribution of network raw output bins """
-                    outputbin_param_distribution(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
+                    #outputbin_param_distribution(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
                     
                     """ Param Fraction Plot """
                     paramfrac_detected_above_thresh(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
