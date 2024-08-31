@@ -78,9 +78,10 @@ from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, Unif
 from data.transforms import Whiten, MultirateSampling, Normalise, MonorateSampling
 from data.transforms import AugmentOptimalNetworkSNR, AugmentPolSky
 from data.transforms import Recolour
+from data.transforms import Buffer, BufferPerChannel
 # Generating signals and noise
 from data.transforms import FastGenerateWaveform, SinusoidGenerator
-from data.transforms import RandomNoiseSlice, MultipleFileRandomNoiseSlice, ColouredNoiseGenerator
+from data.transforms import RandomNoiseSlice, MultipleFileRandomNoiseSlice, ColouredNoiseGenerator, WhiteNoiseGenerator
 
 # Loss functions
 from losses.custom_loss_functions import BCEWithPEregLoss
@@ -1470,6 +1471,13 @@ class Vitelotte_FixedDataset(SageNetOTF):
 
     batchshuffle_noise = True
     
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = None,
+        noise  = None,
+    )
+
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
@@ -1535,7 +1543,7 @@ class Vitelotte_FixedDataset_Relax1(SageNetOTF):
     # 4. All the noise, limited signals
 
     """ Data storage """
-    name = "Vitelotte_FixedDataset_Aug25_AlltheNoise"
+    name = "Vitelotte_FixedDataset_Aug31_AlltheNoise_smaller"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1583,8 +1591,8 @@ class Vitelotte_FixedDataset_Relax1(SageNetOTF):
         noise=UnifyNoise([
                     Recolour(use_precomputed=True, 
                              use_shifted=False, shift_up_factor=10, shift_down_factor=1,
-                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days_20s.hdf"),
-                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days_20s.hdf"),
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
                              p_recolour=0.3829,
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
@@ -1610,14 +1618,11 @@ class Vitelotte_FixedDataset_Relax1(SageNetOTF):
         target=None
     )
 
-    
     """ Architecture """
-    model = Rigatoni_MS_ResNetCBAM_legacy
+    model = KappaModel_ResNet1D
 
     model_params = dict(
         # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
         resnet_size = 50,
         store_device = 'cuda:0',
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
@@ -1637,8 +1642,8 @@ class Vitelotte_FixedDataset_Relax1(SageNetOTF):
     testing_device = 'cuda:0'
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_fixed_dataset_allnoise.hdf"
-    test_background_output = "testing_boutput_fixed_dataset_allnoise.hdf"
+    test_foreground_output = "testing_foutput_fixed_dataset_allnoise_smaller.hdf"
+    test_background_output = "testing_boutput_fixed_dataset_allnoise_smaller.hdf"
 
 
 # ABLATION - All the signals, limited noise (RUNNING)
@@ -1741,7 +1746,7 @@ class Butterball_ResNet1D(SageNetOTF):
     # 2. SNR halfnorm (not variation)
 
     """ Data storage """
-    name = "Butterball_ResNet1D_Aug11"
+    name = "Butterball_ResNet1D_Aug31_withPE"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1754,7 +1759,7 @@ class Butterball_ResNet1D(SageNetOTF):
     """ Dataloader params """
     num_workers = 16
     pin_memory = True
-    prefetch_factor = 100
+    prefetch_factor = 8
     persistent_workers = True
 
     """ Generation """
@@ -1831,6 +1836,7 @@ class Butterball_ResNet1D(SageNetOTF):
         # Resnet50
         resnet_size = 50,
         store_device = 'cuda:0',
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
 
     """ Storage Devices """
@@ -1841,18 +1847,18 @@ class Butterball_ResNet1D(SageNetOTF):
     testing_device = 'cuda:0'
     
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_resnet1d.hdf"    
-    test_background_output = "testing_boutput_resnet1d.hdf"
+    test_foreground_output = "testing_foutput_resnet1d_withPE.hdf"    
+    test_background_output = "testing_boutput_resnet1d_withPE.hdf"
 
 
 # BIASES - Spectral Bias (RUNNING)
-class Rooster_Aug26_SpectralBias(SageNetOTF):
+class Rooster_Aug31_SpectralBias(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "Rooster_Aug26_SpectralBias"
+    name = "Rooster_Aug31_SpectralBias"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1866,7 +1872,7 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal = UnifySignalGen([
-                    SinusoidGenerator(A=1e-22, 
+                    SinusoidGenerator(A=1.0, 
                                       phi=0.0, 
                                       inject_lower = 0.0,
                                       inject_upper = 0.0,
@@ -1880,25 +1886,9 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
                                       upper_tau = 5.0),
                 ]),
         noise  = UnifyNoiseGen({
-                    'training': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False,
-                                ),
-                    'validation': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False,
-                                ),
+                    'training': WhiteNoiseGenerator(),
+                    'validation': WhiteNoiseGenerator(),
                     },
-                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
-                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
-                                                        ),
-                                                 debug_me=False,
-                                                 debug_dir=""
-                    ),
-                    paux = 0.0, # 113/164 days for extra O3b noise
-                    debug_me=False,
-                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
     )
 
@@ -1908,32 +1898,28 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
         noise=None,
         train=Unify({
                     'stage1':[
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                            BufferPerChannel(),
                     ],
                     'stage2':[
                             Normalise(ignore_factors=True),
-                            MultirateSampling(),
                     ],
                 }),
         test=Unify({
                     'stage1':[
-                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                            BufferPerChannel(),
                     ],
                     'stage2':[
                             Normalise(ignore_factors=True),
-                            MultirateSampling(),
                     ],
                 }),
         target=None
     )
     
     """ Architecture """
-    model = Rigatoni_MS_ResNetCBAM_legacy
+    model = KappaModel_ResNet1D
 
     model_params = dict(
         # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
         resnet_size = 50,
         store_device = torch.device("cuda"),
     )
@@ -1952,8 +1938,8 @@ class Rooster_Aug26_SpectralBias(SageNetOTF):
     persistent_workers = True
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_spectral_bias.hdf"    
-    test_background_output = "testing_boutput_spectral_bias.hdf"
+    test_foreground_output = "testing_foutput_spectral_bias_simplified.hdf"    
+    test_background_output = "testing_boutput_spectral_bias_simplified.hdf"
 
 
 # BIASES - Duration Bias
@@ -2062,6 +2048,7 @@ class Rooster_Aug25_DurationBias(SageNetOTF):
 
 
 ## Repeating best run with different training seeds
+## NO PE RUN!!! (also diffseed)
 class SageNetOTF_Aug27_Russet(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
@@ -2178,7 +2165,7 @@ class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "SageNet50_halfnormSNR_Aug27_Russet_diffseed_run1"
+    name = "SageNet50_halfnormSNR_Aug31_Russet_diffseed"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2272,7 +2259,7 @@ class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 16
+    num_workers = 32
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
@@ -2285,8 +2272,8 @@ class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
     testing_device = torch.device("cuda:0")
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_BEST_June_diff_seed_1.hdf"    
-    test_background_output = "testing_boutput_BEST_June_diff_seed_1.hdf"
+    test_foreground_output = "testing_foutput_BEST_June_diff_seed_Aug31.hdf"    
+    test_background_output = "testing_boutput_BEST_June_diff_seed_Aug31.hdf"
 
 
 # Single epoch validation
@@ -2296,7 +2283,7 @@ class Validate_1epoch(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "KennebecAnnealed_1epoch_validate"
+    name = "KennebecAnnealed_1epoch_validate_epoch39"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2311,7 +2298,7 @@ class Validate_1epoch(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = './WEIGHTS/weights_Kennebec_annealed_48.pt'
+    weights_path = './WEIGHTS/weights_Kennebec_annealed_39.pt'
 
     """ Generation """
     # Augmentation using GWSPY glitches happens only during training (not for validation)
@@ -2429,6 +2416,4 @@ class Validate_1epoch(SageNetOTF):
 ### NEXT RUNS ###
 # 1. Bias based on signal duration with const freq and different tau (WIAY) - DEIMOS/WIAY
 # 2. Bias on signal frequency run on standard resnet-50 - DEIMOS/WIAY
-# 3. Different seeded BEST run - MUCK
-# 4. Fixed dataset - 3 runs using smaller network
-# 5. Small network with PE
+# 3. BEST on different seed - MUCK
