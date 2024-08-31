@@ -1458,7 +1458,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # 3. No augmentation for noise (DONE)
 
     """ Data storage """
-    name = "Vitelotte_FixedDataset_Aug24"
+    name = "Vitelotte_FixedDataset_Aug31_smaller"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -1499,15 +1499,13 @@ class Vitelotte_FixedDataset(SageNetOTF):
     )
     
     """ Architecture """
-    model = Rigatoni_MS_ResNetCBAM_legacy
+    model = KappaModel_ResNet1D
 
     model_params = dict(
         # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
         resnet_size = 50,
         store_device = 'cuda:1',
-        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
     )
     
     """ Dataloader params """
@@ -1524,8 +1522,8 @@ class Vitelotte_FixedDataset(SageNetOTF):
     testing_device = 'cuda:1'
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_fixed_dataset.hdf"
-    test_background_output = "testing_boutput_fixed_dataset.hdf"
+    test_foreground_output = "testing_foutput_fixed_dataset_smallnet.hdf"
+    test_background_output = "testing_boutput_fixed_dataset_smallnet.hdf"
 
 
 # ABLATION - All the noise, limited signals (RUNNING)
@@ -2291,8 +2289,146 @@ class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
     test_background_output = "testing_boutput_BEST_June_diff_seed_1.hdf"
 
 
+# Single epoch validation
+class Validate_1epoch(SageNetOTF):
+    ### Primary Deviations (Comparison to BOY) ###
+    # 1. 113 days of O3b data (**VARIATION**)
+    # 2. SNR halfnorm (**VARIATION**)
+
+    """ Data storage """
+    name = "KennebecAnnealed_1epoch_validate"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    # Save weights for particular epochs
+    save_epoch_weight = list(range(4, 100, 5))
+
+    # Weights for testing
+    pretrained = True
+    weights_path = './WEIGHTS/weights_Kennebec_annealed_48.pt'
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         debug_me = False
+                                        ),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
+                                ),
+                    },
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
+                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                                                        ),
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    paux = 0.689, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM
+
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
+    model_params = dict(
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
+        resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
+        store_device = torch.device("cuda:0"),
+        review = False
+    )
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    num_epochs = 1
+    
+    """ Storage Devices """
+    store_device = torch.device("cuda:0")
+    train_device = torch.device("cuda:0")
+
+    # Run device for testing phase
+    testing_device = torch.device("cuda:0")
+
+
 
 ### NEXT RUNS ###
-# 1. Bias based on signal duration with const freq and different tau (WIAY) - can run now
-# 2. Bias on signal frequency run on standard resnet-50 - can run now
-# 3. Norland D3 run on XPHM
+# 1. Bias based on signal duration with const freq and different tau (WIAY) - DEIMOS/WIAY
+# 2. Bias on signal frequency run on standard resnet-50 - DEIMOS/WIAY
+# 3. Different seeded BEST run - MUCK
+# 4. Fixed dataset - 3 runs using smaller network
+# 5. Small network with PE
