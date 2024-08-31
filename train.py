@@ -40,6 +40,7 @@ warnings.filterwarnings("ignore")
 from test import run_test
 from evaluator import main as evaluator
 from manual import train as manual_train
+from utils.aux_validation import validate as aux_validate
 from data.prepare_data import DataModule as dat
 
 # Tensorboard
@@ -145,6 +146,10 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
         Network = manual_train(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
                                train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, verbose=cfg.verbose)
     
+    if opts.validate:
+        Network = aux_validate(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
+                               train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, verbose=cfg.verbose)
+    
     if rtune == None:
         return Network
 
@@ -161,6 +166,8 @@ def run_trainer():
                         help="Running the inference module using trained model")
     parser.add_argument("--manual", action='store_true',
                         help="Running the pipeline using manual PyTorch")
+    parser.add_argument("--validate", action='store_true',
+                        help="Running the pipeline in 1 epoch validate mode")
     parser.add_argument("--summary", action='store_true',
                         help="Store model summary using pytorch_summary")
     
