@@ -257,6 +257,14 @@ class Buffer(TransformWrapper):
         return y
 
 
+class BufferPerChannel(TransformWrapper):
+    def __init__(self, always_apply=True):
+        super().__init__(always_apply)
+
+    def apply(self, y: np.ndarray, channel: int, special: dict):
+        return y
+
+
 class Normalise(TransformWrapperPerChannel):
     def __init__(self, always_apply=True, factors=[1.0, 1.0], ignore_factors=False):
         super().__init__(always_apply)
@@ -472,6 +480,7 @@ class SinusoidGenerator():
                  fixed_frequency = 100.0,
                  lower_tau = 0.1,
                  upper_tau = 5.0,
+                 no_whitening = False,
     ):
         # Sinusoidal wave parameters in general form
         self.A = A
@@ -488,6 +497,8 @@ class SinusoidGenerator():
         self.fixed_frequency = fixed_frequency
         self.lower_tau = lower_tau
         self.upper_tau = upper_tau
+        # Other options
+        self.no_whitening = no_whitening
     
     def generate(self, f, t):
         return self.A * np.sin(2.*np.pi*f*t + self.phi)
@@ -530,8 +541,9 @@ class SinusoidGenerator():
         # Add dt to start time for detector offset
         signal_det2 = self.add_zero_padding(signal, start_time, sample_length, sample_rate)
         # Add whiten padding separately
-        signal_det1 = self.add_whiten_padding(signal_det1, special)
-        signal_det2 = self.add_whiten_padding(signal_det2, special)
+        if not self.no_whitening:
+            signal_det1 = self.add_whiten_padding(signal_det1, special)
+            signal_det2 = self.add_whiten_padding(signal_det2, special)
         return np.stack((signal_det1, signal_det2), axis=0)
 
     def testing_duration_bias(self, special):
@@ -550,8 +562,9 @@ class SinusoidGenerator():
         signal_det1 = self.add_zero_padding(signal, start_time, sample_length, sample_rate)
         signal_det2 = self.add_zero_padding(signal, start_time+dt, sample_length, sample_rate)
         # Add whiten padding separately
-        signal_det1 = self.add_whiten_padding(signal_det1, special)
-        signal_det2 = self.add_whiten_padding(signal_det2, special)
+        if not self.no_whitening:
+            signal_det1 = self.add_whiten_padding(signal_det1, special)
+            signal_det2 = self.add_whiten_padding(signal_det2, special)
         return np.stack((signal_det1, signal_det2), axis=0)
 
     def apply(self, params: dict, special: dict):
@@ -1926,5 +1939,30 @@ class ColouredNoiseGenerator():
         seeds = list(rs.randint(0, 2**32, 2)) # one for each detector
         H1_noise = self.generate(H1_asd, seeds[0], 'H1')
         L1_noise = self.generate(L1_asd, seeds[1], 'L1')
+        noise = np.stack([H1_noise, L1_noise], axis=0)
+        return noise
+
+
+class WhiteNoiseGenerator():
+    """ Generate white Gaussian noise for Sage training """
+    
+    def generate(self, sample_length_in_num, seed=0):
+        """ Generate data with a white Gaussian (normal) distribution """
+        np.random.seed(seed)
+        # 0 mean, 1 std
+        return np.random.normal(0, 1, size=sample_length_in_num)
+
+    def apply(self, special, det_only=''):
+        # Generate white Gaussian noise using random seeds
+        rs = np.random.RandomState(seed=special['sample_seed'])
+        seeds = list(rs.randint(0, 2**32, 2)) # one for each detector
+        # Get sample length in num
+        sample_length_in_s = special['data_cfg'].signal_length # in seconds
+        sample_rate = special['data_cfg'].sample_rate # in samples/second
+        sample_length_in_num = int(sample_length_in_s * sample_rate)
+        # Generate noise for each detector
+        H1_noise = self.generate(sample_length_in_num, seeds[0])
+        L1_noise = self.generate(sample_length_in_num, seeds[1])
+        # Return noise to dataset object
         noise = np.stack([H1_noise, L1_noise], axis=0)
         return noise
