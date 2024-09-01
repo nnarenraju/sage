@@ -34,7 +34,6 @@ import numpy as np
 import configparser
 
 from torch.utils.data import Dataset
-from statsmodels.tsa.stattools import adfuller
 import matplotlib.pyplot as plt
 plt.rcParams.update({'font.size': 16})
 
@@ -476,7 +475,6 @@ class MinimalOTF(Dataset):
 
     def generate_data(self, target, seed):
         ## Generate waveform or read noise sample for D4
-        np.random.seed(seed)
         # Target can be set using probablity of hypothesis
         targets = {}
         targets['gw'] = target
@@ -487,7 +485,6 @@ class MinimalOTF(Dataset):
             # Dummy noise params
             params = self.params.copy()
             params['mchirp'] = -1
-            params['freq'] = -1
             # Dummy targets
             targets['norm_mchirp'] = -1
             targets['norm_tc'] = -1
@@ -502,7 +499,6 @@ class MinimalOTF(Dataset):
             m1, m2 = params['mass1'], params['mass2']
             mchirp = (m1*m2 / (m1+m2)**2.)**(3./5) * (m1 + m2)
             params['mchirp'] = mchirp
-            params['freq'] = -1
             targets['norm_mchirp'] = self.norm['mchirp'].norm(mchirp)
             targets['norm_tc'] = self.norm['tc'].norm(params['tc'])
         
@@ -678,12 +674,6 @@ class MinimalOTF(Dataset):
 
         # Setting epoch number
         self.special['epoch'] = self.epoch.value
-
-        ## Read the sample(s)
-        if self.data_cfg.fix_coin_seeds:
-            np.random.seed(fixed_epoch_seed)
-        else:
-            np.random.seed(unique_epoch_seed)
         
         # Set target for current iteration
         target = 1 if np.random.rand() < self.data_cfg.signal_probability else 0
@@ -702,7 +692,6 @@ class MinimalOTF(Dataset):
 
         # Setting the seed for sample/iter
         seed = unique_epoch_seed
-        np.random.seed(seed)
         self.special['sample_seed'] = seed
         # Generate sample / read sample
         if self.data_cfg.OTF:
