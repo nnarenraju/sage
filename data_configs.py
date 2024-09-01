@@ -272,7 +272,7 @@ class DefaultOTF:
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 1_000_000
+    num_validation_samples = 100_000
     num_auxilliary_samples = 125_000
     
     """ Signal Params """
@@ -280,7 +280,7 @@ class DefaultOTF:
     # Create a new class for a different problem instead of changing this config
     sample_rate = 2048. # Hz
     # (20.0 seconds max + 2.0 seconds of noise padding) would be better
-    signal_length = 2.0 # seconds (CHANGE THIS BACK TO 12!!!)-------------------------------------------- !!!LOOK HERE!!!
+    signal_length = 12.0 # seconds (CHANGE THIS BACK TO 12!!!)-------------------------------------------- !!!LOOK HERE!!!
     # Noise padding after ringdown
     # Signal will be placed based on requested noise pad and post fudge factor
     # if signal length is not sufficient for longest possible signal, error occurs.
