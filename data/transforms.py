@@ -738,7 +738,7 @@ class FastGenerateWaveform():
         tc = params['tc']
         tc_gps = params['injection_time']
         ## Get random value (with a given prior) for polarisation angle, ra, dec
-        np.random.seed(special['sample_seed'])
+        # np.random.seed(special['sample_seed'])
         # Polarisation angle
         pol_angle = special['distrs']['pol'].rvs()[0][0]
         # Right ascension, declination
@@ -950,7 +950,7 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
 
     def get_rescaled_signal(self, signal, psds, params, cfg, debug, training, aux, epoch, seed):
         # params: This will contain params var found in __getitem__ method of custom dataset object
-        np.random.seed(seed)
+        # np.random.seed(seed) ----------------------------------------------------------------------------------- ???
         # Get original network SNR
         prelim_network_snr = get_network_snr(signal, psds, params, cfg.export_dir, debug)
         
@@ -1461,7 +1461,7 @@ class MultipleFileRandomNoiseSlice():
         self.lengths = {}
         for name in noise_dirs.keys():
             self.noise_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(noise_dirs[name], "*.hdf"))]
-            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise_deimos.npy".format(name))
+            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise_deimos.npy".format(name)) # _deimos
 
     def pick_noise_file(self, det):
         # Pick a noise file for each detector
@@ -1593,7 +1593,6 @@ class RandomNoiseSlice():
     
     def get_segment_choice(self, seed):
         # Get one choice from seg_idx based on probalities obtained from seg durations
-        np.random.seed(seed)
         return np.random.choice(self.seg_idx, 1, p=self.segprob)[0]
 
     def _load_segments(self):
@@ -1674,7 +1673,6 @@ class RandomNoiseSlice():
     
     def _make_sample_start_time(self, seg_start_idx, seg_end_idx, seed):
         # Make a sample start time that is uniformly distributed within segdur
-        np.random.seed(seed)
         return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
 
     def get_noise_segment(self, special, segdeets, det_only, recolour):
@@ -1907,7 +1905,6 @@ class ColouredNoiseGenerator():
             A TimeSeries containing gaussian noise
         """
 
-        np.random.seed(seed)
         data = np.random.normal(size=int((end-start)*sample_rate), scale=(sample_rate/2.)**0.5)
         return TimeSeries(data, delta_t=1.0/sample_rate)
 
