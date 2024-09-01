@@ -32,12 +32,38 @@ import numpy as np
 from pycbc.psd import interpolate
 from pycbc.types import TimeSeries
 from pycbc.filter.matchedfilter import sigmasq
+from pycbc.filter import matched_filter
 
 
 def calculate_network_snr(strains, psds, noise_low_freq_cutoff):
     # SNR Calculation
     return np.sqrt(sum([sigmasq(strain, psd=psd, low_frequency_cutoff=noise_low_freq_cutoff)
                         for strain, psd in zip(strains, psds)]))
+
+def matched_filter_snr(strains, psds, noise_low_freq_cutoff):
+    # Matched filter SNR
+    snrs = []
+    for strain, psd in zip(strains, psds):
+        snr = matched_filter(strain, strain, psd=psd, low_frequency_cutoff=noise_low_freq_cutoff)
+        snr = np.array(snr)
+        snrs.append(np.max(np.abs(snr)))
+    network_snr = np.sqrt(np.sum(snrs))
+    return network_snr
+
+def optimal_snr(strains, psds):
+    snrs = []
+    for strain, psd in zip(strains, psds):
+        strain = np.array(strain)
+        psd = np.array(psd)
+        dt = 1./2048.
+        # compute data ffts (i.e. get frequency domain of data)
+        signal_fft = np.fft.rfft(strain) * dt
+        # compute inner product of template and template
+        h_inner_h =  4/12.0 * np.sum(np.conj(signal_fft) * signal_fft / psd)
+        snrs.append(np.abs(np.sqrt(h_inner_h)))
+    network_snr = np.sqrt(np.sum(snrs))
+    print(network_snr)
+    return network_snr
 
 def get_network_snr(signals, psds_data, params, save_dir, debug):
     # pure_sample, params, data_loc
@@ -57,5 +83,6 @@ def get_network_snr(signals, psds_data, params, save_dir, debug):
     
     """ Calculation of SNR """
     network_snr = calculate_network_snr(signals, psd_data, params['noise_low_freq_cutoff']) 
-    
+    # network_snr = matched_filter_snr(signals, psd_data, params['noise_low_freq_cutoff'])
+    # network_snr = optimal_snr(signals, psds_data)
     return network_snr
