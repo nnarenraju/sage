@@ -236,8 +236,6 @@ def learning_parameter_prior(nep, source_params, predicted_outputs, labels, save
     bin_width = 500 # samples
     overlap = 10 # samples
     for key in source_params.keys():
-        if key not in ['signal_duration', 'tc']:
-            continue
         # Sort the source_params for the particular key alongside the predicted outputs
         source_data = np.ma.masked_array(source_params[key])
         source_data = source_data[mx.mask == True].data
@@ -441,8 +439,6 @@ def paramfrac_detected_above_thresh(cfg, export_dir, network_output, labels, sam
     ## Make n bins of parameter space for each parameter
     # We need to ignore all values of -1
     for param, distr in sample_params.items():
-        if param not in ['signal_duration', 'tc']:
-            continue
         # Dir handling
         out_dir = os.path.join(save_dir, param)
         os.makedirs(out_dir, exist_ok=False)
@@ -677,18 +673,18 @@ def validate(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function
                     # Confusion matrix and rate evolution plots have been reinstated as of May 09, 2023
 
                     """ Prediction Probabilitiy OR Raw Value histograms  """
-                    #low_far_nsignals = prediction_raw(nep, raw_output, epoch_labels['gw'], export_dir)
+                    low_far_nsignals = prediction_raw(nep, raw_output, epoch_labels['gw'], export_dir)
                     #prediction_probability(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
                     
                     """ Source parameter vs prediction probabilities OR raw values """
                     learning_parameter_prior(nep, sample_params, raw_output, epoch_labels['gw'], 'raw_value', export_dir)
-                    #learning_parameter_prior(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], 'pred_prob', export_dir)
+                    learning_parameter_prior(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], 'pred_prob', export_dir)
                     
                     """ Value VS Value Plots for PE """
                     diagonal_compare(nep, epoch_outputs, epoch_labels, sample_params['network_snr'], export_dir)
                     
                     """ Param distribution of network raw output bins """
-                    #outputbin_param_distribution(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
+                    outputbin_param_distribution(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
                     
                     """ Param Fraction Plot """
                     paramfrac_detected_above_thresh(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
