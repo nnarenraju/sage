@@ -170,3 +170,4 @@ tmp/segments.csv
 *.err
 *.out
 *.log
+*.pickle
