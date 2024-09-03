@@ -1561,17 +1561,17 @@ class Vitelotte_FixedDataset_Relax1(SageNetOTF):
         signal = None,
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                 ),
                     'validation': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
-                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
                                                  debug_me=False,
                                                  debug_dir=""
@@ -1739,7 +1739,7 @@ class Vitelotte_FixedDataset_Relax2(SageNetOTF):
     test_background_output = "testing_boutput_fixed_dataset_allsignals.hdf"
 
 
-# ABLATION 1 - small network resnet50 (DONE)
+# ABLATION 1 - small network resnet50
 class Butterball_ResNet1D(SageNetOTF):
     ### Primary Deviations (Comparison to BOY latest) ###
     # 1. 113 days of O3b data (not variation)
@@ -1838,16 +1838,16 @@ class Butterball_ResNet1D(SageNetOTF):
     model_params = dict(
         # Resnet50
         resnet_size = 50,
-        store_device = torch.device('cuda'),
+        store_device = torch.device('cuda:0'),
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
 
     """ Storage Devices """
-    store_device = torch.device('cuda')
-    train_device = torch.device('cuda')
+    store_device = torch.device('cuda:0')
+    train_device = torch.device('cuda:0')
 
     # Run device for testing phase
-    testing_device = torch.device('cuda')
+    testing_device = torch.device('cuda:0')
     
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
     test_foreground_output = "testing_foutput_resnet1d_withPE.hdf"    
@@ -1891,17 +1891,17 @@ class Butterball_ResNet1D_withoutPE(SageNetOTF):
                 ]),
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False,
                                 ),
                     'validation': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False,
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
-                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
                                                  debug_me=False,
                                                  debug_dir=""
@@ -1952,15 +1952,15 @@ class Butterball_ResNet1D_withoutPE(SageNetOTF):
     model_params = dict(
         # Resnet50
         resnet_size = 50,
-        store_device = torch.device('cuda'),
+        store_device = torch.device('cuda:2'),
     )
 
     """ Storage Devices """
-    store_device = torch.device('cuda')
-    train_device = torch.device('cuda')
+    store_device = torch.device('cuda:2')
+    train_device = torch.device('cuda:2')
 
     # Run device for testing phase
-    testing_device = torch.device('cuda')
+    testing_device = torch.device('cuda:2')
     
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
     test_foreground_output = "testing_foutput_resnet1d_withoutPE.hdf"    
@@ -2399,7 +2399,7 @@ class Validate_1epoch(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "KennebecAnnealed_1epoch_validation"
+    name = "KennebecAnnealed_1epoch_validation_Sept2_updated"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2430,17 +2430,17 @@ class Validate_1epoch(SageNetOTF):
 
         noise  = UnifyNoiseGen({
                     'training': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=133, segment_ulimit=-1, debug_me=False
                                 ),
                     'validation': RandomNoiseSlice(
-                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                                     segment_llimit=0, segment_ulimit=132, debug_me=False
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
-                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
-                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                                                         ),
                                                  debug_me=False,
                                                  debug_dir=""
@@ -2485,7 +2485,7 @@ class Validate_1epoch(SageNetOTF):
         target=None
     )
     
-    """ Architecture 
+    """ Architecture
     model = Rigatoni_MS_ResNetCBAM_legacy
 
     model_params = dict(
@@ -2495,8 +2495,8 @@ class Validate_1epoch(SageNetOTF):
         resnet_size = 50,
         store_device = torch.device("cuda:0"),
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
-    )
-    """
+    )"""
+    
 
     """ Architecture """
     model = Rigatoni_MS_ResNetCBAM
