@@ -72,7 +72,7 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
             weights = torch.load(cfg.weights_path, cfg.store_device)
             Network.load_state_dict(weights)
             del weights; gc.collect()
-            summary(Network, (2, 4096), batch_size=cfg.batch_size)
+            # summary(Network, (2, 4096), batch_size=cfg.batch_size)
             # Freezing
             if cfg.freeze_for_transfer:
                 # Freeze all layers
@@ -145,10 +145,6 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
         # Initialise the trainer
         Network = manual_train(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
                                train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, opts.validate, verbose=cfg.verbose)
-    
-    if opts.validate:
-        Network = aux_validate(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
-                               train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, verbose=cfg.verbose)
     
     if rtune == None:
         return Network
