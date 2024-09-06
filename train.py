@@ -40,7 +40,6 @@ warnings.filterwarnings("ignore")
 from test import run_test
 from evaluator import main as evaluator
 from manual import train as manual_train
-from utils.aux_validation import validate as aux_validate
 from data.prepare_data import DataModule as dat
 
 # Tensorboard
