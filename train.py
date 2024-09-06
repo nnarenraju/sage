@@ -144,7 +144,7 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
         # Running the manual pipeline version using pure PyTorch
         # Initialise the trainer
         Network = manual_train(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
-                               train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, verbose=cfg.verbose)
+                               train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, opts.validate, verbose=cfg.verbose)
     
     if opts.validate:
         Network = aux_validate(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
