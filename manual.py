@@ -714,7 +714,7 @@ def validation_phase(nep, cfg, data_cfg, Network, loss_function, validation_samp
     return (all_losses, accuracy, validation_output)
 
 
-def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, trainDL, validDL, auxDL, nepoch, cflag, checkpoint, verbose=False):
+def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, trainDL, validDL, auxDL, nepoch, cflag, checkpoint, validate_1epoch=False, verbose=False):
     
     """
     Train a network on given data.
@@ -808,74 +808,75 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
             PHASE 1 - Training 
                 [1] Do gradient clipping. Set value in cfg.
             """
-            print("\nTraining Phase Initiated")
-            pbar = tqdm(trainDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
-            
-            # Total Number of batches
-            num_train_batches = len(trainDL)
-            # Recording the time taken for training
-            start = time.time()
-            train_times = []
-            
-            for nbatch, (training_samples, training_labels, source_params) in enumerate(pbar):
+            if not validate_1epoch:
+                print("\nTraining Phase Initiated")
+                pbar = tqdm(trainDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
+                
+                # Total Number of batches
+                num_train_batches = len(trainDL)
+                # Recording the time taken for training
+                start = time.time()
+                train_times = []
+                
+                for nbatch, (training_samples, training_labels, source_params) in enumerate(pbar):
 
-                # BatchShuffle Noise samples for an extra dimension of augmentation
-                if cfg.batchshuffle_noise:
-                    training_samples = batchshuffle_noise(training_labels, training_samples, nbatch, nep)
+                    # BatchShuffle Noise samples for an extra dimension of augmentation
+                    if cfg.batchshuffle_noise:
+                        training_samples = batchshuffle_noise(training_labels, training_samples, nbatch, nep)
+                    
+                    # Update params
+                    if scheduler:
+                        scheduler_step = nep + nbatch / num_train_batches
+                    else:
+                        scheduler_step = None
+                    
+                    # Record time taken for training
+                    start_train = time.time()
+                    
+                    ## Class balance assertions
+                    ## NOTE: This may be too stringent for small batch sizes
+                    ##       Also, the variance in dataset balance might help training. 
+                    # batch_labels = training_labels['gw'].numpy()
+                    # check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
+                    # assert check_balance >= 0.30 and check_balance <= 0.70
+                    
+                    """ Tensorification and Device Compatibility """
+                    ## Performing this here rather than in the Dataset object
+                    ## will reduce the overhead of having to move each sample to CUDA 
+                    ## rather than moving a batch of data.
+                    # Set the device and dtype
+                    training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
+                    for key, value in training_labels.items():
+                        training_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
+                    
+                    """ Call Training Phase """
+                    # Run training phase and get loss and accuracy
+                    training_loss, accuracy = training_phase(nep, cfg, data_cfg, Network, 
+                                                            optimizer, 
+                                                            scheduler, scheduler_step,
+                                                            loss_function, 
+                                                            training_samples, training_labels,
+                                                            source_params, optional,
+                                                            export_dir)
+                    
+                    ## Display stuff
+                    loss = np.around(training_loss['total_loss'].clone().cpu().item(), 8)
+                    # Update pbar with loss, acc
+                    pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, training_batches, loss))
+                    # Update losses and accuracy
+                    training_batches+=1
+                    acc_train.append(accuracy)
+                    for key in training_running_loss.keys():
+                        training_running_loss[key] += training_loss[key].clone().cpu().item()
+                    # Record time taken to load data (calculate avg time later)
+                    train_times.append(time.time() - start_train)
                 
-                # Update params
-                if scheduler:
-                    scheduler_step = nep + nbatch / num_train_batches
-                else:
-                    scheduler_step = None
                 
-                # Record time taken for training
-                start_train = time.time()
+                ## Time taken to train data
+                # Total time taken for training phase
+                total_time = time.time() - start
                 
-                ## Class balance assertions
-                ## NOTE: This may be too stringent for small batch sizes
-                ##       Also, the variance in dataset balance might help training. 
-                # batch_labels = training_labels['gw'].numpy()
-                # check_balance = len(batch_labels[batch_labels == 1])/len(batch_labels)
-                # assert check_balance >= 0.30 and check_balance <= 0.70
-                
-                """ Tensorification and Device Compatibility """
-                ## Performing this here rather than in the Dataset object
-                ## will reduce the overhead of having to move each sample to CUDA 
-                ## rather than moving a batch of data.
-                # Set the device and dtype
-                training_samples = training_samples.to(dtype=torch.float32, device=cfg.train_device)
-                for key, value in training_labels.items():
-                    training_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
-                
-                """ Call Training Phase """
-                # Run training phase and get loss and accuracy
-                training_loss, accuracy = training_phase(nep, cfg, data_cfg, Network, 
-                                                         optimizer, 
-                                                         scheduler, scheduler_step,
-                                                         loss_function, 
-                                                         training_samples, training_labels,
-                                                         source_params, optional,
-                                                         export_dir)
-                
-                ## Display stuff
-                loss = np.around(training_loss['total_loss'].clone().cpu().item(), 8)
-                # Update pbar with loss, acc
-                pbar.set_description("Epoch {}, batch {} - loss = {}".format(nep, training_batches, loss))
-                # Update losses and accuracy
-                training_batches+=1
-                acc_train.append(accuracy)
-                for key in training_running_loss.keys():
-                    training_running_loss[key] += training_loss[key].clone().cpu().item()
-                # Record time taken to load data (calculate avg time later)
-                train_times.append(time.time() - start_train)
-            
-            
-            ## Time taken to train data
-            # Total time taken for training phase
-            total_time = time.time() - start
-            
-            consolidated_display(train_times, total_time)
+                consolidated_display(train_times, total_time)
             
             
     
@@ -987,6 +988,10 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     
                     """ Efficiency Curves """
                     # efficiency_curves(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], save_name='efficiency_validation', export_dir=export_dir)
+
+            # 1 epoch validation
+            if validate_1epoch:
+                return Network
 
             
             ### Auxiliary validation set checks
