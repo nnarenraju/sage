@@ -817,8 +817,6 @@ class FastGenerateWaveform():
         if self.one_signal_params != None:
             params = self.one_signal_params
         hp, hc = self.generate(params)
-        print(params)
-        raise
         ## Make hp, hc into proper injection (adjust to tc and zero pad)
         hp, hc = self.make_injection(hp, hc, params)
         ## Convert hp, hc into h(t) using antenna pattern (H1, L1 considered)
@@ -938,7 +936,8 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
                  use_add5=False,
                  use_halfnorm=False,
                  snr_lower_limit=5.0,
-                 snr_upper_limit=15.0):
+                 snr_upper_limit=15.0,
+                 fix_snr=None):
         
         super().__init__(always_apply)
         # If rescale is False, AUG method returns original network_snr, norm_snr and signal
@@ -952,6 +951,7 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         self.use_halfnorm = use_halfnorm
         self.snr_lower_limit = snr_lower_limit
         self.snr_upper_limit = snr_upper_limit
+        self.fix_snr = fix_snr
 
     def _dchirp_from_dist(self, dist, mchirp, ref_mass=1.4):
         # Credits: https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
@@ -989,7 +989,11 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
                 target_snr = 12.0
             else:
                 raise ValueError('Unidentified value for cflag!')
-
+            
+            # Fix SNR for all input signals
+            if self.fix_snr != None:
+                target_snr = self.fix_snr
+            
             rescaling_factor = target_snr/prelim_network_snr
             # Add noise to rescaled signal
             rescaled_signal = signal * rescaling_factor
