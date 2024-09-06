@@ -2399,7 +2399,7 @@ class Validate_1epoch(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "KennebecAnnealed_1epoch_validation_Sept2_updated"
+    name = "KennebecAnnealed_1epoch_validation_Sept6"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2484,19 +2484,6 @@ class Validate_1epoch(SageNetOTF):
                 }),
         target=None
     )
-    
-    """ Architecture
-    model = Rigatoni_MS_ResNetCBAM_legacy
-
-    model_params = dict(
-        # Resnet50
-        filter_size = 32,
-        kernel_size = 64,
-        resnet_size = 50,
-        store_device = torch.device("cuda:0"),
-        parameter_estimation = ('norm_tc', 'norm_mchirp', )
-    )"""
-    
 
     """ Architecture """
     model = Rigatoni_MS_ResNetCBAM
