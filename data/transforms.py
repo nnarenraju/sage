@@ -463,6 +463,7 @@ class MonorateSampling(TransformWrapperPerChannel):
 
 """ Waveform Generation """
 
+
 class SinusoidGenerator():
     ## Used to create sinusoid with different parameters to test biases
     ## Bias due to waveform frequency comes under spectral bias
@@ -585,6 +586,7 @@ class FastGenerateWaveform():
                  beta_taper = 8, 
                  pad_duration_estimate = 1.1, 
                  min_mass = 5.0,
+                 one_signal_params = None,
                  debug_me = False
                 ):
 
@@ -607,6 +609,10 @@ class FastGenerateWaveform():
         # Other        
         self.min_mass = min_mass
         self.debug_me = debug_me
+        # One-Signal mode
+        # Whatever the params received from datasets obj
+        # use one_signal_params for every iteration
+        self.one_signal_params = one_signal_params
 
     def precompute_common_params(self):
         # Pick the longest waveform from priors to make some params static
@@ -807,18 +813,22 @@ class FastGenerateWaveform():
         # Set lal.Detector object as global as workaround for MP methods
         # Project wave does not work with DataLoader otherwise
         setattr(self, 'dets', special['dets'])
-        # Augmentation on all params
+        ## Augmentation on all params
+        if self.one_signal_params != None:
+            params = self.one_signal_params
         hp, hc = self.generate(params)
-        # Make hp, hc into proper injection (adjust to tc and zero pad)
+        print(params)
+        raise
+        ## Make hp, hc into proper injection (adjust to tc and zero pad)
         hp, hc = self.make_injection(hp, hc, params)
-        # Convert hp, hc into h(t) using antenna pattern (H1, L1 considered)
+        ## Convert hp, hc into h(t) using antenna pattern (H1, L1 considered)
         out = self.project(hp, hc, special, params)
-        # Debug waveform generation
+        ## Debug waveform generation
         if self.debug_me:
             self.debug_waveform_generate(data=[out[0], out[1]],
                                          labels=['H1', 'L1'],
                                          special=special)
-        # Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
+        ## Input: (h_plus, h_cross) --> output: (det1 h_t, det_2 h_t)
         return out
     
 
