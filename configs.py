@@ -2509,7 +2509,7 @@ class Validate_1epoch(SageNetOTF):
         resnet_size = 50,
         parameter_estimation = ('norm_tc', 'norm_mchirp', ),
         norm_layer = 'instancenorm',
-        store_device = torch.device("cuda:0"),
+        store_device = torch.device("cuda:1"),
         review = False
     )
     
@@ -2523,11 +2523,11 @@ class Validate_1epoch(SageNetOTF):
     num_epochs = 1
     
     """ Storage Devices """
-    store_device = torch.device("cuda:0")
-    train_device = torch.device("cuda:0")
+    store_device = torch.device("cuda:1")
+    train_device = torch.device("cuda:1")
 
     # Run device for testing phase
-    testing_device = torch.device("cuda:0")
+    testing_device = torch.device("cuda:1")
 
 
 
