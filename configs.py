@@ -2399,7 +2399,7 @@ class Validate_1epoch(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "KennebecAnnealed_1epoch_validation_Sept6"
+    name = "KennebecAnnealed_1epoch_validation_Sept7"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2536,7 +2536,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept6"
+    name = "MetricLatest_1epoch_validation_Sept7"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
