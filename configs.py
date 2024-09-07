@@ -2658,7 +2658,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "TrainRecolour_1epoch_validation_Sept6"
+    name = "TrainRecolour_1epoch_validation_Sept7_traindata"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2673,7 +2673,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = './WEIGHTS/weights_training_recolour_49.pt'
+    weights_path = './WEIGHTS/weights_training_recolour_ep49.pt'
 
     """ Generation """
 
@@ -2706,7 +2706,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=0, segment_ulimit=132, debug_me=False
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -2716,7 +2716,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
                                                  debug_me=False,
                                                  debug_dir=""
                     ),
-                    paux = 0.689, # 113/164 days for extra O3b noise
+                    paux = 0.0, # 0.689 - 113/164 days for extra O3b noise
                     debug_me=False,
                     debug_dir=os.path.join(debug_dir, 'NoiseGen')
                 )
@@ -2731,7 +2731,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
                     Recolour(use_precomputed=True, 
                              h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
                              l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
-                             p_recolour=0.3829,
+                             p_recolour=0.0, # 0.3829
                              debug_me=False,
                              debug_dir=os.path.join(debug_dir, 'Recolour')),
                 ]),
@@ -2757,31 +2757,15 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
     )
 
     """ Architecture """
-    model = Rigatoni_MS_ResNetCBAM
+    model = Rigatoni_MS_ResNetCBAM_legacy
 
-    # Following options available for pe point estimate
-    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
-    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
     model_params = dict(
-        scales = [1, 2, 4, 0.5, 0.25],
-        blocks = [
-            [MultiScaleBlock, MultiScaleBlock], 
-            [MultiScaleBlock, MultiScaleBlock], 
-            [MultiScaleBlock, MultiScaleBlock]
-        ],
-        out_channels = [[32, 32], [64, 64], [128, 128]],
-        base_kernel_sizes = [
-            [64, 64 // 2 + 1], 
-            [64 // 2 + 1, 64 // 4 + 1], 
-            [64 // 4 + 1, 64 // 4 + 1]
-        ], 
-        compression_factor = [8, 4, 0],
-        in_channels = 1,
+        # Resnet50
+        filter_size = 32,
+        kernel_size = 64,
         resnet_size = 50,
-        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
-        norm_layer = 'instancenorm',
         store_device = torch.device("cuda:1"),
-        review = False
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
     
 
