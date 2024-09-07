@@ -2658,7 +2658,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "TrainRecolour_1epoch_validation_Sept7_traindata"
+    name = "TrainRecolour_1epoch_validation_Sept7_longer"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2677,6 +2677,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
 
     """ Generation """
 
+    """
     signal_param = {'approximant': 'IMRPhenomPv2', 'f_ref': 20.0, 'mass1': 34.78719347340714, 'mass2': 26.213305061289596, 
                     'ra': 3.1059617471553547, 'dec': -0.6182337605590603, 'inclination': 0.8318006348684067, 
                     'coa_phase': 1.7465934740664464, 'polarization': 2.8848538945232653, 'chirp_distance': 240.66621748823462, 
@@ -2686,6 +2687,17 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
                     'spin1y': 0.11000153135040237, 'spin1z': 0.009032973837402562, 'spin2x': 0.2762643625638985, 
                     'spin2y': -0.24619412379548633, 'spin2z': -0.09049400101200968, 'mchirp': 26.236024494682457, 
                     'q': 1.3270815485521894, 'distance': 3106.193154419415}
+    """
+
+    signal_param = {'approximant': 'IMRPhenomPv2', 'f_ref': 20.0, 'mass1': 10.0, 'mass2': 8.0, 
+                    'ra': 3.1059617471553547, 'dec': -0.6182337605590603, 'inclination': 0.8318006348684067, 
+                    'coa_phase': 1.7465934740664464, 'polarization': 2.8848538945232653, 'chirp_distance': 240.66621748823462, 
+                    'spin1_a': 0.3205292059008806, 'spin1_azimuthal': 2.791139350243793, 'spin1_polar': 1.5426111575393548, 
+                    'spin2_a': 0.3809497458109482, 'spin2_azimuthal': 5.555278986183884, 'spin2_polar': 1.8106375482871242, 
+                    'injection_time': 1242017656.1400197, 'tc': 11.085430996548288, 'spin1x': -0.3009269684153754, 
+                    'spin1y': 0.11000153135040237, 'spin1z': 0.009032973837402562, 'spin2x': 0.2762643625638985, 
+                    'spin2y': -0.24619412379548633, 'spin2z': -0.09049400101200968, 'mchirp': 7.776774233174154, 
+                    'q': 1.25, 'distance': 3106.193154419415}
 
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
@@ -2706,7 +2718,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
                                 ),
                     'validation': RandomNoiseSlice(
                                     real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
-                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
                                 ),
                     },
                     MultipleFileRandomNoiseSlice(noise_dirs=dict(
@@ -2764,7 +2776,7 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = torch.device("cuda:1"),
+        store_device = torch.device("cuda:0"),
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
     
@@ -2778,11 +2790,11 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
     num_epochs = 1
     
     """ Storage Devices """
-    store_device = torch.device("cuda:1")
-    train_device = torch.device("cuda:1")
+    store_device = torch.device("cuda:0")
+    train_device = torch.device("cuda:0")
 
     # Run device for testing phase
-    testing_device = torch.device("cuda:1")
+    testing_device = torch.device("cuda:0")
 
 
 
