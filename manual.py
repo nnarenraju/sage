@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import sys
 import time
+import h5py
 import glob
 import torch
 import errno
@@ -991,6 +992,26 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
             # 1 epoch validation
             if validate_1epoch:
+                with h5py.File(os.path.join(export_dir, 'validation_output.hdf'), 'a') as ds:
+                    # Raw output
+                    ds.create_dataset('raw_output', data=raw_output, compression='gzip', 
+                                        compression_opts=9, shuffle=True)
+                    # Epoch outputs
+                    for key in epoch_outputs.keys():
+                        dataset_name = 'epoch_outputs'+key
+                        ds.create_dataset(dataset_name, data=epoch_outputs[key], compression='gzip', 
+                                        compression_opts=9, shuffle=True)
+                    # Epoch labels
+                    for key in epoch_labels.keys():
+                        dataset_name = 'epoch_labels'+key
+                        ds.create_dataset(dataset_name, data=epoch_labels[key], compression='gzip', 
+                                        compression_opts=9, shuffle=True)
+                    # Sample params
+                    for key in sample_params.keys():
+                        dataset_name = 'sample_params'+key
+                        ds.create_dataset(dataset_name, data=sample_params[key], compression='gzip', 
+                                        compression_opts=9, shuffle=True)
+                
                 return Network
 
             
@@ -1099,6 +1120,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 _key = "tot" if key == "total_loss" else key
                 epoch_validation_loss[_key] = np.around(validation_running_loss[key]/validation_batches, 8)
                 epoch_training_loss[_key] = np.around(training_running_loss[key]/training_batches, 8)
+            
             
             avg_acc_valid = np.around(sum(acc_valid)/len(acc_valid), 8)
             avg_acc_train = np.around(sum(acc_train)/len(acc_train), 8)
