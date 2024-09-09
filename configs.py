@@ -2676,8 +2676,6 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
     weights_path = './WEIGHTS/weights_training_recolour_ep49.pt'
 
     """ Generation """
-
-    """
     signal_param = {'approximant': 'IMRPhenomPv2', 'f_ref': 20.0, 'mass1': 34.78719347340714, 'mass2': 26.213305061289596, 
                     'ra': 3.1059617471553547, 'dec': -0.6182337605590603, 'inclination': 0.8318006348684067, 
                     'coa_phase': 1.7465934740664464, 'polarization': 2.8848538945232653, 'chirp_distance': 240.66621748823462, 
@@ -2687,17 +2685,6 @@ class Validate_1epoch_TrainRecolour(SageNetOTF):
                     'spin1y': 0.11000153135040237, 'spin1z': 0.009032973837402562, 'spin2x': 0.2762643625638985, 
                     'spin2y': -0.24619412379548633, 'spin2z': -0.09049400101200968, 'mchirp': 26.236024494682457, 
                     'q': 1.3270815485521894, 'distance': 3106.193154419415}
-    """
-
-    signal_param = {'approximant': 'IMRPhenomPv2', 'f_ref': 20.0, 'mass1': 10.0, 'mass2': 8.0, 
-                    'ra': 3.1059617471553547, 'dec': -0.6182337605590603, 'inclination': 0.8318006348684067, 
-                    'coa_phase': 1.7465934740664464, 'polarization': 2.8848538945232653, 'chirp_distance': 240.66621748823462, 
-                    'spin1_a': 0.3205292059008806, 'spin1_azimuthal': 2.791139350243793, 'spin1_polar': 1.5426111575393548, 
-                    'spin2_a': 0.3809497458109482, 'spin2_azimuthal': 5.555278986183884, 'spin2_polar': 1.8106375482871242, 
-                    'injection_time': 1242017656.1400197, 'tc': 11.085430996548288, 'spin1x': -0.3009269684153754, 
-                    'spin1y': 0.11000153135040237, 'spin1z': 0.009032973837402562, 'spin2x': 0.2762643625638985, 
-                    'spin2y': -0.24619412379548633, 'spin2z': -0.09049400101200968, 'mchirp': 7.776774233174154, 
-                    'q': 1.25, 'distance': 3106.193154419415}
 
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
@@ -3055,7 +3042,90 @@ class Validate_1epoch_D3(SageNetOTF):
 
 
 
+
+### FINAL TESTING ###
+
+class Vitelotte_FixedDataset_Aug24(SageNetOTF):
+
+    """ Data storage """
+    name = "Vitelotte_FixedDataset_Aug24"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    batchshuffle_noise = True
+    
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = None,
+        noise  = None,
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentPolSky(),
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=None,
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM_legacy
+
+    model_params = dict(
+        # Resnet50
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = torch.device("cuda:1"),
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+    )
+    
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Storage Devices """
+    store_device = torch.device("cuda:1")
+    train_device = torch.device("cuda:1")
+
+    # Run device for testing phase
+    testing_device = torch.device("cuda:1")
+
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_Vitelotte_FixedDataset_Aug24.hdf"
+    test_background_output = "testing_boutput_Vitelotte_FixedDataset_Aug24.hdf"
+
+
+
+
 ### NEXT RUNS ###
-# 1. Bias based on signal duration with const freq and different tau (WIAY) - DEIMOS/WIAY
-# 2. Bias on signal frequency run on standard resnet-50 - DEIMOS/WIAY
-# 3. BEST on different seed - MUCK
+# 1. BEST on different seed - MUCK
