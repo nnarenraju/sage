@@ -331,7 +331,7 @@ class DefaultOTF:
     # Annealing is done linear between start and end prob
     # Feature creep: Other functions can be used to move from start to end
     # Annealing is done within the given epoch numbers
-    anneal_epochs = [20, 40] # [start, end]
+    anneal_epochs = [40, 60] # [start, end]
     # Modification off = None option
     modification_toggle_probability = 1.0
     
