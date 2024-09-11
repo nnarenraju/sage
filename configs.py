@@ -230,7 +230,7 @@ class SageNetOTF:
     train_device = 'cuda:0'
 
     """ Dataloader params """
-    num_workers = 32
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 4
     persistent_workers = True
@@ -1093,7 +1093,7 @@ class Russet_to_Desiree_Annealed(SageNetOTF):
     test_background_output = "testing_boutput_Annealed_Russet_to_Desiree.hdf"
 
 
-# Anneal from U(m1, m2) to template placement metric (RUNNING)
+# Anneal from U(m1, m2) to template placement metric
 class Kennebec_Annealed(SageNetOTF):
     # Hopefully we can keep both noise rejection capabilities and unbiased representation
 
@@ -2275,13 +2275,13 @@ class SageNetOTF_Aug27_Russet(SageNetOTF):
     test_background_output = "testing_boutput_BEST_June_noPE.hdf"
 
 
-class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
+class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "SageNet50_halfnormSNR_Sept1_Russet_diffseed"
+    name = "SageNet50_halfnormSNR_Sept11_Russet_diffseed_another"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2375,7 +2375,7 @@ class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 32
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
@@ -2388,8 +2388,8 @@ class SageNetOTF_Aug27_Russet_diffseed_1(SageNetOTF):
     testing_device = torch.device("cuda:0")
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_BEST_June_diff_seed_Sept1.hdf"    
-    test_background_output = "testing_boutput_BEST_June_diff_seed_Sept1.hdf"
+    test_foreground_output = "testing_foutput_BEST_June_diff_seed_Sept11.hdf"    
+    test_background_output = "testing_boutput_BEST_June_diff_seed_Sept11.hdf"
 
 
 # Single epoch validation
@@ -2922,7 +2922,7 @@ class Validate_1epoch_D3(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "Dataset3_1epoch_validation_Sept8_traindata"
+    name = "Dataset3_1epoch_validation_Sept11_traindata"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2940,15 +2940,6 @@ class Validate_1epoch_D3(SageNetOTF):
     weights_path = './WEIGHTS/weights_dataset3_ep49.pt'
 
     """ Generation """
-    signal_param = {'approximant': 'IMRPhenomPv2', 'f_ref': 20.0, 'mass1': 34.78719347340714, 'mass2': 26.213305061289596, 
-                    'ra': 3.1059617471553547, 'dec': -0.6182337605590603, 'inclination': 0.8318006348684067, 
-                    'coa_phase': 1.7465934740664464, 'polarization': 2.8848538945232653, 'chirp_distance': 240.66621748823462, 
-                    'spin1_a': 0.3205292059008806, 'spin1_azimuthal': 2.791139350243793, 'spin1_polar': 1.5426111575393548, 
-                    'spin2_a': 0.3809497458109482, 'spin2_azimuthal': 5.555278986183884, 'spin2_polar': 1.8106375482871242, 
-                    'injection_time': 1242017656.1400197, 'tc': 11.085430996548288, 'spin1x': -0.3009269684153754, 
-                    'spin1y': 0.11000153135040237, 'spin1z': 0.009032973837402562, 'spin2x': 0.2762643625638985, 
-                    'spin2y': -0.24619412379548633, 'spin2z': -0.09049400101200968, 'mchirp': 26.236024494682457, 
-                    'q': 1.3270815485521894, 'distance': 3106.193154419415}
 
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
@@ -2957,7 +2948,6 @@ class Validate_1epoch_D3(SageNetOTF):
                                          beta_taper = 8, 
                                          pad_duration_estimate = 1.1, 
                                          min_mass = 5.0, 
-                                         one_signal_params = signal_param,
                                          debug_me = False
                                         ),
                 ]),
@@ -2972,7 +2962,7 @@ class Validate_1epoch_D3(SageNetOTF):
     """ Transforms """
     transforms = dict(
         signal=UnifySignal([
-                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0, fix_snr=10.0),
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
                 ]),
         noise=None,
         train=Unify({
@@ -3125,7 +3115,391 @@ class Vitelotte_FixedDataset_Aug24(SageNetOTF):
     test_background_output = "testing_boutput_Vitelotte_FixedDataset_Aug24.hdf"
 
 
+class Vitelotte_FixedDataset_Aug25_AlltheNoise(SageNetOTF):
+
+    """ Data storage """
+    name = "Vitelotte_FixedDataset_Aug25_AlltheNoise"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    batchshuffle_noise = True
+    
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = None,
+        noise  = None,
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentPolSky(),
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=None,
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM_legacy
+
+    model_params = dict(
+        # Resnet50
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = torch.device("cuda:0"),
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+    )
+    
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Storage Devices """
+    store_device = torch.device("cuda:0")
+    train_device = torch.device("cuda:0")
+
+    # Run device for testing phase
+    testing_device = torch.device("cuda:0")
+
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_Vitelotte_FixedDataset_allnoise_Aug25.hdf"
+    test_background_output = "testing_boutput_Vitelotte_FixedDataset_allnoise_Aug25.hdf"
 
 
-### NEXT RUNS ###
-# 1. BEST on different seed - MUCK
+class Vitelotte_FixedDataset_Aug25_AlltheSignals(SageNetOTF):
+
+    """ Data storage """
+    name = "Vitelotte_FixedDataset_Aug25_AlltheSignals"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    batchshuffle_noise = True
+    
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = None,
+        noise  = None,
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentPolSky(),
+                    AugmentOptimalNetworkSNR(rescale=True, use_uniform=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=None,
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM_legacy
+
+    model_params = dict(
+        # Resnet50
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = torch.device("cuda:2"),
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+    )
+    
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Storage Devices """
+    store_device = torch.device("cuda:2")
+    train_device = torch.device("cuda:2")
+
+    # Run device for testing phase
+    testing_device = torch.device("cuda:2")
+
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_Vitelotte_FixedDataset_Aug25_AlltheSignals.hdf"
+    test_background_output = "testing_boutput_Vitelotte_FixedDataset_Aug25_AlltheSignals.hdf"
+
+
+
+### BEST with Annealing (RUNNING) ###
+
+class Kennebec_Annealed_from_BEST(SageNetOTF):
+
+    # Hopefully we can keep both noise rejection capabilities and unbiased representation
+
+    """ Data storage """
+    name = "Kennebec_Annealed_training_Sept11"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    # Weights for testing
+    resume_from_checkpoint = True
+    checkpoint_path = './WEIGHTS/checkpoint_BEST_June_for_annealing.pt'
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         debug_me = False
+                                        ),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
+                                ),
+                    },
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
+                                                            L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                                                        ),
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    paux = 0.689, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM_legacy
+
+    model_params = dict(
+        # Resnet50
+        filter_size = 32,
+        kernel_size = 64,
+        resnet_size = 50,
+        store_device = torch.device("cuda:0"),
+        parameter_estimation = ('norm_tc', 'norm_mchirp', )
+    )
+
+    """ Storage Devices """
+    store_device = torch.device("cuda:0")
+    train_device = torch.device("cuda:0")
+
+    # Run device for testing phase
+    testing_device = torch.device("cuda:0")
+    
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    test_foreground_output = "testing_foutput_annealed_training_from_BEST.hdf"    
+    test_background_output = "testing_boutput_annealed_training_from_BEST.hdf"
+
+
+
+### NORLAND D3 on BEST settings ###
+
+class Norland_D3_BEST_settings(SageNetOTF):
+    # Running D3 on template placement metric
+    # Due to the abscence of blip glitches sensitivitiy should not suffer
+    # PSD distribution should match exactly between train and test
+
+    """ Data storage """
+    name = "Norland_D3_BEST_settings_Sept11"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         debug_me = False
+                                        ),
+                ]),
+        noise  = UnifyNoiseGen({
+                    'training': ColouredNoiseGenerator(psds_dir=os.path.join(repo_abspath, "data/psds")),
+                    'validation': ColouredNoiseGenerator(psds_dir=os.path.join(repo_abspath, "data/psds")),
+                    },
+                )
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=None,
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+    
+    """ Architecture """
+    model = Rigatoni_MS_ResNetCBAM
+
+    # Following options available for pe point estimate
+    # 'norm_tc', 'norm_dchirp', 'norm_mchirp', 
+    # 'norm_dist', 'norm_q', 'norm_invq', 'norm_snr'
+    model_params = dict(
+        scales = [1, 2, 4, 0.5, 0.25],
+        blocks = [
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock], 
+            [MultiScaleBlock, MultiScaleBlock]
+        ],
+        out_channels = [[32, 32], [64, 64], [128, 128]],
+        base_kernel_sizes = [
+            [64, 64 // 2 + 1], 
+            [64 // 2 + 1, 64 // 4 + 1], 
+            [64 // 4 + 1, 64 // 4 + 1]
+        ], 
+        compression_factor = [8, 4, 0],
+        in_channels = 1,
+        resnet_size = 50,
+        parameter_estimation = ('norm_tc', 'norm_mchirp', ),
+        norm_layer = 'instancenorm',
+        store_device = torch.device('cuda'),
+        review = False
+    )
+
+    """ Storage Devices """
+    store_device = torch.device('cuda')
+    train_device = torch.device('cuda')
+
+    # Run device for testing phase
+    testing_device = torch.device('cuda')
+    
+    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d3"
+    test_foreground_output = "testing_foutput_D3_SageNet_BEST_settings.hdf"    
+    test_background_output = "testing_boutput_D3_SageNet_BEST_settings.hdf"
