@@ -124,7 +124,7 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
     """ Default Checkpointing """    
     # Resume training by loading a checkpoint file
     if cfg.resume_from_checkpoint:
-        checkpoint = torch.load(cfg.checkpoint_path)
+        checkpoint = torch.load(cfg.checkpoint_path, map_location=cfg.train_device)
         Network.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     else:
