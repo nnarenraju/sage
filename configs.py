@@ -2536,7 +2536,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept7_run2"
+    name = "MetricLatest_1epoch_validation_Sept7_run3"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2551,7 +2551,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_4.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_9.pt'
 
     """ Generation """
     # Augmentation using GWSPY glitches happens only during training (not for validation)
@@ -2630,7 +2630,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = torch.device("cuda:2"),
+        store_device = torch.device("cuda:0"),
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
 
@@ -2643,11 +2643,11 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
     num_epochs = 1
     
     """ Storage Devices """
-    store_device = torch.device("cuda:2")
-    train_device = torch.device("cuda:2")
+    store_device = torch.device("cuda:0")
+    train_device = torch.device("cuda:0")
 
     # Run device for testing phase
-    testing_device = torch.device("cuda:2")
+    testing_device = torch.device("cuda:0")
 
 
 
