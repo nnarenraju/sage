@@ -3034,7 +3034,7 @@ class Validate_1epoch_D3(SageNetOTF):
 class Validate_1epoch_D4_BEST(SageNetOTF):
 
     """ Data storage """
-    name = "Dataset4_1epoch_validation_Sept11_BEST"
+    name = "Dataset4_1epoch_validation_Sept12_BEST"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
