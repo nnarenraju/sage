@@ -1512,7 +1512,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     model_params = dict(
         # Resnet50
         resnet_size = 50,
-        store_device = 'cuda:1',
+        store_device = 'cuda:2',
         parameter_estimation = ('norm_tc', 'norm_mchirp', ),
     )
     
@@ -1523,15 +1523,15 @@ class Vitelotte_FixedDataset(SageNetOTF):
     persistent_workers = True
 
     """ Storage Devices """
-    store_device = 'cuda:1'
-    train_device = 'cuda:1'
+    store_device = 'cuda:2'
+    train_device = 'cuda:2'
 
     # Run device for testing phase
-    testing_device = 'cuda:1'
+    testing_device = 'cuda:2'
 
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
-    test_foreground_output = "testing_foutput_fixed_dataset_smallnet.hdf"
-    test_background_output = "testing_boutput_fixed_dataset_smallnet.hdf"
+    test_foreground_output = "testing_foutput_fixed_dataset_smallnet_Sept12.hdf"
+    test_background_output = "testing_boutput_fixed_dataset_smallnet_Sept12.hdf"
 
 
 # ABLATION - All the noise, limited signals (RUNNING)
