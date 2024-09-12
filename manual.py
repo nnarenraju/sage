@@ -962,13 +962,9 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
 
 
                 if nep % cfg.validation_plot_freq == 0:
-
+                    
                     """ ROC Curve save data """
                     roc_auc, fpr, tpr = roc_curve(nep, epoch_outputs['gw'], epoch_labels['gw'], export_dir)
-                    
-                    """ Confusion Matrix and FPR,TPR,FNR,TNR Evolution """
-                    # Confusion matrix and rate evolution plots have been deprecated as of June 10, 2022
-                    # Confusion matrix and rate evolution plots have been reinstated as of May 09, 2023
 
                     """ Prediction Probabilitiy OR Raw Value histograms  """
                     low_far_nsignals = prediction_raw(nep, raw_output, epoch_labels['gw'], export_dir)
@@ -987,8 +983,6 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                     """ Param Fraction Plot """
                     paramfrac_detected_above_thresh(cfg, export_dir, raw_output, epoch_labels['gw'], sample_params, nep)
                     
-                    """ Efficiency Curves """
-                    # efficiency_curves(nep, sample_params, epoch_outputs['gw'], epoch_labels['gw'], save_name='efficiency_validation', export_dir=export_dir)
 
             # 1 epoch validation
             if validate_1epoch:
@@ -1011,51 +1005,61 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                         dataset_name = 'sample_params'+key
                         ds.create_dataset(dataset_name, data=sample_params[key], compression='gzip', 
                                         compression_opts=9, shuffle=True)
-                
-                return Network
 
             
-            ### Auxiliary validation set checks
-            aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
-            aux_val_batches = 1
-            """
-            print('\nAUX validation phase')
-            with torch.no_grad():
+            if validate_1epoch:
+                ### Auxiliary validation set checks
                 aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
-                for cf in range(4):
-                    # Change AUX label in dataloader
-                    cflag.value = cf
-
-                    # Update validation loss dict
-                    aux_val_batches = 1
-
-                    print('AUX validation dataset {}'.format(cf))
-                    pbar = tqdm(auxDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
-                    for nbatch, (aux_samples, aux_labels, source_params) in enumerate(pbar):
-                        
-                        # Set the device and dtype
-                        aux_samples = aux_samples.to(dtype=torch.float32, device=cfg.train_device)
-                        for key, value in aux_labels.items():
-                            aux_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
-                            
-                        # Call Validation Phase
-                        # Run training phase and get loss and accuracy
-                        aux_loss, accuracy, _ = validation_phase(nep, cfg, data_cfg, Network, 
-                                                                 loss_function,
-                                                                 aux_samples, 
-                                                                 aux_labels, source_params,
-                                                                 optional, export_dir)
-
-                        # Display stuff
-                        loss = np.around(aux_loss['total_loss'].clone().cpu().item(), 8)
-                        pbar.set_description("AUX Epoch {}, batch {} - loss = {}".format(nep, aux_val_batches, loss))
-                        
-                        # Update losses and accuracy
-                        aux_val_batches+=1
-                        aux_val_running_loss['aux_{}'.format(cf)] += aux_loss['gw'].clone().cpu().item()
+                aux_val_batches = 1
                 
-                cflag.value = -1
-            """
+                print('\nAUX validation phase')
+                with torch.no_grad():
+                    aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
+                    for cf in range(4):
+                        # Change AUX label in dataloader
+                        cflag.value = cf
+
+                        # Update validation loss dict
+                        aux_val_batches = 1
+
+                        print('AUX validation dataset {}'.format(cf))
+                        pbar = tqdm(auxDL, bar_format='{l_bar}{bar:50}{r_bar}{bar:-10b}', position=0, leave=True)
+                        for nbatch, (aux_samples, aux_labels, source_params) in enumerate(pbar):
+                            
+                            # Set the device and dtype
+                            aux_samples = aux_samples.to(dtype=torch.float32, device=cfg.train_device)
+                            for key, value in aux_labels.items():
+                                aux_labels[key] = value.to(dtype=torch.float32, device=cfg.train_device)
+                                
+                            # Call Validation Phase
+                            # Run training phase and get loss and accuracy
+                            aux_loss, accuracy, _ = validation_phase(nep, cfg, data_cfg, Network, 
+                                                                    loss_function,
+                                                                    aux_samples, 
+                                                                    aux_labels, source_params,
+                                                                    optional, export_dir)
+
+                            # Display stuff
+                            loss = np.around(aux_loss['total_loss'].clone().cpu().item(), 8)
+                            pbar.set_description("AUX Epoch {}, batch {} - loss = {}".format(nep, aux_val_batches, loss))
+                            
+                            # Update losses and accuracy
+                            aux_val_batches+=1
+                            aux_val_running_loss['aux_{}'.format(cf)] += aux_loss['gw'].clone().cpu().item()
+                    
+                    cflag.value = -1
+                
+                aux_0 = np.around(aux_val_running_loss['aux_0']/aux_val_batches, 8)
+                aux_1 = np.around(aux_val_running_loss['aux_1']/aux_val_batches, 8)
+                aux_2 = np.around(aux_val_running_loss['aux_2']/aux_val_batches, 8)
+                aux_3 = np.around(aux_val_running_loss['aux_3']/aux_val_batches, 8)
+
+                aux_losses = [aux_0, aux_1, aux_2, aux_3]
+                np.save("./aux_losses.npy", aux_losses)
+
+                return Network
+
+
 
 
             """
