@@ -356,6 +356,24 @@ class MinimalOTF(Dataset):
                     mchirp_lower = 25.0
                 mass1, mass2, q, mchirp, _ = self.bprior.get_bounded_gwparams_from_uniform_mchirp_given_limits(mchirp_lower, mchirp_upper)
 
+                # Distance and chirp distance
+                chirp_distance_distr = UniformRadius(distance=(self.data_cfg.prior_low_chirp_dist, 
+                                                            self.data_cfg.prior_high_chirp_dist))
+                dchirp = np.asarray([chirp_distance_distr.rvs()[0][0] for _ in range(1)])
+            
+                # Get distance from chirp distance and chirp mass
+                distance = self._dist_from_dchirp(dchirp, mchirp)
+
+                ## Update Priors
+                priors['q'] = q
+                priors['mchirp'] = mchirp
+                priors['mass1'] = mass1
+                priors['mass2'] = mass2
+                priors['chirp_distance'] = dchirp
+                priors['distance'] = distance
+
+                return priors
+
             # Pick the modification based on probability provided
             # Sum of probabilities must sum to 1
             current_probabilities = [self.modprobs[foo][self.epoch.value] for foo in self.data_cfg.modification]
