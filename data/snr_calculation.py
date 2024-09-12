@@ -23,6 +23,9 @@ Documentation: NULL
 
 """
 
+# Packages
+import numpy as np
+
 # PyCBC
 from pycbc.types import TimeSeries
 from pycbc.filter.matchedfilter import sigmasq
