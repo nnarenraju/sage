@@ -1475,7 +1475,7 @@ class MultipleFileRandomNoiseSlice():
         self.lengths = {}
         for name in noise_dirs.keys():
             self.noise_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(noise_dirs[name], "*.hdf"))]
-            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise_deimos.npy".format(name)) # _deimos
+            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise.npy".format(name)) # _deimos
 
     def pick_noise_file(self, det):
         # Pick a noise file for each detector
