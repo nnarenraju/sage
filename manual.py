@@ -1055,7 +1055,7 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                 aux_3 = np.around(aux_val_running_loss['aux_3']/aux_val_batches, 8)
 
                 aux_losses = [aux_0, aux_1, aux_2, aux_3]
-                np.save("./aux_losses.npy", aux_losses)
+                np.save("./aux_losses_{}.npy".format(cfg.export_dir), aux_losses)
 
                 return Network
 
