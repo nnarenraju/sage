@@ -272,7 +272,7 @@ class DefaultOTF:
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 500_000
+    num_validation_samples = 1000
     num_auxilliary_samples = 125_000
     
     """ Signal Params """
