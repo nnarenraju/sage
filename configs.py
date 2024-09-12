@@ -1529,7 +1529,7 @@ class Vitelotte_FixedDataset(SageNetOTF):
     # Run device for testing phase
     testing_device = 'cuda:2'
 
-    testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d4"
+    testing_dir = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
     test_foreground_output = "testing_foutput_fixed_dataset_smallnet_Sept12.hdf"
     test_background_output = "testing_boutput_fixed_dataset_smallnet_Sept12.hdf"
 
@@ -2536,7 +2536,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept7"
+    name = "MetricLatest_1epoch_validation_Sept7_run2"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2551,7 +2551,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = './WEIGHTS/weights_metric_latest_37.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_4.pt'
 
     """ Generation """
     # Augmentation using GWSPY glitches happens only during training (not for validation)
@@ -2630,7 +2630,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = torch.device("cuda:1"),
+        store_device = torch.device("cuda:2"),
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
 
@@ -2643,11 +2643,11 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
     num_epochs = 1
     
     """ Storage Devices """
-    store_device = torch.device("cuda:1")
-    train_device = torch.device("cuda:1")
+    store_device = torch.device("cuda:2")
+    train_device = torch.device("cuda:2")
 
     # Run device for testing phase
-    testing_device = torch.device("cuda:1")
+    testing_device = torch.device("cuda:2")
 
 
 
@@ -3620,3 +3620,9 @@ class Norland_D3_BEST_settings(SageNetOTF):
     testing_dir = "/home/nnarenraju/Research/ORChiD/test_data_d3"
     test_foreground_output = "testing_foutput_D3_SageNet_BEST_settings.hdf"    
     test_background_output = "testing_boutput_D3_SageNet_BEST_settings.hdf"
+
+
+
+### THE THINGS YOU DO FOR A GOOD PAPER ###
+
+
