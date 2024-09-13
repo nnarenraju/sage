@@ -2630,7 +2630,7 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
         filter_size = 32,
         kernel_size = 64,
         resnet_size = 50,
-        store_device = torch.device("cuda:0"),
+        store_device = torch.device("cuda:1"),
         parameter_estimation = ('norm_tc', 'norm_mchirp', )
     )
 
@@ -2643,11 +2643,11 @@ class Validate_1epoch_MetricDensity(SageNetOTF):
     num_epochs = 1
     
     """ Storage Devices """
-    store_device = torch.device("cuda:0")
-    train_device = torch.device("cuda:0")
+    store_device = torch.device("cuda:1")
+    train_device = torch.device("cuda:1")
 
     # Run device for testing phase
-    testing_device = torch.device("cuda:0")
+    testing_device = torch.device("cuda:1")
 
 
 
