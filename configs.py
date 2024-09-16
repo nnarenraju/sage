@@ -2645,7 +2645,7 @@ class Validate_1epoch_MetricDensity_1(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 8
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
@@ -2767,7 +2767,7 @@ class Validate_1epoch_MetricDensity_2(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 8
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
@@ -2889,7 +2889,7 @@ class Validate_1epoch_MetricDensity_3(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 8
+    num_workers = 16
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
