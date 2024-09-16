@@ -684,10 +684,10 @@ class MinimalOTF(Dataset):
         
         # Setting the unique seed for given sample
         if self.training:
-            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2*25)
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + self.cfg.seed_offset_train)
             fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1)
         elif not self.training:
-            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1 + 2**29) # 28 for all 1 epoch runs
+            unique_epoch_seed = int((self.epoch.value*self.total_samples_per_epoch) + idx+1  + self.cfg.seed_offset_valid) # 28 for all 1 epoch runs
             fixed_epoch_seed = int((self.total_samples_per_epoch) + idx+1 + 2**30)
 
         # Setting epoch number
