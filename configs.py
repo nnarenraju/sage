@@ -70,14 +70,14 @@ from data.datasets import MinimalOTF
 
 # Architectures
 from architectures.models import Rigatoni_MS_ResNetCBAM, Rigatoni_MS_ResNetCBAM_legacy
-from architectures.models import KappaModel_ResNet1D
+from architectures.models import KappaModel_ResNet1D, KappaModelPE
 from architectures.frontend import MultiScaleBlock
 
 # Transforms, augmentation and generation
 from data.transforms import Unify, UnifySignal, UnifyNoise, UnifySignalGen, UnifyNoiseGen
 from data.transforms import Whiten, MultirateSampling, Normalise, MonorateSampling
 from data.transforms import AugmentOptimalNetworkSNR, AugmentPolSky
-from data.transforms import Recolour
+from data.transforms import Recolour, HighPass
 from data.transforms import Buffer, BufferPerChannel
 # Generating signals and noise
 from data.transforms import FastGenerateWaveform, SinusoidGenerator
@@ -2544,7 +2544,7 @@ class Validate_1epoch_MetricDensity_1(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept16_run1_1"
+    name = "MetricLatest_1epoch_validation_Sept16_run6_1"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2559,7 +2559,7 @@ class Validate_1epoch_MetricDensity_1(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_0.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_24.pt'
     seed_offset_train = 2**28
     seed_offset_valid = 2**28
 
@@ -2645,7 +2645,7 @@ class Validate_1epoch_MetricDensity_1(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 16
+    num_workers = 8
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
@@ -2666,7 +2666,7 @@ class Validate_1epoch_MetricDensity_2(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept16_run1_2"
+    name = "MetricLatest_1epoch_validation_Sept16_run6_2"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2681,7 +2681,7 @@ class Validate_1epoch_MetricDensity_2(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_0.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_24.pt'
     seed_offset_train = 2**23
     seed_offset_valid = 2**23
 
@@ -2767,7 +2767,7 @@ class Validate_1epoch_MetricDensity_2(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 16
+    num_workers = 8
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
@@ -2788,7 +2788,7 @@ class Validate_1epoch_MetricDensity_3(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept16_run1_3"
+    name = "MetricLatest_1epoch_validation_Sept16_run6_3"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2803,7 +2803,7 @@ class Validate_1epoch_MetricDensity_3(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_0.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_24.pt'
     seed_offset_train = 2**16
     seed_offset_valid = 2**16
 
@@ -2889,7 +2889,7 @@ class Validate_1epoch_MetricDensity_3(SageNetOTF):
     )
 
     """ Dataloader params """
-    num_workers = 16
+    num_workers = 8
     pin_memory = True
     prefetch_factor = 8
     persistent_workers = True
@@ -3889,4 +3889,121 @@ class Norland_D3_BEST_settings(SageNetOTF):
 
 ### THE THINGS YOU DO FOR A GOOD PAPER ###
 
+class Testing_2023_Model(SageNetOTF):
+
+    """ Data storage """
+    name = "testing_2023_model_biased_lowmchirp"
+    export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
+    debug_dir = "./DEBUG"
+    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
+    repo_abspath = git_revparse.stdout.strip('\n')
+
+    """ Dataset """
+    dataset = MinimalOTF
+    dataset_params = dict()
+
+    # Weights for testing
+    pretrained = False
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/old_runs/KaggleFirst_Mar30_TRD4_lowmchirp_corrected/BEST/weights_loss.pt'
+
+    """ Generation """
+    # Augmentation using GWSPY glitches happens only during training (not for validation)
+    generation = dict(
+        signal = UnifySignalGen([
+                    FastGenerateWaveform(rwrap = 3.0, 
+                                         beta_taper = 8, 
+                                         pad_duration_estimate = 1.1, 
+                                         min_mass = 5.0, 
+                                         debug_me = False
+                                        ),
+                ]),
+
+        noise  = UnifyNoiseGen({
+                    'training': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=133, segment_ulimit=-1, debug_me=False
+                                ),
+                    'validation': RandomNoiseSlice(
+                                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
+                                    segment_llimit=0, segment_ulimit=132, debug_me=False
+                                ),
+                    },
+                    MultipleFileRandomNoiseSlice(noise_dirs=dict(
+                                                            H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                                                            L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
+                                                        ),
+                                                 debug_me=False,
+                                                 debug_dir=""
+                    ),
+                    paux = 0.689, # 113/164 days for extra O3b noise
+                    debug_me=False,
+                    debug_dir=os.path.join(debug_dir, 'NoiseGen')
+                )
+    )
+
+    """ Transforms """
+    transforms = dict(
+        signal=UnifySignal([
+                    AugmentOptimalNetworkSNR(rescale=True, use_halfnorm=True, snr_lower_limit=5.0, snr_upper_limit=15.0),
+                ]),
+        noise=UnifyNoise([
+                    Recolour(use_precomputed=True, 
+                             h1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"),
+                             l1_psds_hdf=os.path.join(repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"),
+                             p_recolour=0.3829,
+                             debug_me=False,
+                             debug_dir=os.path.join(debug_dir, 'Recolour')),
+                ]),
+        train=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        test=Unify({
+                    'stage1':[
+                            Whiten(trunc_method='hann', remove_corrupted=True, estimated=False),
+                    ],
+                    'stage2':[
+                            HighPass(lower=20.0, fs=2048., order=6),
+                            Normalise(ignore_factors=True),
+                            MultirateSampling(),
+                    ],
+                }),
+        target=None
+    )
+
+    """ Architecture """
+    model = KappaModelPE
+    
+    model_params = dict(
+        # Kaggle frontend+backend
+        # This model is ridiculously slow on cpu, use cuda
+        model_name = 'KaggleFirstPEJun9', 
+        filter_size = 32,
+        kernel_size = 64,
+        timm_params = {'model_name': 'resnet34', 
+                        'pretrained': True, 
+                        'in_chans': 2, 
+                        'drop_rate': 0.25},
+        store_device = 'cuda:2',
+    )
+
+    """ Dataloader params """
+    num_workers = 16
+    pin_memory = True
+    prefetch_factor = 8
+    persistent_workers = True
+
+    num_epochs = 1
+    
+    """ Storage Devices """
+    store_device = torch.device("cuda:2")
+    train_device = torch.device("cuda:2")
+
+    # Run device for testing phase
+    testing_device = torch.device("cuda:2")
 
