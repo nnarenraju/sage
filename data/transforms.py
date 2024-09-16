@@ -1607,6 +1607,7 @@ class RandomNoiseSlice():
     
     def get_segment_choice(self, seed):
         # Get one choice from seg_idx based on probalities obtained from seg durations
+        np.random.seed(seed) # ------------------------------------------------------------------------------ REMOVE THIS!!!
         return np.random.choice(self.seg_idx, 1, p=self.segprob)[0]
 
     def _load_segments(self):
@@ -1687,6 +1688,7 @@ class RandomNoiseSlice():
     
     def _make_sample_start_time(self, seg_start_idx, seg_end_idx, seed):
         # Make a sample start time that is uniformly distributed within segdur
+        np.random.seed(seed) # ---------------------------------------------------------------------------- REMOVE THIS!!!
         return int(np.random.uniform(low=seg_start_idx, high=seg_end_idx))
 
     def get_noise_segment(self, special, segdeets, det_only, recolour):
