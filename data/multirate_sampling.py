@@ -465,7 +465,11 @@ def multirate_sampling(signal, data_cfg, check=False):
     elif isinstance(data_cfg.corrupted_len, int):
         lcorrupted_len = data_cfg.corrupted_len
         rcorrupted_len = data_cfg.corrupted_len
-    multirate_signal = multirate_signal[lcorrupted_len:-1*rcorrupted_len]
+    
+    if lcorrupted_len != 0 and rcorrupted_len != 0:
+        multirate_signal = multirate_signal[lcorrupted_len:-1*rcorrupted_len]
+    else:
+        multirate_signal = multirate_signal
 
     if check:
         return None, None
