@@ -1045,3 +1045,208 @@ class SigmaModel(torch.nn.Module):
                 'norm_q_sigma': q_var, 'norm_invq_sigma': invq_var, 'norm_dist_sigma': dist_var,
                 'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed}
 
+
+@unreviewed_model
+class KappaModelPE(torch.nn.Module):
+    """
+    Kappa-type Model PE Architecture
+    
+    Description - consists of a 2-channel ConvBlock backend and a Timm model frontend
+                  this Model-type can be used to test the Kaggle architectures
+    
+    Parameters
+    ----------
+    model_name  = 'simple' : string
+        Simple NN model name for Frontend. Save model with this name as attribute.
+    pretrained  = False : Bool
+        Pretrained option for saved models
+        If True, weights are stored under the model_name in saved_models dir
+        If model name already exists, throws an error (safety)
+    in_channels = 2 : int
+        Number of input channels (number of detectors)
+    out_channels = 2 : int
+        Number of output channels (signal, noise)
+    store_device = 'cpu' : str
+        Storage device for network (NOTE: make sure data is also stored in the same device)
+    weights_path = '' : str
+        Absolute path to the weights.pt file. Used when pretrained == True
+        
+    """
+
+    def __init__(self, 
+                 model_name='trainable_backend_and_frontend', 
+                 filter_size: int = 32,
+                 kernel_size: int = 64,
+                 timm_params: dict = {'model_name': 'resnet34', 'pretrained': True, 'in_chans': 2, 'drop_rate': 0.25},
+                 norm_layer: str = 'layernorm',
+                 store_device: str = 'cpu',
+                 **kwargs):
+        
+        super().__init__()
+        
+        self.model_name = model_name
+        self.store_device = store_device
+        self.timm_params = timm_params
+        self.filter_size = filter_size
+        self.kernel_size = kernel_size
+        self.norm_layer = norm_layer
+        
+        """ Backend """
+        # filters_start=16, kernel_start=32 --> 1.3 Mil. trainable params backend
+        # filters_start=32, kernel_start=64 --> 9.6 Mil. trainable params backend
+        self._det1 = ConvBlock(self.filter_size, self.kernel_size)
+        self._det2 = ConvBlock(self.filter_size, self.kernel_size)
+        _initialize_weights(self)
+        
+        """ Frontend """
+        # resnet34 --> 21 Mil. trainable params trainable frontend
+        self.frontend = timm.create_model(**timm_params)
+        
+        """ Mods """
+        # Primary outputs
+        self.signal_or_noise = nn.Linear(self.frontend.num_features, 1)
+        self.coalescence_time = nn.Linear(self.frontend.num_features, 2)
+        self.chirp_distance = nn.Linear(self.frontend.num_features, 1)
+        self.chirp_mass = nn.Linear(self.frontend.num_features, 2)
+        self.distance = nn.Linear(self.frontend.num_features, 1)
+        self.mass_ratio = nn.Linear(self.frontend.num_features, 1)
+        self.inv_mass_ratio = nn.Linear(self.frontend.num_features, 1)
+        self.snr = nn.Linear(self.frontend.num_features, 2)
+        # Manipulation layers
+        self.avg_pool_2d = nn.AdaptiveAvgPool2d((1, 1))
+        self.batchnorm = nn.BatchNorm1d(2)
+        self.dain = DAIN_Layer(mode='full', input_dim=2)
+        self.layernorm = nn.LayerNorm([2, 5830])
+        self.layernorm_cnn = nn.LayerNorm([2, 128, 182])
+        self.avg_pool_1d = nn.AdaptiveAvgPool1d(self.frontend.num_features)
+        self.flatten_d1 = nn.Flatten(start_dim=1)
+        self.flatten_d0 = nn.Flatten(start_dim=0)
+        self.dropout = nn.Dropout(0.25)
+        self.sigmoid = torch.nn.Sigmoid()
+        self.softmax = torch.nn.Softmax(dim=1)
+        self.ReLU = nn.ReLU()
+        
+        ## Convert network into given dtype and store in proper device
+        # Manipulation layers
+        self.batchnorm.to(dtype=data_type, device=self.store_device)
+        self.dain.to(dtype=data_type, device=self.store_device)
+        self.layernorm.to(dtype=data_type, device=self.store_device)
+        self.layernorm_cnn.to(dtype=data_type, device=self.store_device)
+        # Mod layers
+        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
+        self.coalescence_time.to(dtype=data_type, device=self.store_device)
+        self.chirp_distance.to(dtype=data_type, device=self.store_device)
+        self.chirp_mass.to(dtype=data_type, device=self.store_device)
+        self.distance.to(dtype=data_type, device=self.store_device)
+        self.mass_ratio.to(dtype=data_type, device=self.store_device)
+        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
+        self.snr.to(dtype=data_type, device=self.store_device)
+        # Main layers
+        self._det1.to(dtype=data_type, device=self.store_device)
+        self._det2.to(dtype=data_type, device=self.store_device)
+        self.backend = {'det1': self._det1, 'det2': self._det2}
+        self.frontend.to(dtype=data_type, device=self.store_device)
+    
+    # x.shape: (batch size, wave channel, length of wave)
+    def forward(self, x):
+        # batch_size, channel, signal_length = s.shape
+        if self.norm_layer == 'batchnorm':
+            normed = self.batchnorm(x)
+        elif self.norm_layer == 'dain':
+            normed, gate = self.dain(x)
+        elif self.norm_layer == 'layernorm':
+            normed = self.layernorm(x)
+        
+        # Data quality flag and veto of bad segments
+        # [(0, 3342), (3342, 4485), (4485, 4705), (4705, 5729), (5729, 5838)]
+        # ref = normed[:, :, 3697: -128]
+
+        """
+        segments = [(0, 1000), (1000, 2000), (2000, 3000), (3000, 4000), (4000, 4697), (-100, -1)]
+        for n, (sidx, eidx) in enumerate(segments):
+            # Each chunk should be of a different sampling rate
+            # Alpha should vary as [0.0, 1.0]
+            # We don't use the hqual chunk as alpha = 1.0 in that chunk always
+            chunk = normed[:, :, sidx: eidx]
+            cmin = ref.min(dim=2).values.reshape(32, 2, 1)
+            cmax = ref.max(dim=2).values.reshape(32, 2, 1)
+            chunk = (chunk - cmin) / (cmax - cmin)
+            mean = torch.mean(chunk, dim=2)
+            mean = torch.reshape(mean, (32, 2, 1))
+            diffs = chunk - mean # (32, 2, 1000)
+            var = torch.mean(torch.pow(diffs, 2.0), dim=2)
+            var = torch.reshape(var, (32, 2, 1))
+            std = torch.pow(var, 0.5)
+            zscores = diffs / std
+            kurtoses = torch.mean(torch.pow(zscores, 4.0), dim=2) - 3.0
+            # veto = self.glitch_veto_simple[n](chunk)
+            # veto = self.glitch_veto_kurtosis(kurtosis)
+            for n, kurt in enumerate(kurtoses):
+                if abs(kurt[0] - kurt[1]) > 1.0:
+                    normed[n, :, sidx: eidx] = torch.tanh(normed[n, :, sidx: eidx])
+
+            # alpha = torch.reshape(veto['pred_prob'], (32, 2, 1))
+            # This is meant to downplay any chunks that impede with classification
+            # normed[:, :, sidx: eidx] *= alpha
+        """
+
+        # Applying a tanh function to the normed input
+        # cmin = ref.min(dim=2).values.reshape(32, 2, 1)
+        # cmax = ref.max(dim=2).values.reshape(32, 2, 1)
+        # normed = (normed - cmin) / (cmax - cmin)
+        # normed = torch.tanh(normed)
+        # normed = self.layernorm(normed)
+        
+        # Conv Backend
+        cnn_output = torch.cat([self.backend['det1'](normed[:, 0:1]), self.backend['det2'](normed[:, 1:2])], dim=1)
+        # Apply LayerNorm to CNN output before passing to ResNet
+        cnn_output = self.layernorm_cnn(cnn_output)
+        
+        """
+        # TODO: Experimental cwt input
+        # Get the CWT of the input sample and attach it to the cnn_output before resnet section
+        # cnn_output is (32, 2, 128, 182)
+        widths = np.arange(1, cnn_output[0][0].shape[0]+1)
+        
+        cwt_output = []
+        for n, sample in enumerate(x):
+            det1, det2 = sample
+            det1 = det1.detach().cpu().numpy()
+            det2 = det2.detach().cpu().numpy()
+            cwt_H1 = torch.from_numpy(signal.cwt(det1, signal.ricker, widths))
+            cwt_L1 = torch.from_numpy(signal.cwt(det2, signal.ricker, widths))
+            cwt_H1 = cwt_H1.to(torch.device('cuda:1'), dtype=torch.float32)
+            cwt_L1 = cwt_L1.to(torch.device('cuda:1'), dtype=torch.float32)
+            cwt_output_tmp = torch.stack((cwt_H1, cwt_L1))
+            cwt_output.append(cwt_output_tmp)
+
+        cwt_output = torch.stack(cwt_output)
+        cwt_output.to(torch.device('cuda:1'), dtype=torch.float32)
+        cwt_cnn_output = torch.cat([cnn_output, cwt_output], dim=3)
+        """ 
+        
+        # Timm Frontend
+        out = self.frontend(cnn_output) # (batch_size, 1000) by default
+        ## Manipulate encoder output to get params
+        # Global Pool
+        out = self.flatten_d1(self.avg_pool_1d(out))
+        # In the Kaggle architecture a dropout is added at this point
+        # I see no reason to include at this stage. But we can experiment.
+        ## Output necessary params
+        raw = self.flatten_d0(self.signal_or_noise(out))
+        pred_prob = self.sigmoid(raw)
+        # Parameter Estimation
+        tc = self.flatten_d0(self.sigmoid(self.coalescence_time(out)))
+        dchirp = self.flatten_d0(self.sigmoid(self.chirp_distance(out)))
+        mchirp = self.flatten_d0(self.sigmoid(self.chirp_mass(out)))
+        dist = self.flatten_d0(self.sigmoid(self.distance(out)))
+        q = self.flatten_d0(self.sigmoid(self.mass_ratio(out)))
+        invq = self.flatten_d0(self.sigmoid(self.inv_mass_ratio(out)))
+        raw_snr = self.flatten_d0(self.snr(out))
+        snr = self.sigmoid(raw_snr)
+        
+        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
+        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
+                'norm_tc': tc, 'norm_dchirp': dchirp, 'norm_mchirp': mchirp,
+                'norm_dist': dist, 'norm_q': q, 'norm_invq': invq, 'norm_snr': snr,
+                'raw_snr': raw_snr, 'input': x, 'normed': normed}
