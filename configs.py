@@ -2544,7 +2544,7 @@ class Validate_1epoch_MetricDensity_1(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept16_run6_1"
+    name = "MetricLatest_1epoch_validation_Sept16_run9_1"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2559,7 +2559,7 @@ class Validate_1epoch_MetricDensity_1(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_24.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_39.pt'
     seed_offset_train = 2**28
     seed_offset_valid = 2**28
 
@@ -2666,7 +2666,7 @@ class Validate_1epoch_MetricDensity_2(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept16_run6_2"
+    name = "MetricLatest_1epoch_validation_Sept16_run9_2"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2681,7 +2681,7 @@ class Validate_1epoch_MetricDensity_2(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_24.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_39.pt'
     seed_offset_train = 2**23
     seed_offset_valid = 2**23
 
@@ -2788,7 +2788,7 @@ class Validate_1epoch_MetricDensity_3(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "MetricLatest_1epoch_validation_Sept16_run6_3"
+    name = "MetricLatest_1epoch_validation_Sept16_run9_3"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2803,7 +2803,7 @@ class Validate_1epoch_MetricDensity_3(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_24.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/recent_runs/SageNet50_metric_density_Jun26/BEST/weights_low_far_nsignals_39.pt'
     seed_offset_train = 2**16
     seed_offset_valid = 2**16
 
