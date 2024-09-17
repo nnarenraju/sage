@@ -2546,7 +2546,7 @@ class Validate_1epoch_D3_job1(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "Dataset3_1epoch_validation_Sept17_run1_1"
+    name = "Dataset3_1epoch_validation_Sept17_run2_1"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2561,7 +2561,7 @@ class Validate_1epoch_D3_job1(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/Norland_D3_template_placement_metric_Jul26/BEST/weights_low_far_nsignals_0.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/Norland_D3_template_placement_metric_Jul26/BEST/weights_low_far_nsignals_4.pt'
     seed_offset_train = 2**16
     seed_offset_valid = 2**16
 
@@ -2662,7 +2662,7 @@ class Validate_1epoch_D3_job2(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "Dataset3_1epoch_validation_Sept17_run1_2"
+    name = "Dataset3_1epoch_validation_Sept17_run2_2"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2677,7 +2677,7 @@ class Validate_1epoch_D3_job2(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/Norland_D3_template_placement_metric_Jul26/BEST/weights_low_far_nsignals_0.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/Norland_D3_template_placement_metric_Jul26/BEST/weights_low_far_nsignals_4.pt'
     seed_offset_train = 2**23
     seed_offset_valid = 2**23
 
@@ -2778,7 +2778,7 @@ class Validate_1epoch_D3_job3(SageNetOTF):
     # 2. SNR halfnorm (**VARIATION**)
 
     """ Data storage """
-    name = "Dataset3_1epoch_validation_Sept17_run1_3"
+    name = "Dataset3_1epoch_validation_Sept17_run2_3"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
@@ -2793,7 +2793,7 @@ class Validate_1epoch_D3_job3(SageNetOTF):
 
     # Weights for testing
     pretrained = True
-    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/Norland_D3_template_placement_metric_Jul26/BEST/weights_low_far_nsignals_0.pt'
+    weights_path = '/home/nnarenraju/Research/ORChiD/RUNS/Norland_D3_template_placement_metric_Jul26/BEST/weights_low_far_nsignals_4.pt'
     seed_offset_train = 2**29
     seed_offset_valid = 2**29
 
