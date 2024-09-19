@@ -524,12 +524,16 @@ if __name__ == "__main__":
     
     # Set the optimal weights to network
     weights_path = os.path.join(check_dir, cfg.weights_path)
+    print('Using weights = {}'.format(weights_path))
     Network = cfg.model(**cfg.model_params)
     ## Error (unsolved): CUDA out of memory when loading weights 
     ## Work-around: mapping weights to CPU before loading into GPU
     # Refer: https://discuss.pytorch.org/t/cuda-error-out-of-memory-when-load-models/38011/3
     checkpoint = torch.load(weights_path, map_location='cpu')
-    Network.load_state_dict(checkpoint['model_state_dict'])
+    try:
+        Network.load_state_dict(checkpoint['model_state_dict'])
+    except:
+        Network.load_state_dict(checkpoint)
 
     # Try to use multiple GPUs using DataParallel
     # Network = torch.nn.DataParallel(Network)
