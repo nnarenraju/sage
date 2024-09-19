@@ -3424,6 +3424,8 @@ class Kennebec_Annealed_from_BEST(SageNetOTF):
     resume_from_checkpoint = True
     checkpoint_path = './WEIGHTS/checkpoint_BEST_June_for_annealing.pt'
 
+    weights_path = "weights_low_far_nsignals_79.pt"
+
     """ Generation """
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
