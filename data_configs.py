@@ -272,7 +272,7 @@ class DefaultOTF:
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 1000
+    num_validation_samples = 100_000
     num_auxilliary_samples = 125_000
     
     """ Signal Params """
@@ -323,11 +323,11 @@ class DefaultOTF:
     #                 'bounded_plmc', 'bounded_pltau', 'template_placement_metric', 'bounded_umcq',
     #                 'bounded_um1m2')
     # NOTE: Set to None if not required
-    modification = [None]
+    modification = [None, 'template_placement_metric']
     # modification = [None]
     # Both start and end list must sum to 1
-    mod_start_probability = [1.0]
-    mod_end_probability = [1.0]
+    mod_start_probability = [1.0, 0.0]
+    mod_end_probability = [0.0, 1.0]
     # Annealing is done linear between start and end prob
     # Feature creep: Other functions can be used to move from start to end
     # Annealing is done within the given epoch numbers
