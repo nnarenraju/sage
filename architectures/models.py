@@ -38,7 +38,7 @@ from architectures.zoo.res2net_v1b import res2net101_v1b_26w_4s, res2net50_v1b_2
 from architectures.zoo.osnet1d import osnet_ain_custom as osnet1d
 from architectures.zoo.kaggle import ConvBlock, _initialize_weights
 from architectures.frontend import MSFeatureExtractor, MultiScaleBlock
-from architectures.zoo.resnet1d import resnet50, resnet101
+from architectures.zoo.resnet1d import resnet50, resnet101, resnet152
 
 # Code Review
 from utils.decorators import unreviewed_model
@@ -786,6 +786,8 @@ class KappaModel_ResNet1D(torch.nn.Module):
             self.resnet = resnet50(num_classes=512)
         elif resnet_size == 101:
             self.resnet = resnet101(num_classes=512)
+        elif resnet_size == 152:
+            self.resnet = resnet152(num_classes=512)
         
         """ Mods """
         # Manipulation layers
