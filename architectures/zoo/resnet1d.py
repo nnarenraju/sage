@@ -282,3 +282,9 @@ def resnet50(num_classes=512, **kwargs: Any) -> ResNet1D:
 def resnet101(num_classes=512, **kwargs: Any) -> ResNet1D:
     """ 1D version of ResNet-101 from Deep Residual Learning for Image Recognition <https://arxiv.org/abs/1512.03385> """
     return _resnet(Bottleneck, [3, 4, 23, 3], num_classes, **kwargs)
+
+
+def resnet152(num_classes=512, **kwargs: Any) -> ResNet1D:
+    """ 1D version of ResNet-152 from Deep Residual Learning for Image Recognition <https://arxiv.org/abs/1512.03385> """
+    return _resnet(Bottleneck, [3, 8, 36, 3], num_classes, **kwargs)
+    
