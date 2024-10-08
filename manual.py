@@ -1007,11 +1007,11 @@ def train(cfg, data_cfg, td, vd, Network, optimizer, scheduler, loss_function, t
                                         compression_opts=9, shuffle=True)
 
             
+            ### Auxiliary validation set checks
+            aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
+            aux_val_batches = 1
+
             if validate_1epoch:
-                ### Auxiliary validation set checks
-                aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
-                aux_val_batches = 1
-                
                 print('\nAUX validation phase')
                 with torch.no_grad():
                     aux_val_running_loss = {'aux_0': 0.0, 'aux_1': 0.0, 'aux_2': 0.0, 'aux_3': 0.0}
