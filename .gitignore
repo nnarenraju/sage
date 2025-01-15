@@ -171,3 +171,6 @@ tmp/segments.csv
 *.out
 *.log
 *.pickle
+
+# Do not ignore these files
+!requirements.txt
