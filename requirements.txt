@@ -1,0 +1,14 @@
+# requirements for most basic use
+pycbc>=2.4.0
+torch>=2.3.0
+statsmodels
+astropy>=2.0.3,!=4.2.1,!=4.0.5
+scipy>=0.16.0
+matplotlib>=2.0.0
+numpy>=1.16.0,!=1.19.0,<2.0.0
+h5py>=3.0.0,!=3.7.0
+lalsuite!=7.2
+tqdm
+corner 
+seaborn 
+scikit-learn
