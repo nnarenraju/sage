@@ -579,8 +579,7 @@ class SinusoidGenerator():
 
 
 class FastGenerateWaveform():
-    ## Used to augment on all parameters (uses GPU-accelerated IMRPhenomPv2 waveform generation)
-    ## Link to Ripple: https://github.com/tedwards2412/ripple
+    ## Used to augment on all parameters
     def __init__(self, 
                  rwrap = 3.0, 
                  beta_taper = 8, 
