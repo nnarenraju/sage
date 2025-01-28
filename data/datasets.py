@@ -491,7 +491,7 @@ class MinimalOTF(Dataset):
         return (waveform_kwargs, params)
 
 
-    def generate_data(self, target, seed):
+    def generate_data(self, target, seed, partial_signal=False):
         ## Generate waveform or read noise sample for D4
         # Target can be set using probablity of hypothesis
         targets = {}
@@ -511,6 +511,11 @@ class MinimalOTF(Dataset):
             # Parameter (time of coalescence, tc) is always set to 0.0 for Ripple to reproduce LAL
             # NOTE: All further manipulations assume this. Do not change this to any other value.
             waveform_kwargs, params = self.set_waveform_parameters(self.params.copy(), seed)
+            # Make a partial signal for non-astro samples
+            if partial_signal:
+                # NOTE (to future me): don't worry; targets['norm_tc'] will be removed in __getitem__
+                # This sample will be labelled as noise and will have targets that reflect this 
+                params['tc'] = np.random.uniform(low=0.1, high=11.9)
             ## Generate waveform sample
             sample = self.waveform_generation(waveform_kwargs, self.special)
             # Target params
@@ -731,13 +736,14 @@ class MinimalOTF(Dataset):
         self.special['sample_seed'] = seed
         # Generate sample / read sample
         if self.data_cfg.OTF:
-            # Timeslide mode is given x% of all samples
+            # Timeslide mode is given tsmode_probability of all samples
+            # So this mode should still maintain balance between normal signal and noise class samples
             if self.data_cfg.timeslide_mode:
                 make_nonastro_sample = 1 if np.random.rand() < self.data_cfg.tsmode_probability else 0
                 # Two modes: mode_1=(signal + signal') or mode_2=(signal + noise)
                 # Note: signal' need not be time coincident with signal.
                 # So tc and tc' can be different
-                non_astro_mode_select = 1 if np.random.rand() < 0.5 else 2
+                non_astro_mode_select = 1 if np.random.rand() < self.data_cfg.non_astro_mode_select_probability else 2
             else:
                 make_nonastro_sample = 0
 
@@ -755,11 +761,11 @@ class MinimalOTF(Dataset):
                     # We store both H1 and L1 for each sample for now
                     # After augmentation, we can remove the dummy samples
                     # Data now: [(H1, dummy_L1), (dummy_H1, L1)] --> [(H1, L1)]
-                    sample, targets, params = self.generate_data(1, seed=seed)
+                    sample, targets, params = self.generate_data(1, seed=seed, partial_signal=True)
                     noisy_sample_1, _ = self.preprocess(sample, targets, params, seed)
-                    # Make signal'
+                    # Make signal' (tc' should automatically be different from tc)
                     seed_dash = seed+np.random.randint(1, 2**32)
-                    sample, targets, params = self.generate_data(1, seed=seed_dash)
+                    sample, targets, params = self.generate_data(1, seed=seed_dash, partial_signal=True)
                     noisy_sample_2, _ = self.preprocess(sample, targets, params, seed_dash)
                     # Get required det samples from signal and signal'
                     noisy_sample = np.array([noisy_sample_1[0], noisy_sample_2[1]])
@@ -770,7 +776,7 @@ class MinimalOTF(Dataset):
                     # Choice for H1 and L1: (noise + signal) or (signal + noise)
                     noise_det_choice = 0 if np.random.rand() < 0.5 else 1
                     # Make signal sample
-                    sample, targets, params = self.generate_data(1, seed=seed)
+                    sample, targets, params = self.generate_data(1, seed=seed, partial_signal=True)
                     signal_sample, _ = self.preprocess(sample, targets, params, seed)
                     # Make noise sample (this could be from H1 or L1)
                     seed_dash = seed+np.random.randint(1, 2**32)
