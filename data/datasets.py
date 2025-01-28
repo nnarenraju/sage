@@ -680,6 +680,23 @@ class MinimalOTF(Dataset):
         return all_targets, source_params
     
 
+    def preprocess(self, sample, targets, params, seed):
+        ## Signal Augmentation
+        # Runs signal augmentation if sample is clean waveform
+        pure_sample, params = self._augmentation_(sample, targets['gw'], params, mode='signal')
+
+        ## Add noise realisation to the signals
+        noisy_sample, pure_noise = self._noise_realisation_(pure_sample, targets, seed)
+        
+        ## Noise Augmentation
+        if self.training:
+            # Runs noise augmentation only for pure noise samples
+            # TODO: var name noisy_sample might suggest that this is waveform + noise (fix this) 
+            noisy_sample, params = self._augmentation_(noisy_sample, targets['gw'], params, mode='noise')
+        
+        return (noisy_sample, params)
+
+
     def __getitem__(self, idx):
         
         # Setting the unique seed for given sample
@@ -709,11 +726,73 @@ class MinimalOTF(Dataset):
             raise ValueError('Seed options incorrect!')
 
         # Setting the seed for sample/iter
+        # TODO: debug the fixed seed mode
         seed = unique_epoch_seed
         self.special['sample_seed'] = seed
         # Generate sample / read sample
         if self.data_cfg.OTF:
-            sample, targets, params = self.generate_data(target, seed=seed)
+            # Timeslide mode is given x% of all samples
+            if self.data_cfg.timeslide_mode:
+                make_nonastro_sample = 1 if np.random.rand() < self.data_cfg.tsmode_probability else 0
+                # Two modes: mode_1=(signal + signal') or mode_2=(signal + noise)
+                # Note: signal' need not be time coincident with signal.
+                # So tc and tc' can be different
+                non_astro_mode_select = 1 if np.random.rand() < 0.5 else 2
+            else:
+                make_nonastro_sample = 0
+
+            if not make_nonastro_sample:
+                # Generate sample
+                sample, targets, params = self.generate_data(target, seed=seed)
+                # Signal/Noise class augmentation && add noise realisation (for signal class)
+                noisy_sample, params = self.preprocess(sample, targets, params, seed)
+            else:
+                # All non-astro samples {01, 10, 12} are labelled at noise in targets['gw']
+                # This will take unwanted network capacity and might reduce detection efficiency
+                # TODO: Search for alternate solutions
+                if non_astro_mode_select == 1:
+                    ## Make signal + signal'
+                    # We store both H1 and L1 for each sample for now
+                    # After augmentation, we can remove the dummy samples
+                    # Data now: [(H1, dummy_L1), (dummy_H1, L1)] --> [(H1, L1)]
+                    sample, targets, params = self.generate_data(1, seed=seed)
+                    noisy_sample_1, _ = self.preprocess(sample, targets, params, seed)
+                    # Make signal'
+                    seed_dash = seed+np.random.randint(1, 2**32)
+                    sample, targets, params = self.generate_data(1, seed=seed_dash)
+                    noisy_sample_2, _ = self.preprocess(sample, targets, params, seed_dash)
+                    # Get required det samples from signal and signal'
+                    noisy_sample = np.array([noisy_sample_1[0], noisy_sample_2[1]])
+
+                elif non_astro_mode_select == 2:
+                    # Make signal + noise
+                    # I'm not okay with this. Labelling this as noise is not correct.
+                    # Choice for H1 and L1: (noise + signal) or (signal + noise)
+                    noise_det_choice = 0 if np.random.rand() < 0.5 else 1
+                    # Make signal sample
+                    sample, targets, params = self.generate_data(1, seed=seed)
+                    signal_sample, _ = self.preprocess(sample, targets, params, seed)
+                    # Make noise sample (this could be from H1 or L1)
+                    seed_dash = seed+np.random.randint(1, 2**32)
+                    sample, targets, params = self.generate_data(0, seed=seed_dash)
+                    noise_sample, _ = self.preprocess(sample, targets, params, seed_dash)
+                    # Get required det samples from signal and noise
+                    if noise_det_choice == 0:
+                        noisy_sample = np.array([noise_sample[0], signal_sample[1]])
+                    else: 
+                        noisy_sample = np.array([signal_sample[0], noise_sample[1]])
+                
+                # Set params to noise params for non-astro samples
+                params = self.params.copy()
+                params['mchirp'] = -1
+                params['sample_rate'] = self.sample_rate
+                params['noise_low_freq_cutoff'] = self.noise_low_freq_cutoff
+                # Set targets to noise
+                targets = {}
+                targets['gw'] = 0
+                targets['norm_mchirp'] = -1
+                targets['norm_tc'] = -1
+
         else:
             # Check if generation is present for signals or noise
             data_path = self.data_paths[idx]
@@ -731,18 +810,8 @@ class MinimalOTF(Dataset):
                 # Get data paths for external link
                 sample, targets, params = self.read_data(data_path)
         
-        ## Signal Augmentation
-        # Runs signal augmentation if sample is clean waveform
-        pure_sample, params = self._augmentation_(sample, targets['gw'], params, mode='signal')
-
-        ## Add noise realisation to the signals
-        noisy_sample, pure_noise = self._noise_realisation_(pure_sample, targets, seed)
-        
-        ## Noise Augmentation
-        if self.training:
-            # Runs noise augmentation only for pure noise samples
-            # var name noisy_sample might suggest that this is waveform + noise (fix this) 
-            noisy_sample, params = self._augmentation_(noisy_sample, targets['gw'], params, mode='noise')
+            # Signal/Noise class augmentation && add noise realisation (for signal class)
+            noisy_sample, params = self.preprocess(sample, targets, params, seed)
 
         ## Transformation Stage 1 (HighPass and Whitening)
         # These transformations are possible for pure noise before augmentation
@@ -752,6 +821,8 @@ class MinimalOTF(Dataset):
         sample_transforms = self._transforms_(noisy_sample, key='stage1')
 
         ## Transformation Stage 2 (Multirate Sampling)
+        # We keep this separate because many transformations require const delta t
+        # MRsampling should be done as the last step of the transformation process
         mrsampling = self._transforms_(sample_transforms['sample'], key='stage2')
 
         # With the update 'sample' should point to mrsampled data
@@ -769,6 +840,7 @@ class MinimalOTF(Dataset):
         # Convert signal/target to Tensor objects
         sample = torch.from_numpy(sample)
 
+        # TODO: Clean this up!
         if not self.data_cfg.OTF:
             rem = ['start_time', 'interval_lower', 'interval_upper', 'declination', 'right_ascension', 'polarisation_angle']
             rem += ['spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'coa_phase', 'inclination']
