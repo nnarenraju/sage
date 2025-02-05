@@ -338,12 +338,12 @@ class DefaultOTF:
     """ Timeslide Analysis """
     # Each detector gets a different signal
     # One detector gets a signal and the other gets noise
-    timeslide_mode = False
-    tsmode_probability = 0.2
+    timeslide_mode = True
+    tsmode_probability = 0.4
     # Two modes: mode_1=(signal + signal') or mode_2=(signal + noise)
     # This value is used as: 1 if np.random.rand() < p else 2
     # For example: 0.2 --> p=0.2 for mode_1 && p=0.8 for mode_2
-    # Set this to 0 or 1 to select one more or the other
+    # Set this to 0 or 1 to select one mode or the other
     non_astro_mode_select_probability = 0.5
 
     """ PSD Params """
