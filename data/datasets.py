@@ -738,7 +738,7 @@ class MinimalOTF(Dataset):
         if self.data_cfg.OTF:
             # Timeslide mode is given tsmode_probability of all samples
             # So this mode should still maintain balance between normal signal and noise class samples
-            if self.data_cfg.timeslide_mode:
+            if self.data_cfg.timeslide_mode and target == 0:
                 make_nonastro_sample = 1 if np.random.rand() < self.data_cfg.tsmode_probability else 0
                 # Two modes: mode_1=(signal + signal') or mode_2=(signal + noise)
                 # Note: signal' need not be time coincident with signal.
@@ -764,7 +764,7 @@ class MinimalOTF(Dataset):
                     sample, targets, params = self.generate_data(1, seed=seed, partial_signal=True)
                     noisy_sample_1, _ = self.preprocess(sample, targets, params, seed)
                     # Make signal' (tc' should automatically be different from tc)
-                    seed_dash = seed+np.random.randint(1, 2**32)
+                    seed_dash = seed+np.random.randint(1, 2**30)
                     sample, targets, params = self.generate_data(1, seed=seed_dash, partial_signal=True)
                     noisy_sample_2, _ = self.preprocess(sample, targets, params, seed_dash)
                     # Get required det samples from signal and signal'
@@ -779,7 +779,7 @@ class MinimalOTF(Dataset):
                     sample, targets, params = self.generate_data(1, seed=seed, partial_signal=True)
                     signal_sample, _ = self.preprocess(sample, targets, params, seed)
                     # Make noise sample (this could be from H1 or L1)
-                    seed_dash = seed+np.random.randint(1, 2**32)
+                    seed_dash = seed+np.random.randint(1, 2**30)
                     sample, targets, params = self.generate_data(0, seed=seed_dash)
                     noise_sample, _ = self.preprocess(sample, targets, params, seed_dash)
                     # Get required det samples from signal and noise
@@ -787,7 +787,7 @@ class MinimalOTF(Dataset):
                         noisy_sample = np.array([noise_sample[0], signal_sample[1]])
                     else: 
                         noisy_sample = np.array([signal_sample[0], noise_sample[1]])
-                
+                    
                 # Set params to noise params for non-astro samples
                 params = self.params.copy()
                 params['mchirp'] = -1
