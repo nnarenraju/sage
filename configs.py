@@ -2397,7 +2397,7 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
     test_background_output = "testing_boutput_BEST_June_diff_seed_Sept11_2.hdf"
 
 
-class SageNetOTF_Feb04_Russet_nonastro(SageNetOTF):
+class SageNetOTF_Feb05_Russet_nonastro(SageNetOTF):
     ### Primary Deviations (Comparison to BOY) ###
     # 1. 113 days of O3b data (**VARIATION**)
     # 2. SNR halfnorm (**VARIATION**)
