@@ -40,6 +40,80 @@ class LossWrapper:
 
 """ CUSTOM LOSS FUNCTIONS """
 
+class lPOPWithPEregLoss(LossWrapper):
+    
+    def __init__(self, lpop_alpha=2.0, lpop_beta=1.0, mse_alpha=1.0):
+        
+        super().__init__()
+        # MSE Loss is always ON with PE
+        assert mse_alpha >= 0.0, 'mse_alpha must be greater than or equal to 0.0'
+        # Set generic params
+        self.mse_alpha = mse_alpha
+        # lPOP loss parameters
+        # Default values set using reference: https://iopscience.iop.org/article/10.1088/2632-2153/ad1a4d/pdf
+        self.lpop_alpha = lpop_alpha
+        self.lpop_beta = lpop_beta
+    
+    def __str__(self):
+        # Display details of loss function
+        str = "Loss function = IPOP Loss for GW && MSE Loss for PE point-estimate"
+        return str
+
+    def forward(self, outputs, targets, source_params, cfg):
+        # BCE to check whether the signal contains GW or is pure noise
+        # MSE for calculation of correct 'tc'
+        custom_loss = {}
+        # This can be any monotonic function; TODO: experiment with other monotonic functions
+        leaky_parity_odd_power = (self.lpop_beta*outputs['raw']) + outputs['raw'] * torch.abs(outputs['raw'])**(self.lpop_alpha-1)
+        unreduced_BCEgw = torch.exp((0.5 - targets['gw']) * leaky_parity_odd_power)
+        BCEgw = torch.mean(unreduced_BCEgw)
+        custom_loss['gw'] = BCEgw
+        
+        """
+        MSE - Mean Squared Error Loss
+        For the handling of 'tc'
+        MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
+        """
+        MSEpe = 0
+        if 'parameter_estimation' in cfg.model_params.keys():
+            if len(cfg.model_params['parameter_estimation']) != 0:
+                for key in cfg.model_params['parameter_estimation']:
+                    # Get a masked loss calculation for parameter estimation
+                    # Ignore all targets corresponding to pure noise samples
+                    if self.mse_alpha == 0.0:
+                        pe_loss = torch.tensor(0.0).to(device='cuda:{}'.format(BCEgw.get_device()))
+                        custom_loss[key] = pe_loss
+                        MSEpe += pe_loss
+                        continue
+
+                    mask = torch.ge(targets[key], 0.0)
+                    masked_target = torch.masked_select(targets[key], mask)
+                    masked_output = torch.masked_select(outputs[key], mask)
+                    assert -1 not in masked_target, 'Found invalid value (-1) in PE target. Noise sample may have leaked into signals!'
+                    if len(masked_target) == 0:
+                        pe_loss = torch.tensor(0.0)
+                    else:
+                        pe_loss = self.mse_alpha * torch.mean((masked_target-masked_output)**2)
+
+                    # Store losses
+                    if torch.is_tensor(pe_loss) and torch.isnan(pe_loss):
+                        raise ValueError("PE Loss for {} is nan! val = {}".format(key, pe_loss))
+                    if not torch.is_tensor(pe_loss):
+                        if np.isnan(pe_loss):
+                            raise ValueError("PE Loss for {} is nan! val = {}".format(key, pe_loss))
+                    
+                    custom_loss[key] = pe_loss
+                    MSEpe += pe_loss
+        
+        """ 
+        CUSTOM LOSS FUNCTION
+        L = BCE(P_0) + alpha * MSE(P_1)
+        """
+        custom_loss['total_loss'] = BCEgw + MSEpe
+        
+        return custom_loss
+
+
 class BCEWithPEregLoss(LossWrapper):
     
     def __init__(self, gw_loss=None, mse_alpha=1.0):
