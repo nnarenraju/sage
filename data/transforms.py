@@ -1341,7 +1341,7 @@ class GlitchAugmentGWSPY():
         self.num_glitches = {}
         for name in include:
             self.glitch_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(glitch_dirs[name], "*.hdf"))]
-            self.num_glitches[name] = np.load("./notebooks/tmp/{}.npy".format(name))
+            self.num_glitches[name] = np.load("/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/{}.npy".format(name))
         
         # DEBUGGER
         self.debug_me = debug_me
@@ -1474,7 +1474,8 @@ class MultipleFileRandomNoiseSlice():
         self.lengths = {}
         for name in noise_dirs.keys():
             self.noise_files[name] = [h5py.File(fname) for fname in glob.glob(os.path.join(noise_dirs[name], "*.hdf"))]
-            self.lengths[name] = np.load("./notebooks/tmp/durs_{}_O3b_all_noise_deimos.npy".format(name)) # _deimos
+            self.lengths[name] = np.load("/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_{}_O3b_all_noise_deimos.npy".format(name)) # _deimos
+            
 
     def pick_noise_file(self, det):
         # Pick a noise file for each detector
@@ -1579,7 +1580,7 @@ class RandomNoiseSlice():
         if self.segment_ulimit == -1:
             self.segment_ulimit = len(ligo_segments)
         
-        lookup = np.load("./notebooks/tmp/segdurs_all.npy")
+        lookup = np.load("/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/segdurs_all.npy")
         for n, seg in enumerate(ligo_segments):
             key_time = str(load_times[seg][0])
             _key = f'{self.detectors[0]}/{key_time}'
@@ -1610,7 +1611,7 @@ class RandomNoiseSlice():
         return np.random.choice(self.seg_idx, 1, p=self.segprob)[0]
 
     def _load_segments(self):
-        tmp_dir = "./tmp"
+        tmp_dir = "/home/nnarenraju/Research/sgwc-1/sage/tmp"
         path = os.path.join(tmp_dir, 'segments.csv')
         # Download data if it does not exist
         if not os.path.isfile(path):
