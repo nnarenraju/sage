@@ -1,3 +1,3 @@
 # SAGE
-Unbiased detection of gravitational-waves using machine learning
+Detection of gravitational-waves using machine learning
 
