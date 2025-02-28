@@ -1211,7 +1211,6 @@ class KappaModel_ResNet1D(torch.nn.Module):
 class SigmaModel(torch.nn.Module):
     """
     Sigma-type Model PE Architecture with ResNet and CBAM
-    Sigma = sum of all hard work.
     
     Description - consists of two separate OSnet frontend for feature extraction
                   and a ResNet CBAM as backend for classification.
