@@ -148,29 +148,12 @@ source/baseline/data/psds/
 *.csv
 
 source/baseline/check.py
-source/baseline/notebooks/tmp/h1_o3a.npy
-source/baseline/notebooks/tmp/h1_o3b.npy
-source/baseline/notebooks/tmp/l1_o3a.npy
-source/baseline/notebooks/tmp/l1_o3b.npy
-source/baseline/notebooks/tmp/H1_O3b.npy
-source/baseline/notebooks/tmp/L1_O3b.npy
-source/baseline/injparams_D4_seeded.pkl
-source/baseline/notebooks/snrs.npy
-source/baseline/notebooks/evaluation_plots/compare.pdf
-source/baseline/notebooks/tmp/durs_H1_O3b_all_noise.npy
-source/baseline/notebooks/tmp/durs_L1_O3b_all_noise.npy
-source/baseline/notebooks/tmp/freq_psd.npy
-source/baseline/weights/checkpoint_epoch_49_PhenomD_BOY.pt
-source/baseline/weights/weights_loss_BOY.pt
-notebooks/tmp/H1_O3b.npy
-notebooks/tmp/L1_O3b.npy
-notebooks/snrs.npy
-notebooks/tmp/freq_psd.npy
-tmp/segments.csv
 *.err
 *.out
 *.log
 *.pickle
+*.pdf
+*.pkl
 
 # Do not ignore these files
 !requirements.txt
