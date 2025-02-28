@@ -386,7 +386,6 @@ def multirate_sampling(signal, data_cfg, check=False):
                 
                 # The decimation factor should always be of type 2**n
                 # So factorisation should be quite straight-forward (depricated on April 1st, 2022)
-                # Is the above deprication an April's Fools joke? Absolutely not.
                 
                 # Prime-factorisation
                 factors = prime_factors(decimation_factor)
