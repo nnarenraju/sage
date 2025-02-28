@@ -17,9 +17,7 @@ __email__       = nnarenraju@gmail.com
 __status__      = ['inProgress', 'Archived', 'inUsage', 'Debugging']
 
 
-Github Repository: NULL
-
-Documentation: NULL
+Obtained from AresGW GitHub: https://github.com/vivinousi/gw-detection-deep-learning
 
 """
 
