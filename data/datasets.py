@@ -251,7 +251,6 @@ class MinimalOTF(Dataset):
         """ Waveform Parameters """
         ## Parameters required to produce a waveform
         # m1_msun, m2_msun, s1x, s1y, s1z, s2x, s2y, s2z, distance_mpc, tc, phiRef, inclination
-        # Parameters must be of form np.ndarray to be input into Ripple jitted generator
         self.params = {'mass1': -1, 'mass2': -1, 'spin1x': -1, 'spin1y': -1, 'spin1z': -1,
                        'spin2x': -1, 'spin2y': -1, 'spin2z': -1, 'distance': -1, 'tc': -1,
                        'coa_phase': -1,  'inclination': -1}
@@ -479,15 +478,10 @@ class MinimalOTF(Dataset):
         waveform_kwargs.update(dict(zip(list(priors.fieldnames), priors[0])))
         # Adding only dominant modes to the waveform
         # waveform_kwargs['mode_array'] = [ [2,2], [2,-2] ]
-        # Set waveform parameters for Ripple IMRPhenomPv2
         # m1_msun, m2_msun, s1x, s1y, s1z, s2x, s2y, s2z, distance_mpc, tc, phiRef, inclination
         for key in params.keys():
             params[key] = priors[key][0]
         
-        # Params in the dict are in the exact order required for Ripple
-        # Ripple specific changes to params
-        # params = np.fromiter(params.values(), dtype=np.float64)
-        # params['tc'] = 0.0
         return (waveform_kwargs, params)
 
 
@@ -508,8 +502,6 @@ class MinimalOTF(Dataset):
             targets['norm_tc'] = -1
         else:
             # Set parameters for waveform generation
-            # Parameter (time of coalescence, tc) is always set to 0.0 for Ripple to reproduce LAL
-            # NOTE: All further manipulations assume this. Do not change this to any other value.
             waveform_kwargs, params = self.set_waveform_parameters(self.params.copy(), seed)
             # Make a partial signal for non-astro samples
             if partial_signal:
