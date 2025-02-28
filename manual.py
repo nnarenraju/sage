@@ -511,9 +511,6 @@ def paramfrac_detected_above_thresh(cfg, export_dir, network_output, labels, sam
         fill_count, _ = np.histogram(masked_distr, bins=100)
         border = 8
         y_min, y_max = 0.0, max(fill_count) + border
-        # Random colours we like, woooo
-        # Shoutout to ORChiD. woooo
-        # ...Why am I like this?
         colours = ['gold', 'forestgreen', 'orchid', 'royalblue', 'orangered', 'gray']
 
         for n in range(len(bin_edges)-1):
