@@ -272,8 +272,8 @@ class DefaultOTF:
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 100_000
-    num_auxilliary_samples = 125_000
+    num_validation_samples = 500_000
+    num_auxilliary_samples = 1000
     
     """ Signal Params """
     ## these params may be used if make_dataset == False
@@ -335,6 +335,17 @@ class DefaultOTF:
     # Modification off = None option
     modification_toggle_probability = 1.0
     
+    """ Timeslide Analysis """
+    # Each detector gets a different signal
+    # One detector gets a signal and the other gets noise
+    timeslide_mode = False
+    tsmode_probability = 0.33
+    # Two modes: mode_1=(signal + signal') or mode_2=(signal + noise)
+    # This value is used as: 1 if np.random.rand() < p else 2
+    # For example: 0.2 --> p=0.2 for mode_1 && p=0.8 for mode_2
+    # Set this to 0 or 1 to select one mode or the other
+    non_astro_mode_select_probability = 0.5
+
     """ PSD Params """
     noise_low_freq_cutoff = 15.0 # Hz
     noise_high_freq_cutoff = 1024.8 # Hz
@@ -345,7 +356,7 @@ class DefaultOTF:
     # Got an error in transforms where signal.to_frequencyseries did not have the correct length
     # NOTE: Verified to produce correct results for 1.0 s and 20.0 s signals (March 30th, 2022)
     psd_len = int(int(sample_length_in_num+0.5) / 2 + 1)
-    
+
     """ Multirate sampling params """
     # Sampling rate bins type 1 or 2
     srbins_type = 1
