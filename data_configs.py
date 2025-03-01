@@ -260,7 +260,7 @@ class DefaultOTF:
     """ Basic dataset options """
     # These options are used by generate_data.py
     # Type of dataset (1, 2, 3 or 4)
-    # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
+    # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets
     dataset = 4
     # Random seed provided to generate_data script
     # This seed is used to generate the priors
@@ -272,7 +272,7 @@ class DefaultOTF:
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 500_000
+    num_validation_samples = 100_000 # 105_189_754
     num_auxilliary_samples = 1000
     
     """ Signal Params """
@@ -417,7 +417,8 @@ class LongerOTF:
     """ Location (these params used if make_dataset == False, as search loc) """
     # Dataset location directory
     # Data storage drive or /mnt absolute path
-    parent_dir = "/local/scratch/igr/nnarenraju"
+    # parent_dir = "/local/scratch/igr/nnarenraju"
+    parent_dir = "/home/nnarenraju/Research/ORChiD/"
     # Dataset directory within parent_dir
     # data_dir = "buffer_dataset_check"
     data_dir = "dataset_D4_2e6_Nov28_seed2GW_combination"
@@ -425,27 +426,31 @@ class LongerOTF:
     """ Basic dataset options """
     # These options are used by generate_data.py
     # Type of dataset (1, 2, 3 or 4)
-    # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets 
+    # Refer https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets
     dataset = 4
     # Random seed provided to generate_data script
     # This seed is used to generate the priors
     seed = 110798
+    # Fix epoch seeds for lowering dataset variation
+    fix_coin_seeds = False
+    fix_signal_seeds = False
+    fix_noise_seeds = False
 
     """ OTF Params """
     num_training_samples = 2_000_000
-    num_validation_samples = 500_000
-    num_auxilliary_samples = 125_000
+    num_validation_samples = 100_000 # 105_189_754
+    num_auxilliary_samples = 1000
     
     """ Signal Params """
     ## these params may be used if make_dataset == False
     # Create a new class for a different problem instead of changing this config
     sample_rate = 2048. # Hz
     # (20.0 seconds max + 2.0 seconds of noise padding) would be better
-    signal_length = 15.0 # seconds
+    signal_length = 20.0 # seconds
     # Noise padding after ringdown
     # Signal will be placed based on requested noise pad and post fudge factor
     # if signal length is not sufficient for longest possible signal, error occurs.
-    noise_pad = 1.5 # seconds
+    noise_pad = 0.6 # seconds
     # whiten_padding is also known as max_filter_duration in some modules
     whiten_padding = 5.0 # seconds (padding/2.0 on each side of signal_length)
     sample_length_in_s = signal_length + whiten_padding # seconds
@@ -457,12 +462,12 @@ class LongerOTF:
     error_padding_in_num = round(error_padding_in_s * sample_rate)
     
     signal_low_freq_cutoff = 20.0 # Hz
-    signal_approximant = 'IMRPhenomXPHM'
+    signal_approximant = 'IMRPhenomPv2'
     reference_freq = 20.0 # Hz
 
     """ PRIORS """
-    prior_low_mass = 7.0 # Msun
-    prior_high_mass = 50.0 # Msun
+    prior_low_mass = 5.0 # Msun
+    prior_high_mass = 100.0 # Msun
     # Chirp distance
     prior_low_chirp_dist = 130.0
     prior_high_chirp_dist = 350.0
@@ -472,17 +477,41 @@ class LongerOTF:
     post_fudge_factor = get_post_fudge_factor(prior_high_mass)
     # tc params
     tc_diff = 0.2 # seconds
-    tc_inject_lower = signal_length - (noise_pad + post_fudge_factor + tc_diff)
-    tc_inject_upper = tc_inject_lower + tc_diff
-    assert tc_inject_lower > _longest_wavelen, 'longest waveform does not fit within provided signal len!'
+    #tc_inject_lower = signal_length - (noise_pad + post_fudge_factor + tc_diff)
+    #tc_inject_upper = tc_inject_lower + tc_diff
+    #assert tc_inject_lower > _longest_wavelen, 'longest waveform does not fit within provided signal len!'
+    tc_inject_lower = 18.0
+    tc_inject_upper = 18.2
 
     ### MODS ###
     # Modifications to Dataset
-    # Possible mods: ('bounded_utau', 'bounded_umc', 'unbounded_utau', 'unbounded_umc', 'bounded_plmc', bounded_pltau)
+    # Possible mods: ('bounded_utau', 'bounded_umc', 'unbounded_utau', 'unbounded_umc', 
+    #                 'bounded_plmc', 'bounded_pltau', 'template_placement_metric', 'bounded_umcq',
+    #                 'bounded_um1m2')
     # NOTE: Set to None if not required
-    modification = 'bounded_utau'
-    modification_probability = 1.0
+    modification = [None]
+    # modification = [None]
+    # Both start and end list must sum to 1
+    mod_start_probability = [1.0]
+    mod_end_probability = [1.0]
+    # Annealing is done linear between start and end prob
+    # Feature creep: Other functions can be used to move from start to end
+    # Annealing is done within the given epoch numbers
+    anneal_epochs = [40, 60] # [start, end]
+    # Modification off = None option
+    modification_toggle_probability = 1.0
     
+    """ Timeslide Analysis """
+    # Each detector gets a different signal
+    # One detector gets a signal and the other gets noise
+    timeslide_mode = False
+    tsmode_probability = 0.33
+    # Two modes: mode_1=(signal + signal') or mode_2=(signal + noise)
+    # This value is used as: 1 if np.random.rand() < p else 2
+    # For example: 0.2 --> p=0.2 for mode_1 && p=0.8 for mode_2
+    # Set this to 0 or 1 to select one mode or the other
+    non_astro_mode_select_probability = 0.5
+
     """ PSD Params """
     noise_low_freq_cutoff = 15.0 # Hz
     noise_high_freq_cutoff = 1024.8 # Hz
@@ -493,7 +522,7 @@ class LongerOTF:
     # Got an error in transforms where signal.to_frequencyseries did not have the correct length
     # NOTE: Verified to produce correct results for 1.0 s and 20.0 s signals (March 30th, 2022)
     psd_len = int(int(sample_length_in_num+0.5) / 2 + 1)
-    
+
     """ Multirate sampling params """
     # Sampling rate bins type 1 or 2
     srbins_type = 1
@@ -513,7 +542,7 @@ class LongerOTF:
     # The starting freq. will be reduced by this factor**(n) for n = [0, N], 'N'is num of bins
     # If facrtor==2.0, the sampling freq. is halved every time the signal freq. reduced by
     # a factor equal to fbin_reduction_factor
-    fs_reduction_factor = 1.8 # (def: 1.8)
+    fs_reduction_factor = 2.05 # (def: 1.8)
     # Check value where signal freq. reduces by this factor
     # When this happens, that data idx is store in bins as one of the edges for MR-sampling
     fbin_reduction_factor = 2.0
