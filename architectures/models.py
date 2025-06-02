@@ -604,7 +604,7 @@ class Rigatoni_MS_ResNetCBAM_legacy(torch.nn.Module):
                  norm_layer: str = 'instancenorm',
                  upsample_factor: float = 1.0,
                  parameter_estimation = ('norm_tc', 'norm_mchirp', ),
-                 _input_length: int = 4254, # 4859
+                 _input_length: int = 4254, # 4254
                  _decimated_bins = None,
                  store_device: str = 'cpu',
                  **kwargs):
@@ -754,7 +754,8 @@ class Rigatoni_MS_ResNetCBAM_legacy(torch.nn.Module):
                 'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
                 'norm_tc_sigma': tc_var, 'norm_mchirp_sigma': mchirp_var, 'norm_snr_sigma': snr_var,
                 'norm_q_sigma': q_var, 'norm_invq_sigma': invq_var, 'norm_dist_sigma': dist_var,
-                'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed}
+                'norm_dchirp_sigma': dchirp_var, 'input': x, 'normed': normed, 'embedding': out}
+
 
 
 @unreviewed_model
@@ -953,8 +954,8 @@ class Rigatoni_MS_ResNetCBAM_legacy_singledet(torch.nn.Module):
         # resnet50 --> Based on Res2Net blocks
         # Pretrained model is for 3-channels. We use 2 channels.
         if resnet_size == 50:
-            self.frontend_1 = resnet50_cbam(pretrained=False, in_channels=1)
-            self.frontend_2 = resnet50_cbam(pretrained=False, in_channels=1)
+            self.frontend_1 = resnet50_cbam(pretrained=False, num_classes=256, in_channels=1)
+            self.frontend_2 = resnet50_cbam(pretrained=False, num_classes=256, in_channels=1)
         elif resnet_size == 152:
             raise NotImplementedError('Use ResNet50 instead!')
         
@@ -968,7 +969,7 @@ class Rigatoni_MS_ResNetCBAM_legacy_singledet(torch.nn.Module):
         self.instancenorm = nn.InstanceNorm1d(2, affine=True)
         self.flatten_d1 = nn.Flatten(start_dim=1)
         self.flatten_d0 = nn.Flatten(start_dim=0)
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
+        self.avg_pool_1d = nn.AdaptiveAvgPool1d(256)
         self.dropout = nn.Dropout(0.25)
         self.sigmoid = torch.nn.Sigmoid()
         self.softmax = torch.nn.Softmax(dim=1)
@@ -978,16 +979,16 @@ class Rigatoni_MS_ResNetCBAM_legacy_singledet(torch.nn.Module):
         
         ## Convert network into given dtype and store in proper device 
         # Primary outputs
-        self.signal_or_noise_1 = nn.Linear(512, 1)
-        self.signal_or_noise_2 = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(1024, 2)
-        self.chirp_distance = nn.Linear(1024, 2)
-        self.chirp_mass = nn.Linear(1024, 2)
-        self.distance = nn.Linear(1024, 2)
-        self.mass_ratio = nn.Linear(1024, 2)
-        self.inv_mass_ratio = nn.Linear(1024, 2)
-        self.snr = nn.Linear(1024, 2)
-        self.combine_ranking = nn.Linear(1024, 1)
+        self.signal_or_noise_1 = nn.Linear(256, 1)
+        self.signal_or_noise_2 = nn.Linear(256, 1)
+        self.coalescence_time = nn.Linear(512, 2)
+        self.chirp_distance = nn.Linear(512, 2)
+        self.chirp_mass = nn.Linear(512, 2)
+        self.distance = nn.Linear(512, 2)
+        self.mass_ratio = nn.Linear(512, 2)
+        self.inv_mass_ratio = nn.Linear(512, 2)
+        self.snr = nn.Linear(512, 2)
+        self.combine_ranking = nn.Linear(512, 1)
         # Mod layers
         self.signal_or_noise_1.to(dtype=data_type, device=self.store_device)
         self.signal_or_noise_2.to(dtype=data_type, device=self.store_device)
@@ -998,6 +999,7 @@ class Rigatoni_MS_ResNetCBAM_legacy_singledet(torch.nn.Module):
         self.mass_ratio.to(dtype=data_type, device=self.store_device)
         self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
         self.snr.to(dtype=data_type, device=self.store_device)
+        self.combine_ranking.to(dtype=data_type, device=self.store_device)
 
         # Manipulation layers
         self.batchnorm.to(dtype=data_type, device=self.store_device)
@@ -1027,21 +1029,18 @@ class Rigatoni_MS_ResNetCBAM_legacy_singledet(torch.nn.Module):
         # Conv Backend
         cnn_output_1 = self.backend['det1'](normed[:, 0:1])
         cnn_output_2 = self.backend['det2'](normed[:, 1:2])
+        cnn_output = torch.cat([cnn_output_1, cnn_output_2], dim=1)
 
         # Timm Frontend
         out_1 = self.frontend_1(cnn_output_1) # (batch_size, 512)
         out_1 = self.flatten_d1(self.avg_pool_1d(out_1))
         out_2 = self.frontend_2(cnn_output_2) # (batch_size, 512)
         out_2 = self.flatten_d1(self.avg_pool_1d(out_2))
-        out = torch.cat([out_1, out_2])
-
-        raw_1 = self.flatten_d0(self.signal_or_noise_1(out_1))
-        raw_2 = self.flatten_d0(self.signal_or_noise_2(out_2))
+        out = torch.cat([out_1, out_2], dim=1)
 
         ## Output necessary params
         raw = self.flatten_d0(self.combine_ranking(out))
         pred_prob = self.sigmoid(raw)
-        all_raw_out = torch.cat([raw, raw_1, raw_2])
 
         ## Parameter Estimation
         # Time of Coalescence
@@ -1081,7 +1080,7 @@ class Rigatoni_MS_ResNetCBAM_legacy_singledet(torch.nn.Module):
         snr_var = self.flatten_d0(snr_[:,1])
         
         # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
-        return {'raw': all_raw_out, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
+        return {'raw': raw, 'pred_prob': pred_prob, 'cnn_output': cnn_output,
                 'norm_tc': norm_tc, 'norm_dchirp': norm_dchirp, 'norm_mchirp': norm_mchirp,
                 'norm_dist': norm_dist, 'norm_q': norm_q, 'norm_invq': norm_invq, 'norm_snr': norm_snr,
                 'tc': tc, 'dchirp': dchirp, 'mchirp': mchirp, 'dist': dist, 'q': q, 'invq': invq, 'snr': snr,
