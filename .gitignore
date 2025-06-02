@@ -174,3 +174,6 @@ tmp/segments.csv
 
 # Do not ignore these files
 !requirements.txt
+
+# Automatically added files
+architectures/zoo/mamba.py
