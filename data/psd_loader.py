@@ -25,7 +25,11 @@ def load_psds(data_loc, data_cfg):
 
     if data_cfg.dataset == 1:
         psds_data = [psds['aLIGOZeroDetHighPower']]*2
-    else:
+    elif data_cfg.ifo_combination == "HL":
         psds_data = [psds['median_det1'], psds['median_det2']]
+    elif data_cfg.ifo_combination == "HV":
+        psds_data = [psds['median_det1'], psds['median_det3']]
+    elif data_cfg.ifo_combination == "LV":
+        psds_data = [psds['median_det2'], psds['median_det3']]
 
     return psds_data
