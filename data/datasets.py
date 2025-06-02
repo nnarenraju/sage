@@ -171,12 +171,14 @@ class MinimalOTF(Dataset):
                 self.noise_generation.generations[name].sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
                 if noigen_name == 'RandomNoiseSlice':
                     self.noise_generation.generations[name].dt = 1./data_cfg.sample_rate # seconds
+                    # Compute common params
+                    self.noise_generation.generations[name].precompute_common_params()
                 elif noigen_name == 'ColouredNoiseGenerator':
                     self.noise_generation.generations[name].delta_f = self.data_cfg.delta_f
                     self.noise_generation.generations[name].noise_low_freq_cutoff = self.data_cfg.noise_low_freq_cutoff
                     self.noise_generation.generations[name].sample_rate = self.data_cfg.sample_rate
-                # Compute common params
-                self.noise_generation.generations[name].precompute_common_params()
+                    # Compute common params
+                    self.noise_generation.generations[name].precompute_common_params()
 
             if self.noise_generation.aux != None:
                 self.noise_generation.aux.sample_length = data_cfg.signal_length + data_cfg.whiten_padding # seconds
@@ -469,6 +471,8 @@ class MinimalOTF(Dataset):
             prior = self.apply_prior_mods(prior)
         return prior
 
+    def get_chirp_distance(self, dist, mchirp, ref_mass=1.4):
+        return dist * (2.**(-1./5) * ref_mass / mchirp)**(5./6)
 
     def set_waveform_parameters(self, params, seed):
         # Get waveform params using PyCBC ini file
@@ -477,6 +481,12 @@ class MinimalOTF(Dataset):
         waveform_kwargs['approximant'] = self.data_cfg.signal_approximant
         waveform_kwargs['f_ref'] = 20.0
         waveform_kwargs.update(dict(zip(list(priors.fieldnames), priors[0])))
+        # Changing the distance distribution
+        if self.data_cfg.better_distance_distribution:
+            new_distance = beta.rvs(a=2, b=16) * 9000 + 250
+            waveform_kwargs.update({'distance': new_distance})
+            new_chirp_distance = self.get_chirp_distance(new_distance, waveform_kwargs['mchirp'], ref_mass=1.4)
+            waveform_kwargs.update({'chirp_distance': new_chirp_distance})
         # Adding only dominant modes to the waveform
         # waveform_kwargs['mode_array'] = [ [2,2], [2,-2] ]
         # Set waveform parameters for Ripple IMRPhenomPv2
@@ -696,7 +706,7 @@ class MinimalOTF(Dataset):
         ## Noise Augmentation
         if self.training:
             # Runs noise augmentation only for pure noise samples
-            # TODO: var name noisy_sample might suggest that this is waveform + noise (fix this) 
+            # TODO: var name noisy_sample might suggest that this is waveform + noise (fix this)
             noisy_sample, params = self._augmentation_(noisy_sample, targets['gw'], params, mode='noise')
         
         return (noisy_sample, params)
