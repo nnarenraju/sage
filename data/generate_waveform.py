@@ -92,7 +92,6 @@ class PyCBCGenerateWaveform:
             else:
                 # We can change this to tmp_f_lower -= 3.0 to lower iterations
                 # It will consequently increase the time taken for waveform generation process
-                # But, we've already seen that this shouldn't matter much for Ripple
                 # tmp_f_lower *= 0.99 is consistent with PyCBC docs
                 tmp_f_lower *= 0.99
 
@@ -195,8 +194,6 @@ class PyCBCGenerateWaveform:
 
     def generate(self, _theta):
         theta = _theta.copy()
-        ## Generate waveform on the fly using GPU-accelerated Ripple
-        # Convert theta to theta_ripple (jnp) (only required params)
         theta_pycbc = self.get_theta_pycbc(theta)
         # Get h_plus and h_cross from the given waveform parameters theta
         # Note than hp and hc are in the frequency domain

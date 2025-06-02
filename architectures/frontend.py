@@ -1,3 +1,29 @@
+# -*- coding: utf-8 -*-
+#!/usr/bin/env python
+
+"""
+Filename         =  foobar.py
+Description      =  Lorem ipsum dolor sit amet
+
+Created on 28/02/2025 at 16:35:37
+
+__author__       =  Narenraju Nagarajan
+__copyright__    =  Copyright 2025, ProjectName
+__credits__      =  nnarenraju
+__license__      =  MIT Licence
+__version__      =  0.0.1
+__maintainer__   =  nnarenraju
+__affiliation__  =  University of Glasgow
+__email__        =  nnarenraju@gmail.com
+__status__       =  ['inProgress', 'Archived', 'inUsage', 'Debugging']
+
+
+Github Repository: NULL
+
+Documentation: NULL
+
+"""
+
 # Modules
 import math
 import torch
