@@ -192,8 +192,12 @@ def get_injection_snr(args):
     
     if data_cfg.dataset == 1:
         psds_data = [PSDs['aLIGOZeroDetHighPower']]*2
-    else:
+    elif data_cfg.ifo_combination == "HL":
         psds_data = [PSDs['median_det1'], PSDs['median_det2']]
+    elif data_cfg.ifo_combination == "HV":
+        psds_data = [PSDs['median_det1'], PSDs['median_det3']]
+    elif data_cfg.ifo_combination == "LV":
+        psds_data = [PSDs['median_det2'], PSDs['median_det3']]
     
 
     ### Calculation of SNR
