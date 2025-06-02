@@ -4,7 +4,7 @@
   <img src="https://github.com/user-attachments/assets/ceabdb59-2847-45e6-a618-2153278049d0" alt="SAGE logo" width="400"/>
 </p>
 
-Code repository of the paper [Identifying and Mitigating Machine Learning Biases for the Gravitational Wave Detection Problem](https://arxiv.org/abs/2501.13846).
+[Identifying and Mitigating Machine Learning Biases for the Gravitational Wave Detection Problem](https://arxiv.org/abs/2501.13846).
 
 **Abstract**
 
