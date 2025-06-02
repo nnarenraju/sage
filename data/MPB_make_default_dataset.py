@@ -126,7 +126,8 @@ def get_complex_asds():
     # Save complex PSDs or ASDs as global variables
     # Since this is not within the multiprocessing block, it will not be counted towards shared RAM
     git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
-    repo_abspath = git_revparse.stdout.strip('\n')
+    # repo_abspath = os.path.join(git_revparse.stdout.strip('\n'), 'sage')
+    repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
     psd_options = {'H1': [os.path.join(repo_abspath, 'data/psds/H1/psd-{}.hdf'.format(i)) for i in range(20)],
                    'L1': [os.path.join(repo_abspath, 'data/psds/L1/psd-{}.hdf'.format(i)) for i in range(20)]}
     # Iterate through all PSD files for detector and compute the median PSD
