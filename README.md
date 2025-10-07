@@ -4,6 +4,8 @@
   <img src="https://github.com/user-attachments/assets/ceabdb59-2847-45e6-a618-2153278049d0" alt="SAGE logo" width="400"/>
 </p>
 
+[![DOI](https://zenodo.org/badge/482025216.svg)](https://doi.org/10.5281/zenodo.17290133)
+
 [Identifying and Mitigating Machine Learning Biases for the Gravitational Wave Detection Problem](https://arxiv.org/abs/2501.13846)
 
 **Abstract**
