@@ -35,8 +35,10 @@ from json.decoder import JSONDecodeError
 
 def get_sage_abspath():
     # Get Sage abspath
-    git_revparse = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output = True, text = True)
-    repo_abspath = git_revparse.stdout.strip('\n')
+    git_revparse = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    )
+    repo_abspath = git_revparse.stdout.strip("\n")
     return repo_abspath
 
 
