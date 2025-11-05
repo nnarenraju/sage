@@ -14,8 +14,8 @@ Matched-filtering is a long-standing technique for the optimal detection of know
 
 ### TODO
 1. Add documentation
-2. Notes to reproduce results in the paper
-3. Code cleanup
+2. Notes to reproduce results in the paper (ongoing; last update 04/11/2025)
+3. Code cleanup (ongoing; last update 05/11/2025)
 
 ### Cite
 If you found this work useful in your research, please consider citing:
