@@ -34,13 +34,15 @@ from torchsummary import summary
 
 # Warnings
 import warnings
+
 warnings.filterwarnings("ignore")
 
 # LOCAL
-from test import run_test
-from evaluator import main as evaluator
-from manual import train as manual_train
-from data.prepare_data import DataModule as dat
+from sage.factory.testing import run_test
+from sage.factory.evaluator import main as evaluator
+from sage.factory.training import train as manual_train
+from sage.exec.data_handler import DataModule as dat
+
 
 # Tensorboard
 from torch.utils.tensorboard import SummaryWriter
@@ -50,115 +52,340 @@ from ray import tune
 
 
 def parse_args():
-    """Argument parser for director
+    """Argument parser for directors
 
     Returns:
-        opts (namespace object): returns the populated namespace object 
+        opts (namespace object): populated namespace object
     """
 
     parser = argparse.ArgumentParser()
-    
-    parser.add_argument("--config", type=str, default='Baseline',
-                        help="Uses the pipeline architecture as described in configs.py")
-    parser.add_argument("--data-config", type=str, default='Default',
-                        help="Creates or uses a particular dataset as provided in data_configs.py")
-    parser.add_argument("--inference", action='store_true',
-                        help="Running the inference module using trained model")
-    parser.add_argument("--manual", action='store_true',
-                        help="Running the pipeline using manual PyTorch")
-    parser.add_argument("--validate", action='store_true',
-                        help="Running the pipeline in 1 epoch validate mode")
-    parser.add_argument("--summary", action='store_true',
-                        help="Store model summary using pytorch_summary")
-    
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="Baseline",
+        help="Uses the pipeline architecture as described in configs.py",
+    )
+    parser.add_argument(
+        "--data-config",
+        type=str,
+        default="Default",
+        help="Creates or uses a particular dataset as provided in data_configs.py",
+    )
+    parser.add_argument(
+        "--inference",
+        action="store_true",
+        help="Running the inference module using trained model",
+    )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Running the pipeline using manual PyTorch",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Running the pipeline in 1 epoch validate mode",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Store model summary using pytorch_summary",
+    )
+
     opts = parser.parse_args()
     return opts
 
 
-def prepare_configs(opts):
-    """Initialise chosen run configuration classes
+class SageDirector:
 
-    Args:
-        opts (namespace object): populated namespace object from parse_args()
+    def __init__(self, opts):
+        self.opts = opts
+        self.cfg = None
+        self.data_cfg = None
+        self.Network = None
+        self.optimiser = None
+        self.scheduler = None
+        self.loss_function = None
+        self.train_loader = None
+        self.val_loader = None
+        self.aux_loader = None
+        self.checkpoint = None
 
-    Returns:
-        cfg, data_cfg (class object, class object): Class objects defining the run configuration
-    """
+    def prepare_configs(self):
+        # Get data creation/usage configuration
+        self.data_cfg = dat.configure_dataset(self.opts)
+        # Get model configuration
+        self.cfg = dat.configure_pipeline(self.opts)
 
-    # Get data creation/usage configuration
-    data_cfg = dat.configure_dataset(opts)
-    # Get model configuration
-    cfg = dat.configure_pipeline(opts)
-    return cfg, data_cfg
+    def prepare_data(self, train_fold=None, val_fold=None, balance_params=None):
+        # Get input data length
+        # Used in torch summary and to initialise norm layers
+        dat.input_sample_length(self.data_cfg)
+
+        # Make export dir (save dir for all outputs)
+        # TODO: Save config file as YAML/JSON
+        # TODO: Save a copy of the code files used for the run
+        # TODO: Freeze git commit hash and save
+        dat.make_export_dir(self.cfg)
+
+        # Prepare input data for training and testing
+        # This should create/use a dataset and save a copy of the lookup table
+        # This function does nothing if OTF is True
+        dat.get_summary(self.cfg, self.data_cfg, self.cfg.export_dir)
+
+        # Get the dataset objects for training and validation
+        self.train_data, self.val_data, self.aux_data = dat.get_dataset_objects(
+            self.cfg, self.data_cfg, train_fold, val_fold
+        )
+
+        # Get the Pytorch DataLoader objects of train and valid data
+        self.train_loader, self.val_loader, self.aux_loader, self.nepoch, self.cflag = (
+            dat.get_dataloader(
+                self.cfg, self.train_data, self.val_data, self.aux_data, balance_params
+            )
+        )
+
+    def _freeze_layers(self):
+        # Freeze all layers
+        # Frozen layers should have no grad before and after backward() call
+        # Check using print(model.layer.weight.grad) before and after backward
+        for param in self.Network.parameters():
+            param.requires_grad = False
+        # Unfreeze required layers
+        # FIX ME!!! Add this to cfg as option
+        layer_names = ["signal_or_noise", "chirp_mass", "coalescence_time"]
+        layer_params = [getattr(self.Network, foo).parameters() for foo in layer_names]
+        for layer in layer_params:
+            for param in layer:
+                param.requires_grad = True
+
+    def initialise_model(self):
+        # Initialise chosen model architecture (Backend + Frontend)
+        # Equivalent to the "Network" variable in manual mode without weights
+        self.cfg.model_params.update(
+            dict(
+                _input_length=self.data_cfg.network_sample_length,
+                _decimated_bins=self.data_cfg._decimated_bins,
+            )
+        )
+        # Init Network
+        self.Network = self.cfg.model(**self.cfg.model_params)
+
+        # Load weights snapshot
+        if self.cfg.pretrained and self.cfg.weights_path != "":
+            if os.path.exists(self.cfg.weights_path):
+                weights = torch.load(self.cfg.weights_path, self.cfg.store_device)
+                self.Network.load_state_dict(weights)
+                del weights
+                gc.collect()
+                # summary(Network, (2, 4096), batch_size=cfg.batch_size)
+                # Freezing
+                if self.cfg.freeze_for_transfer:
+                    self._freeze_layers()
+            else:
+                raise ValueError("train.py: cfg.weights_path does not exist!")
+
+        elif self.cfg.pretrained and self.cfg.weights_path == "":
+            raise ValueError("CFG: pretrained==True, but no weights path provided!")
+
+    def prepare_model_summary(self):
+        # Model Summary (frontend + backend)
+        if self.opts.summary:
+            # Using TorchSummary to get # trainable params and general overview
+            summary(
+                self.Network,
+                (2, self.data_cfg.network_sample_length),
+                batch_size=self.cfg.batch_size,
+            )
+            print("")
+            # Using TensorBoard summary writer to create detailed graph of ModelClass
+            tb = SummaryWriter()
+            samples, labels = next(iter(self.train_loader))
+            tb.add_graph(self.Network, samples)
+            tb.close()
+
+    def prepare_optimiser(self):
+        # Optimiser and Scheduler (Set to None if unused)
+        if self.cfg.optimiser is not None:
+            self.optimiser = self.cfg.optimiser(
+                self.Network.parameters(), **self.cfg.optimiser_params
+            )
+        else:
+            self.optimiser = None
+
+    def prepare_scheduler(self):
+        if self.cfg.scheduler is not None:
+            self.scheduler = self.cfg.scheduler(
+                self.optimiser, **self.cfg.scheduler_params
+            )
+        else:
+            self.scheduler = None
+        return self.scheduler
+
+    def prepare_loss_function(self):
+        # Loss function used
+        self.loss_function = self.cfg.loss_function
+
+    def prepare_checkpoint(self):
+        # Resume training by loading a checkpoint file or prepare checkpoint
+        if self.cfg.resume_from_checkpoint:
+            self.checkpoint = torch.load(
+                self.cfg.checkpoint_path, map_location=self.cfg.train_device
+            )
+            self.Network.load_state_dict(self.checkpoint["model_state_dict"])
+            self.optimiser.load_state_dict(self.checkpoint["optimiser_state_dict"])
+
+    def train_model(self):
+        # Running the manual pipeline version using pure PyTorch
+        # Initialise the trainer
+        self.Network = manual_train(
+            self.cfg,
+            self.data_cfg,
+            self.train_data,
+            self.val_data,
+            self.Network,
+            self.optimiser,
+            self.scheduler,
+            self.loss_function,
+            self.train_loader,
+            self.val_loader,
+            self.aux_loader,
+            self.nepoch,
+            self.cflag,
+            self.checkpoint,
+            self.opts.validate,
+            verbose=self.cfg.verbose,
+        )
+
+    def test_model(self):
+        if opts.inference:
+            # Running the testing phase for foreground data
+            transforms = self.cfg.transforms["test"]
+            jobs = ["foreground", "background"]
+
+            output_testing_dir = os.path.join(self.cfg.export_dir, "TESTING")
+            for job in jobs:
+                # Get the required data based on testing job
+                if job == "foreground":
+                    testfile = os.path.join(
+                        self.cfg.testing_dir, self.cfg.test_foreground_dataset
+                    )
+                    evalfile = os.path.join(
+                        output_testing_dir, self.cfg.test_foreground_output
+                    )
+                elif job == "background":
+                    testfile = os.path.join(
+                        self.cfg.testing_dir, self.cfg.test_background_dataset
+                    )
+                    evalfile = os.path.join(
+                        output_testing_dir, self.cfg.test_background_output
+                    )
+
+                print("\nRunning the testing phase on {} data".format(job))
+                run_test(
+                    self.Network,
+                    testfile,
+                    evalfile,
+                    transforms,
+                    self.cfg,
+                    self.data_cfg,
+                    step_size=self.cfg.step_size,
+                    slice_length=int(
+                        self.data_cfg.signal_length * self.data_cfg.sample_rate
+                    ),
+                    trigger_threshold=self.cfg.trigger_threshold,
+                    cluster_threshold=self.cfg.cluster_threshold,
+                    batch_size=self.cfg.batch_size,
+                    device=self.cfg.testing_device,
+                    verbose=self.cfg.verbose,
+                )
+
+    def evaluate_model(self):
+        # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
+        raw_args = [
+            "--injection-file",
+            os.path.join(self.cfg.testing_dir, self.cfg.injection_file),
+        ]
+        raw_args += [
+            "--foreground-events",
+            os.path.join(output_testing_dir, self.cfg.test_foreground_output),
+        ]
+        raw_args += [
+            "--foreground-files",
+            os.path.join(self.cfg.testing_dir, self.cfg.test_foreground_dataset),
+        ]
+        raw_args += [
+            "--background-events",
+            os.path.join(output_testing_dir, self.cfg.test_background_output),
+        ]
+        out_eval = os.path.join(output_testing_dir, self.cfg.evaluation_output)
+        raw_args += ["--output-file", out_eval]
+        raw_args += ["--output-dir", output_testing_dir]
+        raw_args += ["--verbose"]
+
+        # Running the evaluator to obtain output triggers (with clustering)
+        evaluator(
+            raw_args,
+            cfg_far_scaling_factor=float(self.cfg.far_scaling_factor),
+            dataset=self.data_cfg.dataset,
+        )
+
+    def save_results(self):
+        pass
+
+    def run(self):
+        self.prepare_configs()
+        self.prepare_data()
+        self.initialise_model()
+        self.prepare_model_summary()
+        self.prepare_optimiser()
+        self.prepare_scheduler()
+        self.prepare_loss_function()
+        self.prepare_checkpoint()
+        self.train_model()
+        # self.test_model()
+        # self.evaluate_model()
+        self.save_results()
 
 
-def prepare_data():
-    
-    # Get input data length
-    # Used in torch summary and to initialise norm layers
-    dat.input_sample_length(data_cfg)
-    
-    # Make export dir
-    dat.make_export_dir(cfg)
-    
-    # Prepare input data for training and testing
-    # This should create/use a dataset and save a copy of the lookup table
-    dat.get_summary(cfg, data_cfg, cfg.export_dir)
+if __name__ == "__main__":
+    opts = parse_args()
+    director = SageDirector(opts)
+    director.run()
 
-
-def initialise_model():
-    pass
-
-
-def train_model():
-    pass
-
-
-def test_model():
-    pass
-
-
-def run_evaluation():
-    pass
-
-
-def save_results():
-    pass
-
-
-
-
-
-
-
-
-
-
-
-
-
+"""
 def trainer(rtune=None, checkpoint_dir=None, args=None):
-    
+
     cfg, data_cfg, opts, train_fold, val_fold, balance_params = args
     # Get the dataset objects for training and validation
-    train_data, val_data, aux_data = dat.get_dataset_objects(cfg, data_cfg, train_fold, val_fold)
-    
+    train_data, val_data, aux_data = dat.get_dataset_objects(
+        cfg, data_cfg, train_fold, val_fold
+    )
+
     # Get the Pytorch DataLoader objects of train and valid data
-    train_loader, val_loader, aux_loader, nepoch, cflag = dat.get_dataloader(cfg, train_data, val_data, aux_data, balance_params)
-    
+    train_loader, val_loader, aux_loader, nepoch, cflag = dat.get_dataloader(
+        cfg, train_data, val_data, aux_data, balance_params
+    )
+
     # Initialise chosen model architecture (Backend + Frontend)
     # Equivalent to the "Network" variable in manual mode without weights
-    cfg.model_params.update(dict(_input_length=data_cfg.network_sample_length,
-                                 _decimated_bins=data_cfg._decimated_bins))
+    cfg.model_params.update(
+        dict(
+            _input_length=data_cfg.network_sample_length,
+            _decimated_bins=data_cfg._decimated_bins,
+        )
+    )
     # Init Network
     Network = cfg.model(**cfg.model_params)
-    
+
     # Load weights snapshot
-    if cfg.pretrained and cfg.weights_path!='':
+    if cfg.pretrained and cfg.weights_path != "":
         if os.path.exists(cfg.weights_path):
             weights = torch.load(cfg.weights_path, cfg.store_device)
             Network.load_state_dict(weights)
-            del weights; gc.collect()
+            del weights
+            gc.collect()
             # summary(Network, (2, 4096), batch_size=cfg.batch_size)
             # Freezing
             if cfg.freeze_for_transfer:
@@ -169,8 +396,10 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
                     param.requires_grad = False
                 # Unfreeze required layers
                 # FIX ME!!! Add this to cfg as option
-                layer_names = ['signal_or_noise', 'chirp_mass', 'coalescence_time']
-                layer_params = [getattr(Network, foo).parameters() for foo in layer_names]
+                layer_names = ["signal_or_noise", "chirp_mass", "coalescence_time"]
+                layer_params = [
+                    getattr(Network, foo).parameters() for foo in layer_names
+                ]
                 for layer in layer_params:
                     for param in layer:
                         param.requires_grad = True
@@ -178,11 +407,15 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
         else:
             raise ValueError("train.py: cfg.weights_path does not exist!")
 
-    elif cfg.pretrained and cfg.weights_path=='':
+    elif cfg.pretrained and cfg.weights_path == "":
         raise ValueError("CFG: pretrained==True, but no weights path provided!")
-    
+
     ## Display
-    print("Sample length for training and testing = {}".format(data_cfg.network_sample_length))
+    print(
+        "Sample length for training and testing = {}".format(
+            data_cfg.network_sample_length
+        )
+    )
 
     # Model Summary (frontend + backend)
     if opts.summary:
@@ -194,70 +427,106 @@ def trainer(rtune=None, checkpoint_dir=None, args=None):
         samples, labels = next(iter(train_loader))
         tb.add_graph(Network, samples)
         tb.close()
-    
+
     # Optimizer and Scheduler (Set to None if unused)
     if cfg.optimizer is not None:
         optimizer = cfg.optimizer(Network.parameters(), **cfg.optimizer_params)
     else:
         optimizer = None
-        
+
     if cfg.scheduler is not None:
         scheduler = cfg.scheduler(optimizer, **cfg.scheduler_params)
     else:
         scheduler = None
-    
+
     # Loss function used
     loss_function = cfg.loss_function
 
-    """ Default Checkpointing """    
+    ## Default Checkpointing
     # Resume training by loading a checkpoint file
     if cfg.resume_from_checkpoint:
         checkpoint = torch.load(cfg.checkpoint_path, map_location=cfg.train_device)
-        Network.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        Network.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     else:
         checkpoint = None
 
-    """ RayTune Checkpointing """
+    ## RayTune Checkpointing
     if checkpoint_dir:
         model_state, optimizer_state = torch.load(
-            os.path.join(checkpoint_dir, "checkpoint"))
+            os.path.join(checkpoint_dir, "checkpoint")
+        )
         Network.load_state_dict(model_state)
         optimizer.load_state_dict(optimizer_state)
-    
-    """ Training and Validation Methods """
+
+    ## Training and Validation Methods
     ## MANUAL
     if opts.manual:
         # Running the manual pipeline version using pure PyTorch
         # Initialise the trainer
-        Network = manual_train(cfg, data_cfg, train_data, val_data, Network, optimizer, scheduler, loss_function,
-                               train_loader, val_loader, aux_loader, nepoch, cflag, checkpoint, opts.validate, verbose=cfg.verbose)
-    
+        Network = manual_train(
+            cfg,
+            data_cfg,
+            train_data,
+            val_data,
+            Network,
+            optimizer,
+            scheduler,
+            loss_function,
+            train_loader,
+            val_loader,
+            aux_loader,
+            nepoch,
+            cflag,
+            checkpoint,
+            opts.validate,
+            verbose=cfg.verbose,
+        )
+
     if rtune == None:
         return Network
 
 
 def run_trainer():
-    
+
     parser = argparse.ArgumentParser()
-    
-    parser.add_argument("--config", type=str, default='Baseline',
-                        help="Uses the pipeline architecture as described in configs.py")
-    parser.add_argument("--data-config", type=str, default='Default',
-                        help="Creates or uses a particular dataset as provided in data_configs.py")
-    parser.add_argument("--inference", action='store_true',
-                        help="Running the inference module using trained model")
-    parser.add_argument("--manual", action='store_true',
-                        help="Running the pipeline using manual PyTorch")
-    parser.add_argument("--validate", action='store_true',
-                        help="Running the pipeline in 1 epoch validate mode")
-    parser.add_argument("--summary", action='store_true',
-                        help="Store model summary using pytorch_summary")
-    
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="Baseline",
+        help="Uses the pipeline architecture as described in configs.py",
+    )
+    parser.add_argument(
+        "--data-config",
+        type=str,
+        default="Default",
+        help="Creates or uses a particular dataset as provided in data_configs.py",
+    )
+    parser.add_argument(
+        "--inference",
+        action="store_true",
+        help="Running the inference module using trained model",
+    )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Running the pipeline using manual PyTorch",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Running the pipeline in 1 epoch validate mode",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Store model summary using pytorch_summary",
+    )
+
     opts = parser.parse_args()
-    
-    
-    """ Prepare Data """
+
+    # Prepare Data
     # Get data creation/usage configuration
     data_cfg = dat.configure_dataset(opts)
     # Get model configuration
@@ -266,129 +535,181 @@ def run_trainer():
     # Get input data length
     # Used in torch summary and to initialise norm layers
     dat.input_sample_length(data_cfg)
-    
+
     # Make export dir
     dat.make_export_dir(cfg)
-    
+
     # Prepare input data for training and testing
     # This should create/use a dataset and save a copy of the lookup table
     dat.get_summary(cfg, data_cfg, cfg.export_dir)
-    
+
     if not data_cfg.OTF:
         # Prepare dataset (read, split and return fold idx)
         # Folds are based on stratified-KFold method in Sklearn (preserves class ratio)
         train, folds, balance_params = dat.get_metadata(cfg, data_cfg)
 
-        """ Training (non-OTF) """
+        ## Training (non-OTF)
         # Folds are obtained only by splitting the training dataset
         # Use folds for cross-validation
         for nfold, (train_idx, val_idx) in enumerate(folds):
-            
-            #if cfg.splitter != None:
+
+            # if cfg.splitter != None:
             #    raise NotImplementedError('K-fold cross validation method under construction!')
             #    print(f'\n========================= TRAINING FOLD {nfold} =========================\n')
 
             train_fold = train.iloc[train_idx]
             val_fold = train.iloc[val_idx]
-            
+
             if cfg.rtune_optimise:
                 ### RayTune needs to optimise parameter from this point forward
                 ### All code before inference section must be wrapped into a train function
                 rtune = cfg.rtune_params
                 # Get RayTune configs
-                rtune_config = rtune['config']
-                rtune_scheduler = rtune['scheduler'](**rtune['scheduler_params'])
-                rtune_reporter = rtune['reporter'](**rtune['reporter_params'])
-                
+                rtune_config = rtune["config"]
+                rtune_scheduler = rtune["scheduler"](**rtune["scheduler_params"])
+                rtune_reporter = rtune["reporter"](**rtune["reporter_params"])
+
                 # Constant args to be passed to trainer
-                const = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
-                
+                const = (
+                    cfg,
+                    data_cfg,
+                    opts,
+                    train_fold,
+                    val_fold,
+                    balance_params,
+                )
+
                 # Run RayTune with given config options
                 result = tune.run(
                     partial(trainer, args=const),
-                    name = "raytune_optimisation",
-                    local_dir = os.path.join(cfg.export_dir, "raytune"),
-                    resources_per_trial = {"cpu": 1, "gpu": 1},
+                    name="raytune_optimisation",
+                    local_dir=os.path.join(cfg.export_dir, "raytune"),
+                    resources_per_trial={"cpu": 1, "gpu": 1},
                     max_concurrent_trials=1,
-                    config = rtune_config,
-                    num_samples = rtune['num_samples'],
-                    scheduler = rtune_scheduler,
-                    progress_reporter = rtune_reporter
+                    config=rtune_config,
+                    num_samples=rtune["num_samples"],
+                    scheduler=rtune_scheduler,
+                    progress_reporter=rtune_reporter,
                 )
-                
+
                 # Getting the best trial
                 # Syntax: get_best_trial(metric, mode, scope)
                 # Usage: esult.get_best_trial("loss", "min", "last")
                 # Meaning: Get the trial that has minimum validation loss
                 best_trial = result.get_best_trial("loss", "min", "last")
                 print("Best trial config: {}".format(best_trial.config))
-                print("Best trial final validation loss: {}".format(
-                    best_trial.last_result["loss"]))
-                
+                print(
+                    "Best trial final validation loss: {}".format(
+                        best_trial.last_result["loss"]
+                    )
+                )
+
                 # Best trained Network
                 best_checkpoint_dir = best_trial.checkpoint.value
-                model_state, optimizer_state = torch.load(os.path.join(best_checkpoint_dir, "checkpoint"))
+                model_state, optimizer_state = torch.load(
+                    os.path.join(best_checkpoint_dir, "checkpoint")
+                )
                 # Loading the network the best weights
                 Network = cfg.model(**cfg.model_params)
                 Network.load_state_dict(model_state)
-                
+
                 ### RayTune Optimisation ends ###
-            
+
             else:
                 # Running the pipeline without RayTune optimisation
-                args = (cfg, data_cfg, opts, train_fold, val_fold, balance_params, )
+                args = (
+                    cfg,
+                    data_cfg,
+                    opts,
+                    train_fold,
+                    val_fold,
+                    balance_params,
+                )
                 Network = trainer(args=args)
-            
+
             # Save run in online workspace
             # save(cfg, data_cfg)
-            
+
             # Sanity check for Network load
             if Network == None:
                 return
-    
+
     else:
-        args = (cfg, data_cfg, opts, None, None, None, )
+        args = (
+            cfg,
+            data_cfg,
+            opts,
+            None,
+            None,
+            None,
+        )
         Network = trainer(args=args)
-        
-    """ TESTING """
+
+    ## TESTING
     if opts.inference:
         # Running the testing phase for foreground data
-        transforms = cfg.transforms['test']
-        jobs = ['foreground', 'background']
-        
-        output_testing_dir = os.path.join(cfg.export_dir, 'TESTING')
+        transforms = cfg.transforms["test"]
+        jobs = ["foreground", "background"]
+
+        output_testing_dir = os.path.join(cfg.export_dir, "TESTING")
         for job in jobs:
             # Get the required data based on testing job
-            if job == 'foreground':
+            if job == "foreground":
                 testfile = os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)
                 evalfile = os.path.join(output_testing_dir, cfg.test_foreground_output)
-            elif job == 'background':
+            elif job == "background":
                 testfile = os.path.join(cfg.testing_dir, cfg.test_background_dataset)
                 evalfile = os.path.join(output_testing_dir, cfg.test_background_output)
-                
-            print('\nRunning the testing phase on {} data'.format(job))
-            run_test(Network, testfile, evalfile, transforms, cfg, data_cfg,
-                        step_size=cfg.step_size, slice_length=int(data_cfg.signal_length*data_cfg.sample_rate),
-                        trigger_threshold=cfg.trigger_threshold, cluster_threshold=cfg.cluster_threshold, 
-                        batch_size = cfg.batch_size,
-                        device=cfg.testing_device, verbose=cfg.verbose)
-    
-        # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
-        raw_args =  ['--injection-file', os.path.join(cfg.testing_dir, cfg.injection_file)]
-        raw_args += ['--foreground-events', os.path.join(output_testing_dir, cfg.test_foreground_output)]
-        raw_args += ['--foreground-files', os.path.join(cfg.testing_dir, cfg.test_foreground_dataset)]
-        raw_args += ['--background-events', os.path.join(output_testing_dir, cfg.test_background_output)]
-        out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
-        raw_args += ['--output-file', out_eval]
-        raw_args += ['--output-dir', output_testing_dir]
-        raw_args += ['--verbose']
-        
-        # Running the evaluator to obtain output triggers (with clustering)
-        evaluator(raw_args, cfg_far_scaling_factor=float(cfg.far_scaling_factor), dataset=data_cfg.dataset)
 
-        
+            print("\nRunning the testing phase on {} data".format(job))
+            run_test(
+                Network,
+                testfile,
+                evalfile,
+                transforms,
+                cfg,
+                data_cfg,
+                step_size=cfg.step_size,
+                slice_length=int(data_cfg.signal_length * data_cfg.sample_rate),
+                trigger_threshold=cfg.trigger_threshold,
+                cluster_threshold=cfg.cluster_threshold,
+                batch_size=cfg.batch_size,
+                device=cfg.testing_device,
+                verbose=cfg.verbose,
+            )
+
+        # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
+        raw_args = [
+            "--injection-file",
+            os.path.join(cfg.testing_dir, cfg.injection_file),
+        ]
+        raw_args += [
+            "--foreground-events",
+            os.path.join(output_testing_dir, cfg.test_foreground_output),
+        ]
+        raw_args += [
+            "--foreground-files",
+            os.path.join(cfg.testing_dir, cfg.test_foreground_dataset),
+        ]
+        raw_args += [
+            "--background-events",
+            os.path.join(output_testing_dir, cfg.test_background_output),
+        ]
+        out_eval = os.path.join(output_testing_dir, cfg.evaluation_output)
+        raw_args += ["--output-file", out_eval]
+        raw_args += ["--output-dir", output_testing_dir]
+        raw_args += ["--verbose"]
+
+        # Running the evaluator to obtain output triggers (with clustering)
+        evaluator(
+            raw_args,
+            cfg_far_scaling_factor=float(cfg.far_scaling_factor),
+            dataset=data_cfg.dataset,
+        )
+
 
 if __name__ == "__main__":
-    
+
     run_trainer()
-    print('\nFIN')    
+    print("\nFIN")
+"""
