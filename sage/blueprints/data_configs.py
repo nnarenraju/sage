@@ -287,8 +287,8 @@ class DefaultOTF:
     ifo_combination = "HL"
 
     """ OTF Params """
-    num_training_samples = 2_000_000
-    num_validation_samples = 500_000  # 105_189_754
+    num_training_samples = 2_000
+    num_validation_samples = 500  # 105_189_754
     num_auxilliary_samples = 1000
 
     """ Signal Params """
