@@ -582,7 +582,7 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
 class SageNetOTF_Russet_BEST_HL(SageNetOTF):
     """Data storage"""
 
-    name = "SageNet50_Russet_BEST_HL"
+    name = "SageNet50_Russet_BEST_HL_dummy"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
     git_revparse = subprocess.run(
@@ -618,7 +618,7 @@ class SageNetOTF_Russet_BEST_HL(SageNetOTF):
         noise=UnifyNoiseGen(
             {
                 "training": RandomNoiseSlice(
-                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                     segment_llimit=133,
                     segment_ulimit=-1,
                     debug_me=False,
