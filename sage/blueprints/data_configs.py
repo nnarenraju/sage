@@ -284,7 +284,7 @@ class DefaultOTF:
     fix_noise_seeds = False
 
     """ 2-ifo combination """
-    ifo_combination = "HV"
+    ifo_combination = "HL"
 
     """ OTF Params """
     num_training_samples = 2_000_000
