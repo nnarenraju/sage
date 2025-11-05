@@ -208,7 +208,6 @@ class UnifyNoiseGen:
             elif hardsample:
                 y = self.hardsample.apply(special)
             else:
-                # print('We should not be here 3')
                 y = self.generations["training"].apply(special)
         else:
             y = self.generations["validation"].apply(special)
@@ -2079,7 +2078,6 @@ class RandomNoiseSlice:
     def apply(self, special, det_only=""):
         ## Get noise sample with random start time from O3a real noise
         # Check whether recolour is done
-        print("We should not be here at all")
         if special["cfg"].transforms["noise"] != None:
             get_class = lambda clist, cname: [
                 foo for foo in clist if foo.__class__.__name__ == cname
