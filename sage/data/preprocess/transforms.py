@@ -43,9 +43,9 @@ from numpy.random import RandomState
 from scipy.signal import decimate
 
 # LOCAL
-from data.multirate_sampling import multirate_sampling
-from data.snr_calculation import get_network_snr
-from data.mlmdc_noise_generator import NoiseGenerator
+from sage.data.preprocess.multirate_sampling import multirate_sampling
+from sage.data.preprocess.snr_calculation import get_network_snr
+from sage.data.generation.mlmdc_noise_generator import NoiseGenerator
 
 # PyCBC
 import pycbc
@@ -145,7 +145,16 @@ class UnifyNoise:
 
 
 class UnifyNoiseGen:
-    def __init__(self, generations, aux=None, paux=0.0, hardsample=None, phard=0.0, debug_me=False, debug_dir=""):
+    def __init__(
+        self,
+        generations,
+        aux=None,
+        paux=0.0,
+        hardsample=None,
+        phard=0.0,
+        debug_me=False,
+        debug_dir="",
+    ):
         self.generations = generations
         self.aux = aux
         self.hardsample = hardsample
@@ -423,8 +432,8 @@ class Whiten(TransformWrapperPerChannel):
             psds = {}
             H1_dir = os.path.join(whitening_psd_dir, "H1")
             L1_dir = os.path.join(whitening_psd_dir, "L1")
-            psd_file_H1 = glob.glob(os.path.join(H1_dir, '*.hdf'))
-            psd_file_L1 = glob.glob(os.path.join(L1_dir, '*.hdf'))
+            psd_file_H1 = glob.glob(os.path.join(H1_dir, "*.hdf"))
+            psd_file_L1 = glob.glob(os.path.join(L1_dir, "*.hdf"))
             for psd_file in psd_file_H1:
                 psd_data = load_frequencyseries(psd_file)
                 # Store PSD data into lookup dict
@@ -1082,7 +1091,7 @@ class AugmentOptimalNetworkSNR(SignalWrapper):
         snr_lower_limit=5.0,
         snr_upper_limit=15.0,
         fix_snr=None,
-        always_rescale_for_validation=True
+        always_rescale_for_validation=True,
     ):
 
         super().__init__(always_apply)
@@ -1739,7 +1748,10 @@ class MultipleFileRandomNoiseSlice:
         # Pick a noise file for each detector
         # Pick a random file to get the noise sample
         idx = np.random.choice(list(range(len(self.lengths[det]))))
-        det_file, det_file_length = self.noise_files[det]['data/chunk_{}'.format(idx)], self.lengths[det][idx]
+        det_file, det_file_length = (
+            self.noise_files[det]["data/chunk_{}".format(idx)],
+            self.lengths[det][idx],
+        )
         return det_file, det_file_length
 
     def _make_sample_start_time(self, seg_start_idx, seg_end_idx):
@@ -1784,8 +1796,11 @@ class MultipleFileRandomNoiseSlice:
         else:
             recolour_pad = 0
         # Is the detector going to be augmented with extra noise?
-        #is_augment = {"H1": np.random.rand() < 0.5, "L1": np.random.rand() < 0.5} -----------> Change
-        is_augment = {self.detnames[0]: np.random.rand() < 1.0, self.detnames[1]: np.random.rand() < 1.0}
+        # is_augment = {"H1": np.random.rand() < 0.5, "L1": np.random.rand() < 0.5} -----------> Change
+        is_augment = {
+            self.detnames[0]: np.random.rand() < 1.0,
+            self.detnames[1]: np.random.rand() < 1.0,
+        }
 
         # Read the noise from the provided filenum
         noise_H1 = np.zeros(
@@ -2064,7 +2079,7 @@ class RandomNoiseSlice:
     def apply(self, special, det_only=""):
         ## Get noise sample with random start time from O3a real noise
         # Check whether recolour is done
-        print('We should not be here at all')
+        print("We should not be here at all")
         if special["cfg"].transforms["noise"] != None:
             get_class = lambda clist, cname: [
                 foo for foo in clist if foo.__class__.__name__ == cname

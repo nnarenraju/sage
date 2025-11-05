@@ -66,33 +66,39 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 ## LOCAL
 # Dataset objects
-from data.datasets import MinimalOTF
+from sage.data.datasets.minimal_otf import MinimalOTF
 
 # Architectures
-from architectures.models import (
+from sage.architecture.network import (
     Rigatoni_MS_ResNetCBAM,
     Rigatoni_MS_ResNetCBAM_legacy,
     Rigatoni_MS_ResNetCBAM_legacy_minimal,
+    KappaModel_ResNet1D,
+    KappaModelPE,
 )
-from architectures.models import KappaModel_ResNet1D, KappaModelPE
-from architectures.frontend import MultiScaleBlock
+from sage.architecture.frontend import MultiScaleBlock
 
 # Transforms, augmentation and generation
-from data.transforms import (
+from sage.data.preprocess.transforms import (
     Unify,
     UnifySignal,
     UnifyNoise,
     UnifySignalGen,
     UnifyNoiseGen,
 )
-from data.transforms import Whiten, MultirateSampling, Normalise, MonorateSampling
-from data.transforms import AugmentOptimalNetworkSNR, AugmentPolSky
-from data.transforms import Recolour, HighPass
-from data.transforms import Buffer, BufferPerChannel
+from sage.data.preprocess.transforms import (
+    Whiten,
+    MultirateSampling,
+    Normalise,
+    MonorateSampling,
+)
+from sage.data.preprocess.transforms import AugmentOptimalNetworkSNR, AugmentPolSky
+from sage.data.preprocess.transforms import Recolour, HighPass
+from sage.data.preprocess.transforms import Buffer, BufferPerChannel
 
 # Generating signals and noise
-from data.transforms import FastGenerateWaveform, SinusoidGenerator
-from data.transforms import (
+from sage.data.preprocess.transforms import FastGenerateWaveform, SinusoidGenerator
+from sage.data.preprocess.transforms import (
     RandomNoiseSlice,
     MultipleFileRandomNoiseSlice,
     ColouredNoiseGenerator,
@@ -100,7 +106,10 @@ from data.transforms import (
 )
 
 # Loss functions
-from losses.custom_loss_functions import BCEWithPEregLoss, lPOPWithPEregLoss
+from sage.architecture.custom_losses.loss_functions import (
+    BCEWithPEregLoss,
+    lPOPWithPEregLoss,
+)
 
 # RayTune
 from ray import tune
@@ -121,7 +130,6 @@ from ray.tune.schedulers import ASHAScheduler
 # Add logging to all modules
 # Add documentation to all classes and functions
 # Add diagnostic tests with at least 90% coverage
-# Add Sage logo to output
 
 
 """ CUSTOM MODELS FOR EXPERIMENTATION """
@@ -237,8 +245,8 @@ class SageNetOTF:
 
     """ Optimizer """
     ## Adam
-    optimizer = optim.Adam
-    optimizer_params = dict(lr=2e-4, weight_decay=1e-6)
+    optimiser = optim.Adam
+    optimiser_params = dict(lr=2e-4, weight_decay=1e-6)
 
     """ Scheduler """
     ## Cosine Annealing with Warm Restarts
@@ -309,8 +317,8 @@ class SageNetOTF:
             # Auxilliary noise data (only used for training, not for validation)
             MultipleFileRandomNoiseSlice(
                 noise_dirs=dict(
-                    H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
-                    L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                    H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                    L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                 ),
                 debug_me=False,
                 debug_dir="",
@@ -428,9 +436,6 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
     repo_abspath = os.path.join(git_revparse.stdout.strip("\n"), "sage")
     repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
 
-    # testing on individual events from GWTC-3 confident
-    batch_size = 1
-
     """ Dataset """
     dataset = MinimalOTF
     dataset_params = dict()
@@ -460,13 +465,13 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
         noise=UnifyNoiseGen(
             {
                 "training": RandomNoiseSlice(
-                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                     segment_llimit=133,
                     segment_ulimit=-1,
                     debug_me=False,
                 ),
                 "validation": RandomNoiseSlice(
-                    real_noise_path="/home/nnarenraju/Research/ORChiD/O3a_real_noise/O3a_real_noise.hdf",
+                    real_noise_path="/local/scratch/igr/nnarenraju/O3a_real_noise/O3a_real_noise.hdf",
                     segment_llimit=0,
                     segment_ulimit=132,
                     debug_me=False,
@@ -474,8 +479,8 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
             },
             MultipleFileRandomNoiseSlice(
                 noise_dirs=dict(
-                    H1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/H1",
-                    L1="/home/nnarenraju/Research/ORChiD/O3b_real_noise/L1",
+                    H1="/local/scratch/igr/nnarenraju/O3b_real_noise/H1",
+                    L1="/local/scratch/igr/nnarenraju/O3b_real_noise/L1",
                 ),
                 debug_me=False,
                 debug_dir="",
@@ -503,10 +508,12 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
                 Recolour(
                     use_precomputed=True,
                     h1_psds_hdf=os.path.join(
-                        repo_abspath, "notebooks/tmp/psds_H1_30days.hdf"
+                        repo_abspath,
+                        "/home/nnarenraju/Research/ORChiD/ML-GWSC1-Glasgow/notebooks/tmp/psds_H1_30days.hdf",
                     ),
                     l1_psds_hdf=os.path.join(
-                        repo_abspath, "notebooks/tmp/psds_L1_30days.hdf"
+                        repo_abspath,
+                        "/home/nnarenraju/Research/ORChiD/ML-GWSC1-Glasgow/notebooks/tmp/psds_L1_30days.hdf",
                     ),
                     p_recolour=0.3829,
                     debug_me=False,
@@ -573,8 +580,8 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
 
 
 class SageNetOTF_Russet_BEST_HL(SageNetOTF):
-
     """Data storage"""
+
     name = "SageNet50_Russet_BEST_HL"
     export_dir = Path("/home/nnarenraju/Research/ORChiD/RUNS") / name
     debug_dir = "./DEBUG"
@@ -623,7 +630,7 @@ class SageNetOTF_Russet_BEST_HL(SageNetOTF):
                     ),
                     lengths_dir=dict(
                         H1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_H1_O3_all_noise.npy",
-                        L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy"
+                        L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy",
                     ),
                     debug_me=False,
                     debug_dir="",
@@ -636,7 +643,7 @@ class SageNetOTF_Russet_BEST_HL(SageNetOTF):
                 ),
                 lengths_dir=dict(
                     H1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_H1_O3_all_noise.npy",
-                    L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy"
+                    L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy",
                 ),
                 debug_me=False,
                 debug_dir="",
@@ -787,7 +794,7 @@ class SageNetOTF_Russet_BEST_HV(SageNetOTF):
                     ),
                     lengths_dir=dict(
                         H1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_H1_O3_all_noise.npy",
-                        V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy"
+                        V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy",
                     ),
                     debug_me=False,
                     debug_dir="",
@@ -800,7 +807,7 @@ class SageNetOTF_Russet_BEST_HV(SageNetOTF):
                 ),
                 lengths_dir=dict(
                     H1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_H1_O3_all_noise.npy",
-                    V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy"
+                    V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy",
                 ),
                 debug_me=False,
                 debug_dir="",
@@ -951,7 +958,7 @@ class SageNetOTF_Russet_BEST_LV(SageNetOTF):
                     ),
                     lengths_dir=dict(
                         L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy",
-                        V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy"
+                        V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy",
                     ),
                     debug_me=False,
                     debug_dir="",
@@ -964,7 +971,7 @@ class SageNetOTF_Russet_BEST_LV(SageNetOTF):
                 ),
                 lengths_dir=dict(
                     L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy",
-                    V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy"
+                    V1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_V1_O3_all_noise.npy",
                 ),
                 debug_me=False,
                 debug_dir="",
@@ -1087,7 +1094,7 @@ class SageNetOTF_Russet_HL_HardSampleMined(SageNetOTF):
     save_epoch_weight = list(range(4, 100, 5))
 
     """ Generation """
-    generation=dict(
+    generation = dict(
         signal=UnifySignalGen(
             [
                 FastGenerateWaveform(
@@ -1108,7 +1115,7 @@ class SageNetOTF_Russet_HL_HardSampleMined(SageNetOTF):
                     ),
                     lengths_dir=dict(
                         H1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_H1_O3_all_noise.npy",
-                        L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy"
+                        L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy",
                     ),
                     debug_me=False,
                     debug_dir="",
@@ -1120,7 +1127,7 @@ class SageNetOTF_Russet_HL_HardSampleMined(SageNetOTF):
                     ),
                     lengths_dir=dict(
                         H1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_H1_O3_all_noise.npy",
-                        L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy"
+                        L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_all_noise.npy",
                     ),
                     debug_me=False,
                     debug_dir="",
@@ -1133,13 +1140,12 @@ class SageNetOTF_Russet_HL_HardSampleMined(SageNetOTF):
                 ),
                 lengths_dir=dict(
                     H1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_H1_O3_glitches.npy",
-                    L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_glitches.npy"
+                    L1="/home/nnarenraju/Research/sgwc-1/sage/notebooks/tmp/durs_L1_O3_glitches.npy",
                 ),
                 debug_me=False,
                 debug_dir="",
             ),
             paux=0.6,  # (0.689) 113/164 days for extra O3b noise
-            
             debug_me=False,
             debug_dir=os.path.join(debug_dir, "NoiseGen"),
         ),
@@ -1231,7 +1237,6 @@ class SageNetOTF_Russet_HL_HardSampleMined(SageNetOTF):
     test_background_output = "testing_boutput_HL_hardsampled.hdf"
 
 
-
 class Norland_D3_Odds_Ratio(SageNetOTF):
     # Running D3 on template placement metric
     # Due to the abscence of blip glitches sensitivitiy should not suffer
@@ -1259,7 +1264,6 @@ class Norland_D3_Odds_Ratio(SageNetOTF):
     seed_offset_train = 2**25
     seed_offset_valid = 2**29
 
-    
     # Augmentation using GWSPY glitches happens only during training (not for validation)
     generation = dict(
         signal=UnifySignalGen(
@@ -1285,7 +1289,6 @@ class Norland_D3_Odds_Ratio(SageNetOTF):
         ),
     )
 
-    
     transforms = dict(
         signal=UnifySignal(
             [
@@ -1338,7 +1341,6 @@ class Norland_D3_Odds_Ratio(SageNetOTF):
         target=None,
     )
 
-    
     model = Rigatoni_MS_ResNetCBAM
 
     # Following options available for pe point estimate
@@ -1369,7 +1371,6 @@ class Norland_D3_Odds_Ratio(SageNetOTF):
         review=False,
     )
 
-    
     store_device = torch.device("cuda:0")
     train_device = torch.device("cuda:0")
 

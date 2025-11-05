@@ -44,7 +44,9 @@ def get_sage_abspath():
 
 def set_review_date(parent_name, module_name, last_review_date):
     repo_abspath = get_sage_abspath()
-    review_file = os.path.join(repo_abspath, "utils/review.json")
+    review_file = os.path.join(
+        repo_abspath, "/home/nnarenraju/Research/sage/sage/utils/review.json"
+    )
     try:
         with open(review_file, "r") as jfile:
             data = json.load(jfile)

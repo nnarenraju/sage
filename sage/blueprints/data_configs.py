@@ -24,7 +24,9 @@ Documentation: NULL
 """
 
 # LOCAL
-from data.MPB_make_default_dataset import make as make_MPB_default_dataset
+from sage.data.generation.MPB_make_default_dataset import (
+    make as make_MPB_default_dataset,
+)
 
 import numpy as np
 
