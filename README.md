@@ -21,17 +21,21 @@ Matched-filtering is a long-standing technique for the optimal detection of know
 If you found this work useful in your research, please consider citing:
 
 ```
-@misc{nagarajan2025,
-      title={Identifying and Mitigating Machine Learning Biases for the Gravitational-wave Detection Problem}, 
-      author={Narenraju Nagarajan and Christopher Messenger},
-      year={2025},
-      eprint={2501.13846},
-      archivePrefix={arXiv},
-      primaryClass={gr-qc},
-      url={https://arxiv.org/abs/2501.13846}, 
+@article{sage,
+  title = {Identifying and mitigating machine-learning biases for the gravitational-wave detection problem},
+  author = {Nagarajan, Narenraju and Messenger, Christopher},
+  journal = {Phys. Rev. D},
+  volume = {112},
+  issue = {10},
+  pages = {103002},
+  numpages = {40},
+  year = {2025},
+  month = {Nov},
+  publisher = {American Physical Society},
+  doi = {10.1103/zwj9-ycyz},
+  url = {https://link.aps.org/doi/10.1103/zwj9-ycyz}
 }
 ```
-Will be updated after publication.
 
 ### Acknowledgements
 
