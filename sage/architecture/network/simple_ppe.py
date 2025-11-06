@@ -32,20 +32,20 @@ from torch import nn
 from datetime import date
 
 # Importing architecture snippets from zoo
-from sage.architecture.zoo.resnet_cbam import (
+from sage.architecture.backend.resnet_cbam import (
     resnet50_cbam,
     resnet152_cbam,
     resnet34_cbam,
 )
-from sage.architecture.zoo.res2net_v1b import (
+from sage.architecture.backend.res2net_v1b import (
     res2net101_v1b_26w_4s,
     res2net50_v1b_26w_4s,
     res2net152_v1b_26w_4s,
 )
-from sage.architecture.zoo.osnet1d import osnet_ain_custom as osnet1d
-from sage.architecture.zoo.kaggle import ConvBlock, _initialize_weights
-from sage.architecture.frontend import MSFeatureExtractor, MultiScaleBlock
-from sage.architecture.zoo.resnet1d import resnet50, resnet101, resnet152
+from sage.architecture.frontend.osnet1d import osnet_ain_custom as osnet1d
+from sage.architecture.frontend.kaggle import ConvBlock, _initialize_weights
+from sage.architecture.frontend.mscnn1d import MSFeatureExtractor, MultiScaleBlock
+from sage.architecture.frontend.resnet1d import resnet50, resnet101, resnet152
 
 # Code Review
 from sage.utils.decorators import unreviewed_model
