@@ -66,7 +66,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 ## LOCAL
 # Dataset objects
-from sage.data.datasets.minimal_otf import MinimalOTF
+from sage.data.datasets.bbh import BBHDataset
 
 # Architectures
 from sage.architecture.network import (
@@ -184,7 +184,7 @@ class SageNetOTF:
     )
 
     """ Dataset """
-    dataset = MinimalOTF
+    dataset = BBHDataset
     dataset_params = dict()
 
     """ Architecture """
@@ -437,7 +437,7 @@ class SageNetOTF_Aug27_Russet_diffseed_2(SageNetOTF):
     repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
 
     """ Dataset """
-    dataset = MinimalOTF
+    dataset = BBHDataset
     dataset_params = dict()
 
     # Save weights for particular epochs
@@ -592,7 +592,7 @@ class SageNetOTF_Russet_BEST_HL(SageNetOTF):
     repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
 
     """ Dataset """
-    dataset = MinimalOTF
+    dataset = BBHDataset
     dataset_params = dict()
 
     seed_offset_train = 2**25
@@ -756,7 +756,7 @@ class SageNetOTF_Russet_BEST_HV(SageNetOTF):
     repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
 
     """ Dataset """
-    dataset = MinimalOTF
+    dataset = BBHDataset
     dataset_params = dict()
 
     seed_offset_train = 2**25
@@ -920,7 +920,7 @@ class SageNetOTF_Russet_BEST_LV(SageNetOTF):
     repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
 
     """ Dataset """
-    dataset = MinimalOTF
+    dataset = BBHDataset
     dataset_params = dict()
 
     seed_offset_train = 2**25
@@ -1084,7 +1084,7 @@ class SageNetOTF_Russet_HL_HardSampleMined(SageNetOTF):
     repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
 
     """ Dataset """
-    dataset = MinimalOTF
+    dataset = BBHDataset
     dataset_params = dict()
 
     seed_offset_train = 2**25
@@ -1253,7 +1253,7 @@ class Norland_D3_Odds_Ratio(SageNetOTF):
     repo_abspath = "/home/nnarenraju/Research/sgwc-1/sage"
 
     # Dataset
-    dataset = MinimalOTF
+    dataset = BBHDataset
     dataset_params = dict()
 
     num_workers = 32

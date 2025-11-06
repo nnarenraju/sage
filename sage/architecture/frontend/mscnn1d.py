@@ -1,28 +1,28 @@
-# -*- coding: utf-8 -*-
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 """
-Filename         =  foobar.py
-Description      =  Lorem ipsum dolor sit amet
+Filename        : frontend.py
+Description     : Short description of the file
 
-Created on 28/02/2025 at 16:35:37
+Created on 2025-11-06 12:34:59
 
-__author__       =  Narenraju Nagarajan
-__copyright__    =  Copyright 2025, ProjectName
-__credits__      =  nnarenraju
-__license__      =  MIT Licence
-__version__      =  0.0.1
-__maintainer__   =  nnarenraju
-__affiliation__  =  University of Glasgow
-__email__        =  nnarenraju@gmail.com
-__status__       =  ['inProgress', 'Archived', 'inUsage', 'Debugging']
+__author__        = Narenraju Nagarajan
+__copyright__     = Copyright 2025, ProjectName
+__license__       = MIT Licence
+__version__       = 0.0.1
+__maintainer__    = Narenraju Nagarajan
+__affiliation__   = N/A
+__email__         = N/A
+__status__        = ['inProgress', 'Archived', 'inUsage', 'Debugging']
 
 
-Github Repository: NULL
+GitHub Repository: NULL
 
 Documentation: NULL
 
 """
+
 
 # Modules
 import math
@@ -36,23 +36,31 @@ from torch.nn.functional import pad
 
 
 class Conv1dSame(nn.Conv1d):
-    """ Tensorflow like 'SAME' convolution wrapper """
+    """Tensorflow like 'SAME' convolution wrapper"""
 
     def __init__(
-        self, 
-        in_channels: int, 
-        out_channels: int, 
-        kernel_size: int, 
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
         stride: int = 1,
-        padding: int = 0, 
-        dilation: int = 1, 
-        groups: int = 1, 
+        padding: int = 0,
+        dilation: int = 1,
+        groups: int = 1,
         bias: bool = False,
     ):
-        args = (in_channels, out_channels, kernel_size, stride, 0, dilation, 
-                groups, bias)
+        args = (
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            0,
+            dilation,
+            groups,
+            bias,
+        )
         super(Conv1dSame, self).__init__(*args)
-    
+
     def get_same_padding(self, x: int, k: int, s: int, d: int):
         # Calculate asymmetric TensorFlow-like 'SAME' padding
         return max((math.ceil(x / s) - 1) * s + (k - 1) * d + 1 - x, 0)
@@ -67,46 +75,47 @@ class Conv1dSame(nn.Conv1d):
 
     def conv1d_same(
         self,
-        x, 
-        weight: torch.Tensor, 
-        bias: Optional[torch.Tensor] = None, 
+        x,
+        weight: torch.Tensor,
+        bias: Optional[torch.Tensor] = None,
         stride: int = 1,
-        padding: int = 0, 
-        dilation: int = 1, 
+        padding: int = 0,
+        dilation: int = 1,
         groups: int = 1,
     ):
         x = self.pad_same(x, weight.shape[-1], stride, dilation)
         return conv1d(x, weight, bias, stride, 0, dilation, groups)
 
     def forward(self, x):
-        return self.conv1d_same(x, self.weight, self.bias, self.stride[0], 
-                           self.padding[0], self.dilation[0], self.groups)
+        return self.conv1d_same(
+            x,
+            self.weight,
+            self.bias,
+            self.stride[0],
+            self.padding[0],
+            self.dilation[0],
+            self.groups,
+        )
 
 
 class ConvLayer(nn.Module):
-    """ Convolution layer (conv + bn + relu) """
+    """Convolution layer (conv + bn + relu)"""
 
     def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        padding=0,
-        groups=1
+        self, in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1
     ):
         super(ConvLayer, self).__init__()
         self.conv = Conv1dSame(
-            in_channels, 
-            out_channels, 
-            kernel_size, 
+            in_channels,
+            out_channels,
+            kernel_size,
             stride,
-            padding, 
-            groups=groups, 
-            bias=False
+            padding,
+            groups=groups,
+            bias=False,
         )
         self.bn = nn.BatchNorm1d(out_channels)
-        self.silu = nn.SiLU() # Using the swish function instead of ReLU
+        self.silu = nn.SiLU()  # Using the swish function instead of ReLU
 
     def forward(self, x):
         x = self.conv(x)
@@ -115,18 +124,18 @@ class ConvLayer(nn.Module):
 
 
 class Conv1x1(nn.Module):
-    """ 1x1 convolution + bn + relu """
+    """1x1 convolution + bn + relu"""
 
     def __init__(self, in_channels, out_channels, stride=1, groups=1):
         super(Conv1x1, self).__init__()
         self.conv = Conv1dSame(
-            in_channels, 
-            out_channels, 
-            kernel_size=1, 
+            in_channels,
+            out_channels,
+            kernel_size=1,
             stride=stride,
-            padding=0, 
-            groups=groups, 
-            bias=False
+            padding=0,
+            groups=groups,
+            bias=False,
         )
         self.bn = nn.BatchNorm1d(out_channels)
         self.silu = nn.SiLU()
@@ -138,18 +147,18 @@ class Conv1x1(nn.Module):
 
 
 class MultiScaleBlock(nn.Module):
-    """ Multi-scale feature learning block """
+    """Multi-scale feature learning block"""
 
     def __init__(
-        self, 
+        self,
         scales: list,
-        in_channels: int, 
-        out_channels: int, 
-        kernel_size: int, 
-        stride: int = 1, 
-        padding: int = 0, 
-        dilation: int = 1, 
-        groups: int = 1, 
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: int = 1,
+        padding: int = 0,
+        dilation: int = 1,
+        groups: int = 1,
         bias: bool = False,
     ):
         super().__init__()
@@ -164,19 +173,19 @@ class MultiScaleBlock(nn.Module):
 
     def forward(self, x):
         ms = [conv(x) for conv in self.convs]
-        x = torch.cat(ms+[x], dim=1)
+        x = torch.cat(ms + [x], dim=1)
         x = self.conv1x1(x)
         return x
 
 
 class MSFeatureExtractor(nn.Module):
-    """ 
-    Multi-scale frontend feature extractor 
-    
+    """
+    Multi-scale frontend feature extractor
+
     Example MSFeatureExtractor:
     Default parameters describe the following
-      
-    
+
+
                      BLOCK 1
             MSBlock(in=1, out=32, kernel=64)
         MSBlock(in=32, out=32, kernel=64//2+1)
@@ -202,28 +211,27 @@ class MSFeatureExtractor(nn.Module):
         self,
         scales: list = [1, 2, 4, 0.5, 0.25],
         blocks: list = [
-            [MultiScaleBlock, MultiScaleBlock], 
-            [MultiScaleBlock, MultiScaleBlock], 
-            [MultiScaleBlock, MultiScaleBlock]
+            [MultiScaleBlock, MultiScaleBlock],
+            [MultiScaleBlock, MultiScaleBlock],
+            [MultiScaleBlock, MultiScaleBlock],
         ],
         out_channels: list = [[32, 32], [64, 64], [128, 128]],
         base_kernel_sizes: list = [
-            [64, 64 // 2 + 1], 
-            [64 // 2 + 1, 64 // 4 + 1], 
-            [64 // 4 + 1, 64 // 4 + 1]
-        ], 
+            [64, 64 // 2 + 1],
+            [64 // 2 + 1, 64 // 4 + 1],
+            [64 // 4 + 1, 64 // 4 + 1],
+        ],
         compression_factor: list = [8, 4, 0],
-        in_channels: int = 1
+        in_channels: int = 1,
     ):
         super().__init__()
         # Feature Extractor Blocks
-        block_metadata = (blocks, out_channels, 
-                          base_kernel_sizes, compression_factor)
+        block_metadata = (blocks, out_channels, base_kernel_sizes, compression_factor)
 
         all_modules = []
         in_chans = in_channels
         # Iterating through feature extractor blocks
-        for (block, out_chans, base_kernels, comp) in zip(*block_metadata):
+        for block, out_chans, base_kernels, comp in zip(*block_metadata):
             # Iterating through each multi-scale block within
             for msb, oc, bk in zip(block, out_chans, base_kernels):
                 all_modules.append(msb(scales, in_chans, oc, bk))
@@ -238,14 +246,12 @@ class MSFeatureExtractor(nn.Module):
         self.feature_extractor = nn.Sequential(*all_modules)
         # Initialise the weights for all layers
         self._init_params()
-    
+
     def _init_params(self):
         # Initialise weights and biases for layers
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
-                nn.init.kaiming_normal_(
-                    m.weight, mode='fan_out'
-                )
+                nn.init.kaiming_normal_(m.weight, mode="fan_out")
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
@@ -257,7 +263,7 @@ class MSFeatureExtractor(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-        
+
     def forward(self, x):
         x = self.feature_extractor(x).unsqueeze(1)
         return x
