@@ -26,7 +26,7 @@ Documentation: NULL
 
 # GWOSC API
 from gwosc.timeline import get_segments
-from gwosc.datasets import run_segment
+from gwosc.datasets import run_segment, run_at_gps
 
 # General
 import numpy as np
@@ -37,6 +37,9 @@ from typing import Union, List, Sequence
 # LOCAL
 from sage.core.utils import to_sequence
 from sage.core.types import SEGMENT_DTYPE
+from sage.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TimelineQuery:
@@ -79,6 +82,98 @@ class TimelineQuery:
         # Structured array of segments as output
         self.timeline = []
 
+    def _get_segment_runspan(self, start, end):
+        """Get the observing runs spanned by start and end GPS times
+
+        Args:
+            start (_type_): _description_
+            end (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        runs = set()
+
+        # If requested segment is very small
+        if end - start < 86400:
+            return (run_at_gps(start),)
+
+        # Assuming that the time between two runs < 1 day
+        logger.warning("Assuming that the time between consecutive runs is > 1 day!")
+        for t in np.arange(start, end, step=86400):
+            runs.add(run_at_gps(t))
+
+        return tuple(runs)
+
+    def _case_1_handle(self, runs):
+        """Handle case 1: Only observing run provided
+
+        Args:
+            runs (_type_): _description_
+        """
+
+        logger.info(
+            f"Getting all segments for runs in {runs} "
+            "with data quality flags matching <DET>_DATA"
+        )
+        for run, det in product(runs, self.detector):
+            run_start, run_end = run_segment(run)
+            segments = np.array(get_segments(f"{det}_DATA", run_start, run_end))
+            self.timeline.append(
+                np.array(
+                    [(det, run_start, run_end, run, segments)],
+                    dtype=SEGMENT_DTYPE,
+                )
+            )
+
+    def _case_2_handle(self, start, end):
+        """Handle case 2: Only start & end provided
+
+        Args:
+            start (_type_): _description_
+            end (_type_): _description_
+        """
+
+        logger.info(
+            f"Getting all segments between {start}-{end} "
+            "for all detectors in the correct observing run"
+        )
+
+        # What if the start and end span multiple runs?
+        runs = self._get_segment_runspan(start, end)
+
+        for run, det in product(runs, self.detector):
+
+            # Handling the case of multiple runs
+            if len(runs) != 1:
+                logger.warning(
+                    f"Warning: start/end span multiple runs {runs}. "
+                    "Segments will be retrieved per run."
+                )
+
+                # 3 conditions: start run, middle run, end run
+                if run == runs[0]:
+                    run_start = start
+                    run_end = run_segment(run)[1]
+                elif run == runs[-1]:
+                    run_start = run_segment(run)[0]
+                    run_end = end
+                else:
+                    run_start, run_end = run_segment(run)
+            else:
+                run_start, run_end = start, end
+
+            segments = np.array(get_segments(f"{det}_DATA", run_start, run_end))
+            # Get run from segment time
+            # Handle case where start/end span multiple runs
+
+            self.timeline.append(
+                np.array(
+                    [(det, run_start, run_end, run, segments)],
+                    dtype=SEGMENT_DTYPE,
+                )
+            )
+
     def download_segments(self):
         """_summary_
 
@@ -89,42 +184,23 @@ class TimelineQuery:
 
             # Case 1: Only observing run
             case (runs, None, None, None):
-                print(
-                    f"Getting all segments for runs in {runs} with data quality flags matching <DET>_DATA"
-                )
-                for run, det in product(runs, self.detector):
-                    run_start, run_end = run_segment(run)
-                    segments = np.array(get_segments(f"{det}_DATA", run_start, run_end))
-                    self.timeline.append(
-                        np.array(
-                            [(det, run_start, run_end, run, segments)],
-                            dtype=SEGMENT_DTYPE,
-                        )
-                    )
+                self._case_1_handle(runs)
 
             # Case 2: Only start & end
             case (None, start, end, None) if start and end:
-                print(f"Getting all segments between {start}-{end} for all detectors")
-                for det in ["H1", "L1", "V1"]:
-                    print(det, len(get_segments(f"{det}_DATA", start, end)))
+                self._case_2_handle(start, end)
 
             # Case 3: Only data-quality flag
             case (None, None, None, flag):
-                print(f"Getting all segments for flag {flag}")
-                seg = get_segments(flag, 0, 9999999999)
-                print(len(seg))
+                logger.info(f"Getting all segments for flag {flag}")
 
             # Case 4: Flag missing → all detectors
             case (None, None, None, None):
-                print("Getting all segments for all detectors")
-                for det in ["H1", "L1", "V1"]:
-                    print(det, len(get_segments(f"{det}_DATA", 0, 9999999999)))
+                logger.info("Getting all segments for all detectors")
 
             # Case 5: Run + start/end → limit by time within run for all dets
             case (run, start, end, None) if start is not None and end is not None:
-                print(f"Getting segments for run {run} within {start}-{end}")
-                for det in ["H1", "L1", "V1"]:
-                    print(det, len(get_segments(f"{det}_DATA", start, end)))
+                logger.info(f"Getting segments for run {run} within {start}-{end}")
 
             # Case 6: Fallback (invalid input)
             case _:
