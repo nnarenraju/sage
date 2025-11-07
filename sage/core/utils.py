@@ -24,10 +24,10 @@ Documentation: NULL
 """
 
 
-def ensure_sequence(x):
+def to_sequence(x):
     """Wrap scalars into a tuple so everything becomes iterable."""
     if x is None:
-        return ()
+        return x
     if isinstance(x, (str, bytes)):
         return (x,)  # single string as a tuple
     if isinstance(x, (int, float)):
