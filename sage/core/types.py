@@ -23,6 +23,9 @@ Documentation: NULL
 
 """
 
+# General
+import numpy as np
+
 # Structured dtype for segment results
 SEGMENT_DTYPE = np.dtype(
     [
