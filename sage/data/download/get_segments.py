@@ -29,11 +29,13 @@ from gwosc.timeline import get_segments
 from gwosc.datasets import run_segment
 
 # General
-from typing import Union, List, Sequence
+import numpy as np
+
 from itertools import product
+from typing import Union, List, Sequence
 
 # LOCAL
-from sage.core.utils import ensure_sequence
+from sage.core.utils import to_sequence
 from sage.core.types import SEGMENT_DTYPE
 
 
@@ -41,7 +43,7 @@ class TimelineQuery:
 
     ## Static methods from sage.core
     # Make input variables iterable (if not already)
-    _ensure_sequence = staticmethod(ensure_sequence)
+    _to_seq = staticmethod(to_sequence)
 
     def __init__(
         self,
@@ -66,16 +68,16 @@ class TimelineQuery:
         """
 
         # Parameters for GWOSC query
-        self.observing_run = self._ensure_sequence(observing_run)
-        self.start = self._ensure_sequence(start)
-        self.end = self._ensure_sequence(end)
-        self.data_quality_flag = self._ensure_sequence(dq_flag)
+        self.observing_run = self._to_seq(observing_run)
+        self.start = self._to_seq(start)
+        self.end = self._to_seq(end)
+        self.data_quality_flag = self._to_seq(dq_flag)
 
         # Detector specification (mandatory)
-        self.detector = self._ensure_sequence(detector)
+        self.detector = self._to_seq(detector)
 
         # Structured array of segments as output
-        self.segments = None
+        self.timeline = []
 
     def download_segments(self):
         """_summary_
@@ -88,15 +90,20 @@ class TimelineQuery:
             # Case 1: Only observing run
             case (runs, None, None, None):
                 print(
-                    f"Getting all segments for {run} with dq flags matching <DET>_DATA"
+                    f"Getting all segments for runs in {runs} with data quality flags matching <DET>_DATA"
                 )
                 for run, det in product(runs, self.detector):
                     run_start, run_end = run_segment(run)
-                    segments = get_segments(f"{det}_DATA", run_start, run_end)
-                print(segments)
+                    segments = np.array(get_segments(f"{det}_DATA", run_start, run_end))
+                    self.timeline.append(
+                        np.array(
+                            [(det, run_start, run_end, run, segments)],
+                            dtype=SEGMENT_DTYPE,
+                        )
+                    )
 
             # Case 2: Only start & end
-            case (None, start, end, None) if start is not None and end is not None:
+            case (None, start, end, None) if start and end:
                 print(f"Getting all segments between {start}-{end} for all detectors")
                 for det in ["H1", "L1", "V1"]:
                     print(det, len(get_segments(f"{det}_DATA", start, end)))
@@ -127,5 +134,5 @@ class TimelineQuery:
 
 
 if __name__ == "__main__":
-    tq = TimelineQuery("O1", None, None, None)
+    tq = TimelineQuery(["H1", "L1"], "O1", None, None, None)
     tq.download_segments()
