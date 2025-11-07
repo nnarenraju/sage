@@ -47,8 +47,8 @@ from sage.exec.data_handler import DataModule as dat
 # Tensorboard
 from torch.utils.tensorboard import SummaryWriter
 
-# RayTune
-from ray import tune
+# Logging
+from sage.core.logger import setup_logging
 
 
 def parse_args():
@@ -257,7 +257,7 @@ class SageDirector:
             transforms = self.cfg.transforms["test"]
             jobs = ["foreground", "background"]
 
-            output_testing_dir = os.path.join(self.cfg.export_dir, "TESTING")
+            self.output_testing_dir = os.path.join(self.cfg.export_dir, "TESTING")
             for job in jobs:
                 # Get the required data based on testing job
                 if job == "foreground":
@@ -265,14 +265,14 @@ class SageDirector:
                         self.cfg.testing_dir, self.cfg.test_foreground_dataset
                     )
                     evalfile = os.path.join(
-                        output_testing_dir, self.cfg.test_foreground_output
+                        self.output_testing_dir, self.cfg.test_foreground_output
                     )
                 elif job == "background":
                     testfile = os.path.join(
                         self.cfg.testing_dir, self.cfg.test_background_dataset
                     )
                     evalfile = os.path.join(
-                        output_testing_dir, self.cfg.test_background_output
+                        self.output_testing_dir, self.cfg.test_background_output
                     )
 
                 print("\nRunning the testing phase on {} data".format(job))
@@ -302,7 +302,7 @@ class SageDirector:
         ]
         raw_args += [
             "--foreground-events",
-            os.path.join(output_testing_dir, self.cfg.test_foreground_output),
+            os.path.join(self.output_testing_dir, self.cfg.test_foreground_output),
         ]
         raw_args += [
             "--foreground-files",
@@ -310,11 +310,11 @@ class SageDirector:
         ]
         raw_args += [
             "--background-events",
-            os.path.join(output_testing_dir, self.cfg.test_background_output),
+            os.path.join(self.output_testing_dir, self.cfg.test_background_output),
         ]
-        out_eval = os.path.join(output_testing_dir, self.cfg.evaluation_output)
+        out_eval = os.path.join(self.output_testing_dir, self.cfg.evaluation_output)
         raw_args += ["--output-file", out_eval]
-        raw_args += ["--output-dir", output_testing_dir]
+        raw_args += ["--output-dir", self.output_testing_dir]
         raw_args += ["--verbose"]
 
         # Running the evaluator to obtain output triggers (with clustering)
@@ -343,7 +343,17 @@ class SageDirector:
 
 
 if __name__ == "__main__":
+
+    # Initialising logger
+    # sets up main log and console output
+    setup_logging("logs")
+
+    # Parse command-line arguments
     opts = parse_args()
+
+    # Run the director
     director = SageDirector(opts)
     director.run()
+
+    # That's all folks!
     print("\nFIN")
