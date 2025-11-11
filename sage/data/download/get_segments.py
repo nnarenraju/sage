@@ -26,7 +26,7 @@ Documentation: NULL
 
 # GWOSC API
 from gwosc.timeline import get_segments
-from gwosc.datasets import run_segment, run_at_gps
+from gwosc.datasets import run_segment, run_at_gps, find_datasets
 
 # General
 import numpy as np
@@ -38,6 +38,7 @@ from typing import Union, List, Sequence
 from sage.core.utils import to_sequence
 from sage.core.types import SEGMENT_DTYPE
 from sage.core.logger import get_logger
+from sage.core.hardcode import _DETECTORS, _check_detector_prefixes
 
 logger = get_logger(__name__)
 
@@ -50,13 +51,13 @@ class TimelineQuery:
 
     def __init__(
         self,
-        detector: Union[str, Sequence[str]],
+        detector: Union[str, Sequence[str], None],
         observing_run: Union[str, Sequence[str], None],
         start: Union[float, int, Sequence[float], Sequence[int], None],
         end: Union[float, int, Sequence[float], Sequence[int], None],
         dq_flag: Union[str, Sequence[str], None],
     ):
-        """Retrieve JSON of segment details from GWOSC timeline
+        """Retrieve segment details from GWOSC
 
         Args:
             observing_run (Union[str, Sequence[str], None]): {O1, O2, O3, ..., ON}
@@ -74,10 +75,13 @@ class TimelineQuery:
         self.observing_run = self._to_seq(observing_run)
         self.start = self._to_seq(start)
         self.end = self._to_seq(end)
-        self.data_quality_flag = self._to_seq(dq_flag)
 
-        # Detector specification (mandatory)
+        # if dq flag provided; detector not required
+        self.data_quality_flag = self._to_seq(dq_flag)
+        # if det provided; only <DET>_data retrieved
         self.detector = self._to_seq(detector)
+        # SANITY CHECK: self.detector must be subset of _DETECTORS
+        _check_detector_prefixes(self.detector)
 
         # Structured array of segments as output
         self.timeline = []
@@ -105,18 +109,19 @@ class TimelineQuery:
 
         return tuple(runs)
 
-    def _case_1_handle(self, runs):
-        """Handle case 1: Only observing run provided
+    def _case_1_handle(self, runs, dets):
+        """Handle case 1: Observing run and dets provided
 
         Args:
             runs (_type_): _description_
+            dets (_type_): _description_
         """
 
         logger.info(
             f"Getting all segments for runs in {runs} "
             "with data quality flags matching <DET>_DATA"
         )
-        for run, det in product(runs, self.detector):
+        for run, det in product(runs, dets):
             run_start, run_end = run_segment(run)
             segments = np.array(get_segments(f"{det}_DATA", run_start, run_end))
             self.timeline.append(
@@ -126,12 +131,13 @@ class TimelineQuery:
                 )
             )
 
-    def _case_2_handle(self, start, end):
-        """Handle case 2: Only start & end provided
+    def _case_2_handle(self, start, end, dets):
+        """Handle case 2: Segment start & end, dets provided
 
         Args:
             start (_type_): _description_
             end (_type_): _description_
+            dets (_type_): _description_
         """
 
         logger.info(
@@ -142,7 +148,7 @@ class TimelineQuery:
         # What if the start and end span multiple runs?
         runs = self._get_segment_runspan(start, end)
 
-        for run, det in product(runs, self.detector):
+        for run, det in product(runs, dets):
 
             # Handling the case of multiple runs
             if len(runs) != 1:
@@ -180,33 +186,77 @@ class TimelineQuery:
         Raises:
             ValueError: _description_
         """
-        match (self.observing_run, self.start, self.end, self.data_quality_flag):
+        match (
+            self.observing_run,
+            self.start,
+            self.end,
+            self.data_quality_flag,
+            self.detector,
+        ):
 
-            # Case 1: Only observing run
-            case (runs, None, None, None):
-                self._case_1_handle(runs)
+            ## --- Single option Cases ---
 
-            # Case 2: Only start & end
-            case (None, start, end, None) if start and end:
+            # Case 0: Only observing run
+            case (runs, None, None, None, None):
+                logger.info(f"Getting all segments for runs in {runs}")
+
+            # Case 1: Only segment start & end
+            case (None, start, end, None, None) if start and end:
+                logger.info(f"Getting all segments for flag {flag}")
+                logger.warning("Assuming <DET> prefix provided along with flag")
+
+            # Case 2: Only data-quality flag
+            case (None, None, None, flags, None):
+                logger.info(f"Getting all segments for flag {flag}")
+                logger.warning("Assuming <DET> prefix provided along with flag")
+
+            # Case 3: Only detectors
+            case (None, None, None, None, dets):
+                logger.info(f"Getting all segments for flag {flag}")
+                logger.warning("Assuming <DET> prefix provided along with flag")
+
+            ## --- Two option Cases ---
+
+            # Case 4: Observing run and dets
+            case (runs, None, None, None, dets):
+                self._case_1_handle(runs, dets)
+
+            # Case 5: Segment start & end and dets
+            case (None, start, end, None, dets) if start and end:
                 self._case_2_handle(start, end)
 
-            # Case 3: Only data-quality flag
-            case (None, None, None, flag):
-                logger.info(f"Getting all segments for flag {flag}")
+            # Case 6: Data-quality flag and dets
+            case (None, None, None, flags, dets):
+                logger.info(f"Getting all segments for flag {flag} and <DET>")
+                logger.warning("Assuming flag provided without <DET> prefix")
 
-            # Case 4: Flag missing → all detectors
-            case (None, None, None, None):
-                logger.info("Getting all segments for all detectors")
+            # Case 7: Segment start & end and observing run
+            case (runs, start, end, None, None) if start and end:
+                pass
 
-            # Case 5: Run + start/end → limit by time within run for all dets
-            case (run, start, end, None) if start is not None and end is not None:
-                logger.info(f"Getting segments for run {run} within {start}-{end}")
+            # Case 8: Data-quality flag and observing run
+            case (runs, None, None, flags, None):
+                pass
 
-            # Case 6: Fallback (invalid input)
+            # Case 9: Segment start & end
+            case (None, start, end, flags, None) if start and end:
+                pass
+
+            ## --- Three/four option Cases (ignoring conditions) ---
+            # Case 10: (runs, start, end, None, dets) (runs ignored)
+            # Case 11: (runs, None, None, flags, dets) (dets ignored)
+            # Case 12: (None, start, end, flags, dets) (dets ignored)
+            # Case 13: (runs, start, end, flags, None) (runs ignored)
+            # Case 14: (runs, start, end, flags, dets) (runs and dets ignored)
+
+            # Case _: Fallback (invalid input)
             case _:
-                raise ValueError(
-                    "Invalid input arguments were provided for TimelineQuery!"
+                error = (
+                    "Insufficient/Invalid input arguments "
+                    "were provided for TimelineQuery!"
                 )
+                logger.critical(error)
+                raise ValueError(error)
 
 
 if __name__ == "__main__":
