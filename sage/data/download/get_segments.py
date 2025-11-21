@@ -109,8 +109,8 @@ class TimelineQuery:
 
         return tuple(runs)
 
-    def _case_1_handle(self, runs, dets):
-        """Handle case 1: Observing run and dets provided
+    def _case_4_handle(self, runs, dets):
+        """Handle case 4: Observing run and dets provided
 
         Args:
             runs (_type_): _description_
@@ -131,8 +131,8 @@ class TimelineQuery:
                 )
             )
 
-    def _case_2_handle(self, start, end, dets):
-        """Handle case 2: Segment start & end, dets provided
+    def _case_5_handle(self, start, end, dets):
+        """Handle case 5: Segment start & end, dets provided
 
         Args:
             start (_type_): _description_
@@ -198,36 +198,45 @@ class TimelineQuery:
 
             # Case 0: Only observing run
             case (runs, None, None, None, None):
-                logger.info(f"Getting all segments for runs in {runs}")
+                logger.info(
+                    f"Getting all segments for runs in {runs} and all available detectors"
+                )
 
             # Case 1: Only segment start & end
             case (None, start, end, None, None) if start and end:
-                logger.info(f"Getting all segments for flag {flag}")
-                logger.warning("Assuming <DET> prefix provided along with flag")
+                logger.info(
+                    f"Getting all segments from <DET>_DATA from all available detectors"
+                )
 
             # Case 2: Only data-quality flag
             case (None, None, None, flags, None):
-                logger.info(f"Getting all segments for flag {flag}")
-                logger.warning("Assuming <DET> prefix provided along with flag")
+                logger.info(f"Getting all segments for flag(s) {flags}")
+                logger.warning(
+                    "Only flags provided; this will likely download a lot of data!"
+                )
 
             # Case 3: Only detectors
             case (None, None, None, None, dets):
-                logger.info(f"Getting all segments for flag {flag}")
-                logger.warning("Assuming <DET> prefix provided along with flag")
+                logger.info(
+                    f"Getting all segments from <DET>_DATA for requested detectors"
+                )
+                logger.warning(
+                    "Only dets provided; this will likely download a lot of data!"
+                )
 
             ## --- Two option Cases ---
 
             # Case 4: Observing run and dets
             case (runs, None, None, None, dets):
-                self._case_1_handle(runs, dets)
+                self._case_4_handle(runs, dets)
 
             # Case 5: Segment start & end and dets
             case (None, start, end, None, dets) if start and end:
-                self._case_2_handle(start, end)
+                self._case_5_handle(start, end)
 
             # Case 6: Data-quality flag and dets
             case (None, None, None, flags, dets):
-                logger.info(f"Getting all segments for flag {flag} and <DET>")
+                logger.info(f"Getting all segments for flag {flags} and <DET>")
                 logger.warning("Assuming flag provided without <DET> prefix")
 
             # Case 7: Segment start & end and observing run
