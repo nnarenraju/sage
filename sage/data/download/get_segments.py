@@ -35,12 +35,14 @@ from itertools import product
 from typing import Union, List, Sequence
 
 # LOCAL
+from sage.core.errors import safe_call
 from sage.core.utils import to_sequence
 from sage.core.types import SEGMENT_DTYPE
-from sage.core.logger import get_logger
+from sage.core.logger import get_logger, setup_logging
 from sage.core.hardcode import _DETECTORS, _check_detector_prefixes
 
 logger = get_logger(__name__)
+setup_logging("logs")
 
 
 class TimelineQuery:
@@ -56,6 +58,7 @@ class TimelineQuery:
         start: Union[float, int, Sequence[float], Sequence[int], None],
         end: Union[float, int, Sequence[float], Sequence[int], None],
         dq_flag: Union[str, Sequence[str], None],
+        auto_clean_empty_timelines: bool = False,
     ):
         """Retrieve segment details from GWOSC
 
@@ -85,6 +88,13 @@ class TimelineQuery:
 
         # Structured array of segments as output
         self.timeline = []
+        # Auto cleanup if requested
+        if auto_clean_empty_timelines:
+            _clean_empty_timelines()
+
+    def clean_empty_timelines(self):
+        """Remove timelines with empty segments"""
+        self.timeline = [arr for arr in self.timeline if arr["segments"].size > 0]
 
     def _get_segment_runspan(self, start, end):
         """Get the observing runs spanned by start and end GPS times
@@ -109,6 +119,19 @@ class TimelineQuery:
 
         return tuple(runs)
 
+    def _case_0_handle(self, runs):
+        """Handle case 0: Only observing runs provided
+
+        Args:
+            runs (_type_): _description_
+        """
+
+        logger.info(
+            f"Getting all segments for runs in {runs} and all available detectors"
+        )
+        # Get all available detectors in observing runs
+        _case_4_handle(runs, _DETECTORS)
+
     def _case_4_handle(self, runs, dets):
         """Handle case 4: Observing run and dets provided
 
@@ -123,7 +146,15 @@ class TimelineQuery:
         )
         for run, det in product(runs, dets):
             run_start, run_end = run_segment(run)
-            segments = np.array(get_segments(f"{det}_DATA", run_start, run_end))
+            # Handling timeout errors or non-existent detector
+            args = (
+                f"{det}_DATA",
+                run_start,
+                run_end,
+            )
+            # If failure, return empty list
+            segments = np.array(safe_call(get_segments, *args, fallback_return=[]))
+
             self.timeline.append(
                 np.array(
                     [(det, run_start, run_end, run, segments)],
@@ -181,7 +212,9 @@ class TimelineQuery:
             )
 
     def download_segments(self):
-        """_summary_
+        """Match cases of all possible download scenarios
+        We can write this in a super modular way without any redundancy
+        but this reduces readability quite a bit.
 
         Raises:
             ValueError: _description_
@@ -198,9 +231,7 @@ class TimelineQuery:
 
             # Case 0: Only observing run
             case (runs, None, None, None, None):
-                logger.info(
-                    f"Getting all segments for runs in {runs} and all available detectors"
-                )
+                _case_0_handle(runs)
 
             # Case 1: Only segment start & end
             case (None, start, end, None, None) if start and end:
@@ -232,7 +263,7 @@ class TimelineQuery:
 
             # Case 5: Segment start & end and dets
             case (None, start, end, None, dets) if start and end:
-                self._case_5_handle(start, end)
+                self._case_5_handle(start, end, dets)
 
             # Case 6: Data-quality flag and dets
             case (None, None, None, flags, dets):
@@ -269,5 +300,5 @@ class TimelineQuery:
 
 
 if __name__ == "__main__":
-    tq = TimelineQuery(["H1", "L1"], "O1", None, None, None)
+    tq = TimelineQuery(["H1", "L1", "P1"], "O1", None, None, None)
     tq.download_segments()
