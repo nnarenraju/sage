@@ -29,7 +29,8 @@ import numpy as np
 # Structured dtype for segment results
 SEGMENT_DTYPE = np.dtype(
     [
-        ("det", "U2"),  # Detector, e.g. 'H1'
+        ("detector", "U2"),  # Detector, e.g. 'H1'
+        ("flag", "U10"),  # Data quality flag, e.g. 'H1_DATA'
         ("start_time", "f8"),  # Start time (float)
         ("end_time", "f8"),  # End time (float)
         ("observing_run", "U10"),  # Run name
