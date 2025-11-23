@@ -53,11 +53,11 @@ class TimelineQuery:
 
     def __init__(
         self,
-        detector: Union[str, Sequence[str], None],
-        observing_run: Union[str, Sequence[str], None],
-        start: Union[float, int, Sequence[float], Sequence[int], None],
-        end: Union[float, int, Sequence[float], Sequence[int], None],
-        dq_flag: Union[str, Sequence[str], None],
+        detector: Union[str, Sequence[str], None] = None,
+        observing_run: Union[str, Sequence[str], None] = None,
+        start: Union[float, int, Sequence[float], Sequence[int], None] = None,
+        end: Union[float, int, Sequence[float], Sequence[int], None] = None,
+        dq_flag: Union[str, Sequence[str], None] = None,
         auto_clean_empty_timelines: bool = False,
     ):
         """Retrieve segment details from GWOSC
@@ -88,13 +88,32 @@ class TimelineQuery:
 
         # Structured array of segments as output
         self.timeline = []
-        # Auto cleanup if requested
-        if auto_clean_empty_timelines:
-            _clean_empty_timelines()
+        self.auto_clean = auto_clean_empty_timelines
+
+    def _save_as_structured(self):
+        """Save list of records as structured array"""
+        self.timeline = np.array(self.timeline, dtype=SEGMENT_DTYPE)
 
     def clean_empty_timelines(self):
         """Remove timelines with empty segments"""
-        self.timeline = [arr for arr in self.timeline if arr["segments"].size > 0]
+        SEG_FIELDS = list(SEGMENT_DTYPE.fields.keys())  # get fieldnames
+        segments_idx = SEG_FIELDS.index("segments")
+        det_idx = SEG_FIELDS.index("detector")
+        run_idx = SEG_FIELDS.index("observing_run")
+
+        cleaned = []
+        for row in self.timeline:
+            segments = row[segments_idx]
+            if isinstance(segments, (list, np.ndarray)) and len(segments) == 0:
+                logger.debug(
+                    f"Skipping empty segment row: det={row[det_idx]}, run={row[run_idx]}"
+                )
+                continue
+            cleaned.append(row)
+
+        # Save cleaned list of records
+        self.timeline = cleaned
+        self._save_as_structured()
 
     def _get_segment_runspan(self, start, end):
         """Get the observing runs spanned by start and end GPS times
@@ -119,6 +138,40 @@ class TimelineQuery:
 
         return tuple(runs)
 
+    def extract_det_from_flag(flag: str, detectors=_DETECTORS):
+        """Return the detector prefix if the flag contains one, else None
+
+        Args:
+            flag (str): _description_
+            detectors (_type_, optional): _description_. Defaults to _DETECTORS.
+
+        Returns:
+            _type_: _description_
+        """
+        for det in detectors:
+            if det in flag:
+                return det
+        return "NULL"
+
+    def _get_segments(self, flag, start, end):
+        """Safe call get_segments method from GWOSC
+
+        Args:
+            flags (_type_): _description_
+            start (_type_): _description_
+            end (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+
+        args = (
+            flag,
+            start,
+            end,
+        )
+        return np.array(safe_call(get_segments, *args, fallback_return=[]))
+
     def _case_0_handle(self, runs):
         """Handle case 0: Only observing runs provided
 
@@ -126,13 +179,47 @@ class TimelineQuery:
             runs (_type_): _description_
         """
 
-        logger.info(
-            f"Getting all segments for runs in {runs} and all available detectors"
-        )
+        logger.info(f"Getting all segments for runs in {runs} and all detectors")
         # Get all available detectors in observing runs
-        _case_4_handle(runs, _DETECTORS)
+        self._case_4_handle(runs, dets=_DETECTORS)
 
-    def _case_4_handle(self, runs, dets):
+    def _case_1_handle(self, start, end):
+        """Handle case 1: Only start and end provided
+
+        Args:
+            start (_type_): _description_
+            end (_type_): _description_
+        """
+
+        logger.info(f"Getting all segments from <DET>_DATA from all detectors")
+        self._case_5_handle(start, end, _DETECTORS)
+
+    def _case_2_handle(self, flags):
+        """Handle case 2: Only flags provided
+
+        Args:
+            flags (_type_): _description_
+        """
+
+        logger.info(f"Getting all segments for flag(s) {flags}")
+        logger.warning("Only flags provided; this will likely download a lot of data!")
+        start = 0
+        end = 999_999_999_999
+        self._case_5_handle(start, end, dets=None, flags=flags)
+
+    def _case_3_handle(self, dets):
+        """Handle case 3: Only dets provided
+
+        Args:
+            dets (_type_): _description_
+        """
+        logger.info(f"Getting all segments from <DET>_DATA for requested detectors")
+        logger.warning("Only dets provided; this will likely download a lot of data!")
+        start = 0
+        end = 999_999_999_999
+        self._case_5_handle(start, end, dets=_DETECTORS, flags=None)
+
+    def _case_4_handle(self, runs, dets=None, flags=None):
         """Handle case 4: Observing run and dets provided
 
         Args:
@@ -144,25 +231,20 @@ class TimelineQuery:
             f"Getting all segments for runs in {runs} "
             "with data quality flags matching <DET>_DATA"
         )
-        for run, det in product(runs, dets):
+        if flags == None:
+            flags = [f"{det}_DATA" for det in dets]
+        for run, flag in product(runs, flags):
             run_start, run_end = run_segment(run)
             # Handling timeout errors or non-existent detector
-            args = (
-                f"{det}_DATA",
-                run_start,
-                run_end,
-            )
             # If failure, return empty list
-            segments = np.array(safe_call(get_segments, *args, fallback_return=[]))
+            det = self.extract_det_from_flag(flag)
+            segments = self._get_segments(flag, run_start, run_end)
 
             self.timeline.append(
-                np.array(
-                    [(det, run_start, run_end, run, segments)],
-                    dtype=SEGMENT_DTYPE,
-                )
+                (det, run_start, run_end, run, segments),
             )
 
-    def _case_5_handle(self, start, end, dets):
+    def _case_5_handle(self, start, end, dets=None, flags=None):
         """Handle case 5: Segment start & end, dets provided
 
         Args:
@@ -178,8 +260,10 @@ class TimelineQuery:
 
         # What if the start and end span multiple runs?
         runs = self._get_segment_runspan(start, end)
+        if flags == None:
+            flags = [f"{det}_DATA" for det in dets]
 
-        for run, det in product(runs, dets):
+        for run, flag in product(runs, flags):
 
             # Handling the case of multiple runs
             if len(runs) != 1:
@@ -200,16 +284,62 @@ class TimelineQuery:
             else:
                 run_start, run_end = start, end
 
-            segments = np.array(get_segments(f"{det}_DATA", run_start, run_end))
-            # Get run from segment time
-            # Handle case where start/end span multiple runs
+            det = self.extract_det_from_flag(flag)
+            segments = self._get_segments(flag, run_start, run_end)
 
             self.timeline.append(
-                np.array(
-                    [(det, run_start, run_end, run, segments)],
-                    dtype=SEGMENT_DTYPE,
-                )
+                (det, run_start, run_end, run, segments),
             )
+
+    def _case_6_handle(self, flags):
+        """Handle case 6: Flags and dets provided (dets ignored)
+
+        Args:
+            flags (_type_): _description_
+            dets (_type_): _description_
+        """
+
+        logger.info(f"Getting all segments for flag {flags} and <DET>")
+        logger.warning("Assuming flag provided without <DET> prefix")
+        self._case_2_handle(flags)
+
+    def _case_7_handle(self, start, end):
+        """Handle case 7: Runs, start and end provided
+
+        Args:
+            start (_type_): _description_
+            end (_type_): _description_
+        """
+        logger.warning("Run information ignored")
+        logger.info(f"Getting all segments from <DET>_DATA from all detectors")
+        self._case_5_handle(start, end, _DETECTORS)
+
+    def _case_8_handle(self, runs, flags):
+        """Handle case 8: Runs and flags provided
+
+        Args:
+            runs (_type_): _description_
+            flags (_type_): _description_
+        """
+        self._case_4_handle(runs, dets=None, flags=flags)
+
+    def _case_9_handle(self, start, end, flags):
+        """Handle case 9: Segment start, end and flags provided
+
+        Args:
+            start (_type_): _description_
+            end (_type_): _description_
+            flags (_type_): _description_
+        """
+        self._case_5_handle(start, end, flags=flags)
+
+    def _save_and_clean(self):
+        """Clean up empty slots and save structured array"""
+        # Auto cleanup if requested
+        if self.auto_clean:
+            self.clean_empty_timelines()
+        # Save list of records as structured array
+        self._save_as_structured()
 
     def download_segments(self):
         """Match cases of all possible download scenarios
@@ -231,58 +361,47 @@ class TimelineQuery:
 
             # Case 0: Only observing run
             case (runs, None, None, None, None):
-                _case_0_handle(runs)
+                self._case_0_handle(runs)
 
             # Case 1: Only segment start & end
             case (None, start, end, None, None) if start and end:
-                logger.info(
-                    f"Getting all segments from <DET>_DATA from all available detectors"
-                )
+                self._case_1_handle(start, end)
 
             # Case 2: Only data-quality flag
             case (None, None, None, flags, None):
-                logger.info(f"Getting all segments for flag(s) {flags}")
-                logger.warning(
-                    "Only flags provided; this will likely download a lot of data!"
-                )
+                self._case_2_handle(flags)
 
             # Case 3: Only detectors
             case (None, None, None, None, dets):
-                logger.info(
-                    f"Getting all segments from <DET>_DATA for requested detectors"
-                )
-                logger.warning(
-                    "Only dets provided; this will likely download a lot of data!"
-                )
+                self._case_3_handle(dets)
 
             ## --- Two option Cases ---
 
             # Case 4: Observing run and dets
             case (runs, None, None, None, dets):
-                self._case_4_handle(runs, dets)
+                self._case_4_handle(runs, dets=dets)
 
             # Case 5: Segment start & end and dets
             case (None, start, end, None, dets) if start and end:
-                self._case_5_handle(start, end, dets)
+                self._case_5_handle(start, end, dets=dets)
 
-            # Case 6: Data-quality flag and dets
+            # Case 6: Data-quality flag and dets (dets ignored)
             case (None, None, None, flags, dets):
-                logger.info(f"Getting all segments for flag {flags} and <DET>")
-                logger.warning("Assuming flag provided without <DET> prefix")
+                self._case_6_handle(flags)
 
-            # Case 7: Segment start & end and observing run
+            # Case 7: Segment start & end and observing run (ignore runs)
             case (runs, start, end, None, None) if start and end:
-                pass
+                self._case_7_handle(start, end)
 
             # Case 8: Data-quality flag and observing run
             case (runs, None, None, flags, None):
-                pass
+                self._case_8_handle(runs, flags)
 
             # Case 9: Segment start & end
             case (None, start, end, flags, None) if start and end:
-                pass
+                self._case_9_handle(start, end, flags)
 
-            ## --- Three/four option Cases (ignoring conditions) ---
+            ## --- Three/four option Cases ---
             # Case 10: (runs, start, end, None, dets) (runs ignored)
             # Case 11: (runs, None, None, flags, dets) (dets ignored)
             # Case 12: (None, start, end, flags, dets) (dets ignored)
@@ -298,7 +417,5 @@ class TimelineQuery:
                 logger.critical(error)
                 raise ValueError(error)
 
-
-if __name__ == "__main__":
-    tq = TimelineQuery(["H1", "L1", "P1"], "O1", None, None, None)
-    tq.download_segments()
+        # Save structured array of records + clean empty records
+        self._save_and_clean()
