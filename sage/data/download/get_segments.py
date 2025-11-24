@@ -14,7 +14,7 @@ __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
 __email__         = N/A
-__status__        = ['inProgress', 'Archived', 'inUsage', 'Debugging']
+__status__        = inUsage
 
 
 GitHub Repository: NULL
@@ -90,6 +90,7 @@ class TimelineQuery:
         self.timeline = []
         self.auto_clean = auto_clean_empty_timelines
 
+    ## TODO: Doesn't make sense to keep these inside the class.
     @staticmethod
     def get_all_detnames():
         """Return all detector names for reference"""
@@ -127,7 +128,8 @@ class TimelineQuery:
             segments = row[segments_idx]
             if isinstance(segments, (list, np.ndarray)) and len(segments) == 0:
                 logger.debug(
-                    f"Skipping empty segment row: det={row[det_idx]}, run={row[run_idx]}"
+                    f"Skipping empty segment row: det={row[det_idx]}, "
+                    "run={row[run_idx]}"
                 )
                 continue
             cleaned.append(row)
