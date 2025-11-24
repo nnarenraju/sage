@@ -8,7 +8,7 @@ Description     : Short description of the file
 Created on 2025-11-06 15:06:12
 
 __author__        = Narenraju Nagarajan
-__copyright__     = Copyright 2025, ProjectName
+__copyright__     = Copyright 2025, Sage
 __license__       = MIT Licence
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
@@ -90,9 +90,30 @@ class TimelineQuery:
         self.timeline = []
         self.auto_clean = auto_clean_empty_timelines
 
-    def _save_as_structured(self):
-        """Save list of records as structured array"""
-        self.timeline = np.array(self.timeline, dtype=SEGMENT_DTYPE)
+    @staticmethod
+    def get_all_detnames():
+        """Return all detector names for reference"""
+        return _DETECTORS
+
+    @staticmethod
+    def get_all_runnames():
+        """Return all run names for reference"""
+        return find_datasets(type="run")
+
+    def extract_det_from_flag(self, flag: str, detectors=_DETECTORS):
+        """Return the detector prefix if the flag contains one, else None
+
+        Args:
+            flag (str): _description_
+            detectors (_type_, optional): _description_. Defaults to _DETECTORS.
+
+        Returns:
+            _type_: _description_
+        """
+        for det in detectors:
+            if det in flag:
+                return det
+        return "NULL"
 
     def clean_empty_timelines(self):
         """Remove timelines with empty segments"""
@@ -114,6 +135,10 @@ class TimelineQuery:
         # Save cleaned list of records
         self.timeline = cleaned
         self._save_as_structured()
+
+    def _save_as_structured(self):
+        """Save list of records as structured array"""
+        self.timeline = np.array(self.timeline, dtype=SEGMENT_DTYPE)
 
     def _get_segment_runspan(self, start, end):
         """Get the observing runs spanned by start and end GPS times
@@ -138,21 +163,6 @@ class TimelineQuery:
 
         return tuple(runs)
 
-    def extract_det_from_flag(flag: str, detectors=_DETECTORS):
-        """Return the detector prefix if the flag contains one, else None
-
-        Args:
-            flag (str): _description_
-            detectors (_type_, optional): _description_. Defaults to _DETECTORS.
-
-        Returns:
-            _type_: _description_
-        """
-        for det in detectors:
-            if det in flag:
-                return det
-        return "NULL"
-
     def _get_segments(self, flag, start, end):
         """Safe call get_segments method from GWOSC
 
@@ -171,6 +181,19 @@ class TimelineQuery:
             end,
         )
         return np.array(safe_call(get_segments, *args, fallback_return=[]))
+
+    def _download_segment_metadata(
+        self, runs=None, start=None, end=None, dets=None, flags=None
+    ):
+        """Common function to download segment metadata from GWOSC
+
+        Args:
+            runs (_type_): _description_
+            start (_type_): _description_
+            end (_type_): _description_
+            dets (_type_, optional): _description_. Defaults to None.
+            flags (_type_, optional): _description_. Defaults to None.
+        """
 
     def _case_0_handle(self, runs):
         """Handle case 0: Only observing runs provided
@@ -241,7 +264,7 @@ class TimelineQuery:
             segments = self._get_segments(flag, run_start, run_end)
 
             self.timeline.append(
-                (det, run_start, run_end, run, segments),
+                (det, flag, run_start, run_end, run, segments),
             )
 
     def _case_5_handle(self, start, end, dets=None, flags=None):
@@ -288,7 +311,7 @@ class TimelineQuery:
             segments = self._get_segments(flag, run_start, run_end)
 
             self.timeline.append(
-                (det, run_start, run_end, run, segments),
+                (det, flag, run_start, run_end, run, segments),
             )
 
     def _case_6_handle(self, flags):
@@ -402,11 +425,26 @@ class TimelineQuery:
                 self._case_9_handle(start, end, flags)
 
             ## --- Three/four option Cases ---
+
             # Case 10: (runs, start, end, None, dets) (runs ignored)
+            case (runs, start, end, None, dets) if start and end:
+                self._case_5_handle(start, end, dets=dets)
+
             # Case 11: (runs, None, None, flags, dets) (dets ignored)
+            case (runs, None, None, flags, dets):
+                self._case_8_handle(runs, flags)
+
             # Case 12: (None, start, end, flags, dets) (dets ignored)
+            case (None, start, end, flags, dets):
+                self._case_9_handle(start, end, flags)
+
             # Case 13: (runs, start, end, flags, None) (runs ignored)
+            case (runs, start, end, flags, None):
+                self._case_9_handle(start, end, flags)
+
             # Case 14: (runs, start, end, flags, dets) (runs and dets ignored)
+            case (runs, start, end, flags, dets):
+                self._case_9_handle(start, end, flags)
 
             # Case _: Fallback (invalid input)
             case _:
