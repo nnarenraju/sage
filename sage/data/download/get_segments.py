@@ -27,6 +27,7 @@ Documentation: NULL
 # GWOSC API
 from gwosc.timeline import get_segments
 from gwosc.datasets import run_segment, run_at_gps, find_datasets
+from gwosc.api import fetch_allevents_json as _fetch_allevents_json
 
 # General
 import numpy as np
@@ -43,6 +44,21 @@ from sage.core.hardcode import _DETECTORS, _check_detector_prefixes
 
 logger = get_logger(__name__)
 setup_logging("logs")
+
+
+def get_all_detnames():
+    """Return all detector names for reference"""
+    return _DETECTORS
+
+
+def get_all_runnames():
+    """Return all run names for reference"""
+    return find_datasets(type="run")
+
+
+def get_all_events():
+    """Return all events as JSON from GWOSC"""
+    return _fetch_allevents_json(full=True, host="https://gwosc.org")
 
 
 class TimelineQuery:
@@ -90,17 +106,6 @@ class TimelineQuery:
         self.timeline = []
         self.auto_clean = auto_clean_empty_timelines
 
-    ## TODO: Doesn't make sense to keep these inside the class.
-    @staticmethod
-    def get_all_detnames():
-        """Return all detector names for reference"""
-        return _DETECTORS
-
-    @staticmethod
-    def get_all_runnames():
-        """Return all run names for reference"""
-        return find_datasets(type="run")
-
     def extract_det_from_flag(self, flag: str, detectors=_DETECTORS):
         """Return the detector prefix if the flag contains one, else None
 
@@ -129,7 +134,7 @@ class TimelineQuery:
             if isinstance(segments, (list, np.ndarray)) and len(segments) == 0:
                 logger.debug(
                     f"Skipping empty segment row: det={row[det_idx]}, "
-                    "run={row[run_idx]}"
+                    f"run={row[run_idx]}"
                 )
                 continue
             cleaned.append(row)
@@ -196,6 +201,7 @@ class TimelineQuery:
             dets (_type_, optional): _description_. Defaults to None.
             flags (_type_, optional): _description_. Defaults to None.
         """
+        pass
 
     def _case_0_handle(self, runs):
         """Handle case 0: Only observing runs provided
@@ -459,3 +465,106 @@ class TimelineQuery:
 
         # Save structured array of records + clean empty records
         self._save_and_clean()
+
+    def _subtract_windows_from_segments(self, segments, rm_windows):
+        """Remove rm_windows from segments
+
+        Args:
+            segments (_type_): np.array of shape (N,2)
+            rm_windows (_type_): iterable of [start,end] windows to remove
+
+        Returns:
+            np.ndarray: new array of shape (M,2)
+        """
+
+        # Nothing to do if no segments
+        if segments.size == 0:
+            return segments
+
+        new_segments = []
+
+        for s_start, s_end in segments:
+
+            # a working list of intervals for this segment
+            remaining = [(s_start, s_end)]
+
+            for r_start, r_end in rm_windows:
+                updated = []
+                for seg_start, seg_end in remaining:
+
+                    # 1. No overlap
+                    if seg_end <= r_start or seg_start >= r_end:
+                        updated.append((seg_start, seg_end))
+                        continue
+
+                    # 2a. Partial or full overlap (left remainder)
+                    if seg_start < r_start:
+                        updated.append((seg_start, min(seg_end, r_start)))
+
+                    # 2b. Partial or full overlap (right remainder)
+                    if seg_end > r_end:
+                        updated.append((max(seg_start, r_end), seg_end))
+
+                remaining = updated
+
+            new_segments.extend(remaining)
+
+        return np.array(new_segments, dtype=float).reshape(-1, 2)
+
+    def _remove_allevents(
+        self,
+        rm_length,
+    ):
+        """Remove all events from GWOSC and return updated segments"""
+        allevents = get_all_events()
+        # Iterate through all events, get GPS and get segments to remove
+        allevents_gps = np.sort([event["GPS"] for event in allevents["events"].keys()])
+        # Get all windows that must be removed from segments
+        rmwin = [[inv - rm_length, inv + rm_length] for inv in allevents_gps]
+
+    def _remove_short_segments(self, rm_min_duration):
+        """Remove segments that do not pass the minimum duration threshold
+
+        Args:
+            rm_min_duration (_type_): _description_
+        """
+        logger.info(f"Removing segments below the min duration of {rm_min_duration}")
+
+        # Safe to make copy first
+        prune_timeline = self.timeline.copy()
+
+        for i, record in enumerate(prune_timeline):
+            segs = record["segments"]
+
+            if segs.size == 0:
+                continue  # nothing to prune
+
+            durations = segs[:, 1] - segs[:, 0]
+            keep_mask = durations >= rm_min_duration
+            prune_timeline[i]["segments"] = segs[keep_mask]
+
+        # Update original timeline with pruned timeline
+        self.timeline = prune_timeline
+
+    def prune_segments(
+        self,
+        rm_short_segments: bool = False,
+        rm_min_duration: float = 20,
+        rm_allevents: bool = False,
+        rm_window_length: float = 30,
+    ):
+        """Prune segments of events/short-duration-segs and return updated timeline
+
+        Args:
+            rmevents (bool, optional): _description_. Defaults to False.
+            rmwindow_length (float, optional): _description_. Defaults to 30.
+            min_segment_length (float, optional): _description_. Defaults to 20.
+        """
+
+        # Any segments that may become too small will be handled next
+        # IF the short segment pruning is toggled
+        if rm_allevents:
+            self._remove_allevents(rm_window_length)
+
+        if rm_short_segments:
+            self._remove_short_segments(rm_min_duration)
