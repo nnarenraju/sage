@@ -523,10 +523,13 @@ class TimelineQuery:
         Args:
             rm_length (_type_): _description_
         """
+        logger.info(f"Removing all events (obtained from GWOSC) from segments")
+        logger.info(f"[event_gps - rm_length, event_gps + rm_length] will be removed")
 
-        allevents = get_all_events()
+        allevents = get_all_events()["events"]
         # Iterate through all events, get GPS and get segments to remove
-        allevents_gps = np.sort([event["GPS"] for event in allevents["events"].keys()])
+        allevents_gps = np.sort([allevents[key]["GPS"] for key in allevents.keys()])
+
         # Get all windows that must be removed from segments
         rm_windows = [[inv - rm_length, inv + rm_length] for inv in allevents_gps]
 
