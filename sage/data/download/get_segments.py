@@ -481,46 +481,62 @@ class TimelineQuery:
         if segments.size == 0:
             return segments
 
-        new_segments = []
+        pruned_segments = []
 
-        for s_start, s_end in segments:
+        for seg_start, seg_end in segments:
+            # This will be pruned and split soon
+            remaining = [(seg_start, seg_end)]
 
-            # a working list of intervals for this segment
-            remaining = [(s_start, s_end)]
-
-            for r_start, r_end in rm_windows:
+            # Check and prune rmwindow from segment
+            for rm_start, rm_end in rm_windows:
+                # TMP store updated segment
                 updated = []
-                for seg_start, seg_end in remaining:
+
+                # Look at all three cases of pruning
+                for pruned_start, pruned_end in remaining:
 
                     # 1. No overlap
-                    if seg_end <= r_start or seg_start >= r_end:
-                        updated.append((seg_start, seg_end))
+                    if pruned_end <= rm_start or pruned_start >= rm_end:
+                        updated.append((pruned_start, pruned_end))
                         continue
 
                     # 2a. Partial or full overlap (left remainder)
-                    if seg_start < r_start:
-                        updated.append((seg_start, min(seg_end, r_start)))
+                    if pruned_start < rm_start:
+                        updated.append((pruned_start, min(pruned_end, rm_start)))
 
                     # 2b. Partial or full overlap (right remainder)
-                    if seg_end > r_end:
-                        updated.append((max(seg_start, r_end), seg_end))
+                    if pruned_end > rm_end:
+                        updated.append((max(pruned_start, rm_end), pruned_end))
 
                 remaining = updated
 
-            new_segments.extend(remaining)
+            pruned_segments.extend(remaining)
 
-        return np.array(new_segments, dtype=float).reshape(-1, 2)
+        return np.array(pruned_segments, dtype=float).reshape(-1, 2)
 
     def _remove_allevents(
         self,
         rm_length,
     ):
-        """Remove all events from GWOSC and return updated segments"""
+        """Remove all events from GWOSC and return updated segments
+
+        Args:
+            rm_length (_type_): _description_
+        """
+
         allevents = get_all_events()
         # Iterate through all events, get GPS and get segments to remove
         allevents_gps = np.sort([event["GPS"] for event in allevents["events"].keys()])
         # Get all windows that must be removed from segments
-        rmwin = [[inv - rm_length, inv + rm_length] for inv in allevents_gps]
+        rm_windows = [[inv - rm_length, inv + rm_length] for inv in allevents_gps]
+
+        # Iterate over segments from each record and prune from event list
+        prune_timeline = self.timeline.copy()
+        for record in prune_timeline:
+            segs = record["segments"]
+            record["segments"] = self._subtract_windows_from_segments(segs, rm_windows)
+
+        self.timeline = prune_timeline
 
     def _remove_short_segments(self, rm_min_duration):
         """Remove segments that do not pass the minimum duration threshold
