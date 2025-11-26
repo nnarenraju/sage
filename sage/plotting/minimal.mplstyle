@@ -1,0 +1,20 @@
+figure.figsize: 6, 4
+figure.autolayout: True
+
+axes.grid: False
+axes.linewidth: 0.8
+
+lines.linewidth: 1.2
+
+font.family: sans-serif
+font.sans-serif: DejaVu Sans
+font.size: 11
+
+legend.frameon: False
+
+axes.prop_cycle: cycler("color", [
+    "#333333"
+])
+
+savefig.dpi: 300
+savefig.bbox: tight
