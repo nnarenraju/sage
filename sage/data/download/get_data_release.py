@@ -42,13 +42,14 @@ import warnings
 import itertools
 import functools
 
+from pathlib import Path
+
 # Downloading
 import urllib.request
 
 # Scientific
 import scipy
 import numpy as np
-import pandas as pd
 
 # Plotting
 import matplotlib.pyplot as plt
@@ -61,8 +62,13 @@ from sys import getsizeof
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import warnings
+
+# Suppressing LAL warnings
+warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
+
 # Signal processing
-from gwpy.timeseries.TimeSeries import fetch_open_data
+from gwpy.timeseries import TimeSeries
 from gwpy.segments import DataQualityFlag
 from pycbc.filter import highpass
 from pycbc.filter.resample import lfilter
@@ -79,13 +85,11 @@ from scipy.signal import (
 # Constants
 from pycbc import DYN_RANGE_FAC
 
-# Removing LAL warnings
-warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
-
 # LOCAL
 from sage.core.decorators import reference
-from sage.core.logger import get_logger
+from sage.core.logger import get_logger, setup_logging
 
+setup_logging("logs")
 logger = get_logger(__name__)
 
 
@@ -279,7 +283,7 @@ def _trim_edges(data, fs, trim=0.2):
         _type_: _description_
     """
 
-    n = int(trim * fs)
+    n = int(round(trim * fs))
 
     if n == 0 or 2 * n >= len(data):
         logger.error("Trim too large for data length.")
@@ -288,7 +292,13 @@ def _trim_edges(data, fs, trim=0.2):
     return data[n:-n]
 
 
-def _downsample(strain, sample_rate=2048.0, trim=0.2):
+def _downsample(
+    strain,
+    old_sample_rate,
+    new_sample_rate=2048.0,
+    trim=0.2,
+    noise_low_freq_cutoff=15.0,
+):
     """Downsampling and filtering for computational reasons
 
     Args:
@@ -300,16 +310,20 @@ def _downsample(strain, sample_rate=2048.0, trim=0.2):
     """
 
     # Resample and apply an FIR filter
-    res = _resample(strain, 1.0 / sample_rate)
+    res = _resample(strain, 1.0 / old_sample_rate, 1.0 / new_sample_rate)
 
-    # Apply IIR sosfiltfilt for lowpass
+    # Apply IIR sosfiltfilt for highpass
     ret = _highpass_butter_sosfiltfilt(
-        red, fs=sample_rate, cutoff=15.0, order=4, padlen_seconds=2.5
+        res,
+        fs=new_sample_rate,
+        cutoff=noise_low_freq_cutoff,
+        order=4,
+        padlen_seconds=2.5,
     ).astype(np.float32)
 
     # Remove corrupted regions for edge effects
     # Defaults to 0.2, but user can be more conservative
-    ret = _trim_edges(ret, sample_rate, trim)
+    ret = _trim_edges(ret, new_sample_rate, trim)
     return ret
 
 
@@ -322,32 +336,57 @@ def _get_detector_data(args):
     Returns:
         _type_: _description_
     """
-    n, left_boundary, right_boundary, detector = args
+    (
+        n,
+        left_boundary,
+        right_boundary,
+        detector,
+        new_sample_rate,
+        trim,
+        noise_low_freq_cutoff,
+    ) = args
 
     try:
-        data = fetch_open_data(detector, left_boundary, right_boundary, cache=1)
-    except Exception:
+        data = TimeSeries.fetch_open_data(
+            detector, left_boundary, right_boundary, cache=1
+        )
+    except Exception as e:
         # bubble up the original error
-        raise
+        logger.error(f"Chunk {n} failed: {e}")
+        return n, None, {}
 
     # Process only if fetch succeeded
-    data = _downsample(data.value, 1.0 / data.dt.value, trim)
+    old_sample_rate = 1.0 / data.dt.value
+    data = _downsample(
+        data.value, old_sample_rate, new_sample_rate, trim, noise_low_freq_cutoff
+    )
     # Apply a dynamic range factor for storage
     # NOTE: Remember to reverse this before passing to Sage
     data = data * DYN_RANGE_FAC
-    return n, data
+
+    metadata = {
+        "gps_start": left_boundary + trim,
+        "gps_end": right_boundary - trim,
+        "trim": int(round(trim * new_sample_rate)),
+        "nsamples": len(data),
+        "old_sample_rate": old_sample_rate,
+        "sample_rate": new_sample_rate,
+    }
+    return n, data, metadata
 
 
 # Fetch data in MP && save data chunk
 def _fetcher(
-    GPS_boundaries,
+    boundaries,
     num_workers=4,
     det="",
     run="",
     parent_dir="",
-    monolithic_file=None,
-    trim_seconds=0.2,
+    monolithic_file=True,
+    trim=0.2,
     sample_rate=2048.0,
+    noise_low_freq_cutoff=15.0,
+    full_metadata=None,
 ):
     """Download GWOSC segments for a detector and store either:
       - one HDF5 per chunk (default)
@@ -359,7 +398,7 @@ def _fetcher(
         det (str, optional): _description_. Defaults to "".
         run (str, optional): _description_. Defaults to "".
         parent_dir (str, optional): _description_. Defaults to "".
-        monolithic_file (_type_, optional): _description_. Defaults to None.
+        monolithic_file (_type_, optional): _description_. Defaults to True.
 
     """
 
@@ -371,74 +410,88 @@ def _fetcher(
         f"using {num_workers} workers"
     )
 
-    tasks = ((i, t0, t1, det) for i, (t0, t1) in enumerate(GPS_boundaries))
+    nfs = sample_rate
+    lcut = noise_low_freq_cutoff
+    tasks = ((i, t0, t1, det, nfs, trim, lcut) for i, (t0, t1) in enumerate(boundaries))
 
     # --- Optional monolithic file setup ---
-    if monolithic_file is not None:
-        monolithic_file = Path(monolithic_file)
-        hf_out = h5py.File(monolithic_file, "w")
-        metadata_dtype = np.dtype(
-            [
-                ("chunk_id", int),
-                ("gps_start", float),
-                ("gps_end", float),
-                ("detector", "S2"),
-                ("run", "S10"),
-                ("nsamples", int),
-            ]
-        )
-        metadata_list = []
+    hf_out = None
+    if monolithic_file:
+        monolithic_filepath = Path(parent_dir) / f"data_{det}_{run}.h5"
+        hf_out = h5py.File(monolithic_filepath, "w")
 
-    def save_chunk(n, data):
+        # store full metadata ONCE for the full dataset
+        if full_metadata is not None:
+            hf_out.create_dataset("metadata", data=full_metadata)
+
+    def save_chunk(index, data, metadata):
         """Save as individual files or into the monolithic file"""
         if data is None or not isinstance(data, np.ndarray):
             return
 
         # --- Monolithic mode ---
-        if monolithic_file is not None:
+        if hf_out is not None:
             # Single-threaded write to monolithic file
             dset = hf_out.create_dataset(
-                f"chunk_{n}",
+                f"chunk_{index}",
                 data=data,
                 dtype=data.dtype,
                 compression="gzip",
                 chunks=True,
             )
 
-            # attach metadata to dataset
-            dset.attrs["gps_start"] = chunk["gps_start"]
-            dset.attrs["gps_end"] = chunk["gps_end"]
-            dset.attrs["detector"] = chunk["det"]
-            dset.attrs["run"] = chunk["run"]
-            dset.attrs["nsamples"] = len(chunk["data"])
+            # attach metadata for *this* chunk
+            for k, v in metadata.items():
+                dset.attrs[k] = v
+
+            dset.attrs["detector"] = det
+            dset.attrs["run"] = run
+            dset.attrs["noise_low_freq_cutoff"] = lcut
 
         else:
             # --- Per-file mode (default) ---
-            fname = savedir / f"data_{det}_{run}_chunk_{n}.hdf"
+            fname = savedir / f"data_{det}_{run}_chunk_{index}.hdf"
             with h5py.File(fname, "a") as hf:
                 hf.create_dataset("data", data=data, compression="gzip", chunks=True)
 
+                # write chunk metadata
+                meta_grp = hf.create_group("metadata")
+                for k, v in metadata.items():
+                    meta_grp.attrs[k] = v
+
+                meta_grp.attrs["detector"] = det
+                meta_grp.attrs["run"] = run
+                meta_grp.attrs["noise_low_freq_cutoff"] = lcut
+
     # --- Parallel download ---
     if num_workers > 1:
-        with mp.Pool(num_workers) as pool, tqdm(total=len(GPS_boundaries)) as pbar:
+        with mp.Pool(num_workers) as pool, tqdm(total=len(boundaries)) as pbar:
             pbar.set_description("MP-DET_SCIENCE_DATA GWOSC")
-            for n, data in pool.imap_unordered(_get_detector_data, tasks):
-                save_chunk(n, data)
+            for n, data, metadata in pool.imap_unordered(_get_detector_data, tasks):
+                # NOTE: Always so save_chunk outside in main process
+                # DO NOT write let workers write to same HDF5
+                save_chunk(n, data, metadata)
                 pbar.update()
     else:
-        with tqdm(total=len(GPS_boundaries)) as pbar:
+        with tqdm(total=len(boundaries)) as pbar:
             pbar.set_description("DET_SCIENCE_DATA GWOSC")
-            for args in ((i, t0, t1, det) for i, (t0, t1) in enumerate(GPS_boundaries)):
-                n, data = _get_detector_data(args)
-                save_chunk(n, data)
+            for args in (
+                (i, t0, t1, det, nfs, trim, lcut)
+                for i, (t0, t1) in enumerate(boundaries)
+            ):
+                n, data, metadata = _get_detector_data(args)
+                save_chunk(n, data, metadata)
                 pbar.update()
 
     # Close monolithic output file
-    if monolithic_file is not None:
-        metadata_array = np.array(metadata_list, dtype=metadata_dtype)
-        hf_out.create_dataset("segments_metadata", data=metadata_array)
+    if hf_out is not None:
         hf_out.close()
         logger.info(f"\nWrote monolithic HDF5 to {monolithic_file}")
+
+    if not monolithic_file:
+        metadata_path = savedir / "full_metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(full_metadata, f, indent=2)
 
 
 # --- Callable Function ---
@@ -446,11 +499,15 @@ def _fetcher(
 
 def download_data(
     segments_metadata,
+    save_dir: str,
     noise_low_freq_cutoff: float = 15.0,
     minimum_segment_duration: float = 22.0,
-    corrupt_rmlength: float = 0.2,
+    corrupt_trim_length: float = 0.2,
     max_download_retries: int = 10,
     retry_delay: float = 0.5,
+    num_workers: int = 4,
+    monolithic_file: bool = True,
+    sample_rate: float = 2048.0,
 ):
 
     def fetch_edge(detector, t0, t1, max_retries=10, delay=0.5):
@@ -459,7 +516,7 @@ def download_data(
 
         for _ in range(max_retries):
             try:
-                fetch_open_data(detector, t0, t1, cache=1)
+                TimeSeries.fetch_open_data(detector, t0, t1, cache=1)
                 return True
             except Exception as e:
                 last_exception = e
@@ -484,7 +541,8 @@ def download_data(
         det_end = segments[:, 1]
         durations = det_end - det_start
         # Include corrupt_rmlength in durations
-        durations -= 2.0 * corrupt_rmlength
+        durations = durations - (2.0 * corrupt_trim_length)
+        # durations -= 2.0 * corrupt_trim_length
 
         # Get valid mask based on minimum segment duration
         duration_mask = durations >= minimum_segment_duration
@@ -497,7 +555,7 @@ def download_data(
             edge_times.append((idx, end - 1, end))
 
         # Get validity mask for segment availability
-        edge_ok = np.ones(num_segments, dtype=bool)
+        edge_ok = np.ones(segments.shape[0], dtype=bool)
         # Parallel fetch
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             futures = {
@@ -514,7 +572,7 @@ def download_data(
                 idx = futures[foo]  # get segment index
                 ok = foo.result()  # True/False from fetch_edge
                 if not ok:
-                    edge_ok[i] = False
+                    edge_ok[idx] = False
 
         # Create the final mask after duration and edge checks
         final_mask = duration_mask & edge_ok
@@ -527,5 +585,19 @@ def download_data(
         logger.info(
             f"{det} {run}: Available = {available_valid_duration}, "
             f"Valid = {total_valid_duration}."
-            f"Duration and data availability might reduce valid duration."
+            f"\nDuration and data availability might reduce valid duration."
+        )
+
+        ## Call fetcher to download valid data
+        _fetcher(
+            record["segments"],
+            num_workers=num_workers,
+            det=det,
+            run=run,
+            parent_dir=save_dir,
+            monolithic_file=monolithic_file,
+            trim=corrupt_trim_length,
+            sample_rate=sample_rate,
+            noise_low_freq_cutoff=noise_low_freq_cutoff,
+            full_metadata=record,
         )
