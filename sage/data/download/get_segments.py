@@ -92,8 +92,8 @@ class TimelineQuery:
 
         # Parameters for GWOSC query
         self.observing_run = self._to_seq(observing_run)
-        self.start = self._to_seq(start)
-        self.end = self._to_seq(end)
+        self.start = start
+        self.end = end
 
         # if dq flag provided; detector not required
         self.data_quality_flag = self._to_seq(dq_flag)
