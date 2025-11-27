@@ -28,8 +28,9 @@ Documentation: NULL
 import functools
 
 # LOCAL
-import logging
+from sage.core.logger import get_logger, setup_logging
 
+setup_logging("logs")
 logger = get_logger(__name__)
 # Keep track of references logged in this session
 _logged_references = set()
