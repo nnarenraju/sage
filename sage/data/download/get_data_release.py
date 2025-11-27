@@ -70,6 +70,7 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 # Signal processing
 from gwpy.timeseries import TimeSeries
 from gwpy.segments import DataQualityFlag
+from pycbc.types import TimeSeries as TS
 from pycbc.filter import highpass
 from pycbc.filter.resample import lfilter
 
@@ -88,6 +89,7 @@ from pycbc import DYN_RANGE_FAC
 # LOCAL
 from sage.core.decorators import reference
 from sage.core.logger import get_logger, setup_logging
+from sage.core.types import SEGMENT_DTYPE
 
 setup_logging("logs")
 logger = get_logger(__name__)
@@ -122,7 +124,7 @@ def _roll(arr, shift):
     if shift == 0:
         return arr
 
-    out = zeros(n, dtype=arr.dtype)
+    out = np.zeros(n, dtype=arr.dtype)
     out[:shift] = arr[n - shift :]
     out[shift:] = arr[: n - shift]
     return out
@@ -135,8 +137,8 @@ def _fir_zero_filter(coeff, timeseries):
     ----------
     coeff: numpy.ndarray
         FIR coefficients. Should be and odd length and symmetric.
-    timeseries: pycbc.types.TimeSeries
-        Time series to be filtered.
+    timeseries: np.ndarray
+        Time series to be filtered (not PyCBC TimeSeries object).
 
     Returns
     -------
@@ -147,7 +149,7 @@ def _fir_zero_filter(coeff, timeseries):
     # apply the filter
     ## NOTE: This takes a np.ndarray and not a PyCBC timeseries
     ## So we just call this from PyCBC instead.
-    series = lfilter(coeff, timeseries)
+    series = lfilter(coeff, timeseries).numpy()
 
     # reverse the time shift caused by the filter,
     # corruption regions contain zeros
@@ -172,7 +174,9 @@ def _resample(strain, old_delta_t, new_delta_t):
     filter_coefficients = _cached_firwin(numtaps, 1.0 / factor, window=("kaiser", 5))
 
     # apply the filter and decimate
-    data = _fir_zero_filter(filter_coefficients, timeseries)[::factor]
+    pycbc_strain = TS(strain, delta_t=new_delta_t)
+    data = _fir_zero_filter(filter_coefficients, pycbc_strain)[::factor]
+    return data
 
 
 # --- END ---
@@ -375,6 +379,60 @@ def _get_detector_data(args):
     return n, data, metadata
 
 
+def _write_segments(hf, group_name, struct_array):
+    """
+    Write a numpy structured array to an HDF5 file.
+
+    This function explicitly converts arrays of fixed-length NumPy strings (S or U)
+    to lists of native Python strings (str) before writing, ensuring compatibility
+    with h5py's variable-length UTF-8 dtype for all records in the array.
+    """
+
+    # For demonstration, we assume 'hf' is a valid h5py File object.
+
+    grp = hf.require_group(group_name)
+
+    N = len(struct_array)
+
+    # --- Write simple numeric fields directly ---
+    # These typically have float/integer dtypes and don't need casting.
+    grp.create_dataset("start_time", data=struct_array["start_time"])
+    grp.create_dataset("end_time", data=struct_array["end_time"])
+
+    # --- Write string fields as standalone UTF-8 datasets ---
+    # Define the target dtype for the HDF5 file: variable-length UTF-8
+    dt_str = h5py.string_dtype(encoding="utf-8")
+
+    # The list comprehension iterates over the full array (all N records)
+    # and converts each record's string content to a native Python str.
+
+    # Detector field (e.g., 'H1', 'L1')
+    detector_list = [str(x) for x in struct_array["detector"]]
+    grp.create_dataset("detector", data=detector_list, dtype=dt_str)
+
+    # Flag field (e.g., 'GATED_DATA', 'GOOD_DATA')
+    flag_list = [str(x) for x in struct_array["flag"]]
+    grp.create_dataset("flag", data=flag_list, dtype=dt_str)
+
+    # Observing run field (e.g., 'O2', 'O3')
+    observing_run_list = [str(x) for x in struct_array["observing_run"]]
+    grp.create_dataset("observing_run", data=observing_run_list, dtype=dt_str)
+
+    # --- Store nested segments separately ---
+    seg_grp = grp.require_group("segments")
+
+    # And store a simple index array
+    seg_index = np.zeros(N, dtype="i8")
+
+    for i in range(N):
+        # The 'segments' field contains nested arrays (objects) for each record.
+        segs = np.asarray(struct_array["segments"][i])
+        seg_grp.create_dataset(str(i), data=segs)
+        seg_index[i] = i
+
+    grp.create_dataset("segments_index", data=seg_index)
+
+
 # Fetch data in MP && save data chunk
 def _fetcher(
     boundaries,
@@ -422,7 +480,7 @@ def _fetcher(
 
         # store full metadata ONCE for the full dataset
         if full_metadata is not None:
-            hf_out.create_dataset("metadata", data=full_metadata)
+            _write_segments(hf_out, "metadata", full_metadata)
 
     def save_chunk(index, data, metadata):
         """Save as individual files or into the monolithic file"""
@@ -487,6 +545,8 @@ def _fetcher(
     if hf_out is not None:
         hf_out.close()
         logger.info(f"\nWrote monolithic HDF5 to {monolithic_file}")
+
+    raise
 
     if not monolithic_file:
         metadata_path = savedir / "full_metadata.json"
@@ -599,5 +659,5 @@ def download_data(
             trim=corrupt_trim_length,
             sample_rate=sample_rate,
             noise_low_freq_cutoff=noise_low_freq_cutoff,
-            full_metadata=record,
+            full_metadata=segments_metadata,
         )
