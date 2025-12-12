@@ -73,6 +73,7 @@ from gwpy.segments import DataQualityFlag
 from pycbc.types import TimeSeries as TS
 from pycbc.filter import highpass
 from pycbc.filter.resample import lfilter
+from pycbc.filter.resample import resample_to_delta_t
 
 from scipy.signal import (
     butter,
@@ -314,16 +315,20 @@ def _downsample(
     """
 
     # Resample and apply an FIR filter
-    res = _resample(strain, 1.0 / old_sample_rate, 1.0 / new_sample_rate)
+    pycbc_strain = TS(strain, delta_t=1.0 / old_sample_rate)
+    res = resample_to_delta_t(pycbc_strain, delta_t=1.0 / new_sample_rate)
+    # res = _resample(strain, 1.0 / old_sample_rate, 1.0 / new_sample_rate)
 
     # Apply IIR sosfiltfilt for highpass
-    ret = _highpass_butter_sosfiltfilt(
-        res,
-        fs=new_sample_rate,
-        cutoff=noise_low_freq_cutoff,
-        order=4,
-        padlen_seconds=2.5,
-    ).astype(np.float32)
+    # ret = _highpass_butter_sosfiltfilt(
+    #    res,
+    #    fs=new_sample_rate,
+    #    cutoff=noise_low_freq_cutoff,
+    #    order=4,
+    #    padlen_seconds=2.5,
+    # ).astype(np.float32)
+
+    ret = highpass(res, noise_low_freq_cutoff).numpy()
 
     # Remove corrupted regions for edge effects
     # Defaults to 0.2, but user can be more conservative
@@ -348,15 +353,26 @@ def _get_detector_data(args):
         new_sample_rate,
         trim,
         noise_low_freq_cutoff,
+        max_retries,
+        delay,
     ) = args
 
-    try:
-        data = TimeSeries.fetch_open_data(
-            detector, left_boundary, right_boundary, cache=1
-        )
-    except Exception as e:
+    last_exception = None
+
+    for ntry in range(max_retries):
+        try:
+            data = TimeSeries.fetch_open_data(
+                detector, left_boundary, right_boundary, cache=1
+            )
+        except Exception as e:
+            logger.warning(f"Chunk {n} failed. Retrying ({ntry}/{max_retries})...")
+            last_exception = e
+            time.sleep(delay)
+
+    if last_exception != None:
+        logger.info(f"Tried {ntry}/{max_retries} times. Aborting.")
         # bubble up the original error
-        logger.error(f"Chunk {n} failed: {e}")
+        logger.error(f"Chunk {n} failed: {last_exception}")
         return n, None, {}
 
     # Process only if fetch succeeded
@@ -445,6 +461,8 @@ def _fetcher(
     sample_rate=2048.0,
     noise_low_freq_cutoff=15.0,
     full_metadata=None,
+    max_download_retries=10,
+    retry_delay=0.5,
 ):
     """Download GWOSC segments for a detector and store either:
       - one HDF5 per chunk (default)
@@ -468,9 +486,13 @@ def _fetcher(
         f"using {num_workers} workers"
     )
 
+    # Aliases
     nfs = sample_rate
     lcut = noise_low_freq_cutoff
-    tasks = ((i, t0, t1, det, nfs, trim, lcut) for i, (t0, t1) in enumerate(boundaries))
+    tasks = (
+        (i, t0, t1, det, nfs, trim, lcut, max_download_retries, retry_delay)
+        for i, (t0, t1) in enumerate(boundaries)
+    )
 
     # --- Optional monolithic file setup ---
     hf_out = None
@@ -502,8 +524,8 @@ def _fetcher(
             for k, v in metadata.items():
                 dset.attrs[k] = v
 
-            dset.attrs["detector"] = det
-            dset.attrs["run"] = run
+            dset.attrs["detector"] = det.encode("utf-8")
+            dset.attrs["run"] = run.encode("utf-8")
             dset.attrs["noise_low_freq_cutoff"] = lcut
 
         else:
@@ -534,7 +556,7 @@ def _fetcher(
         with tqdm(total=len(boundaries)) as pbar:
             pbar.set_description("DET_SCIENCE_DATA GWOSC")
             for args in (
-                (i, t0, t1, det, nfs, trim, lcut)
+                (i, t0, t1, det, nfs, trim, lcut, max_download_retries, retry_delay)
                 for i, (t0, t1) in enumerate(boundaries)
             ):
                 n, data, metadata = _get_detector_data(args)
@@ -544,9 +566,7 @@ def _fetcher(
     # Close monolithic output file
     if hf_out is not None:
         hf_out.close()
-        logger.info(f"\nWrote monolithic HDF5 to {monolithic_file}")
-
-    raise
+        logger.info(f"Wrote monolithic HDF5 to {monolithic_filepath}")
 
     if not monolithic_file:
         metadata_path = savedir / "full_metadata.json"
@@ -660,4 +680,6 @@ def download_data(
             sample_rate=sample_rate,
             noise_low_freq_cutoff=noise_low_freq_cutoff,
             full_metadata=segments_metadata,
+            max_download_retries=max_download_retries,
+            retry_delay=retry_delay,
         )
