@@ -21,8 +21,8 @@ GitHub Repository: NULL
 
 Documentation:
     1. Take a segments structured array as input
-    2. Download the updated full event list from GWOSC (DONE)
-    3. Create an updated segment list after removing around known events (DONE)
+    2. Download the updated full event list from GWOSC
+    3. Create an updated segment list after removing around known events
     4. Download the segments from GWOSC with the flags taken from the array
     5. Put all segments together into one monolithic file for fast data retrieval
     6. We can also have an option to keep the files separate for weirdos
@@ -30,271 +30,40 @@ Documentation:
 """
 
 # General
-import os
-import sys
 import time
 import h5py
-import math
-import glob
 import json
-import pickle
 import warnings
-import itertools
-import functools
-
-from pathlib import Path
-
-# Downloading
-import urllib.request
-
-# Scientific
-import scipy
-import numpy as np
-
-# Plotting
-import matplotlib.pyplot as plt
 
 # Utilities
+import numpy as np
+import urllib.request
+
 from tqdm import tqdm
-from sys import getsizeof
+from pathlib import Path
 
 # Multiprocessing
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import warnings
-
 # Suppressing LAL warnings
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
-# Signal processing
+# Signal processing (gwpy)
 from gwpy.timeseries import TimeSeries
-from gwpy.segments import DataQualityFlag
-from pycbc.types import TimeSeries as TS
+
+# Signal processing (pycbc)
+from pycbc import DYN_RANGE_FAC
 from pycbc.filter import highpass
-from pycbc.filter.resample import lfilter
+from pycbc.types import TimeSeries as TS
 from pycbc.filter.resample import resample_to_delta_t
 
-from scipy.signal import (
-    butter,
-    sosfiltfilt,
-    sosfilt,
-    firwin,
-    fftconvolve,
-    sosfreqz,
-)
-
-# Constants
-from pycbc import DYN_RANGE_FAC
-
 # LOCAL
-from sage.core.decorators import reference
+from sage.dsp.utils import trim_edges
 from sage.core.logger import get_logger, setup_logging
-from sage.core.types import SEGMENT_DTYPE
 
 setup_logging("logs")
 logger = get_logger(__name__)
-
-
-# --- Obtained from PyCBC ---
-# Mild modifications have been made to the original
-PYCBC_PARENT_URL = "https://pycbc.org/pycbc/latest/html/_modules/"
-
-
-@functools.lru_cache(maxsize=20)
-def _cached_firwin(*args, **kwargs):
-    """Cache the FIR filter coefficients.
-    This is done if user requests for lots of segments.
-    """
-    return firwin(*args, **kwargs)
-
-
-def _roll(arr, shift):
-    """Roll an array
-    Removes dependence from PyCBC timeseries
-
-    Args:
-        arr (_type_): _description_
-        shift (_type_): _description_
-
-    Returns:
-        _type_: _description_
-    """
-    n = len(arr)
-    shift %= n
-    if shift == 0:
-        return arr
-
-    out = np.zeros(n, dtype=arr.dtype)
-    out[:shift] = arr[n - shift :]
-    out[shift:] = arr[: n - shift]
-    return out
-
-
-def _fir_zero_filter(coeff, timeseries):
-    """Filter the timeseries with a set of FIR coefficients
-
-    Parameters
-    ----------
-    coeff: numpy.ndarray
-        FIR coefficients. Should be and odd length and symmetric.
-    timeseries: np.ndarray
-        Time series to be filtered (not PyCBC TimeSeries object).
-
-    Returns
-    -------
-    filtered_series: pycbc.types.TimeSeries
-        Return the filtered timeseries, which has been properly shifted to account
-    for the FIR filter delay and the corrupted regions zeroed out.
-    """
-    # apply the filter
-    ## NOTE: This takes a np.ndarray and not a PyCBC timeseries
-    ## So we just call this from PyCBC instead.
-    series = lfilter(coeff, timeseries).numpy()
-
-    # reverse the time shift caused by the filter,
-    # corruption regions contain zeros
-    # If the number of filter coefficients is odd, the central point *should*
-    # be included in the output so we only zero out a region of len(coeff) - 1
-    series[: (len(coeff) // 2) * 2] = 0
-    series = _roll(series, -len(coeff) // 2)
-    return series
-
-
-@reference(
-    os.path.join(PYCBC_PARENT_URL, "pycbc/filter/resample.html"),
-    os.path.join(PYCBC_PARENT_URL, "pycbc/types/array.html#Array.roll"),
-    category="documentation",
-)
-def _resample(strain, old_delta_t, new_delta_t):
-    factor = int(round(new_delta_t / old_delta_t))
-    numtaps = factor * 20 + 1
-
-    # The kaiser window has been testing using the LDAS implementation
-    # and is in the same configuration as used in the original lalinspiral
-    filter_coefficients = _cached_firwin(numtaps, 1.0 / factor, window=("kaiser", 5))
-
-    # apply the filter and decimate
-    pycbc_strain = TS(strain, delta_t=new_delta_t)
-    data = _fir_zero_filter(filter_coefficients, pycbc_strain)[::factor]
-    return data
-
-
-# --- END ---
-
-
-def _ensure_1d(x):
-    x = np.asarray(x)
-    if x.ndim != 1:
-        raise ValueError("input must be 1D")
-    return x
-
-
-def _highpass_butter_sosfiltfilt(
-    x,
-    fs,
-    cutoff=15.0,
-    order=4,
-    padlen_seconds=2.0,
-    pad_type="reflect",
-    fallback_to_sos=False,
-):
-    """
-    Robust zero-phase highpass using Butterworth SOS + filtfilt-like forward-backward.
-    NOTE: Padding reduces edge effects
-
-    Args:
-        x (array): 1D time series (float).
-        fs (float): sampling rate (Hz).
-        cutoff (float): cutoff frequency (Hz).
-        order (int): nominal Butterworth order (sos built from order).
-        padlen_seconds (float): pad length in seconds (mirror padding)
-        pad_type: 'reflect' or 'odd' or 'constant' (prefer 'reflect').
-        fallback_to_sos: if True and sosfiltfilt fails, do sosfilt (causal).
-
-    Returns:
-        y (np.ndarray): filtered 1D array same length as input.
-
-    """
-
-    x = _ensure_1d(x)
-    n = x.shape[0]
-    if n == 0:
-        return x
-
-    nyq = 0.5 * fs
-    if cutoff <= 0 or cutoff >= nyq:
-        logger.error("cutoff must be between 0 and Nyquist (fs/2)")
-        raise ValueError("cutoff must be between 0 and Nyquist (fs/2)")
-
-    # Build SOS
-    sos = butter(order, cutoff / nyq, btype="highpass", output="sos")
-
-    # compute pad length in samples (must be >= some multiple of filter transient)
-    padlen = int(max(3, padlen_seconds * fs))
-    # ensure padlen < n
-    if padlen >= n:
-        padlen = max(0, n // 2 - 1)
-
-    # Apply padding
-    if padlen > 0:
-        if pad_type == "reflect":
-            xp = np.pad(x, padlen, mode="reflect")
-        elif pad_type == "symmetric":
-            xp = np.pad(x, padlen, mode="symmetric")
-        elif pad_type == "odd":
-            xp = np.pad(x, padlen, mode="odd")
-        elif pad_type == "constant":
-            xp = np.pad(x, padlen, mode="constant", constant_values=0.0)
-        else:
-            logger.error("unsupported pad_type")
-            raise ValueError("unsupported pad_type")
-    else:
-        xp = x
-
-    # Filter with zero-phase sosfiltfilt
-    try:
-        y = sosfiltfilt(sos, xp)
-    except Exception as exc:
-        # fallback: try sosfilt (causal) if requested, otherwise re-raise
-        logger.warning("sosfiltfilt failed; falling back to sosfilt if enabled")
-        if fallback_to_sos:
-            y = sosfilt(sos, xp)
-        else:
-            logger.warning("sosfilt fallback failed")
-            logger.info("Set fallback_to_sos to True to enable fallback")
-            raise
-
-    # remove padding
-    if padlen > 0:
-        y = y[padlen : padlen + n]
-
-    return y
-
-
-def _trim_edges(data, fs, trim=0.2):
-    """Trim data edges after filtering/resampling.
-
-    Args:
-        data (array): 1D time series
-        fs (float): Sampling rate (Hz)
-        trim (float, optional): Edge trim (seconds) for normal mode.
-            - Defaults to 0.2
-
-    Raises:
-        ValueError: _description_
-
-    Returns:
-        _type_: _description_
-    """
-
-    n = int(round(trim * fs))
-
-    if n == 0 or 2 * n >= len(data):
-        logger.error("Trim too large for data length.")
-        raise ValueError("Trim too large for data length.")
-
-    return data[n:-n]
 
 
 def _downsample(
@@ -314,25 +83,14 @@ def _downsample(
         _type_: _description_
     """
 
-    # Resample and apply an FIR filter
+    # Resample and apply a highpass filter
     pycbc_strain = TS(strain, delta_t=1.0 / old_sample_rate)
     res = resample_to_delta_t(pycbc_strain, delta_t=1.0 / new_sample_rate)
-    # res = _resample(strain, 1.0 / old_sample_rate, 1.0 / new_sample_rate)
-
-    # Apply IIR sosfiltfilt for highpass
-    # ret = _highpass_butter_sosfiltfilt(
-    #    res,
-    #    fs=new_sample_rate,
-    #    cutoff=noise_low_freq_cutoff,
-    #    order=4,
-    #    padlen_seconds=2.5,
-    # ).astype(np.float32)
-
     ret = highpass(res, noise_low_freq_cutoff).numpy()
 
     # Remove corrupted regions for edge effects
     # Defaults to 0.2, but user can be more conservative
-    ret = _trim_edges(ret, new_sample_rate, trim)
+    ret = trim_edges(ret, new_sample_rate, trim)
     return ret
 
 
