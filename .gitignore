@@ -150,6 +150,9 @@ source/baseline/data/psds/
 *.out
 *.log
 *.pickle
+*.h5
+*.hdf5
+*.hdf
 
 # Do not ignore these files
 !requirements.txt
