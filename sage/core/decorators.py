@@ -55,7 +55,7 @@ def reference(*urls, category=None):
             for url in urls:
                 key = (func.__module__, func.__name__, url)
                 if key not in _logged_references:
-                    msg = f"Reference for {func.__name__}: {url}"
+                    msg = f"Reference for {func.__name__} in module {func.__module__}: {url}"
                     if category:
                         msg = f"[{category}] {msg}"
                     # stacklevel=2 so that logging points to the caller
