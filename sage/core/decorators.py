@@ -28,9 +28,8 @@ Documentation: NULL
 import functools
 
 # LOCAL
-from sage.core.logger import get_logger, setup_logging
+from sage.core.logger import get_logger
 
-setup_logging("logs")
 logger = get_logger(__name__)
 # Keep track of references logged in this session
 _logged_references = set()
@@ -47,6 +46,13 @@ def reference(*urls, category=None):
     category : str, optional
         Category label for the reference
         (e.g., "paper", "code", "documentation").
+
+    Example usage:
+        @reference(
+            os.path.join(PYCBC_PARENT_URL, "pycbc/filter/resample.html"),
+            os.path.join(PYCBC_PARENT_URL, "pycbc/types/array.html#Array.roll"),
+            category="documentation",
+        )
     """
 
     def decorator(func):
@@ -55,7 +61,7 @@ def reference(*urls, category=None):
             for url in urls:
                 key = (func.__module__, func.__name__, url)
                 if key not in _logged_references:
-                    msg = f"Reference for {func.__name__} in module {func.__module__}: {url}"
+                    msg = f"Ref. for {func.__name__} in module {func.__module__}: {url}"
                     if category:
                         msg = f"[{category}] {msg}"
                     # stacklevel=2 so that logging points to the caller
