@@ -35,3 +35,10 @@ def to_sequence(x):
     if isinstance(x, (bool)):
         return (x,)
     return tuple(x)
+
+
+def ensure_1d(x):
+    x = np.asarray(x)
+    if x.ndim != 1:
+        raise ValueError("Input must be 1D")
+    return x
