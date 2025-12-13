@@ -41,6 +41,7 @@ import urllib.request
 
 from tqdm import tqdm
 from pathlib import Path
+from dataclasses import dataclass
 
 # Multiprocessing
 import multiprocessing as mp
@@ -54,336 +55,294 @@ from gwpy.timeseries import TimeSeries
 
 # Signal processing (pycbc)
 from pycbc import DYN_RANGE_FAC
-from pycbc.filter import highpass
-from pycbc.types import TimeSeries as TS
-from pycbc.filter.resample import resample_to_delta_t
 
 # LOCAL
-from sage.dsp.utils import trim_edges
+from sage.dsp.filters import pycbc_downsample
 from sage.core.logger import get_logger, setup_logging
 
 setup_logging("logs")
 logger = get_logger(__name__)
 
 
-def _downsample(
-    strain,
-    old_sample_rate,
-    new_sample_rate=2048.0,
-    trim=0.2,
-    noise_low_freq_cutoff=15.0,
-):
-    """Downsampling and filtering for computational reasons
-
-    Args:
-        strain (_type_): _description_
-        sample_rate (float, optional): _description_. Defaults to 2048.0.
-
-    Returns:
-        _type_: _description_
-    """
-
-    # Resample and apply a highpass filter
-    pycbc_strain = TS(strain, delta_t=1.0 / old_sample_rate)
-    res = resample_to_delta_t(pycbc_strain, delta_t=1.0 / new_sample_rate)
-    ret = highpass(res, noise_low_freq_cutoff).numpy()
-
-    # Remove corrupted regions for edge effects
-    # Defaults to 0.2, but user can be more conservative
-    ret = trim_edges(ret, new_sample_rate, trim)
-    return ret
+@dataclass(frozen=True)
+class DownloadConfig:
+    # Immutable MP-safe pickleable download config
+    sample_rate: float
+    trim: float
+    noise_low_freq_cutoff: float
+    max_retries: int
+    delay: float
 
 
-def _get_detector_data(args):
-    """Download detector data from GWOSC
+class DataReleaseDownloader:
 
-    Args:
-        args (_type_): _description_
+    def __init__(
+        self,
+        segments_metadata,
+        save_dir: str,
+        noise_low_freq_cutoff: float = 15.0,
+        minimum_segment_duration: float = 22.0,
+        corrupt_trim_length: float = 0.2,
+        max_download_retries: int = 10,
+        retry_delay: float = 0.5,
+        num_workers: int = 4,
+        make_monolithic_file: bool = True,
+        sample_rate: float = 2048.0,
+    ):
 
-    Returns:
-        _type_: _description_
-    """
-    (
-        n,
-        left_boundary,
-        right_boundary,
-        detector,
-        new_sample_rate,
-        trim,
-        noise_low_freq_cutoff,
-        max_retries,
-        delay,
-    ) = args
+        # Timeseries params
+        self.sample_rate = sample_rate
+        self.noise_low_freq_cutoff = noise_low_freq_cutoff
+        self.trim = corrupt_trim_length
+        self.minimum_segment_duration = minimum_segment_duration
 
-    last_exception = None
+        # Download params
+        self.max_retries = max_download_retries
+        self.delay = retry_delay
+        self.num_workers = num_workers
 
-    for ntry in range(max_retries):
-        try:
-            data = TimeSeries.fetch_open_data(
-                detector, left_boundary, right_boundary, cache=1
-            )
-        except Exception as e:
-            logger.warning(f"Chunk {n} failed. Retrying ({ntry}/{max_retries})...")
-            last_exception = e
-            time.sleep(delay)
+        # Save params
+        self.save_dir = save_dir
+        self.monolithic = make_monolithic_file
 
-    if last_exception != None:
-        logger.info(f"Tried {ntry}/{max_retries} times. Aborting.")
-        # bubble up the original error
-        logger.error(f"Chunk {n} failed: {last_exception}")
-        return n, None, {}
+        # Segments structured array
+        self.full_metadata = segments_metadata
 
-    # Process only if fetch succeeded
-    old_sample_rate = 1.0 / data.dt.value
-    data = _downsample(
-        data.value, old_sample_rate, new_sample_rate, trim, noise_low_freq_cutoff
-    )
-    # Apply a dynamic range factor for storage
-    # NOTE: Remember to reverse this before passing to Sage
-    data = data * DYN_RANGE_FAC
+    def __enter__(self):
+        pass
 
-    metadata = {
-        "gps_start": left_boundary + trim,
-        "gps_end": right_boundary - trim,
-        "trim": int(round(trim * new_sample_rate)),
-        "nsamples": len(data),
-        "old_sample_rate": old_sample_rate,
-        "sample_rate": new_sample_rate,
-    }
-    return n, data, metadata
+    def __exit__(self):
+        pass
 
-
-def _write_segments(hf, group_name, struct_array):
-    """
-    Write a numpy structured array to an HDF5 file.
-
-    This function explicitly converts arrays of fixed-length NumPy strings (S or U)
-    to lists of native Python strings (str) before writing, ensuring compatibility
-    with h5py's variable-length UTF-8 dtype for all records in the array.
-    """
-
-    # For demonstration, we assume 'hf' is a valid h5py File object.
-
-    grp = hf.require_group(group_name)
-
-    N = len(struct_array)
-
-    # --- Write simple numeric fields directly ---
-    # These typically have float/integer dtypes and don't need casting.
-    grp.create_dataset("start_time", data=struct_array["start_time"])
-    grp.create_dataset("end_time", data=struct_array["end_time"])
-
-    # --- Write string fields as standalone UTF-8 datasets ---
-    # Define the target dtype for the HDF5 file: variable-length UTF-8
-    dt_str = h5py.string_dtype(encoding="utf-8")
-
-    # The list comprehension iterates over the full array (all N records)
-    # and converts each record's string content to a native Python str.
-
-    # Detector field (e.g., 'H1', 'L1')
-    detector_list = [str(x) for x in struct_array["detector"]]
-    grp.create_dataset("detector", data=detector_list, dtype=dt_str)
-
-    # Flag field (e.g., 'GATED_DATA', 'GOOD_DATA')
-    flag_list = [str(x) for x in struct_array["flag"]]
-    grp.create_dataset("flag", data=flag_list, dtype=dt_str)
-
-    # Observing run field (e.g., 'O2', 'O3')
-    observing_run_list = [str(x) for x in struct_array["observing_run"]]
-    grp.create_dataset("observing_run", data=observing_run_list, dtype=dt_str)
-
-    # --- Store nested segments separately ---
-    seg_grp = grp.require_group("segments")
-
-    # And store a simple index array
-    seg_index = np.zeros(N, dtype="i8")
-
-    for i in range(N):
-        # The 'segments' field contains nested arrays (objects) for each record.
-        segs = np.asarray(struct_array["segments"][i])
-        seg_grp.create_dataset(str(i), data=segs)
-        seg_index[i] = i
-
-    grp.create_dataset("segments_index", data=seg_index)
-
-
-# Fetch data in MP && save data chunk
-def _fetcher(
-    boundaries,
-    num_workers=4,
-    det="",
-    run="",
-    parent_dir="",
-    monolithic_file=True,
-    trim=0.2,
-    sample_rate=2048.0,
-    noise_low_freq_cutoff=15.0,
-    full_metadata=None,
-    max_download_retries=10,
-    retry_delay=0.5,
-):
-    """Download GWOSC segments for a detector and store either:
-      - one HDF5 per chunk (default)
-      - or a single monolithic HDF5 with all samples appended
-
-    Args:
-        GPS_boundaries (_type_): _description_
-        num_workers (int, optional): _description_. Defaults to 4.
-        det (str, optional): _description_. Defaults to "".
-        run (str, optional): _description_. Defaults to "".
-        parent_dir (str, optional): _description_. Defaults to "".
-        monolithic_file (_type_, optional): _description_. Defaults to True.
-
-    """
-
-    savedir = Path(parent_dir) / f"data_{det}_{run}"
-    savedir.mkdir(parents=True, exist_ok=True)
-
-    logger.info(
-        f"Fetching GWOSC data for detector {det} ({run}) "
-        f"using {num_workers} workers"
-    )
-
-    # Aliases
-    nfs = sample_rate
-    lcut = noise_low_freq_cutoff
-    tasks = (
-        (i, t0, t1, det, nfs, trim, lcut, max_download_retries, retry_delay)
-        for i, (t0, t1) in enumerate(boundaries)
-    )
-
-    # --- Optional monolithic file setup ---
-    hf_out = None
-    if monolithic_file:
-        monolithic_filepath = Path(parent_dir) / f"data_{det}_{run}.h5"
-        hf_out = h5py.File(monolithic_filepath, "w")
-
-        # store full metadata ONCE for the full dataset
-        if full_metadata is not None:
-            _write_segments(hf_out, "metadata", full_metadata)
-
-    def save_chunk(index, data, metadata):
-        """Save as individual files or into the monolithic file"""
-        if data is None or not isinstance(data, np.ndarray):
-            return
-
-        # --- Monolithic mode ---
-        if hf_out is not None:
-            # Single-threaded write to monolithic file
-            dset = hf_out.create_dataset(
-                f"chunk_{index}",
-                data=data,
-                dtype=data.dtype,
-                compression="gzip",
-                chunks=True,
-            )
-
-            # attach metadata for *this* chunk
-            for k, v in metadata.items():
-                dset.attrs[k] = v
-
-            dset.attrs["detector"] = det.encode("utf-8")
-            dset.attrs["run"] = run.encode("utf-8")
-            dset.attrs["noise_low_freq_cutoff"] = lcut
-
-        else:
-            # --- Per-file mode (default) ---
-            fname = savedir / f"data_{det}_{run}_chunk_{index}.hdf"
-            with h5py.File(fname, "a") as hf:
-                hf.create_dataset("data", data=data, compression="gzip", chunks=True)
-
-                # write chunk metadata
-                meta_grp = hf.create_group("metadata")
-                for k, v in metadata.items():
-                    meta_grp.attrs[k] = v
-
-                meta_grp.attrs["detector"] = det
-                meta_grp.attrs["run"] = run
-                meta_grp.attrs["noise_low_freq_cutoff"] = lcut
-
-    # --- Parallel download ---
-    if num_workers > 1:
-        with mp.Pool(num_workers) as pool, tqdm(total=len(boundaries)) as pbar:
-            pbar.set_description("MP-DET_SCIENCE_DATA GWOSC")
-            for n, data, metadata in pool.imap_unordered(_get_detector_data, tasks):
-                # NOTE: Always so save_chunk outside in main process
-                # DO NOT write let workers write to same HDF5
-                save_chunk(n, data, metadata)
-                pbar.update()
-    else:
-        with tqdm(total=len(boundaries)) as pbar:
-            pbar.set_description("DET_SCIENCE_DATA GWOSC")
-            for args in (
-                (i, t0, t1, det, nfs, trim, lcut, max_download_retries, retry_delay)
-                for i, (t0, t1) in enumerate(boundaries)
-            ):
-                n, data, metadata = _get_detector_data(args)
-                save_chunk(n, data, metadata)
-                pbar.update()
-
-    # Close monolithic output file
-    if hf_out is not None:
-        hf_out.close()
-        logger.info(f"Wrote monolithic HDF5 to {monolithic_filepath}")
-
-    if not monolithic_file:
-        metadata_path = savedir / "full_metadata.json"
-        with open(metadata_path, "w") as f:
-            json.dump(full_metadata, f, indent=2)
-
-
-# --- Callable Function ---
-
-
-def download_data(
-    segments_metadata,
-    save_dir: str,
-    noise_low_freq_cutoff: float = 15.0,
-    minimum_segment_duration: float = 22.0,
-    corrupt_trim_length: float = 0.2,
-    max_download_retries: int = 10,
-    retry_delay: float = 0.5,
-    num_workers: int = 4,
-    monolithic_file: bool = True,
-    sample_rate: float = 2048.0,
-):
-
-    def fetch_edge(detector, t0, t1, max_retries=10, delay=0.5):
+    @staticmethod
+    def _fetch_data(cfg, det, b0, b1):
         """Fetch a small slice of data to check availability."""
         last_exception = None
 
-        for _ in range(max_retries):
+        for ntry in range(cfg.max_retries):
             try:
-                TimeSeries.fetch_open_data(detector, t0, t1, cache=1)
-                return True
+                data = TimeSeries.fetch_open_data(det, b0, b1, cache=1)
+                return data, True
             except Exception as e:
+                logger.warning(
+                    f"Chunk {n} failed. Retrying ({ntry}/{cfg.max_retries})..."
+                )
                 last_exception = e
-                time.sleep(delay)
+                time.sleep(cfg.delay)
 
         # If we get here, all retries failed
-        logger.error(f"Failed to fetch {detector} {t0}-{t1}: {last_exception}")
-        return False
+        if last_exception != None:
+            logger.info(f"Tried {ntry}/{cfg.max_retries} times. Aborting.")
+            # bubble up the original error
+            logger.error(f"Failed to fetch {det} {b0}-{b1}: {last_exception}")
+            return None, False
 
-    # Inside your loop over runs/detectors:
-    for record in segments_metadata:
-        run = record["observing_run"]
-        det = record["detector"]
-        segments = record["segments"]
-        if segments.size == 0:
-            logger.warning(f"Segments empty for {det} in {run}. Skipping.")
-            continue
+    @staticmethod
+    def _get_detector_data(cfg, n, b0, b1, det):
+        """Download detector data from GWOSC
 
-        logger.info(f"Downloading segments from {det} for {run}")
+        Args:
+            args (_type_): _description_
 
+        Returns:
+            _type_: _description_
+        """
+
+        # Download data from GWOSC
+        data, fetch_okay = DataReleaseDownloader._fetch_data(cfg, det, b0, b1)
+        # Handle error case
+        if not fetch_okay:
+            return n, None, {}
+
+        # Process only if fetch succeeded
+        old_sample_rate = 1.0 / data.dt.value
+        data = pycbc_downsample(
+            data.value,
+            old_sample_rate,
+            cfg.sample_rate,
+            cfg.trim,
+            cfg.noise_low_freq_cutoff,
+        )
+        # Apply a dynamic range factor for storage
+        # NOTE: Remember to reverse this before passing to Sage
+        data = data * DYN_RANGE_FAC
+
+        metadata = {
+            "gps_start": b0 + cfg.trim,
+            "gps_end": b1 - cfg.trim,
+            "trim": int(round(cfg.trim * cfg.sample_rate)),
+            "nsamples": len(data),
+            "old_sample_rate": old_sample_rate,
+            "sample_rate": cfg.sample_rate,
+        }
+        return n, data, metadata
+
+    def _return_download_config(self):
+        """Return download config dict for MP runs"""
+        return DownloadConfig(
+            sample_rate=self.sample_rate,
+            trim=self.trim,
+            noise_low_freq_cutoff=self.noise_low_freq_cutoff,
+            max_retries=self.max_retries,
+            delay=self.delay,
+        )
+
+    def _save_metadata(self, hf, group_name, metadata):
+        """
+        Write a numpy structured array to an HDF5 file.
+
+        This function explicitly converts arrays of fixed-length NumPy strings (S or U)
+        to lists of native Python strings (str) before writing, ensuring compatibility
+        with h5py's variable-length UTF-8 dtype for all records in the array.
+
+        """
+
+        # Create metadata group
+        grp = hf.require_group(group_name)
+
+        # --- Write simple numeric fields directly ---
+        grp.create_dataset("start_time", data=metadata["start_time"])
+        grp.create_dataset("end_time", data=metadata["end_time"])
+
+        # --- Write string fields as standalone UTF-8 datasets ---
+        # Define the target dtype for the HDF5 file: variable-length UTF-8
+        dt_str = h5py.string_dtype(encoding="utf-8")
+
+        detector_list = [str(x) for x in metadata["detector"]]
+        grp.create_dataset("detector", data=detector_list, dtype=dt_str)
+
+        # Data quality flag
+        flag_list = [str(x) for x in metadata["flag"]]
+        grp.create_dataset("flag", data=flag_list, dtype=dt_str)
+
+        # Observing run
+        observing_run_list = [str(x) for x in metadata["observing_run"]]
+        grp.create_dataset("observing_run", data=observing_run_list, dtype=dt_str)
+
+        # --- Store segments data ---
+        seg_grp = grp.require_group("segments")
+
+        # And store a simple index array
+        N = len(metadata)
+        seg_index = np.zeros(N, dtype="i8")
+
+        for i in range(N):
+            # The 'segments' field contains nested arrays (objects) for each record.
+            segs = np.asarray(metadata["segments"][i])
+            seg_grp.create_dataset(str(i), data=segs)
+            seg_index[i] = i
+
+        grp.create_dataset("segments_index", data=seg_index)
+
+    def _savepath_handling(self, det, run):
+        """Make savepath safely"""
+        # Make the save directory
+        savedir = Path(self.save_dir) / f"data_{det}_{run}"
+        savedir.mkdir(parents=True, exist_ok=True)
+
+    def _h5py_mkfile(self, filename):
+        # Make and persist open the h5py file
+        filepath = Path(self.save_dir) / filename
+        return h5py.File(filepath, "w")
+
+    @staticmethod
+    def _save_chunk(hf, idx, data, det, run, chunk_metadata):
+        """Save data into hdf5 dataset"""
+        if data is None or not isinstance(data, np.ndarray):
+            return
+
+        dset = hf.create_dataset(
+            f"chunk_{idx}",
+            data=data,
+            dtype=data.dtype,
+            compression="gzip",
+            chunks=True,
+        )
+
+        # Attach metadata for *this* chunk
+        for k, v in chunk_metadata.items():
+            dset.attrs[k] = v
+
+        dset.attrs["detector"] = det.encode("utf-8")
+        dset.attrs["run"] = run.encode("utf-8")
+        dset.attrs["noise_low_freq_cutoff"] = self.noise_low_freq_cutoff
+
+    def _fetcher(self, segments, det, run):
+        """
+        Download GWOSC segments for a detector and store either:
+        - one HDF5 per chunk (default)
+        - or a single monolithic HDF5 with all samples appended
+
+        Args:
+            GPS_boundaries (_type_): _description_
+            num_workers (int, optional): _description_. Defaults to 4.
+            det (str, optional): _description_. Defaults to "".
+            run (str, optional): _description_. Defaults to "".
+            parent_dir (str, optional): _description_. Defaults to "".
+            monolithic_file (_type_, optional): _description_. Defaults to True.
+
+        """
+
+        logger.info(
+            f"Fetching GWOSC data for detector {det} ({run}) "
+            f"using {self.num_workers} workers"
+        )
+
+        # Make save dir
+        self._savepath_handling(det, run)
+
+        # Setup monolithic file
+        if self.monolithic:
+            hf = self._h5py_mkfile(f"data_{det}_{run}.h5")
+            # Store full metadata ONCE for the full dataset
+            self._save_metadata(hf, "metadata", self.full_metadata)
+
+        # Download (MP or non-MP)
+        # Get an immutable pickleable download config
+        dcfg = self._return_download_config()
+        # Split segment downloads into separate tasks
+        tasks = ((dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
+
+        if self.num_workers > 1:
+            # Setup mp tasks
+            with mp.Pool(self.num_workers) as pool, tqdm(total=len(segments)) as pbar:
+                pbar.set_description("MP-DET_SCIENCE_DATA GWOSC")
+                for n, data, metadata in pool.starmap(
+                    DataReleaseDownloader._get_detector_data, tasks
+                ):
+                    # NOTE: Always so save_chunk outside in main process
+                    # DO NOT write let workers write to same HDF5
+                    self._save_chunk(hf, n, data, det, run, metadata)
+                    pbar.update()
+        else:
+            with tqdm(total=len(segments)) as pbar:
+                pbar.set_description("DET_SCIENCE_DATA GWOSC")
+                for args in tasks:
+                    n, data, metadata = DataReleaseDownloader._get_detector_data(*args)
+                    hf = self._h5py_mkfile(f"data_{det}_{run}_chunk_{n}.hdf")
+                    self._save_chunk(hf, n, data, det, run, metadata)
+                    hf.close()
+                    pbar.update()
+
+        # Close monolithic output file
+        if self.monolithic:
+            hf.close()
+
+        if not self.monolithic:
+            metadata_path = Path(self.save_dir) / "full_metadata.json"
+            with open(metadata_path, "w") as f:
+                json.dump(self.full_metadata, f, indent=2)
+
+    def _validate_segments(self, segments, det, run):
+        """Validate segments based on trimmed duration and good download"""
         det_start = segments[:, 0]
         det_end = segments[:, 1]
-        durations = det_end - det_start
+        self.durations = det_end - det_start
         # Include corrupt_rmlength in durations
-        durations = durations - (2.0 * corrupt_trim_length)
-        # durations -= 2.0 * corrupt_trim_length
+        self.durations = self.durations - (2.0 * self.trim)
 
         # Get valid mask based on minimum segment duration
-        duration_mask = durations >= minimum_segment_duration
+        duration_mask = self.durations >= self.minimum_segment_duration
 
         # Prepare all edge checks
         edge_times = []
@@ -395,11 +354,10 @@ def download_data(
         # Get validity mask for segment availability
         edge_ok = np.ones(segments.shape[0], dtype=bool)
         # Parallel fetch
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        cfg = self._return_download_config()
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             futures = {
-                executor.submit(
-                    fetch_edge, det, t0, t1, max_download_retries, retry_delay
-                ): idx
+                executor.submit(self._fetch_data, cfg, det, t0, t1): idx
                 for (idx, t0, t1) in edge_times
             }
             for foo in tqdm(
@@ -408,36 +366,56 @@ def download_data(
                 desc=f"Validating segments in {det}-{run}",
             ):
                 idx = futures[foo]  # get segment index
-                ok = foo.result()  # True/False from fetch_edge
+                _, ok = foo.result()  # True/False from fetch_data
                 if not ok:
                     edge_ok[idx] = False
 
         # Create the final mask after duration and edge checks
-        final_mask = duration_mask & edge_ok
+        return duration_mask & edge_ok
+
+    def _clean_record(self, record):
+        """Check valid segments and prune record"""
+        run = record["observing_run"]
+        det = record["detector"]
+        segments = record["segments"]
+
+        if segments.size == 0:
+            logger.warning(f"Segments empty for {det} in {run}. Skipping.")
+            return None
+
+        logger.info(f"Downloading segments from {det} for {run}")
+
+        # Validate if segments are okay to download
+        final_mask = self._validate_segments(segments, det, run)
 
         # Store valid boundaries
         record["segments"] = segments[final_mask]
-        total_valid_duration = durations[final_mask].sum()
-        available_valid_duration = durations.sum()
+        total_valid_duration = self.durations[final_mask].sum()
+        available_valid_duration = self.durations.sum()
 
         logger.info(
             f"{det} {run}: Available = {available_valid_duration}, "
             f"Valid = {total_valid_duration}."
             f"\nDuration and data availability might reduce valid duration."
         )
+        return record
 
-        ## Call fetcher to download valid data
-        _fetcher(
-            record["segments"],
-            num_workers=num_workers,
-            det=det,
-            run=run,
-            parent_dir=save_dir,
-            monolithic_file=monolithic_file,
-            trim=corrupt_trim_length,
-            sample_rate=sample_rate,
-            noise_low_freq_cutoff=noise_low_freq_cutoff,
-            full_metadata=segments_metadata,
-            max_download_retries=max_download_retries,
-            retry_delay=retry_delay,
-        )
+    ## --- Main function for end user ---
+
+    def download(self):
+
+        # Iterate and download records
+        for record in self.full_metadata:
+
+            # Cleanup the record
+            record = self._clean_record(record)
+            # Ignore if empty record
+            if record == None:
+                continue
+
+            # Call fetcher to download valid data
+            self._fetcher(
+                record["segments"],
+                det=record["detector"],
+                run=record["observing_run"],
+            )
