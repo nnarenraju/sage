@@ -245,8 +245,7 @@ class DataReleaseDownloader:
         filepath = Path(self.save_dir) / filename
         return h5py.File(filepath, "w")
 
-    @staticmethod
-    def _save_chunk(hf, idx, data, det, run, chunk_metadata):
+    def _save_chunk(self, hf, idx, data, det, run, chunk_metadata):
         """Save data into hdf5 dataset"""
         if data is None or not isinstance(data, np.ndarray):
             return
