@@ -33,8 +33,45 @@ from scipy.signal import (
     sosfreqz,
 )
 
+# PyCBC
+from pycbc.filter import highpass as pycbc_highpass
+from pycbc.types import TimeSeries as TS
+from pycbc.filter.resample import resample_to_delta_t
+
 # LOCAL
 from sage.core.utils import ensure_1d
+from sage.dsp.utils import trim_edges
+from sage.core.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+def pycbc_downsample(
+    strain,
+    old_sample_rate,
+    new_sample_rate=2048.0,
+    trim=0.2,
+    noise_low_freq_cutoff=15.0,
+):
+    """Downsampling and filtering for computational reasons
+
+    Args:
+        strain (_type_): _description_
+        sample_rate (float, optional): _description_. Defaults to 2048.0.
+
+    Returns:
+        _type_: _description_
+    """
+
+    # Resample and apply a highpass filter
+    pycbc_strain = TS(strain, delta_t=1.0 / old_sample_rate)
+    res = resample_to_delta_t(pycbc_strain, delta_t=1.0 / new_sample_rate)
+    ret = pycbc_highpass(res, noise_low_freq_cutoff).numpy()
+
+    # Remove corrupted regions for edge effects
+    # Defaults to 0.2, but user can be more conservative
+    ret = trim_edges(ret, new_sample_rate, trim)
+    return ret
 
 
 def highpass(
