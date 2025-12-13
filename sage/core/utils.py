@@ -23,6 +23,9 @@ Documentation: NULL
 
 """
 
+# Packages
+import numpy as np
+
 
 def to_sequence(x):
     """Wrap scalars into a tuple so everything becomes iterable."""
