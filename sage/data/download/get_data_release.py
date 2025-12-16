@@ -19,13 +19,7 @@ __status__        = ['inProgress', 'Archived', 'inUsage', 'Debugging']
 
 GitHub Repository: NULL
 
-Documentation:
-    1. Take a segments structured array as input
-    2. Download the updated full event list from GWOSC
-    3. Create an updated segment list after removing around known events
-    4. Download the segments from GWOSC with the flags taken from the array
-    5. Put all segments together into one monolithic file for fast data retrieval
-    6. We can also have an option to keep the files separate for weirdos
+Documentation: NULL
 
 """
 
@@ -79,7 +73,7 @@ class DataReleaseDownloader:
     def __init__(
         self,
         segments_metadata,
-        save_dir: str,
+        save_parent_dir: str,
         noise_low_freq_cutoff: float = 15.0,
         minimum_segment_duration: float = 22.0,
         corrupt_trim_length: float = 0.2,
@@ -102,11 +96,15 @@ class DataReleaseDownloader:
         self.num_workers = num_workers
 
         # Save params
-        self.save_dir = save_dir
+        self.save_parent_dir = save_parent_dir
         self.monolithic = make_monolithic_file
 
         # Segments structured array
         self.full_metadata = segments_metadata
+
+        # Save download config for safe MP
+        # This is immutable and pickleable
+        self.dcfg = self._return_download_config()
 
     def __enter__(self):
         pass
@@ -119,6 +117,7 @@ class DataReleaseDownloader:
         """Fetch a small slice of data to check availability."""
         last_exception = None
 
+        # TODO: Generalise sage.core.errors --> "safe_call" to accommodate this
         for ntry in range(cfg.max_retries):
             try:
                 data = TimeSeries.fetch_open_data(det, b0, b1, cache=1)
@@ -229,29 +228,29 @@ class DataReleaseDownloader:
         for i in range(N):
             # The 'segments' field contains nested arrays (objects) for each record.
             segs = np.asarray(metadata["segments"][i])
-            seg_grp.create_dataset(str(i), data=segs)
+            seg_grp.create_dataset("segment_" + str(i), data=segs)
             seg_index[i] = i
 
         grp.create_dataset("segments_index", data=seg_index)
 
-    def _savepath_handling(self, det, run):
+    def _savepath_handling(self, dirname):
         """Make savepath safely"""
         # Make the save directory
-        savedir = Path(self.save_dir) / f"data_{det}_{run}"
-        savedir.mkdir(parents=True, exist_ok=True)
+        self.save_dir = Path(self.save_parent_dir) / dirname
+        self.save_dir.mkdir(parents=True, exist_ok=False)
 
     def _h5py_mkfile(self, filename):
         # Make and persist open the h5py file
-        filepath = Path(self.save_dir) / filename
+        filepath = self.save_dir / filename
         return h5py.File(filepath, "w")
 
-    def _save_chunk(self, hf, idx, data, det, run, chunk_metadata):
+    def _save_segment(self, hf, idx, data, det, run, chunk_metadata):
         """Save data into hdf5 dataset"""
         if data is None or not isinstance(data, np.ndarray):
             return
 
         dset = hf.create_dataset(
-            f"chunk_{idx}",
+            f"segment_{idx}",
             data=data,
             dtype=data.dtype,
             compression="gzip",
@@ -284,23 +283,24 @@ class DataReleaseDownloader:
 
         logger.info(
             f"Fetching GWOSC data for detector {det} ({run}) "
-            f"using {self.num_workers} workers"
+            f"using {self.num_workers} worker(s)"
         )
-
-        # Make save dir
-        self._savepath_handling(det, run)
 
         # Setup monolithic file
         if self.monolithic:
+            # Make save dir
+            self._savepath_handling(f"data_release")
+            # Make save file
             hf = self._h5py_mkfile(f"data_{det}_{run}.h5")
             # Store full metadata ONCE for the full dataset
             self._save_metadata(hf, "metadata", self.full_metadata)
+        else:
+            # Make save dir
+            self._savepath_handling(f"data_release_{det}_{run}")
 
         # Download (MP or non-MP)
-        # Get an immutable pickleable download config
-        dcfg = self._return_download_config()
         # Split segment downloads into separate tasks
-        tasks = ((dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
+        tasks = ((self.dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
 
         if self.num_workers > 1:
             # Setup mp tasks
@@ -311,7 +311,7 @@ class DataReleaseDownloader:
                 ):
                     # NOTE: Always so save_chunk outside in main process
                     # DO NOT write let workers write to same HDF5
-                    self._save_chunk(hf, n, data, det, run, metadata)
+                    self._save_segment(hf, n, data, det, run, metadata)
                     pbar.update()
         else:
             with tqdm(total=len(segments)) as pbar:
@@ -319,7 +319,7 @@ class DataReleaseDownloader:
                 for args in tasks:
                     n, data, metadata = DataReleaseDownloader._get_detector_data(*args)
                     hf = self._h5py_mkfile(f"data_{det}_{run}_chunk_{n}.hdf")
-                    self._save_chunk(hf, n, data, det, run, metadata)
+                    self._save_segment(hf, n, data, det, run, metadata)
                     hf.close()
                     pbar.update()
 
@@ -328,7 +328,7 @@ class DataReleaseDownloader:
             hf.close()
 
         if not self.monolithic:
-            metadata_path = Path(self.save_dir) / "full_metadata.json"
+            metadata_path = Path(self.save_parent_dir) / "full_metadata.json"
             with open(metadata_path, "w") as f:
                 json.dump(self.full_metadata, f, indent=2)
 
@@ -353,10 +353,9 @@ class DataReleaseDownloader:
         # Get validity mask for segment availability
         edge_ok = np.ones(segments.shape[0], dtype=bool)
         # Parallel fetch
-        cfg = self._return_download_config()
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             futures = {
-                executor.submit(self._fetch_data, cfg, det, t0, t1): idx
+                executor.submit(self._fetch_data, self.dcfg, det, t0, t1): idx
                 for (idx, t0, t1) in edge_times
             }
             for foo in tqdm(
@@ -395,8 +394,8 @@ class DataReleaseDownloader:
         logger.info(
             f"{det} {run}: Available = {available_valid_duration}, "
             f"Valid = {total_valid_duration}."
-            f"\nDuration and data availability might reduce valid duration."
         )
+        logger.warning("Duration and data availability might reduce valid duration.")
         return record
 
     ## --- Main function for end user ---
@@ -415,6 +414,6 @@ class DataReleaseDownloader:
             # Call fetcher to download valid data
             self._fetcher(
                 record["segments"],
-                det=record["detector"],
-                run=record["observing_run"],
+                record["detector"],
+                record["observing_run"],
             )
