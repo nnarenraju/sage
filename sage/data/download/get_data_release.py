@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # General
+import os
 import time
 import h5py
 import json
@@ -98,6 +99,10 @@ class DataReleaseDownloader:
         # Save params
         self.save_parent_dir = save_parent_dir
         self.monolithic = make_monolithic_file
+        if not self.monolithic:
+            logger.warning("N segment files not accepted for training Sage")
+            logger.warning("Please use make_monolithic_file=True if training")
+            logger.warning("Reason: Computational overhead")
 
         # Segments structured array
         self.full_metadata = segments_metadata
@@ -237,7 +242,8 @@ class DataReleaseDownloader:
         """Make savepath safely"""
         # Make the save directory
         self.save_dir = Path(self.save_parent_dir) / dirname
-        self.save_dir.mkdir(parents=True, exist_ok=False)
+        if not os.path.exists(self.save_dir):
+            self.save_dir.mkdir(parents=True, exist_ok=False)
 
     def _h5py_mkfile(self, filename):
         # Make and persist open the h5py file
@@ -395,7 +401,7 @@ class DataReleaseDownloader:
             f"{det} {run}: Available = {available_valid_duration}, "
             f"Valid = {total_valid_duration}."
         )
-        logger.warning("Duration and data availability might reduce valid duration.")
+        logger.warning("Min duration & data availability might reduce valid duration.")
         return record
 
     ## --- Main function for end user ---
