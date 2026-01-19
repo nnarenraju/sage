@@ -255,8 +255,13 @@ class DataReleaseDownloader:
         if data is None or not isinstance(data, np.ndarray):
             return
 
-        dset = hf.create_dataset(
-            f"segment_{idx}",
+        seg_grp = hf.require_group("segments")
+        # TODO: Padded names go up to max 99999 segments
+        # This should be good enough; generalise this later if needed
+        name = f"{idx:05d}"
+
+        dset = seg_grp.create_dataset(
+            name,
             data=data,
             dtype=data.dtype,
             compression="gzip",
