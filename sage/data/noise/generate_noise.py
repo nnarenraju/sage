@@ -22,15 +22,3 @@ Documentation: NULL
 
 """
 
-
-from dataclasses import dataclass
-
-@dataclass(frozen=True)
-class CorruptionBudget:
-    left: float   # seconds
-    right: float  # seconds
-
-    @property
-    def total(self):
-        return self.left + self.right
-

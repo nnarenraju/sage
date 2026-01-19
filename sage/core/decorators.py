@@ -26,6 +26,10 @@ Documentation: NULL
 
 # General
 import functools
+import numpy as np
+
+from functools import wraps
+from dataclasses import dataclass
 
 # LOCAL
 from sage.core.logger import get_logger
@@ -68,6 +72,53 @@ def reference(*urls, category=None):
                     logger.info(msg, stacklevel=2)
                     _logged_references.add(key)
             return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+@dataclass(frozen=True)
+class CorruptionBudget:
+    left: float  # seconds
+    right: float  # seconds
+
+    @property
+    def total(self):
+        return self.left + self.right
+
+
+def corruption(budget: CorruptionBudget):
+    """
+    Decorator to trim left/right edges of a time series according to CorruptionBudget.
+    Expects a `data_config` keyword argument with a `sample_rate` attribute.
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Expect data_config in kwargs
+            data_cfg = kwargs.get("data_config", None)
+            if data_cfg is None:
+                raise ValueError("data_config must be provided to apply corruption")
+
+            sample_rate = getattr(data_cfg, "sample_rate", None)
+            if sample_rate is None:
+                raise ValueError("data_config must have a sample_rate attribute")
+
+            ts = func(*args, **kwargs)  # original segment
+            if not isinstance(ts, np.ndarray):
+                raise TypeError(
+                    "Corruption decorator expects function to return np.ndarray"
+                )
+
+            left_samples = int(budget.left * sample_rate)
+            right_samples = int(budget.right * sample_rate)
+
+            if left_samples + right_samples >= len(ts):
+                raise ValueError("CorruptionBudget exceeds segment length")
+
+            return ts[left_samples : len(ts) - right_samples]
 
         return wrapper
 
