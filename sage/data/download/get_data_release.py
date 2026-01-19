@@ -233,7 +233,7 @@ class DataReleaseDownloader:
         for i in range(N):
             # The 'segments' field contains nested arrays (objects) for each record.
             segs = np.asarray(metadata["segments"][i])
-            seg_grp.create_dataset("segment_" + str(i), data=segs)
+            seg_grp.create_dataset(f"{i:05d}", data=segs)
             seg_index[i] = i
 
         grp.create_dataset("segments_index", data=seg_index)
