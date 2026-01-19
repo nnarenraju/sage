@@ -154,3 +154,54 @@ def highpass(
         y = y[padlen : padlen + n]
 
     return y
+
+
+
+class BandPass(TransformWrapper):
+    def __init__(self, always_apply=True, lower=16, upper=512, fs=2048, order=5):
+        super().__init__(always_apply)
+        self.lower = lower
+        self.upper = upper
+        self.fs = fs
+        self.order = order
+
+    def butter_bandpass(self):
+        nyq = 0.5 * self.fs
+        low = self.lower / nyq
+        high = self.upper / nyq
+        sos = butter(
+            self.order, [low, high], analog=False, btype="bandpass", output="sos"
+        )
+        return sos
+
+    def butter_bandpass_filter(self, data):
+        sos = self.butter_bandpass()
+        filtered_data = sosfiltfilt(sos, data)
+        return filtered_data
+
+    def apply(self, y: np.ndarray, special: dict):
+        return self.butter_bandpass_filter(y)
+
+
+class HighPass(TransformWrapper):
+    def __init__(self, always_apply=True, lower=16, fs=2048, order=5):
+        super().__init__(always_apply)
+        self.lower = lower
+        self.fs = fs
+        self.order = order
+
+    def butter_highpass(self):
+        nyq = 0.5 * self.fs
+        low = self.lower / nyq
+        sos = butter(self.order, low, analog=False, btype="highpass", output="sos")
+        return sos
+
+    def butter_highpass_filter(self, data):
+        sos = self.butter_highpass()
+        filtered_data = sosfiltfilt(sos, data)
+        return filtered_data
+
+    def apply(self, y: np.ndarray, special: dict):
+        # Parallelise HighPass filter
+        return self.butter_highpass_filter(y)
+

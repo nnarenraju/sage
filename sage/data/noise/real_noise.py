@@ -23,12 +23,87 @@ Documentation: NULL
 """
 
 # Packages
+import h5py
+import numpy as np
+
+from pycbc import DYN_RANGE_FAC
 
 
 class GenerateNoise:
+    """
+    Generate random noise slices from a monolithic HDF5 file.
 
-    def __init__(self):
-        pass
+    Selection logic:
+    - Segments are chosen with probability proportional to their duration
+    - A random contiguous slice of fixed length is returned
+    """
+
+    def __init__(self, h5_path: str, sample_rate: float):
+        """
+        Args:
+            h5_path (str): Path to monolithic noise HDF5 file
+            sample_rate (float): Sample rate of stored data (Hz)
+        """
+        self.h5_path = h5_path
+        self.sample_rate = sample_rate
+
+        self.hf = h5py.File(self.h5_path, "r")
+        self.seg_grp = self.hf["segments"]
+
+        # Sorted segment keys: ["0000", "0001", ...]
+        self.segment_keys = sorted(self.seg_grp.keys())
+
+        # Segment lengths in samples
+        self.segment_lengths = np.array(
+            [self.seg_grp[k].shape[0] for k in self.segment_keys],
+            dtype=np.int64,
+        )
+
+        # Probability ∝ duration
+        self.prob = self.segment_lengths / self.segment_lengths.sum()
+
+    def _pick_segment(self):
+        """Pick a segment index weighted by duration."""
+        idx = np.random.choice(len(self.segment_keys), p=self.prob)
+        key = self.segment_keys[idx]
+        length = self.segment_lengths[idx]
+        return self.seg_grp[key], length
+
+    def _pick_start(self, seg_length, slice_length):
+        """Pick a valid random start index inside a segment."""
+        max_start = seg_length - slice_length
+        if max_start <= 0:
+            raise ValueError("Requested slice longer than segment.")
+        return np.random.randint(0, max_start)
+
+    def sample(self, duration: float):
+        """
+        Draw a random noise slice.
+
+        Args:
+            duration (float): Desired duration in seconds
+
+        Returns:
+            np.ndarray: Noise time series, shape (nsamples,)
+        """
+        nsamples = int(duration * self.sample_rate)
+
+        while True:
+            dset, seg_len = self._pick_segment()
+            try:
+                start = self._pick_start(seg_len, nsamples)
+            except ValueError:
+                continue
+
+            noise = np.array(dset[start : start + nsamples], dtype=np.float64)
+            noise /= DYN_RANGE_FAC
+
+            if not np.any(np.isnan(noise)):
+                return noise
+
+    def close(self):
+        self.hf.close()
+
 
 class MultipleFileRandomNoiseSlice:
     """

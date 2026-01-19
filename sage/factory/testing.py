@@ -40,7 +40,7 @@ from pycbc.types import FrequencySeries
 # LOCAL
 from sage.factory.evaluator import main as evaluator
 from sage.exec.data_handler import DataModule as dat
-from sage.data.preprocess.multirate_sampling import (
+from sage.data.transform.multirate_sampling import (
     get_sampling_rate_bins_type1,
     get_sampling_rate_bins_type2,
 )

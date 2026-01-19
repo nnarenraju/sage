@@ -44,7 +44,7 @@ from sklearn.model_selection import train_test_split
 # LOCAL
 from sage.blueprints.configs import *
 from sage.blueprints.data_configs import *
-from sage.data.preprocess.multirate_sampling import (
+from sage.data.transform.multirate_sampling import (
     get_sampling_rate_bins_type1,
     get_sampling_rate_bins_type2,
     multirate_sampling,
