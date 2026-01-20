@@ -156,7 +156,6 @@ source/baseline/data/psds/
 
 # Do not ignore these files
 !requirements.txt
-!*_segments.txt
 
 # Automatically added files
 architectures/zoo/mamba.py
