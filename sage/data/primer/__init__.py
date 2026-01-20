@@ -23,10 +23,10 @@ Documentation: NULL
 
 """
 
-from sage.data.download.get_data_release import DataReleaseDownloader
-from sage.data.download.get_segments import (
+from sage.data.primer.get_data_release import DataReleaseDownloader
+from sage.data.primer.get_segments import (
     get_all_detnames,
     get_all_events,
     get_all_runnames,
 )
-from sage.data.download.get_segments import TimelineQuery
+from sage.data.primer.get_segments import TimelineQuery

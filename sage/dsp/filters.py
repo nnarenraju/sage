@@ -156,7 +156,7 @@ def highpass(
     return y
 
 
-
+"""
 class BandPass(TransformWrapper):
     def __init__(self, always_apply=True, lower=16, upper=512, fs=2048, order=5):
         super().__init__(always_apply)
@@ -205,3 +205,4 @@ class HighPass(TransformWrapper):
         # Parallelise HighPass filter
         return self.butter_highpass_filter(y)
 
+"""
