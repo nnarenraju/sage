@@ -32,6 +32,7 @@ from tqdm import tqdm
 # LOCAL
 from sage.data.primer import NoBlackout
 from sage.dsp.welch import WelchPSD
+from sage.core.conversions import seconds_to_samples
 
 
 class EstimatePSD:
@@ -66,12 +67,21 @@ class EstimatePSD:
         """
 
         # Pull required runtime context
-        sample_rate = kwargs["data_cfg"].sample_rate
-        duration = kwargs["data_cfg"].sample_length
+        cfg = kwargs["cfg"]
+        data_cfg = kwargs["data_cfg"]
+
+        sample_rate = data_cfg.sample_rate
+
+        if hasattr(data_cfg, "sample_length"):
+            duration = data_cfg.sample_length
+        elif hasattr(data_cfg, "sample_length_in_seconds"):
+            duration = seconds_to_samples(
+                data_cfg.sample_length_in_seconds, data_cfg.sample_rate
+            )
 
         # Save directories for PSDs and Fiducial PSDs
-        export_dir = os.path.join(kwargs["cfg"].export_dir, "fiducial_psds")
-        data_dir = os.path.join(kwargs["data_cfg"].data_dir, "psds", self.detector)
+        export_dir = os.path.join(cfg.export_dir, "fiducial_psds")
+        data_dir = os.path.join(data_cfg.data_dir, "raw_psds")
 
         os.makedirs(export_dir, exist_ok=True)
         os.makedirs(data_dir, exist_ok=True)
@@ -124,7 +134,7 @@ class EstimatePSD:
     def _save_raw_psds(self, psds, freqs, data_dir, sample_rate):
         # Save all raw PSDs into one file
         # Saved inside individual detector directories
-        path = os.path.join(data_dir, "raw_psds.h5")
+        path = os.path.join(data_dir, f"raw_{self.detector}_psds.h5")
 
         with h5py.File(path, "w") as hf:
             hf.create_dataset(
@@ -159,7 +169,9 @@ class EstimatePSD:
                 compression_opts=9,
                 shuffle=True,
             )
+
             hf.create_dataset("freqs", data=freqs)
+            # Handles when blackout_idxs is None
             hf.create_dataset("blackout_indices", data=blackout_idxs)
 
             hf.attrs.update(
