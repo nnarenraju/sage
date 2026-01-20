@@ -30,7 +30,7 @@ import numpy as np
 from tqdm import tqdm
 
 # LOCAL
-from sage.primer.blackout import NoBlackout
+from sage.data.primer import NoBlackout
 from sage.dsp.welch import WelchPSD
 
 

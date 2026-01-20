@@ -85,7 +85,7 @@ class SoftRatioBlackout(BlackoutPolicy):
         return median_psd * scale, np.where(mask)[0]
 
 
-class GaussianSoftNotch(BlackoutPolicy):
+class GaussianSoftNotchBlackout(BlackoutPolicy):
     def __init__(self, freqs, centers, widths, depth=10.0):
         self.freqs = freqs
         self.centers = centers
