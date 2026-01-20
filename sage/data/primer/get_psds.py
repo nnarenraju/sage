@@ -27,11 +27,11 @@ Documentation: NULL
 import os
 import h5py
 import numpy as np
-from scipy import signal as ss
 from tqdm import tqdm
 
 # LOCAL
 from sage.primer.blackout import NoBlackout
+from sage.dsp.welch import WelchPSD
 
 
 class EstimatePSD:
@@ -44,18 +44,15 @@ class EstimatePSD:
         *,
         detector: str,
         num_samples: int = 200_000,
-        nperseg: float = 4.0,
-        consolidate_method: str = "median",
+        psd_method=None,
         blackout_policy=None,
         store_raw_psds: bool = False,
     ):
         self.detector = detector
         self.num_samples = int(num_samples)
+        self.psd_method = psd_method
         self.blackout_policy = blackout_policy or NoBlackout()
         self.store_raw_psds = store_raw_psds
-
-        self.nperseg = nperseg
-        self.consolidate_method = consolidate_method
 
     def __call__(self, *, noise_source, **kwargs):
         """
@@ -79,11 +76,7 @@ class EstimatePSD:
         os.makedirs(export_dir, exist_ok=True)
         os.makedirs(data_dir, exist_ok=True)
 
-        # Convert seconds to samples
-        nperseg = int(self.nperseg * sample_rate)
-
         psds = []
-        freqs = None
 
         for _ in tqdm(
             range(self.num_samples),
@@ -93,12 +86,7 @@ class EstimatePSD:
             noise = noise_source(duration)
 
             # Compute PSD using the Welch method
-            f, pxx = ss.welch(
-                noise,
-                fs=sample_rate,
-                nperseg=nperseg,
-                average=self.consolidate_method,
-            )
+            freqs, pxx = self.psd_method(noise)
 
             # To save each PSD if requested
             psds.append(pxx)
@@ -111,8 +99,8 @@ class EstimatePSD:
             self._save_raw_psds(psds, freqs, data_dir, sample_rate)
 
         # Compute median PSD, blackout difficult regions
-        median_psd, max_psd = self._aggregate_psds(psds)
-        fiducial_psd, blackout_idxs = self.blackout_policy.apply(median_psd, max_psd)
+        median_psd = self._aggregate_psds(psds)
+        fiducial_psd, blackout_idxs = self.blackout_policy.apply(median_psd, psds)
 
         # Saving fiducial PSD in export_dir of run
         self._save_fiducial_psd(
@@ -131,9 +119,7 @@ class EstimatePSD:
         medians = [np.median(chunk, axis=0) for chunk in chunks]
 
         median_psd = np.median(medians, axis=0)
-        max_psd = np.maximum.reduce(medians)
-
-        return median_psd, max_psd
+        return median_psd
 
     def _save_raw_psds(self, psds, freqs, data_dir, sample_rate):
         # Save all raw PSDs into one file
@@ -180,7 +166,7 @@ class EstimatePSD:
                 {
                     "detector": self.detector,
                     "delta_f": freqs[1] - freqs[0],
-                    "blackout_max_ratio": self.blackout_max_ratio,
+                    "blackout_policy": self.blackout_policy.__class__.__name__,
                     "num_samples": self.num_samples,
                     "sample_rate": sample_rate,
                 }
