@@ -44,8 +44,8 @@ class HardRatioBlackout(BlackoutPolicy):
         psd = median_psd.copy()
         psd[idxs] = 1e12
 
-        frac = len(idxs) / len(ratio)
-        print(f"[{self.detector}] " f"Blacked out {frac*100:.2f}% of frequency bins")
+        # We can log this if necessary
+        blacked_out_frac = len(idxs) / len(ratio)
 
         return psd, idxs
 
