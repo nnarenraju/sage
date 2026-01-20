@@ -98,7 +98,7 @@ class GaussianSoftNotchBlackout(BlackoutPolicy):
         for f0, w in zip(self.centers, self.widths):
             scale += self.depth * np.exp(-0.5 * ((self.freqs - f0) / w) ** 2)
 
-        return median_psd * scale, None
+        return median_psd * scale, np.empty(0, dtype=np.int64)
 
 
 class LogSoftRatioBlackout(BlackoutPolicy):
@@ -155,4 +155,4 @@ class SqrtSoftRatioBlackout(BlackoutPolicy):
 
 class NoBlackout(BlackoutPolicy):
     def apply(self, median_psd, psds):
-        return median_psd, None
+        return median_psd, np.empty(0, dtype=np.int64)
