@@ -32,11 +32,12 @@ class BlackoutPolicy:
         return median_psd, None
 
 
-class RatioBlackout(BlackoutPolicy):
+class HardRatioBlackout(BlackoutPolicy):
     def __init__(self, max_ratio):
         self.max_ratio = max_ratio
 
-    def apply(self, median_psd, max_psd):
+    def apply(self, median_psd, psds):
+        max_psd = np.max(psds, axis=0)
         ratio = max_psd / median_psd
         idxs = np.where(ratio > self.max_ratio)[0]
 
