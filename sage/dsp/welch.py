@@ -23,8 +23,12 @@ Documentation: NULL
 
 """
 
+# Packages
 import numpy as np
 import scipy.signal as ss
+
+# LOCAL
+from sage.core.conversions import seconds_to_samples
 
 
 class WelchPSD:
@@ -38,7 +42,7 @@ class WelchPSD:
     def __init__(
         self,
         sample_rate: float,
-        nperseg_seconds: float = 4.0,
+        nperseg_in_seconds: float = 4.0,
         average: str = "median",
         detrend: str | None = "constant",
         window: str = "hann",
@@ -47,20 +51,20 @@ class WelchPSD:
         """
         Args:
             sample_rate: Sampling rate in Hz
-            nperseg_seconds: Segment length in seconds
+            nperseg_in_seconds: Segment length in seconds
             average: 'mean' or 'median'
             detrend: Detrending method
             window: Window function
             scaling: 'density' or 'spectrum'
         """
         self.sample_rate = sample_rate
-        self.nperseg_seconds = nperseg_seconds
+        self.nperseg_in_seconds = nperseg_in_seconds
         self.average = average
         self.detrend = detrend
         self.window = window
         self.scaling = scaling
 
-        self.nperseg = int(round(self.nperseg_seconds * self.sample_rate))
+        self.nperseg = seconds_to_samples(self.nperseg_in_seconds, self.sample_rate)
         if self.nperseg <= 0:
             raise ValueError("nperseg must be positive")
 
