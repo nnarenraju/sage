@@ -30,11 +30,10 @@ Modifications listed below:
 
 """
 
-import jax
-import jax.numpy as jnp
+
 from ripplegw import Mc_eta_to_ms
 
-from typing import Tuple
+
 from ..constants import gt, MSUN
 
 from .IMRPhenomD import Phase as PhDPhase
@@ -45,49 +44,86 @@ from .IMRPhenomD_utils import (
     EradRational0815,
     FinalSpin0815_s,
 )
-from ..typing import Array
+
 from .IMRPhenomD_QNMdata import QNMData_a, QNMData_fRD, QNMData_fdamp
 
 # Packages
 import torch
 
+from typing import Tuple
+
+# LOCAL
+from sage.core.utils import torch_interp
+from sage.core.typing import Array
+
 
 # helper functions for LALtoPhenomP:
 def ROTATEZ(angle, x, y, z):
-    tmp_x = x * torch.cos(angle) - y * torch.sin(angle)
-    tmp_y = x * torch.sin(angle) + y * torch.cos(angle)
-    return tmp_x, tmp_y, z
+    # CL: Changed jnp to torch; expanded equation
+    ca = torch.cos(angle)
+    sa = torch.sin(angle)
+    return x * ca - y * sa, x * sa + y * ca, z
 
 
 def ROTATEY(angle, x, y, z):
-    tmp_x = x * torch.cos(angle) + z * torch.sin(angle)
-    tmp_z = -x * torch.sin(angle) + z * torch.cos(angle)
-    return tmp_x, y, tmp_z
+    # CL: Changed jnp to torch; expanded equation
+    ca = torch.cos(angle)
+    sa = torch.sin(angle)
+    return x * ca + z * sa, y, -x * sa + z * ca
+
+
+def FinalSpin0815_s(eta, S):
+    # CL: No changes required
+    eta2 = eta * eta
+    eta3 = eta2 * eta
+    S2 = S * S
+    S3 = S2 * S
+    return eta * (
+        3.4641016151377544
+        - 4.399247300629289 * eta
+        + 9.397292189321194 * eta2
+        - 13.180949901606242 * eta3
+        + S
+        * (
+            (1.0 / eta - 0.0850917821418767 - 5.837029316602263 * eta)
+            + (0.1014665242971878 - 2.0967746996832157 * eta) * S
+            + (-1.3546806617824356 + 4.108962025369336 * eta) * S2
+            + (-0.8676969352555539 + 2.064046835273906 * eta) * S3
+        )
+    )
 
 
 def FinalSpin0815(eta, chi1, chi2):
-    Seta = jnp.sqrt(1.0 - 4.0 * eta)
+    # CL: Changed jnp to torch; expanded equation
+    Seta = torch.sqrt(1.0 - 4.0 * eta)
     m1 = 0.5 * (1.0 + Seta)
     m2 = 0.5 * (1.0 - Seta)
-    m1s = m1 * m1
-    m2s = m2 * m2
-    s = m1s * chi1 + m2s * chi2
+    s = (m1 * m1) * chi1 + (m2 * m2) * chi2
     return FinalSpin0815_s(eta, s)
 
 
 def convert_spins(
-    m1: float,
-    m2: float,
-    f_ref: float,
-    phiRef: float,
-    incl: float,
-    s1x: float,
-    s1y: float,
-    s1z: float,
-    s2x: float,
-    s2y: float,
-    s2z: float,
-) -> Tuple[float, float, float, float, float, float, float]:
+    m1: torch.Tensor,
+    m2: torch.Tensor,
+    f_ref: torch.Tensor,
+    phiRef: torch.Tensor,
+    incl: torch.Tensor,
+    s1x: torch.Tensor,
+    s1y: torch.Tensor,
+    s1z: torch.Tensor,
+    s2x: torch.Tensor,
+    s2y: torch.Tensor,
+    s2z: torch.Tensor,
+) -> Tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    # CL: Changed all jnp to torch equivalent; float to torch.Tensor
     # m1 = m1_SI / MSUN  # Masses in solar masses
     # m2 = m2_SI / MSUN
     M = m1 + m2
@@ -105,37 +141,37 @@ def convert_spins(
     chi2_l = s2z  # Dimensionless aligned spin on BH 2
 
     # Magnitude of the spin projections in the orbital plane
-    S1_perp = m1_2 * jnp.sqrt(s1x**2 + s1y**2)
-    S2_perp = m2_2 * jnp.sqrt(s2x**2 + s2y**2)
+    S1_perp = m1_2 * torch.sqrt(s1x**2 + s1y**2)
+    S2_perp = m2_2 * torch.sqrt(s2x**2 + s2y**2)
 
     A1 = 2 + (3 * m2) / (2 * m1)
     A2 = 2 + (3 * m1) / (2 * m2)
     ASp1 = A1 * S1_perp
     ASp2 = A2 * S2_perp
-    num = jnp.maximum(ASp1, ASp2)
+    num = torch.maximum(ASp1, ASp2)
     den = A2 * m2_2  # warning: this assumes m2 > m1
     chip = num / den
 
     m_sec = M * gt
-    piM = jnp.pi * m_sec
+    piM = torch.pi * m_sec
     v_ref = (piM * f_ref) ** (1 / 3)
     L0 = M * M * L2PNR(v_ref, eta)
     J0x_sf = m1_2 * s1x + m2_2 * s2x
     J0y_sf = m1_2 * s1y + m2_2 * s2y
     J0z_sf = L0 + m1_2 * s1z + m2_2 * s2z
-    J0 = jnp.sqrt(J0x_sf * J0x_sf + J0y_sf * J0y_sf + J0z_sf * J0z_sf)
+    J0 = torch.sqrt(J0x_sf * J0x_sf + J0y_sf * J0y_sf + J0z_sf * J0z_sf)
 
-    thetaJ_sf = jnp.arccos(J0z_sf / J0)
+    thetaJ_sf = torch.arccos(J0z_sf / J0)
 
-    phiJ_sf = jnp.arctan2(J0y_sf, J0x_sf)
+    phiJ_sf = torch.arctan2(J0y_sf, J0x_sf)
 
     phi_aligned = -phiJ_sf
 
     # First we determine kappa
     # in the source frame, the components of N are given in Eq (35c) of T1500606-v6
-    Nx_sf = jnp.sin(incl) * jnp.cos(jnp.pi / 2.0 - phiRef)
-    Ny_sf = jnp.sin(incl) * jnp.sin(jnp.pi / 2.0 - phiRef)
-    Nz_sf = jnp.cos(incl)
+    Nx_sf = torch.sin(incl) * torch.cos(torch.pi / 2.0 - phiRef)
+    Ny_sf = torch.sin(incl) * torch.sin(torch.pi / 2.0 - phiRef)
+    Nz_sf = torch.cos(incl)
 
     tmp_x = Nx_sf
     tmp_y = Ny_sf
@@ -144,7 +180,7 @@ def convert_spins(
     tmp_x, tmp_y, tmp_z = ROTATEZ(-phiJ_sf, tmp_x, tmp_y, tmp_z)
     tmp_x, tmp_y, tmp_z = ROTATEY(-thetaJ_sf, tmp_x, tmp_y, tmp_z)
 
-    kappa = -jnp.arctan2(tmp_y, tmp_x)
+    kappa = -torch.arctan2(tmp_y, tmp_x)
 
     # Then we determine alpha0, by rotating LN
     tmp_x, tmp_y, tmp_z = 0, 0, 1
@@ -160,7 +196,7 @@ def convert_spins(
     tmp_x, tmp_y, tmp_z = ROTATEY(-thetaJ_sf, tmp_x, tmp_y, tmp_z)
     tmp_x, tmp_y, tmp_z = ROTATEZ(kappa, tmp_x, tmp_y, tmp_z)
     Nx_Jf, Nz_Jf = tmp_x, tmp_z
-    thetaJN = jnp.arccos(Nz_Jf)
+    thetaJN = torch.arccos(Nz_Jf)
 
     # Finally, we need to redefine the polarizations:
     # PhenomP's polarizations are defined following Arun et al (arXiv:0810.5336)
@@ -172,9 +208,9 @@ def convert_spins(
     # Both triads differ from each other by a rotation around N by an angle \zeta
     # and we need to rotate the polarizations accordingly by 2\zeta
 
-    Xx_sf = -jnp.cos(incl) * jnp.sin(phiRef)
-    Xy_sf = -jnp.cos(incl) * jnp.cos(phiRef)
-    Xz_sf = jnp.sin(incl)
+    Xx_sf = -torch.cos(incl) * torch.sin(phiRef)
+    Xy_sf = -torch.cos(incl) * torch.cos(phiRef)
+    Xz_sf = torch.sin(incl)
     tmp_x, tmp_y, tmp_z = Xx_sf, Xy_sf, Xz_sf
     tmp_x, tmp_y, tmp_z = ROTATEZ(-phiJ_sf, tmp_x, tmp_y, tmp_z)
     tmp_x, tmp_y, tmp_z = ROTATEY(-thetaJ_sf, tmp_x, tmp_y, tmp_z)
@@ -196,49 +232,55 @@ def convert_spins(
     XdotPArun = tmp_x * PArunx_Jf + tmp_y * PAruny_Jf + tmp_z * PArunz_Jf
     XdotQArun = tmp_x * QArunx_Jf + tmp_y * QAruny_Jf + tmp_z * QArunz_Jf
 
-    zeta_polariz = jnp.arctan2(XdotQArun, XdotPArun)
+    zeta_polariz = torch.arctan2(XdotQArun, XdotPArun)
     return chi1_l, chi2_l, chip, thetaJN, alpha0, phi_aligned, zeta_polariz
 
 
 def SpinWeightedY(theta, phi, s, l, m):
     "copied from SphericalHarmonics.c in LAL"
+    # CL: jnp to torch
     if s == -2:
         if l == 2:
             if m == -2:
                 fac = (
-                    jnp.sqrt(5.0 / (64.0 * jnp.pi))
-                    * (1.0 - jnp.cos(theta))
-                    * (1.0 - jnp.cos(theta))
+                    torch.sqrt(5.0 / (64.0 * torch.pi))
+                    * (1.0 - torch.cos(theta))
+                    * (1.0 - torch.cos(theta))
                 )
             elif m == -1:
                 fac = (
-                    jnp.sqrt(5.0 / (16.0 * jnp.pi))
-                    * jnp.sin(theta)
-                    * (1.0 - jnp.cos(theta))
+                    torch.sqrt(5.0 / (16.0 * torch.pi))
+                    * torch.sin(theta)
+                    * (1.0 - torch.cos(theta))
                 )
             elif m == 0:
-                fac = jnp.sqrt(15.0 / (32.0 * jnp.pi)) * jnp.sin(theta) * jnp.sin(theta)
+                fac = (
+                    torch.sqrt(15.0 / (32.0 * torch.pi))
+                    * torch.sin(theta)
+                    * torch.sin(theta)
+                )
             elif m == 1:
                 fac = (
-                    jnp.sqrt(5.0 / (16.0 * jnp.pi))
-                    * jnp.sin(theta)
-                    * (1.0 + jnp.cos(theta))
+                    torch.sqrt(5.0 / (16.0 * torch.pi))
+                    * torch.sin(theta)
+                    * (1.0 + torch.cos(theta))
                 )
             elif m == 2:
                 fac = (
-                    jnp.sqrt(5.0 / (64.0 * jnp.pi))
-                    * (1.0 + jnp.cos(theta))
-                    * (1.0 + jnp.cos(theta))
+                    torch.sqrt(5.0 / (64.0 * torch.pi))
+                    * (1.0 + torch.cos(theta))
+                    * (1.0 + torch.cos(theta))
                 )
             else:
                 raise ValueError(f"Invalid mode s={s}, l={l}, m={m} - require |m| <= l")
-    return fac * np.exp(1j * m * phi)
+    return fac * torch.exp(1j * m * phi)
 
 
-def L2PNR(v: float, eta: float) -> float:
-    eta2 = eta**2
-    x = v**2
-    x2 = x**2
+def L2PNR(v: torch.Tensor, eta: torch.Tensor) -> torch.Tensor:
+    # CL: jnp to torch; x**0.5 to torch.sqrt; powers expanded
+    eta2 = eta * eta
+    x = v * v
+    x2 = x * x
     return (
         eta
         * (
@@ -246,17 +288,20 @@ def L2PNR(v: float, eta: float) -> float:
             + (1.5 + eta / 6.0) * x
             + (3.375 - (19.0 * eta) / 8.0 - eta2 / 24.0) * x2
         )
-    ) / x**0.5
+    ) / torch.sqrt(x)
 
 
-def WignerdCoefficients(v: float, SL: float, eta: float, Sp: float):
+def WignerdCoefficients(
+    v: torch.Tensor, SL: torch.Tensor, eta: torch.Tensor, Sp: torch.Tensor
+):
+    # CL: jnp to torch; x**0.5 to sqrt; powers expanded
     # We define the shorthand s := Sp / (L + SL)
     L = L2PNR(v, eta)
     s = Sp / (L + SL)
-    s2 = s**2
-    cos_beta = 1.0 / (1.0 + s2) ** 0.5
-    cos_beta_half = ((1.0 + cos_beta) / 2.0) ** 0.5  # cos(beta/2)
-    sin_beta_half = ((1.0 - cos_beta) / 2.0) ** 0.5  # sin(beta/2)
+    s2 = s * s
+    cos_beta = torch.sqrt(1.0 / (1.0 + s2))
+    cos_beta_half = torch.sqrt(((1.0 + cos_beta) / 2.0))  # cos(beta/2)
+    sin_beta_half = torch.sqrt(((1.0 - cos_beta) / 2.0))  # sin(beta/2)
 
     return cos_beta_half, sin_beta_half
 
@@ -382,6 +427,7 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
 
 
 def FinalSpin_inplane(m1, m2, chi1_l, chi2_l, chip):
+    # CL: jnp to torch;
     M = m1 + m2
     eta = m1 * m2 / (M * M)
     # Here I assume m1 > m2, the convention used in phenomD
@@ -389,32 +435,35 @@ def FinalSpin_inplane(m1, m2, chi1_l, chi2_l, chip):
     q_factor = m1 / M
     af_parallel = FinalSpin0815(eta, chi1_l, chi2_l)
     Sperp = chip * q_factor * q_factor
-    af = jnp.copysign(1.0, af_parallel) * jnp.sqrt(
+    af = torch.copysign(1.0, af_parallel) * torch.sqrt(
         Sperp * Sperp + af_parallel * af_parallel
     )
     return af
 
 
 def phP_get_fRD_fdamp(m1, m2, chi1_l, chi2_l, chip):
+    # CL: jnp.interp to custom torch_interp; see sage.core.utils
     # m1 > m2 should hold here
     finspin = FinalSpin_inplane(m1, m2, chi1_l, chi2_l, chip)
     m1_s = m1 * gt
     m2_s = m2 * gt
     M_s = m1_s + m2_s
-    eta_s = m1_s * m2_s / (M_s**2.0)
+    eta_s = m1_s * m2_s / (M_s * M_s)
     Erad = EradRational0815(eta_s, chi1_l, chi2_l)
-    fRD = jnp.interp(finspin, QNMData_a, QNMData_fRD) / (1.0 - Erad)
-    fdamp = jnp.interp(finspin, QNMData_a, QNMData_fdamp) / (1.0 - Erad)
+    fRD = torch_interp(finspin, QNMData_a, QNMData_fRD) / (1.0 - Erad)
+    fdamp = torch_interp(finspin, QNMData_a, QNMData_fdamp) / (1.0 - Erad)
 
     return fRD / M_s, fdamp / M_s
 
 
 def phP_get_transition_frequencies(
     theta: Array,
-    gamma2: float,
-    gamma3: float,
-    chip: float,
-) -> Tuple[float, float, float, float, float, float]:
+    gamma2: torch.Tensor,
+    gamma3: torch.Tensor,
+    chip: torch.Tensor,
+) -> Tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+]:
     # m1 > m2 should hold here
 
     m1, m2, chi1, chi2 = theta
@@ -427,19 +476,11 @@ def phP_get_transition_frequencies(
 
     # Amplitude transition frequencies
     f3 = 0.014 / (M * gt)
-    f4_gammaneg_gtr_1 = lambda f_RD_, f_damp_, gamma3_, gamma2_: jnp.abs(
-        f_RD_ + (-f_damp_ * gamma3_) / gamma2_
+    f4_gammaneg_gtr_1 = torch.abs(f_RD + (-f_damp * gamma3) / gamma2)
+    f4_gammaneg_less_1 = torch.abs(
+        f_RD + (f_damp * (-1 + torch.sqrt(1 - (gamma2) ** 2.0)) * gamma3) / gamma2
     )
-    f4_gammaneg_less_1 = lambda f_RD_, f_damp_, gamma3_, gamma2_: jnp.abs(
-        f_RD_ + (f_damp_ * (-1 + jnp.sqrt(1 - (gamma2_) ** 2.0)) * gamma3_) / gamma2_
-    )
-    f4 = jax.lax.cond(
-        gamma2 >= 1,
-        f4_gammaneg_gtr_1,
-        f4_gammaneg_less_1,
-        f_RD,
-        f_damp,
-        gamma3,
-        gamma2,
-    )
+
+    f4 = torch.where(gamma2 >= 1, f4_gammaneg_gtr_1, f4_gammaneg_less_1)
+
     return f1, f2, f3, f4, f_RD, f_damp
