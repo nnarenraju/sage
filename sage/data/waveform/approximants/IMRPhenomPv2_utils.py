@@ -25,8 +25,9 @@ Documentation: NULL
 Modified code from the JAX version on Ripple
 Modifications listed below:
     1. Converting all possible jnp functions to torch
-    2.
-    3.
+    2. Replaced jnp.interp with custom torch interp (see sage.core.utils)
+    3. Replaced dict with less readable torch.stack for efficiency
+    4. Changed all typing to reflect torch batched operations
 
 """
 
@@ -188,7 +189,7 @@ def convert_spins(
     tmp_x, tmp_y, tmp_z = ROTATEY(-thetaJ_sf, tmp_x, tmp_y, tmp_z)
     tmp_x, tmp_y, tmp_z = ROTATEZ(kappa, tmp_x, tmp_y, tmp_z)
 
-    alpha0 = jnp.arctan2(tmp_y, tmp_x)
+    alpha0 = torch.arctan2(tmp_y, tmp_x)
 
     # Finally we determine thetaJ, by rotating N
     tmp_x, tmp_y, tmp_z = Nx_sf, Ny_sf, Nz_sf
