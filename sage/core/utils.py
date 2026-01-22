@@ -50,29 +50,46 @@ def ensure_1d(x):
     return x
 
 
-def torch_grad(func, args):
+def torch_grad(func, args, argnums=0, create_graph=False):
     """
-    Compute gradient of func w.r.t. the first argument only.
+    PyTorch equivalent of jax.grad.
+
+    Computes gradient of func w.r.t. args[argnums].
 
     Args:
         func: callable
-        args: tuple (arg1, arg2, ...)
+        args: tuple of arguments passed to func
+        argnums: int or tuple of ints (default: 0)
+        create_graph: whether to construct graph for higher-order grads
 
     Returns:
-        grad w.r.t. arg1
+        Gradient(s) corresponding to argnums
+        - Tensor if single argnum
+        - Tuple of tensors if multiple argnums
     """
-    arg1, *rest = args
-    arg1 = arg1.requires_grad_(True)
+    if isinstance(argnums, int):
+        argnums = (argnums,)
 
-    out = func(arg1, *rest)
+    args = list(args)
 
-    (grad,) = torch.autograd.grad(
+    # Enable gradients only for selected args
+    for i in argnums:
+        args[i] = args[i].requires_grad_(True)
+
+    out = func(*args)
+
+    # Handle scalar vs tensor output
+    grad_outputs = None if out.ndim == 0 else torch.ones_like(out)
+
+    grads = torch.autograd.grad(
         out,
-        arg1,
-        grad_outputs=torch.ones_like(out),
-        create_graph=False,
+        [args[i] for i in argnums],
+        grad_outputs=grad_outputs,
+        create_graph=create_graph,
+        allow_unused=True,
     )
-    return grad
+
+    return grads[0] if len(grads) == 1 else grads
 
 
 def torch_value_and_grad(
