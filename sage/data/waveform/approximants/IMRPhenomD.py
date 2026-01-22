@@ -24,35 +24,27 @@ Documentation: NULL
 """
 
 
-# from math import pi
+# Packages
+import torch
 
-import jax
-import jax.numpy as jnp
-from .IMRPhenomD_utils import (
-    get_coeffs,
-    get_delta0,
-    get_delta1,
-    get_delta2,
-    get_delta3,
-    get_delta4,
-    get_transition_frequencies,
-)
+# LOCAL
+from sage.core.conversions import mchirp_eta_to_m1_m2
+from sage.core.constants import EulerGamma, GM, C, PI, Mpc
+from sage.core.utils import torch_value_and_grad, torch_grad
 
-from .IMRPhenomD_QNMdata import fM_CUT
-from ..constants import EulerGamma, gt, m_per_Mpc, C, PI
-from ..typing import Array
-from ripplegw import Mc_eta_to_ms
+from sage.data.waveform import IMRPhenomD_QNMdata as qnm
+from sage.data.waveform import IMRPhenomD_utils as PhDutils
 
 
-def get_inspiral_phase(fM_s: Array, theta: Array, coeffs: Array) -> Array:
+def get_inspiral_phase(fM_s, theta, coeffs):
     """
     Calculate the inspiral phase for the IMRPhenomD waveform.
     """
     # First lets calculate some of the vairables that will be used below
     # Mass variables
     m1, m2, chi1, chi2 = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
 
@@ -122,7 +114,7 @@ def get_inspiral_phase(fM_s: Array, theta: Array, coeffs: Array) -> Array:
         + eta * (-15737.765635 / 3.048192 + 225.5 / 1.2 * PI * PI)
         + eta * eta * 76.055 / 1.728
         - eta * eta * eta * 127.825 / 1.296
-        + (-684.8 / 2.1) * jnp.log(4.0)
+        + (-684.8 / 2.1) * torch.log(4.0)
     )
     phi6 += (PI * m1M * (1490.0 / 3.0 + m1M * 260.0)) * chi1 + (
         PI * m2M * (1490.0 / 3.0 + m2M * 260.0)
@@ -169,9 +161,9 @@ def get_inspiral_phase(fM_s: Array, theta: Array, coeffs: Array) -> Array:
         + phi2 * ((PI * fM_s) ** -1.0)
         + phi3 * ((PI * fM_s) ** -(2.0 / 3.0))
         + phi4 * ((PI * fM_s) ** -(1.0 / 3.0))
-        + phi5_log * jnp.log(v)
+        + phi5_log * torch.log(v)
         + phi5
-        + phi6_log * jnp.log(v) * ((PI * fM_s) ** (1.0 / 3.0))
+        + phi6_log * torch.log(v) * ((PI * fM_s) ** (1.0 / 3.0))
         + phi6 * ((PI * fM_s) ** (1.0 / 3.0))
         + phi7 * ((PI * fM_s) ** (2.0 / 3.0))
     ) * (3.0 / (128.0 * eta)) - PI / 4.0
@@ -188,24 +180,26 @@ def get_inspiral_phase(fM_s: Array, theta: Array, coeffs: Array) -> Array:
     return phi_Ins
 
 
-def get_IIa_raw_phase(fM_s: Array, theta: Array, coeffs: Array) -> Array:
+def get_IIa_raw_phase(fM_s, theta, coeffs):
     m1, m2, _, _ = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
 
     phi_IIa_raw = (
-        coeffs[11] * fM_s + coeffs[12] * jnp.log(fM_s) - coeffs[13] * (fM_s**-3.0) / 3.0
+        coeffs[11] * fM_s
+        + coeffs[12] * torch.log(fM_s)
+        - coeffs[13] * (fM_s**-3.0) / 3.0
     ) / eta
 
     return phi_IIa_raw
 
 
-def get_IIb_raw_phase(fM_s: Array, theta: Array, coeffs: Array, f_RD, f_damp) -> Array:
+def get_IIb_raw_phase(fM_s, theta, coeffs, f_RD, f_damp):
     m1, m2, _, _ = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
 
@@ -216,31 +210,31 @@ def get_IIb_raw_phase(fM_s: Array, theta: Array, coeffs: Array, f_RD, f_damp) ->
         coeffs[14] * fM_s
         - coeffs[15] * (fM_s**-1.0)
         + 4.0 * coeffs[16] * (fM_s ** (3.0 / 4.0)) / 3.0
-        + coeffs[17] * jnp.arctan((fM_s - coeffs[18] * f_RDM_s) / f_dampM_s)
+        + coeffs[17] * torch.arctan((fM_s - coeffs[18] * f_RDM_s) / f_dampM_s)
     ) / eta
 
     return phi_IIb_raw
 
 
-def get_Amp0(fM_s: Array, eta: float) -> Array:
+def get_Amp0(fM_s, eta):
     Amp0 = (
         (2.0 / 3.0 * eta) ** (1.0 / 2.0) * (fM_s) ** (-7.0 / 6.0) * PI ** (-1.0 / 6.0)
     )
     return Amp0
 
 
-def get_inspiral_Amp(fM_s: Array, theta: Array, coeffs: Array) -> Array:
+def get_inspiral_Amp(fM_s, theta, coeffs):
     # Below is taken from https://git.ligo.org/lscsoft/lalsuite/-/blob/master/lalsimulation/lib/LALSimIMRPhenomD_internals.c
     # Lines 302 --> 351
     m1, m2, chi1, chi2 = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
     eta2 = eta * eta
     eta3 = eta * eta2
 
-    Seta = jnp.sqrt(1.0 - 4.0 * eta)
+    Seta = torch.sqrt(1.0 - 4.0 * eta)
     SetaPlus1 = 1.0 + Seta
 
     # Spin variables
@@ -352,12 +346,10 @@ def get_inspiral_Amp(fM_s: Array, theta: Array, coeffs: Array) -> Array:
     return Amp_Ins
 
 
-def get_IIa_Amp(
-    fM_s: Array, theta: Array, coeffs: Array, f1, f3, f_RD, f_damp
-) -> Array:
+def get_IIa_Amp(fM_s, theta, coeffs, f1, f3, f_RD, f_damp):
     m1, m2, _, _ = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
 
     # Central frequency point
@@ -365,15 +357,25 @@ def get_IIa_Amp(
 
     # For this region, we also need to calculate the the values and derivatives
     # of the Ins and IIb regions
-    v1, d1 = jax.value_and_grad(get_inspiral_Amp)(f1 * M_s, theta, coeffs)
-    v3, d3 = jax.value_and_grad(get_IIb_Amp)(f3 * M_s, theta, coeffs, f_RD, f_damp)
+    v1, d1 = torch_value_and_grad(get_inspiral_Amp, (f1 * M_s, theta, coeffs))
+    v3, d3 = torch_value_and_grad(get_IIb_Amp, (f3 * M_s, theta, coeffs, f_RD, f_damp))
 
     # Here we need the delta solutions
-    delta0 = get_delta0(f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3)
-    delta1 = get_delta1(f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3)
-    delta2 = get_delta2(f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3)
-    delta3 = get_delta3(f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3)
-    delta4 = get_delta4(f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3)
+    delta0 = PhDutils.get_delta0(
+        f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3
+    )
+    delta1 = PhDutils.get_delta1(
+        f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3
+    )
+    delta2 = PhDutils.get_delta2(
+        f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3
+    )
+    delta3 = PhDutils.get_delta3(
+        f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3
+    )
+    delta4 = PhDutils.get_delta4(
+        f1 * M_s, f2 * M_s, f3 * M_s, v1, coeffs[3], v3, d1, d3
+    )
 
     Amp_IIa = (
         delta0
@@ -386,10 +388,10 @@ def get_IIa_Amp(
     return Amp_IIa
 
 
-def get_IIb_Amp(fM_s: Array, theta: Array, coeffs: Array, f_RD, f_damp) -> Array:
+def get_IIb_Amp(fM_s, theta, coeffs, f_RD, f_damp):
     m1, m2, _, _ = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
     gamma1 = coeffs[4]
     gamma2 = coeffs[5]
@@ -400,15 +402,14 @@ def get_IIb_Amp(fM_s: Array, theta: Array, coeffs: Array, f_RD, f_damp) -> Array
     fDMgamma3 = fDM * gamma3
     fminfRD = fM_s - fRD
     Amp_IIb = (
-        jnp.exp(-(fminfRD) * gamma2 / (fDMgamma3))
+        torch.exp(-(fminfRD) * gamma2 / (fDMgamma3))
         * (fDMgamma3 * gamma1)
         / ((fminfRD) ** 2.0 + (fDMgamma3) ** 2.0)
     )
     return Amp_IIb
 
 
-# @jax.jit
-def Phase(f: Array, theta: Array, coeffs: Array, transition_freqs: Array) -> Array:
+def Phase(f, theta, coeffs, transition_freqs):
     """
     Computes the phase of the PhenomD waveform following 1508.07253.
     Sets time and phase of coealence to be zero.
@@ -420,8 +421,8 @@ def Phase(f: Array, theta: Array, coeffs: Array, transition_freqs: Array) -> Arr
     # First lets calculate some of the vairables that will be used below
     # Mass variables
     m1, m2, _, _ = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
 
     # Next we need to calculate the transition frequencies
@@ -441,11 +442,11 @@ def Phase(f: Array, theta: Array, coeffs: Array, transition_freqs: Array) -> Arr
     # ==> phi_IIa'(f1*M_s) + beta1_correction = phi_Ins'(f1*M_s)
     # ==> beta1_correction = phi_Ins'(f1*M_s) - phi_IIa'(f1*M_s)
     # ==> beta0 = phi_Ins(f1*M_s) - phi_IIa(f1*M_s) - beta1_correction*(f1*M_s)
-    phi_Ins_f1, dphi_Ins_f1 = jax.value_and_grad(get_inspiral_phase)(
-        f1 * M_s, theta, coeffs
+    phi_Ins_f1, dphi_Ins_f1 = torch_value_and_grad(
+        get_inspiral_phase, (f1 * M_s, theta, coeffs)
     )
-    phi_IIa_f1, dphi_IIa_f1 = jax.value_and_grad(get_IIa_raw_phase)(
-        f1 * M_s, theta, coeffs
+    phi_IIa_f1, dphi_IIa_f1 = torch_value_and_grad(
+        get_IIa_raw_phase, (f1 * M_s, theta, coeffs)
     )
 
     beta1_correction = dphi_Ins_f1 - dphi_IIa_f1
@@ -461,9 +462,9 @@ def Phase(f: Array, theta: Array, coeffs: Array, transition_freqs: Array) -> Arr
     # ==> phi_IIb'(f2*M_s) + a1_correction = phi_IIa'(f2*M_s)
     # ==> a1_correction = phi_IIa'(f2*M_s) - phi_IIb'(f2*M_s)
     # ==> a0 = phi_IIa(f2*M_s) - phi_IIb(f2*M_s) - beta1_correction*(f2*M_s)
-    phi_IIa_f2, dphi_IIa_f2 = jax.value_and_grad(phi_IIa_func)(f2 * M_s)
-    phi_IIb_f2, dphi_IIb_f2 = jax.value_and_grad(get_IIb_raw_phase)(
-        f2 * M_s, theta, coeffs, f_RD, f_damp
+    phi_IIa_f2, dphi_IIa_f2 = torch_value_and_grad(phi_IIa_func, (f2 * M_s))
+    phi_IIb_f2, dphi_IIb_f2 = torch_value_and_grad(
+        get_IIb_raw_phase, (f2 * M_s, theta, coeffs, f_RD, f_damp)
     )
 
     a1_correction = dphi_IIa_f2 - dphi_IIb_f2
@@ -477,18 +478,22 @@ def Phase(f: Array, theta: Array, coeffs: Array, transition_freqs: Array) -> Arr
 
     # And now we can combine them by multiplying by a set of heaviside functions
     phase = (
-        phi_Ins * jnp.heaviside(f1 - f, 0.5)
-        + jnp.heaviside(f - f1, 0.5) * phi_IIa * jnp.heaviside(f2 - f, 0.5)
-        + phi_IIb * jnp.heaviside(f - f2, 0.5)
+        phi_Ins * torch.heaviside(f1 - f, 0.5)
+        + torch.heaviside(f - f1, 0.5) * phi_IIa * torch.heaviside(f2 - f, 0.5)
+        + phi_IIb * torch.heaviside(f - f2, 0.5)
     )
 
     return phase
 
 
-# @jax.jit
 def Amp(
-    f: Array, theta: Array, coeffs: Array, transition_frequencies: Array, D=1
-) -> Array:
+    f,
+    theta,
+    coeffs,
+    transition_frequencies,
+    fcut_true=None,
+    D=1,
+):
     """
     Computes the amplitude of the PhenomD frequency domain waveform following 1508.07253.
     Note that this waveform also assumes that object one is the more massive.
@@ -498,15 +503,16 @@ def Amp(
       Amplitude (array):
     """
 
+    # CL: Conditions are applied in a better torch.compile safe way
     # First lets calculate some of the vairables that will be used below
     # Mass variables
     m1, m2, _, _ = theta
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
 
-    # _, _, f3, f4, f_RD, f_damp = get_transition_frequencies(theta, coeffs[5], coeffs[6])
+    # Get required parts of transition frequencies
     _, _, f3, f4, f_RD, f_damp = transition_frequencies
 
     # First we get the inspiral amplitude
@@ -519,41 +525,53 @@ def Amp(
     # And finally, we construct the amplitude of the merger-ringdown (region IIb)
     Amp_IIb = get_IIb_Amp(f * M_s, theta, coeffs, f_RD, f_damp)
 
-    # And now we can combine them by multiplying by a set of heaviside functions
-    fcut_above = lambda f: (fM_CUT / M_s)
-    fcut_below = lambda f: f[jnp.abs(f - (fM_CUT / M_s)).argmin() - 1]
-    fcut_true = jax.lax.cond((fM_CUT / M_s) > f[-1], fcut_above, fcut_below, f)
+    # Check for fcut_true
+    if fcut_true is None:
+        fcut_true = get_fcut_true(f, M_s)
+
     Amp = (
-        Amp_Ins * jnp.heaviside(f3 - f, 0.5)
-        + jnp.heaviside(f - f3, 0.5) * Amp_IIa * jnp.heaviside(f4 - f, 0.5)
-        + jnp.heaviside(f - f4, 0.5) * Amp_IIb * jnp.heaviside(fcut_true - f, 0.0)
-        + 0.0 * jnp.heaviside(f - fcut_true, 1.0)
+        Amp_Ins * torch.heaviside(f3 - f, 0.5)
+        + torch.heaviside(f - f3, 0.5) * Amp_IIa * torch.heaviside(f4 - f, 0.5)
+        + torch.heaviside(f - f4, 0.5) * Amp_IIb * torch.heaviside(fcut_true - f, 0.0)
+        + 0.0 * torch.heaviside(f - fcut_true, 1.0)
     )
 
     # Prefactor
     Amp0 = get_Amp0(f * M_s, eta) * (
-        2.0 * jnp.sqrt(5.0 / (64.0 * PI))
+        2.0 * torch.sqrt(5.0 / (64.0 * PI))
     )  # This second factor is from lalsuite
 
     # Need to add in an overall scaling of M_s^2 to make the units correct
-    dist_s = (D * m_per_Mpc) / C
+    dist_s = (D * Mpc) / C
     return Amp0 * Amp * (M_s**2.0) / dist_s
 
 
-# @jax.jit
+def get_fcut_true(f, M_s):
+    fcut = qnm.fM_CUT / M_s
+    # Find the index where fcut_val would be inserted
+    idx = torch.searchsorted(f, fcut, right=False) - 1
+    idx = torch.clamp(idx, 0, f.numel() - 1)  # ensure valid index
+    # Use torch.where to handle the case when fcut_val is above f[-1]
+    return torch.where(fcut > f[-1], fcut, f[idx])
+
+
 def _gen_IMRPhenomD(
-    f: Array,
-    theta_intrinsic: Array,
-    theta_extrinsic: Array,
-    coeffs: Array,
-    f_ref: float,
+    f,
+    theta_intrinsic,
+    theta_extrinsic,
+    coeffs,
+    f_ref,
 ):
-    M_s = (theta_intrinsic[0] + theta_intrinsic[1]) * gt
+    M_s = (theta_intrinsic[0] + theta_intrinsic[1]) * GM
 
     # Shift phase so that peak amplitude matches t = 0
-    transition_freqs = get_transition_frequencies(theta_intrinsic, coeffs[5], coeffs[6])
+    transition_freqs = PhDutils.get_transition_frequencies(
+        theta_intrinsic, coeffs[5], coeffs[6]
+    )
     _, _, _, f4, f_RD, f_damp = transition_freqs
-    t0 = jax.grad(get_IIb_raw_phase)(f4 * M_s, theta_intrinsic, coeffs, f_RD, f_damp)
+    t0 = torch_grad(
+        get_IIb_raw_phase, (f4 * M_s, theta_intrinsic, coeffs, f_RD, f_damp)
+    )
 
     # Lets call the amplitude and phase now
     Psi = Phase(f, theta_intrinsic, coeffs, transition_freqs)
@@ -562,21 +580,23 @@ def _gen_IMRPhenomD(
     Psi -= t0 * ((f * M_s) - Mf_ref) + Psi_ref
     ext_phase_contrib = 2.0 * PI * f * theta_extrinsic[1] - 2 * theta_extrinsic[2]
     Psi += ext_phase_contrib
-    fcut_above = lambda f: (fM_CUT / M_s)
-    fcut_below = lambda f: f[jnp.abs(f - (fM_CUT / M_s)).argmin() - 1]
-    fcut_true = jax.lax.cond((fM_CUT / M_s) > f[-1], fcut_above, fcut_below, f)
-    # fcut_true = f[jnp.abs(f - (fM_CUT / M_s)).argmin() - 1]
-    Psi = Psi * jnp.heaviside(fcut_true - f, 0.0) + 2.0 * PI * jnp.heaviside(
+
+    # And now we can combine them by multiplying by a set of heaviside functions
+    fcut_true = get_fcut_true(f, M_s)
+
+    # Get psi and amplitude
+    Psi = Psi * torch.heaviside(fcut_true - f, 0.0) + 2.0 * PI * torch.heaviside(
         f - fcut_true, 1.0
     )
+    A = Amp(
+        f, theta_intrinsic, coeffs, transition_freqs, fcut_true, D=theta_extrinsic[0]
+    )
 
-    A = Amp(f, theta_intrinsic, coeffs, transition_freqs, D=theta_extrinsic[0])
-
-    h0 = A * jnp.exp(1j * -Psi)
+    h0 = A * torch.exp(1j * -Psi)
     return h0
 
 
-def gen_IMRPhenomD(f: Array, params: Array, f_ref: float):
+def gen_IMRPhenomD(f, params, f_ref):
     """
     Generate PhenomD frequency domain waveform following 1508.07253.
     vars array contains both intrinsic and extrinsic variables
@@ -596,16 +616,16 @@ def gen_IMRPhenomD(f: Array, params: Array, f_ref: float):
       h0 (array): Strain
     """
     # Lets make this easier by starting in Mchirp and eta space
-    m1, m2 = Mc_eta_to_ms(jnp.array([params[0], params[1]]))
-    theta_intrinsic = jnp.array([m1, m2, params[2], params[3]])
-    theta_extrinsic = jnp.array([params[4], params[5], params[6]])
+    m1, m2 = mchirp_eta_to_m1_m2(torch.tensor([params[0], params[1]], device="cuda"))
+    theta_intrinsic = torch.tensor([m1, m2, params[2], params[3]], device="cuda")
+    theta_extrinsic = torch.tensor([params[4], params[5], params[6]], device="cuda")
 
-    coeffs = get_coeffs(theta_intrinsic)
+    coeffs = PhDutils.get_coeffs(theta_intrinsic)
     h0 = _gen_IMRPhenomD(f, theta_intrinsic, theta_extrinsic, coeffs, f_ref)
     return h0
 
 
-def gen_IMRPhenomD_hphc(f: Array, params: Array, f_ref: float):
+def gen_IMRPhenomD_hphc(f, params, f_ref):
     """
     Generate PhenomD frequency domain waveform following 1508.07253.
     vars array contains both intrinsic and extrinsic variables
@@ -629,7 +649,7 @@ def gen_IMRPhenomD_hphc(f: Array, params: Array, f_ref: float):
     iota = params[7]
     h0 = gen_IMRPhenomD(f, params, f_ref)
 
-    hp = h0 * (1 / 2 * (1 + jnp.cos(iota) ** 2))
-    hc = -1j * h0 * jnp.cos(iota)
+    hp = h0 * (1 / 2 * (1 + torch.cos(iota) ** 2))
+    hc = -1j * h0 * torch.cos(iota)
 
     return hp, hc
