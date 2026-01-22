@@ -31,14 +31,6 @@ Modifications listed below:
 
 """
 
-from ..constants import gt, MSUN
-
-from .IMRPhenomD_utils import (
-    EradRational0815,
-    FinalSpin0815_s,
-)
-
-from .IMRPhenomD_QNMdata import QNMData_a, QNMData_fRD, QNMData_fdamp
 
 # Packages
 import torch
@@ -46,8 +38,10 @@ import torch
 from typing import Tuple
 
 # LOCAL
-from sage.core.math import torch_interp
-from sage.core.typing import Array
+from sage.core.typing import TorchArray
+from sage.core.math import torch_linear_interp
+from sage.core.constants import GM, MSUN
+from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
 
 # helper functions for LALtoPhenomP:
@@ -63,6 +57,45 @@ def ROTATEY(angle, x, y, z):
     ca = torch.cos(angle)
     sa = torch.sin(angle)
     return x * ca + z * sa, y, -x * sa + z * ca
+
+
+def EradRational0815_s(eta, s):
+    eta2 = eta * eta
+    eta3 = eta2 * eta
+    eta4 = eta3 * eta
+
+    return (
+        (
+            0.055974469826360077 * eta
+            + 0.5809510763115132 * eta2
+            - 0.9606726679372312 * eta3
+            + 3.352411249771192 * eta4
+        )
+        * (
+            1.0
+            + (
+                -0.0030302335878845507
+                - 2.0066110851351073 * eta
+                + 7.7050567802399215 * eta2
+            )
+            * s
+        )
+    ) / (
+        1.0
+        + (-0.6714403054720589 - 1.4756929437702908 * eta + 7.304676214885011 * eta2)
+        * s
+    )
+
+
+def EradRational0815(eta, chi1, chi2):
+    Seta = torch.sqrt(1.0 - 4.0 * eta)
+    m1 = 0.5 * (1.0 + Seta)
+    m2 = 0.5 * (1.0 - Seta)
+    m1s = m1 * m1
+    m2s = m2 * m2
+    s = (m1s * chi1 + m2s * chi2) / (m1s + m2s)
+
+    return EradRational0815_s(eta, s)
 
 
 def FinalSpin0815_s(eta, S):
@@ -145,7 +178,7 @@ def convert_spins(
     den = A2 * m2_2  # warning: this assumes m2 > m1
     chip = num / den
 
-    m_sec = M * gt
+    m_sec = M * GM
     piM = torch.pi * m_sec
     v_ref = (piM * f_ref) ** (1 / 3)
     L0 = M * M * L2PNR(v_ref, eta)
@@ -299,7 +332,7 @@ def WignerdCoefficients(
     return cos_beta_half, sin_beta_half
 
 
-def ComputeNNLOanglecoeffs(q, chil, chip):
+def ComputeNNLOanglecoeffs(q, chil, chip, device):
     m2 = q / (1.0 + q)
     m1 = 1.0 / (1.0 + q)
     dm = m1 - m2
@@ -430,7 +463,7 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
             epsiloncoeff5,
         ],
         dim=0,
-    )
+    ).to(device)
 
     return angcoeffs
 
@@ -454,19 +487,21 @@ def phP_get_fRD_fdamp(m1, m2, chi1_l, chi2_l, chip):
     # CL: jnp.interp to custom torch_interp; see sage.core.utils
     # m1 > m2 should hold here
     finspin = FinalSpin_inplane(m1, m2, chi1_l, chi2_l, chip)
-    m1_s = m1 * gt
-    m2_s = m2 * gt
+    m1_s = m1 * GM
+    m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta_s = m1_s * m2_s / (M_s * M_s)
     Erad = EradRational0815(eta_s, chi1_l, chi2_l)
-    fRD = torch_interp(finspin, QNMData_a, QNMData_fRD) / (1.0 - Erad)
-    fdamp = torch_interp(finspin, QNMData_a, QNMData_fdamp) / (1.0 - Erad)
+    fRD = torch_linear_interp(finspin, qnm.QNMData_a, qnm.QNMData_fRD) / (1.0 - Erad)
+    fdamp = torch_linear_interp(finspin, qnm.QNMData_a, qnm.QNMData_fdamp) / (
+        1.0 - Erad
+    )
 
     return fRD / M_s, fdamp / M_s
 
 
 def phP_get_transition_frequencies(
-    theta: Array,
+    theta: TorchArray,
     gamma2: torch.Tensor,
     gamma3: torch.Tensor,
     chip: torch.Tensor,
@@ -480,11 +515,11 @@ def phP_get_transition_frequencies(
     f_RD, f_damp = phP_get_fRD_fdamp(m1, m2, chi1, chi2, chip)
 
     # Phase transition frequencies
-    f1 = 0.018 / (M * gt)
+    f1 = 0.018 / (M * GM)
     f2 = 0.5 * f_RD
 
     # Amplitude transition frequencies
-    f3 = 0.014 / (M * gt)
+    f3 = 0.014 / (M * GM)
     f4_gammaneg_gtr_1 = torch.abs(f_RD + (-f_damp * gamma3) / gamma2)
     f4_gammaneg_less_1 = torch.abs(
         f_RD + (f_damp * (-1 + torch.sqrt(1 - (gamma2) ** 2.0)) * gamma3) / gamma2
