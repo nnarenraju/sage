@@ -31,17 +31,9 @@ Modifications listed below:
 
 """
 
-
-from ripplegw import Mc_eta_to_ms
-
-
 from ..constants import gt, MSUN
 
-from .IMRPhenomD import Phase as PhDPhase
-from .IMRPhenomD import Amp as PhDAmp
 from .IMRPhenomD_utils import (
-    get_coeffs,
-    get_transition_frequencies,
     EradRational0815,
     FinalSpin0815_s,
 )
@@ -54,7 +46,7 @@ import torch
 from typing import Tuple
 
 # LOCAL
-from sage.core.utils import torch_interp
+from sage.core.math import torch_interp
 from sage.core.typing import Array
 
 
@@ -333,14 +325,13 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
     m2_7 = m2_6 * m2
     m2_8 = m2_7 * m2
 
-    angcoeffs = {}
-    angcoeffs["alphacoeff1"] = -0.18229166666666666 - (5 * dm) / (64.0 * m2)
+    alphacoeff1 = -0.18229166666666666 - (5 * dm) / (64.0 * m2)
 
-    angcoeffs["alphacoeff2"] = (-15 * dm * m2 * chil) / (128.0 * mtot2 * eta) - (
+    alphacoeff2 = (-15 * dm * m2 * chil) / (128.0 * mtot2 * eta) - (
         35 * m2_2 * chil
     ) / (128.0 * mtot2 * eta)
 
-    angcoeffs["alphacoeff3"] = (
+    alphacoeff3 = (
         -1.7952473958333333
         - (4555 * dm) / (7168.0 * m2)
         - (15 * chip2 * dm * m2_3) / (128.0 * mtot4 * eta2)
@@ -350,9 +341,9 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
         - (175 * dm * eta) / (256.0 * m2)
     )
 
-    angcoeffs["alphacoeff4"] = (
-        -(35 * jnp.pi) / 48.0
-        - (5 * dm * jnp.pi) / (16.0 * m2)
+    alphacoeff4 = (
+        -(35 * torch.pi) / 48.0
+        - (5 * dm * torch.pi) / (16.0 * m2)
         + (5 * dm2 * chil) / (16.0 * mtot2)
         + (5 * dm * m2 * chil) / (3.0 * mtot2)
         + (2545 * m2_2 * chil) / (1152.0 * mtot2)
@@ -362,7 +353,7 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
         + (2995 * m2_2 * chil) / (9216.0 * mtot2 * eta)
     )
 
-    angcoeffs["alphacoeff5"] = (
+    alphacoeff5 = (
         4.318908476114694
         + (27895885 * dm) / (2.1676032e7 * m2)
         - (15 * chip4 * dm * m2_7) / (512.0 * mtot8 * eta4)
@@ -379,8 +370,8 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
         + (15 * dm3 * eta2) / (1024.0 * m2_3)
         + (35 * dm2 * eta2) / (256.0 * m2_2)
         + (2725 * dm * eta2) / (3072.0 * m2)
-        - (15 * dm * m2 * jnp.pi * chil) / (16.0 * mtot2 * eta)
-        - (35 * m2_2 * jnp.pi * chil) / (16.0 * mtot2 * eta)
+        - (15 * dm * m2 * torch.pi * chil) / (16.0 * mtot2 * eta)
+        - (35 * m2_2 * torch.pi * chil) / (16.0 * mtot2 * eta)
         + (15 * chip2 * dm * m2_7 * chil2) / (128.0 * mtot8 * eta4)
         + (35 * chip2 * m2_8 * chil2) / (128.0 * mtot8 * eta4)
         + (375 * dm2 * m2_2 * chil2) / (256.0 * mtot4 * eta)
@@ -388,27 +379,27 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
         + (1645 * m2_4 * chil2) / (192.0 * mtot4 * eta)
     )
 
-    angcoeffs["epsiloncoeff1"] = -0.18229166666666666 - (5 * dm) / (64.0 * m2)
-    angcoeffs["epsiloncoeff2"] = (-15 * dm * m2 * chil) / (128.0 * mtot2 * eta) - (
+    epsiloncoeff1 = -0.18229166666666666 - (5 * dm) / (64.0 * m2)
+    epsiloncoeff2 = (-15 * dm * m2 * chil) / (128.0 * mtot2 * eta) - (
         35 * m2_2 * chil
     ) / (128.0 * mtot2 * eta)
-    angcoeffs["epsiloncoeff3"] = (
+    epsiloncoeff3 = (
         -1.7952473958333333
         - (4555 * dm) / (7168.0 * m2)
         - (515 * eta) / 384.0
         - (15 * dm2 * eta) / (256.0 * m2_2)
         - (175 * dm * eta) / (256.0 * m2)
     )
-    angcoeffs["epsiloncoeff4"] = (
-        -(35 * jnp.pi) / 48.0
-        - (5 * dm * jnp.pi) / (16.0 * m2)
+    epsiloncoeff4 = (
+        -(35 * torch.pi) / 48.0
+        - (5 * dm * torch.pi) / (16.0 * m2)
         + (5 * dm2 * chil) / (16.0 * mtot2)
         + (5 * dm * m2 * chil) / (3.0 * mtot2)
         + (2545 * m2_2 * chil) / (1152.0 * mtot2)
         + (2035 * dm * m2 * chil) / (21504.0 * mtot2 * eta)
         + (2995 * m2_2 * chil) / (9216.0 * mtot2 * eta)
     )
-    angcoeffs["epsiloncoeff5"] = (
+    epsiloncoeff5 = (
         4.318908476114694
         + (27895885 * dm) / (2.1676032e7 * m2)
         + (39695 * eta) / 86016.0
@@ -418,12 +409,29 @@ def ComputeNNLOanglecoeffs(q, chil, chip):
         + (15 * dm3 * eta2) / (1024.0 * m2_3)
         + (35 * dm2 * eta2) / (256.0 * m2_2)
         + (2725 * dm * eta2) / (3072.0 * m2)
-        - (15 * dm * m2 * jnp.pi * chil) / (16.0 * mtot2 * eta)
-        - (35 * m2_2 * jnp.pi * chil) / (16.0 * mtot2 * eta)
+        - (15 * dm * m2 * torch.pi * chil) / (16.0 * mtot2 * eta)
+        - (35 * m2_2 * torch.pi * chil) / (16.0 * mtot2 * eta)
         + (375 * dm2 * m2_2 * chil2) / (256.0 * mtot4 * eta)
         + (1815 * dm * m2_3 * chil2) / (256.0 * mtot4 * eta)
         + (1645 * m2_4 * chil2) / (192.0 * mtot4 * eta)
     )
+
+    angcoeffs = torch.stack(
+        [
+            alphacoeff1,
+            alphacoeff2,
+            alphacoeff3,
+            alphacoeff4,
+            alphacoeff5,
+            epsiloncoeff1,
+            epsiloncoeff2,
+            epsiloncoeff3,
+            epsiloncoeff4,
+            epsiloncoeff5,
+        ],
+        dim=0,
+    )
+
     return angcoeffs
 
 
