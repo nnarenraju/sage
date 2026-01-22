@@ -30,6 +30,8 @@ MSUN = 1.988409902147041637325262574352366540e30  # kg
 G = 6.67430e-11  # m^3 / kg / s^2
 C = 299792458.0  # m / s
 GM = G * MSUN / (C**3.0)  # s
+EulerGamma = 0.577215664901532860606512090082402431
+Mpc = 3.085677581491367278913937957796471611e22  # m
 
 # ALL METADATA
 CONST_METADATA = {
@@ -38,4 +40,6 @@ CONST_METADATA = {
     "G": "Newton's gravitational constant in m^3 / Kg / s^2",
     "C": "Speed of light in m/s",
     "GM": "Geometrised mass G * MSUN / C^3 in s",
+    "EulerGamma": "Euler–Mascheroni constant",
+    "Mpc": "1 Megaparsec in m",
 }
