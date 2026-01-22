@@ -30,6 +30,7 @@ import torch
 
 # LOCAL
 from sage.core.constants import GM
+from sage.core.utils import torch_grad
 from sage.core.conversions import mchirp_eta_to_m1_m2
 
 from .IMRPhenomD_utils import get_coeffs
@@ -37,6 +38,10 @@ from .IMRPhenomD import Phase as PhDPhase
 from .IMRPhenomD import Amp as PhDAmp
 from .IMRPhenomPv2_utils import (
     WignerdCoefficients,
+    convert_spins,
+    ComputeNNLOanglecoeffs,
+    SpinWeightedY,
+    phP_get_transition_frequencies,
 )
 
 
@@ -156,11 +161,7 @@ def PhenomPOneFrequency(
     return hPhenom, Dphi
 
 
-def gen_IMRPhenomPv2(
-    fs: Array,
-    theta: Array,
-    f_ref: float,
-):
+def gen_IMRPhenomPv2(fs, theta, f_ref):
     """
     Thetas are waveform parameters.
     m1 must be larger than m2.
@@ -192,10 +193,10 @@ def gen_IMRPhenomPv2(
     chil = (1.0 + q) / q * chi_eff
     eta = m1 * m2 / (M * M)
     m_sec = M * GM
-    piM = jnp.pi * m_sec
+    piM = torch.pi * m_sec
 
     omega_ref = piM * f_ref
-    logomega_ref = jnp.log(omega_ref)
+    logomega_ref = torch.log(omega_ref)
     omega_ref_cbrt = (piM * f_ref) ** (1 / 3)  # == v0
     omega_ref_cbrt2 = omega_ref_cbrt * omega_ref_cbrt
 
@@ -225,7 +226,7 @@ def gen_IMRPhenomPv2(
     Y2 = [Y2m2, Y2m1, Y20, Y21, Y22]
 
     # Shift phase so that peak amplitude matches t = 0
-    theta_intrinsic = jnp.array([m2, m1, chi2_l, chi1_l])
+    theta_intrinsic = torch.tensor([m2, m1, chi2_l, chi1_l])
     coeffs = get_coeffs(theta_intrinsic)
 
     transition_freqs = phP_get_transition_frequencies(
@@ -254,33 +255,32 @@ def gen_IMRPhenomPv2(
     # unpack transition_freqs
     _, _, _, _, f_RD, _ = transition_freqs
 
-    # phi_IIb = lambda f: PhenomPOneFrequency_phase(
-    #     f, m2, m1, chi2_l, chi1_l, chip, phiRef, M, dist_mpc
-    # )
-    t0 = jax.grad(phi_IIb)(f_RD) / (2 * jnp.pi)
-    phase_corr = jnp.cos(2 * jnp.pi * fs * (t0)) - 1j * jnp.sin(2 * jnp.pi * fs * (t0))
+    t0 = torch_grad(phi_IIb, (f_RD,)) / (2 * torch.pi)
+    phase_corr = torch.cos(2 * torch.pi * fs * (t0)) - 1j * torch.sin(
+        2 * torch.pi * fs * (t0)
+    )
     M_s = (m1 + m2) * GM
-    phase_corr_tc = jnp.exp(-1j * fs * M_s * tc)
+    phase_corr_tc = torch.exp(-1j * fs * M_s * tc)
     hp *= phase_corr * phase_corr_tc
     hc *= phase_corr * phase_corr_tc
 
     # final touches to hp and hc, stolen from Scott
-    c2z = jnp.cos(2 * zeta_polariz)
-    s2z = jnp.sin(2 * zeta_polariz)
+    c2z = torch.cos(2 * zeta_polariz)
+    s2z = torch.sin(2 * zeta_polariz)
     final_hp = c2z * hp + s2z * hc
     final_hc = c2z * hc - s2z * hp
     return final_hp, final_hc
 
 
-def gen_IMRPhenomPv2_hphc(f: Array, params: Array, f_ref: float):
+def gen_IMRPhenomPv2_hphc(f, params, f_ref):
     """
     wrapper around gen_Pph but the first two parameters are Mc and eta
     instead of m1 and m2
     """
     Mc = params[0]
     eta = params[1]
-    m1, m2 = mchirp_eta_to_m1_m2(jnp.array([Mc, eta]))
-    m1m2params = jnp.array(
+    m1, m2 = mchirp_eta_to_m1_m2(torch.tensor([Mc, eta]))
+    m1m2params = torch.tensor(
         [
             m1,
             m2,
