@@ -40,7 +40,7 @@ from typing import Tuple
 # LOCAL
 from sage.core.typing import TorchArray
 from sage.core.math import torch_linear_interp
-from sage.core.constants import GM, MSUN
+from sage.core.constants import GM
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
 
