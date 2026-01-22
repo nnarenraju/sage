@@ -140,15 +140,7 @@ def convert_spins(
     s2x: torch.Tensor,
     s2y: torch.Tensor,
     s2z: torch.Tensor,
-) -> Tuple[
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-]:
+):
     # CL: Changed all jnp to torch equivalent; float to torch.Tensor
     # m1 = m1_SI / MSUN  # Masses in solar masses
     # m2 = m2_SI / MSUN
@@ -501,15 +493,12 @@ def phP_get_fRD_fdamp(m1, m2, chi1_l, chi2_l, chip):
 
 
 def phP_get_transition_frequencies(
-    theta: TorchArray,
-    gamma2: torch.Tensor,
-    gamma3: torch.Tensor,
-    chip: torch.Tensor,
-) -> Tuple[
-    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
-]:
+    theta,
+    gamma2,
+    gamma3,
+    chip,
+):
     # m1 > m2 should hold here
-
     m1, m2, chi1, chi2 = theta
     M = m1 + m2
     f_RD, f_damp = phP_get_fRD_fdamp(m1, m2, chi1, chi2, chip)
