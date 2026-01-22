@@ -35,7 +35,7 @@ GM = G * MSUN / (C**3.0)  # s
 CONST_METADATA = {
     "PI": "Constant ratio of a circle's circumference to its diameter",
     "MSUN": "1 solar mass in Kg",
-    "G": "Newton's gravitational constant in m^3 / kg / s^2",
+    "G": "Newton's gravitational constant in m^3 / Kg / s^2",
     "C": "Speed of light in m/s",
-    "GM": "Geometrised mass in s",
+    "GM": "Geometrised mass G * MSUN / C^3 in s",
 }
