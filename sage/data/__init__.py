@@ -24,7 +24,11 @@ Documentation: NULL
 """
 
 from sage.data.waveform.approximants import (
+    IMRPhenomD,
+    IMRPhenomD_utils,
     IMRPhenomD_QNMdata,
-    IMRPhenomPv2_utils,
     IMRPhenomPv2,
+    IMRPhenomPv2_utils,
+    IMRPhenomD_NRTidalv2,
+    IMRPhenom_tidal_utils,
 )
