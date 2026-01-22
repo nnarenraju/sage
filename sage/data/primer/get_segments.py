@@ -38,7 +38,7 @@ from typing import Union, List, Sequence
 # LOCAL
 from sage.core.errors import safe_call
 from sage.core.utils import to_sequence
-from sage.core.types import SEGMENT_DTYPE
+from sage.core.typing import SEGMENT_DTYPE
 from sage.core.logger import get_logger, setup_logging
 from sage.core.hardcode import _DETECTORS, _check_detector_prefixes
 
