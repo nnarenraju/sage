@@ -33,6 +33,43 @@ from sage.core.math import torch_linear_interp
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
 
+
+def Subtract3PNSS(m1, m2, M, eta, chi1, chi2):
+    """
+    * Subtract 3PN spin-spin term below as this is in LAL's TaylorF2 implementation
+    * (LALSimInspiralPNCoefficients.c -> XLALSimInspiralPNPhasing_F2), but
+    * was not available when PhenomD was tuned.
+
+    Args:
+        m1 (_type_): _description_
+        m2 (_type_): _description_
+        M (_type_): _description_
+        eta (_type_): _description_
+        chi1 (_type_): _description_
+        chi2 (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+
+    m1M = m1 / M
+    m2M = m2 / M
+
+    pn_ss3 =  (326.75/1.12 + 557.5/1.8 * eta) * eta * chi1 * chi2
+    
+    pn_ss3 = pn_ss3 + (
+        (4703.5 / 8.4 + (2935./6.) * m1M - 120. * m1M * m1M) + 
+        (-4108.25 / 6.72 - (108.5/1.2) * m1M + (125.5/3.6) * m1M * m1M)
+    ) * m1M * m1M * chi1 * chi1
+
+    pn_ss3 = pn_ss3 + (
+        (4703.5 / 8.4 + (2935./6.) * m2M - 120. * m2M * m2M) + 
+        (-4108.25 / 6.72 - (108.5/1.2) * m2M + (125.5/3.6) * m2M * m2M)
+    ) * m2M * m2M * chi2 * chi2
+    
+    return pn_ss3
+
+
 def EradRational0815_s(eta, s):
     eta2 = eta * eta
     eta3 = eta2 * eta
