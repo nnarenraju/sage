@@ -35,6 +35,8 @@ from sage.core.utils import torch_value_and_grad, torch_grad
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 from sage.data.waveform import IMRPhenomD_utils as PhDutils
 
+from .helper import nudge_backward_, nudge_forward_
+
 
 def get_inspiral_phase(fM_s, theta, coeffs):
     """
@@ -47,7 +49,11 @@ def get_inspiral_phase(fM_s, theta, coeffs):
     m1_s = m1 * GM
     m2_s = m2 * GM
     M_s = m1_s + m2_s
+
+    # Sanity check eta
     eta = m1_s * m2_s / (M_s**2.0)
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
 
     # First lets construct the phase in the inspiral (region I)
     m1M = m1_s / M_s
@@ -258,7 +264,12 @@ def get_inspiral_Amp(fM_s, theta, coeffs):
     m1_s = m1 * GM
     m2_s = m2 * GM
     M_s = m1_s + m2_s
+
+    # Sanity check eta
     eta = m1_s * m2_s / (M_s**2.0)
+    # This should prevents NaNs in Seta
+    nudge_backward_(eta, 0.25, 1e-6)
+
     eta2 = eta * eta
     eta3 = eta * eta2
 

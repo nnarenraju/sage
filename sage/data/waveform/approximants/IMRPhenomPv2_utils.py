@@ -43,6 +43,8 @@ from sage.core.math import torch_linear_interp
 from sage.core.constants import GM
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
+from .helper import nudge_backward_
+
 
 # helper functions for LALtoPhenomP:
 def ROTATEZ(angle, x, y, z):
@@ -466,6 +468,8 @@ def FinalSpin_inplane(m1, m2, chi1_l, chi2_l, chip):
     # CL: jnp to torch;
     M = m1 + m2
     eta = m1 * m2 / (M * M)
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
     # Here I assume m1 > m2, the convention used in phenomD
     # (not the convention of internal phenomP)
     q_factor = m1 / M

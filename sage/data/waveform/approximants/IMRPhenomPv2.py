@@ -44,6 +44,8 @@ from .IMRPhenomPv2_utils import (
     phP_get_transition_frequencies,
 )
 
+from .helper import nudge_backward_
+
 
 def PhenomPCoreTwistUp(
     fHz,
@@ -192,6 +194,8 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     chi_eff = (m1 * chi1_l + m2 * chi2_l) / M
     chil = (1.0 + q) / q * chi_eff
     eta = m1 * m2 / (M * M)
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
     m_sec = M * GM
     piM = torch.pi * m_sec
 
@@ -240,8 +244,6 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     hp, hc = PhenomPCoreTwistUp(
         fs,
         hPhenomDs,
-        # phase,
-        # Amp,
         eta,
         chi1_l,
         chi2_l,
