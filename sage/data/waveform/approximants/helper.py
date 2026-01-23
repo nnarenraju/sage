@@ -24,20 +24,3 @@ Documentation: NULL
 """
 
 # Packages
-import torch
-
-
-def nudge_backward_(foo: torch.Tensor, max_limit: float, nudge_factor=1e-6) -> None:
-    """
-    In-place nudge to keep foo <= max_limit with tiny safety margin.
-    Modifies foo directly.
-    """
-    foo.clamp_(max=max_limit - nudge_factor)
-
-
-def nudge_forward_(foo: torch.Tensor, min_limit: float, nudge_factor=1e-6) -> None:
-    """
-    In-place nudge to keep foo >= min_limit with tiny safety margin.
-    Modifies foo directly.
-    """
-    foo.clamp_(min=min_limit + nudge_factor)
