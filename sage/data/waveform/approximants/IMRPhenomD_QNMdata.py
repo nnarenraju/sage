@@ -21,14 +21,14 @@ GitHub Repository: NULL
 
 Documentation: NULL
 
-"""
 
+"""
 
 # Packages
 import torch
 
 # LOCAL
-from sage.core.math import torch_cubic_interp
+from sage.core.interpolation import torch_cubic_interp
 
 
 # Primary cite: Tables taken from https://git.ligo.org/lscsoft/lalsuite/-/blob/master/lalsimulation/lib/LALSimIMRPhenomD.h
