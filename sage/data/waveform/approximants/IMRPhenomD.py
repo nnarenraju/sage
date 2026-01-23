@@ -43,6 +43,7 @@ def get_inspiral_phase(fM_s, theta, coeffs):
     # First lets calculate some of the vairables that will be used below
     # Mass variables
     m1, m2, chi1, chi2 = theta
+    M = m1 + m2
     m1_s = m1 * GM
     m2_s = m2 * GM
     M_s = m1_s + m2_s
@@ -119,6 +120,33 @@ def get_inspiral_phase(fM_s, theta, coeffs):
     phi6 += (PI * m1M * (1490.0 / 3.0 + m1M * 260.0)) * chi1 + (
         PI * m2M * (1490.0 / 3.0 + m2M * 260.0)
     ) * chi2
+
+    ## --------- 3PN Spin-Spin Correction from TaylorF2 --------- ##
+
+    # Comments from LALSimIMRPhenomP.c in lalsuite lines 828 - 831
+    # // Subtract 3PN spin-spin term below as this is in LAL's TaylorF2 implementation
+    # // (LALSimInspiralPNCoefficients.c -> XLALSimInspiralPNPhasing_F2), but
+    # // was not available when PhenomD was tuned.
+    # pn->v[6] -= (Subtract3PNSS(m1, m2, M, eta, chi1_l, chi2_l) * pn->v[0]);
+
+    # pn->v[6] corresponds to our phi6 variable
+    # pn->v[0] is the leading order coefficient phi0
+    # phi0 is simply 1 in the dimensionless PN expansion
+    # Subtracting correction before calculating phi_TF2 is sufficient
+
+    # LALSimIMRPhenomD_internals.c; lines 1285 - 1292
+    phi6 = phi6 - PhDutils.Subtract3PNSS(m1, m2, M, eta, chi1, chi2)
+
+    # NOTE:
+    # The inspiral phase is used to compute the connection coefficients (beta0 and
+    # beta1_correction) that enforce C1 continuity between the inspiral to
+    # intermediate region. If the 3PN spin–spin term is not subtracted in
+    # get_inspiral_phase, phi_Ins will differ from the C implementation, which in
+    # turn shifts beta0 and beta1_correction and introduces a phase offset that
+    # propagates through the entire waveform (including merger and ringdown).
+
+    ## --------- END --------- ##
+
     phi6_log = -684.8 / 2.1
 
     phi7 = PI * (
@@ -426,7 +454,6 @@ def Phase(f, theta, coeffs, transition_freqs):
     M_s = m1_s + m2_s
 
     # Next we need to calculate the transition frequencies
-    # f1, f2, _, _, f_RD, f_damp = get_transition_frequencies(theta, coeffs[5], coeffs[6])
     f1, f2, _, _, f_RD, f_damp = transition_freqs
 
     phi_Ins = get_inspiral_phase(f * M_s, theta, coeffs)
