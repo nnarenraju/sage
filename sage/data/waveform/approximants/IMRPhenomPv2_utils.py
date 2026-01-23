@@ -40,7 +40,7 @@ from typing import Tuple
 # LOCAL
 from sage.core.constants import GM
 from sage.core.typing import TorchArray
-from sage.core.interpolation import torch_linear_interp
+from sage.core.interpolation import torch_linear_interp, torch_natural_cubic_interp
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
 from sage.core.torch import nudge_backward_
@@ -527,3 +527,54 @@ def phP_get_transition_frequencies(
     f4 = torch.where(gamma2 >= 1, f4_gammaneg_gtr_1, f4_gammaneg_less_1)
 
     return f1, f2, f3, f4, f_RD, f_damp
+
+
+def apply_time_shift_phase_correction(
+    hptilde: torch.Tensor,
+    hctilde: torch.Tensor,
+    freqs: torch.Tensor,
+    freqs_fixed: torch.Tensor,
+    phase_fixed: torch.Tensor,
+    f_final: float,
+    M_s,
+    tc,
+    offset: int = 0,
+):
+    """
+    Apply time shift correction so the waveform coalesces at t=0.
+
+    Args:
+        hptilde: Tensor of shape (n_freq,) with plus polarization.
+        hctilde: Tensor of shape (n_freq,) with cross polarization.
+        freqs: Tensor of frequencies corresponding to hptilde/hctilde.
+        freqs_fixed: Fixed frequency grid used for spline interpolation.
+        phase_fixed: Phase values on freqs_fixed.
+        f_final: Final frequency (fRD or f_merger) to evaluate derivative.
+        offset: Index offset if freqs does not start at zero.
+    Returns:
+        Tuple of corrected (hptilde, hctilde)
+    """
+
+    # Compute derivative of phase at f_final using natural cubic spline
+    # torch_natural_cubic_interp returns derivative if deriv=True
+    t_corr_fixed = torch_natural_cubic_interp(
+        torch.tensor([f_final], device=freqs.device, dtype=freqs.dtype),
+        freqs_fixed,
+        phase_fixed,
+        deriv=True,
+    )[0] / (2 * torch.pi)
+
+    # Compute phase correction factor
+    # phase_corr = exp(-2.PI.i f t_corr_fixed) = cos(...) - i sin(...)
+    # For complex multiplication in PyTorch
+    phase_corr = torch.exp(-2j * torch.pi * freqs * t_corr_fixed)
+
+    # This extra correction term can shift the waveform to our desired tc
+    # We don't include this for now to try and reproduce LAL closely
+    phase_corr_tc = torch.exp(-2j * torch.pi * freqs * tc)
+
+    # Apply to waveform, respecting offset
+    hptilde[..., offset : offset + freqs.numel()] *= phase_corr
+    hctilde[..., offset : offset + freqs.numel()] *= phase_corr
+
+    return hptilde, hctilde
