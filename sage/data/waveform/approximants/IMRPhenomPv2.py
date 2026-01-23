@@ -27,7 +27,6 @@ Documentation: NULL
 # Packages
 import torch
 
-
 # LOCAL
 from sage.core.constants import GM
 from sage.core.utils import torch_grad
@@ -36,6 +35,7 @@ from sage.core.conversions import mchirp_eta_to_m1_m2
 from .IMRPhenomD_utils import get_coeffs
 from .IMRPhenomD import Phase as PhDPhase
 from .IMRPhenomD import Amp as PhDAmp
+
 from .IMRPhenomPv2_utils import (
     WignerdCoefficients,
     convert_spins,
