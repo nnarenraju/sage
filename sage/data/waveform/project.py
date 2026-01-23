@@ -30,70 +30,125 @@ import torch
 from sage.core.constants import C
 
 
-def compute_antenna_patterns(ra, dec, psi, detector_tensors):
+class Detector:
     """
-    Compute the constant antenna patterns F+, Fx for each detector.
-
-    Args:
-        ra: tensor, [batch] right ascension (radians)
-        dec: tensor, [batch] declination (radians)
-        psi: tensor, [batch] polarization angle (radians)
-        detector_tensors: tensor, [num_ifos, 3, 3] detector tensors
-
-    Returns:
-        Fp: [batch, num_ifos]
-        Fc: [batch, num_ifos]
+    Minimal detector container for FD projection.
+    All tensors should live on the same device as waveforms.
     """
-    batch = ra.shape[0]
-    num_ifos = detector_tensors.shape[0]
 
-    # Compute source frame vectors (natural polarization basis)
-    sin_dec, cos_dec = torch.sin(dec), torch.cos(dec)
-    sin_ra, cos_ra = torch.sin(ra), torch.cos(ra)
-    sin_psi, cos_psi = torch.sin(psi), torch.cos(psi)
+    def __init__(
+        self,
+        detector_name,
+        reference_time=1126259462.423,  # GPS seconds
+    ):
+        # Detector tensor
+        self.response = response
+        # Detector position (ECEF)
+        self.loc = location
+        self.longitude = longitude
+        self.latitude = latitude
 
-    # Wave propagation unit vector
-    n = torch.stack([cos_dec * cos_ra, cos_dec * sin_ra, sin_dec], dim=1)  # [batch, 3]
+        # Reference times
+        self.gmst_reference = None
+        # GPS time of GW150914 by default
+        self.reference_time = reference_time
 
-    # Basis vectors orthogonal to n
-    u = torch.stack([sin_ra, -cos_ra, torch.zeros_like(ra)], dim=1)  # [batch, 3]
-    v = torch.cross(n, u, dim=1)  # [batch, 3]
+    def antenna_pattern(
+        self,
+        right_ascension,
+        declination,
+        polarization,
+        reference_time,
+    ):
+        """Return the detector response.
 
-    # Polarization basis vectors
-    m = -u * sin_psi[:, None] - v * cos_psi[:, None]  # [batch, 3]
-    l = -u * cos_psi[:, None] + v * sin_psi[:, None]  # [batch, 3]
+        Parameters
+        ----------
+        right_ascension: float or numpy.ndarray
+            The right ascension of the source
+        declination: float or numpy.ndarray
+            The declination of the source
+        polarization: float or numpy.ndarray
+            The polarization angle of the source
+        polarization_type: string flag: Tensor, Vector or Scalar
+            The gravitational wave polarizations. Default: 'Tensor'
 
-    # Compute F+ and Fx for each detector
-    # detector_tensors: [num_ifos, 3, 3]
-    Fp = torch.einsum(
-        "bd,bk,lm->bl", m[:, None, :], m[:, None, :], detector_tensors
-    ) - torch.einsum("bd,bk,lm->bl", l[:, None, :], l[:, None, :], detector_tensors)
+        Returns
+        -------
+        fplus(default) or fx or fb : float or numpy.ndarray
+            The plus or vector-x or breathing polarization factor for this sky location / orientation
+        fcross(default) or fy or fl : float or numpy.ndarray
+            The cross or vector-y or longitudnal polarization factor for this sky location / orientation
+        """
 
-    Fx = torch.einsum(
-        "bd,bk,lm->bl", m[:, None, :], l[:, None, :], detector_tensors
-    ) + torch.einsum("bd,bk,lm->bl", l[:, None, :], m[:, None, :], detector_tensors)
+        gha = self.gmst_estimate(reference_time) - right_ascension
 
-    return Fp, Fx  # [batch, num_ifos]
+        cosgha = torch.cos(gha)
+        singha = torch.sin(gha)
+        cosdec = torch.cos(declination)
+        sindec = torch.sin(declination)
+        cospsi = torch.cos(polarization)
+        sinpsi = torch.sin(polarization)
 
+        resp = self.response
+        ttype = torch.float64
 
-def project_to_detector(hp, hc, ra, dec, psi, detector_tensors):
-    """
-    Project plus/cross polarizations to detector frame (frequency domain)
+        x0 = -cospsi * singha - sinpsi * cosgha * sindec
+        x1 = -cospsi * cosgha + sinpsi * singha * sindec
+        x2 = sinpsi * cosdec
 
-    Args:
-        hp, hc: [batch, nfreq] complex frequency-domain polarizations
-        ra, dec, psi: [batch] sky and polarization angles
-        detector_tensors: [num_ifos, 3, 3] detector tensors
+        x = np.array([x0, x1, x2], dtype=object)
+        dx = resp.dot(x)
 
-    Returns:
-        hdet: [batch, num_ifos, nfreq] complex frequency-domain detector strain
-    """
-    Fp, Fx = compute_antenna_patterns(
-        ra, dec, psi, detector_tensors
-    )  # [batch, num_ifos]
+        y0 = sinpsi * singha - cospsi * cosgha * sindec
+        y1 = sinpsi * cosgha + cospsi * singha * sindec
+        y2 = cospsi * cosdec
 
-    # Apply antenna patterns: broadcasting over frequency axis
-    # hp/hc: [batch, nfreq], Fp/Fx: [batch, num_ifos]
-    hdet = Fp[:, :, None] * hp[:, None, :] + Fx[:, :, None] * hc[:, None, :]
+        y = np.array([y0, y1, y2], dtype=object)
+        dy = resp.dot(y)
 
-    return hdet
+        if hasattr(dx, "shape"):
+            fplus = (x * dx - y * dy).sum(axis=0).astype(ttype)
+            fcross = (x * dy + y * dx).sum(axis=0).astype(ttype)
+        else:
+            fplus = (x * dx - y * dy).sum()
+            fcross = (x * dy + y * dx).sum()
+
+        return fplus, fcross
+
+    def constant_project(self, hp, hc, ra, dec, polarization):
+        """Return the strain of a waveform as measured by the detector.
+        Apply the time shift for the given detector relative to the assumed
+        geocentric frame and apply the antenna patterns to the plus and cross
+        polarizations.
+
+        Parameters
+        ----------
+        hp: pycbc.types.TimeSeries
+            Plus polarization of the GW
+        hc: pycbc.types.TimeSeries
+            Cross polarization of the GW
+        ra: float
+            Right ascension of source location
+        dec: float
+            Declination of source location
+        polarization: float
+            Polarization angle of the source
+        """
+        # 'constant' assume fixed orientation relative to source over the
+        # duration of the signal, accurate for short duration signals
+        fp, fc = antenna_pattern(ra, dec, polarization, self.reference_time)
+        dt = time_delay_from_earth_center(ra, dec, self.reference_time)
+        ts = fp * hp + fc * hc
+        ts.start_time = float(ts.start_time) + dt
+        return ts
+
+    def gmst_estimate(self, gps_time):
+        if self.reference_time is None:
+            return gmst_accurate(gps_time)
+
+        if self.gmst_reference is None:
+            self.set_gmst_reference()
+        dphase = (gps_time - self.reference_time) / self.sday * (2.0 * np.pi)
+        gmst = (self.gmst_reference + dphase) % (2.0 * np.pi)
+        return gmst
