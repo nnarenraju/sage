@@ -83,19 +83,19 @@ def PhenomPCoreTwistUp(
     omega_cbrt2 = omega_cbrt * omega_cbrt
 
     alpha = (
-        angcoeffs["alphacoeff1"] / omega
-        + angcoeffs["alphacoeff2"] / omega_cbrt2
-        + angcoeffs["alphacoeff3"] / omega_cbrt
-        + angcoeffs["alphacoeff4"] * logomega
-        + angcoeffs["alphacoeff5"] * omega_cbrt
+        angcoeffs[0] / omega
+        + angcoeffs[1] / omega_cbrt2
+        + angcoeffs[2] / omega_cbrt
+        + angcoeffs[3] * logomega
+        + angcoeffs[4] * omega_cbrt
     ) - alphaoffset
 
     epsilon = (
-        angcoeffs["epsiloncoeff1"] / omega
-        + angcoeffs["epsiloncoeff2"] / omega_cbrt2
-        + angcoeffs["epsiloncoeff3"] / omega_cbrt
-        + angcoeffs["epsiloncoeff4"] * logomega
-        + angcoeffs["epsiloncoeff5"] * omega_cbrt
+        angcoeffs[5] / omega
+        + angcoeffs[6] / omega_cbrt2
+        + angcoeffs[7] / omega_cbrt
+        + angcoeffs[8] * logomega
+        + angcoeffs[9] * omega_cbrt
     ) - epsilonoffset
 
     # print("alpha, epsilon: ", alpha, epsilon)
@@ -206,22 +206,25 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     omega_ref_cbrt = (piM * f_ref) ** (1 / 3)  # == v0
     omega_ref_cbrt2 = omega_ref_cbrt * omega_ref_cbrt
 
+    # angcoeffs is a torch.stack with the following values in order
+    # alphacoeff1, alphacoeff2, alphacoeff3, alphacoeff4, alphacoeff5,
+    # epsiloncoeff1, epsiloncoeff2, epsiloncoeff3, epsiloncoeff4, epsiloncoeff5,
     angcoeffs = ComputeNNLOanglecoeffs(q, chil, chip)
 
     alphaNNLOoffset = (
-        angcoeffs["alphacoeff1"] / omega_ref
-        + angcoeffs["alphacoeff2"] / omega_ref_cbrt2
-        + angcoeffs["alphacoeff3"] / omega_ref_cbrt
-        + angcoeffs["alphacoeff4"] * logomega_ref
-        + angcoeffs["alphacoeff5"] * omega_ref_cbrt
+        angcoeffs[0] / omega_ref
+        + angcoeffs[1] / omega_ref_cbrt2
+        + angcoeffs[2] / omega_ref_cbrt
+        + angcoeffs[3] * logomega_ref
+        + angcoeffs[4] * omega_ref_cbrt
     )
 
     epsilonNNLOoffset = (
-        angcoeffs["epsiloncoeff1"] / omega_ref
-        + angcoeffs["epsiloncoeff2"] / omega_ref_cbrt2
-        + angcoeffs["epsiloncoeff3"] / omega_ref_cbrt
-        + angcoeffs["epsiloncoeff4"] * logomega_ref
-        + angcoeffs["epsiloncoeff5"] * omega_ref_cbrt
+        angcoeffs[5] / omega_ref
+        + angcoeffs[6] / omega_ref_cbrt2
+        + angcoeffs[7] / omega_ref_cbrt
+        + angcoeffs[8] * logomega_ref
+        + angcoeffs[9] * omega_ref_cbrt
     )
 
     Y2m2 = SpinWeightedY(thetaJN, 0, -2, 2, -2)
