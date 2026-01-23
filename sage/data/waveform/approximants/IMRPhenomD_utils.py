@@ -29,10 +29,10 @@ import torch
 
 # LOCAL
 from sage.core.constants import GM
-from sage.core.math import torch_linear_interp
+from sage.core.interpolation import torch_linear_interp
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
-from .helper import nudge_backward_
+from sage.core.torch import nudge_backward_
 
 
 def Subtract3PNSS(m1, m2, M, eta, chi1, chi2):

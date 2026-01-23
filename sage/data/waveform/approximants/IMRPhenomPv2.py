@@ -44,7 +44,7 @@ from .IMRPhenomPv2_utils import (
     phP_get_transition_frequencies,
 )
 
-from .helper import nudge_backward_, nudge_forward_
+from sage.core.torch import nudge_backward_, nudge_forward_
 
 
 def PhenomPCoreTwistUp(
@@ -259,6 +259,7 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     # unpack transition_freqs
     _, _, _, _, f_RD, _ = transition_freqs
 
+    ## TODO: This is where we do the corrections to phase and time shift
     t0 = torch_grad(phi_IIb, (f_RD,)) / (2 * torch.pi)
     phase_corr = torch.cos(2 * torch.pi * fs * (t0)) - 1j * torch.sin(
         2 * torch.pi * fs * (t0)

@@ -35,7 +35,7 @@ from sage.core.utils import torch_value_and_grad, torch_grad
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 from sage.data.waveform import IMRPhenomD_utils as PhDutils
 
-from .helper import nudge_backward_, nudge_forward_
+from sage.core.torch import nudge_backward_, nudge_forward_
 
 
 def get_inspiral_phase(fM_s, theta, coeffs):
