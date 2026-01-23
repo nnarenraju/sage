@@ -32,6 +32,8 @@ C = 299792458.0  # m / s
 GM = G * MSUN / (C**3.0)  # s
 EulerGamma = 0.577215664901532860606512090082402431
 Mpc = 3.085677581491367278913937957796471611e22  # m
+SIDEREAL_DAY = 86164.09053083288  # s
+TWOPI = 2.0 * PI
 
 # ALL METADATA
 CONST_METADATA = {
@@ -42,4 +44,6 @@ CONST_METADATA = {
     "GM": "Geometrised mass G * MSUN / C^3 in s",
     "EulerGamma": "Euler–Mascheroni constant",
     "Mpc": "1 Megaparsec in m",
+    "SIDEREAL_DAY": "1 Earth rotation relative to the stars in s",
+    "TWOPI": "This is PI, but twice!",
 }
