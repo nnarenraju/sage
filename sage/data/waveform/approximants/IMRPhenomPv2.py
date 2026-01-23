@@ -35,6 +35,7 @@ from sage.core.conversions import mchirp_eta_to_m1_m2
 from .IMRPhenomD_utils import get_coeffs
 from .IMRPhenomD import Phase as PhDPhase
 from .IMRPhenomD import Amp as PhDAmp
+from .IMRPhenomD_QNMdata import fM_CUT
 
 from .IMRPhenomPv2_utils import (
     WignerdCoefficients,
@@ -42,6 +43,7 @@ from .IMRPhenomPv2_utils import (
     ComputeNNLOanglecoeffs,
     SpinWeightedY,
     phP_get_transition_frequencies,
+    apply_time_shift_phase_correction,
 )
 
 from sage.core.torch import nudge_backward_, nudge_forward_
@@ -152,7 +154,7 @@ def PhenomPOneFrequency(
     # Note that JAX does not give index errors, so if you pass in the
     # the wrong array it will behave strangely
     norm = 2.0 * torch.sqrt(5.0 / (64.0 * torch.pi))
-    theta_ripple = torch.array([m1, m2, chi1, chi2])
+    theta_ripple = torch.tensor([m1, m2, chi1, chi2])
 
     phase = PhDPhase(fs, theta_ripple, coeffs, transition_freqs)
     Dphi = lambda f: -PhDPhase(f, theta_ripple, coeffs, transition_freqs)
@@ -193,6 +195,7 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     # This should prevents NaNs
     nudge_forward_(q, 1.0, 1e-6)
     M = m1 + m2
+    M_s = (m1 + m2) * GM
     chi_eff = (m1 * chi1_l + m2 * chi2_l) / M
     chil = (1.0 + q) / q * chi_eff
     eta = m1 * m2 / (M * M)
@@ -262,15 +265,40 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     # unpack transition_freqs
     _, _, _, _, f_RD, _ = transition_freqs
 
-    ## TODO: This is where we do the corrections to phase and time shift
-    t0 = torch_grad(phi_IIb, (f_RD,)) / (2 * torch.pi)
-    phase_corr = torch.cos(2 * torch.pi * fs * (t0)) - 1j * torch.sin(
-        2 * torch.pi * fs * (t0)
+    ## ** This is where we do the corrections to phase and time shift **
+    # Fixed frequency grid around ringdown frequency for Pv2
+    # 10 points should be enough for cubic interpolation
+    # Same n_fixed used in LAL version
+    n_fixed = 10
+    M_s = (theta_intrinsic[0] + theta_intrinsic[1]) * GM
+    fcut = fM_CUT / M_s
+    f_final = f_RD
+    freqs_fixed_start = 0.8 * f_final
+    freqs_fixed_stop = min(1.2 * f_final, fcut)  # clamp to fCut
+    freqs_fixed = torch.linspace(
+        freqs_fixed_start,
+        freqs_fixed_stop,
+        n_fixed,
+        device=theta_intrinsic.device,
+        dtype=theta_intrinsic.dtype,
     )
-    M_s = (m1 + m2) * GM
-    phase_corr_tc = torch.exp(-1j * fs * M_s * tc)
-    hp *= phase_corr * phase_corr_tc
-    hc *= phase_corr * phase_corr_tc
+
+    # Compute phase on fixed grid
+    # We have inverted m1 and m2 back to the convention m1 > m2 for PhenomD call
+    phase_fixed = PhDPhase(freqs_fixed, theta_intrinsic, coeffs, transition_freqs)
+    # Shift by coalescence phase (if needed)
+    phase_fixed -= phic
+
+    hp, hc = apply_time_shift_phase_correction(
+        hptilde=hp,
+        hctilde=hc,
+        freqs=fs,
+        freqs_fixed=freqs_fixed,
+        phase_fixed=phase_fixed,
+        f_final=f_final,
+        M_s=M_s,
+        tc=tc,
+    )
 
     # final touches to hp and hc, stolen from Scott
     c2z = torch.cos(2 * zeta_polariz)
