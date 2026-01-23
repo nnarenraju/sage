@@ -167,7 +167,9 @@ def convert_spins(
     ASp1 = A1 * S1_perp
     ASp2 = A2 * S2_perp
     num = torch.maximum(ASp1, ASp2)
-    den = A2 * m2_2  # warning: this assumes m2 > m1
+    # Adding this for safety
+    # const REAL8 den = (m2 > m1) ? A2*m2_2 : A1*m1_2;
+    den = A2 * m2_2 if (m2 > m1) else A1 * m1_2
     chip = num / den
 
     m_sec = M * GM
