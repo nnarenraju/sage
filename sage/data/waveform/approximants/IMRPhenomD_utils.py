@@ -32,6 +32,7 @@ from sage.core.constants import GM
 from sage.core.math import torch_linear_interp
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
+from .helper import nudge_backward_
 
 
 def Subtract3PNSS(m1, m2, M, eta, chi1, chi2):
@@ -55,18 +56,32 @@ def Subtract3PNSS(m1, m2, M, eta, chi1, chi2):
     m1M = m1 / M
     m2M = m2 / M
 
-    pn_ss3 =  (326.75/1.12 + 557.5/1.8 * eta) * eta * chi1 * chi2
-    
-    pn_ss3 = pn_ss3 + (
-        (4703.5 / 8.4 + (2935./6.) * m1M - 120. * m1M * m1M) + 
-        (-4108.25 / 6.72 - (108.5/1.2) * m1M + (125.5/3.6) * m1M * m1M)
-    ) * m1M * m1M * chi1 * chi1
+    pn_ss3 = (326.75 / 1.12 + 557.5 / 1.8 * eta) * eta * chi1 * chi2
 
-    pn_ss3 = pn_ss3 + (
-        (4703.5 / 8.4 + (2935./6.) * m2M - 120. * m2M * m2M) + 
-        (-4108.25 / 6.72 - (108.5/1.2) * m2M + (125.5/3.6) * m2M * m2M)
-    ) * m2M * m2M * chi2 * chi2
-    
+    pn_ss3 = (
+        pn_ss3
+        + (
+            (4703.5 / 8.4 + (2935.0 / 6.0) * m1M - 120.0 * m1M * m1M)
+            + (-4108.25 / 6.72 - (108.5 / 1.2) * m1M + (125.5 / 3.6) * m1M * m1M)
+        )
+        * m1M
+        * m1M
+        * chi1
+        * chi1
+    )
+
+    pn_ss3 = (
+        pn_ss3
+        + (
+            (4703.5 / 8.4 + (2935.0 / 6.0) * m2M - 120.0 * m2M * m2M)
+            + (-4108.25 / 6.72 - (108.5 / 1.2) * m2M + (125.5 / 3.6) * m2M * m2M)
+        )
+        * m2M
+        * m2M
+        * chi2
+        * chi2
+    )
+
     return pn_ss3
 
 
@@ -99,6 +114,8 @@ def EradRational0815_s(eta, s):
 
 
 def EradRational0815(eta, chi1, chi2):
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
     Seta = torch.sqrt(1.0 - 4.0 * eta)
     m1 = 0.5 * (1.0 + Seta)
     m2 = 0.5 * (1.0 - Seta)
@@ -177,6 +194,8 @@ def get_coeffs(theta):
     m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
 
     # Definition of chiPN from lalsuite
     chi_s = (chi1 + chi2) / 2.0

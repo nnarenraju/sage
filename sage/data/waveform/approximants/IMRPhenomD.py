@@ -220,6 +220,8 @@ def get_IIa_raw_phase(fM_s, theta, coeffs):
     m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
 
     phi_IIa_raw = (
         coeffs[11] * fM_s
@@ -236,6 +238,8 @@ def get_IIb_raw_phase(fM_s, theta, coeffs, f_RD, f_damp):
     m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
 
     f_RDM_s = f_RD * M_s
     f_dampM_s = f_damp * M_s
@@ -549,6 +553,8 @@ def Amp(
     m2_s = m2 * GM
     M_s = m1_s + m2_s
     eta = m1_s * m2_s / (M_s**2.0)
+    # This should prevents NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
 
     # Get required parts of transition frequencies
     _, _, f3, f4, f_RD, f_damp = transition_frequencies

@@ -43,7 +43,7 @@ from sage.core.math import torch_linear_interp
 from sage.core.constants import GM
 from sage.data.waveform import IMRPhenomD_QNMdata as qnm
 
-from .helper import nudge_backward_
+from .helper import nudge_backward_, nudge_forward_
 
 
 # helper functions for LALtoPhenomP:
@@ -150,6 +150,8 @@ def convert_spins(
     m1_2 = m1 * m1
     m2_2 = m2 * m2
     eta = m1 * m2 / (M * M)  # Symmetric mass-ratio
+    # This should prevent NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
 
     # From the components in the source frame, we can easily determine
     # chi1_l, chi2_l, chip and phi_aligned, which we need to return.
@@ -334,6 +336,8 @@ def ComputeNNLOanglecoeffs(q, chil, chip, device):
     dm = m1 - m2
     mtot = 1.0
     eta = m1 * m2  # mtot = 1
+    # This should prevent NaNs
+    nudge_backward_(eta, 0.25, 1e-6)
     eta2 = eta * eta
     eta3 = eta2 * eta
     eta4 = eta3 * eta

@@ -44,7 +44,7 @@ from .IMRPhenomPv2_utils import (
     phP_get_transition_frequencies,
 )
 
-from .helper import nudge_backward_
+from .helper import nudge_backward_, nudge_forward_
 
 
 def PhenomPCoreTwistUp(
@@ -66,6 +66,8 @@ def PhenomPCoreTwistUp(
     # here it is used to be LAL_MTSUN_SI
     f = fHz * GM * M  # Frequency in geometric units
     q = (1.0 + torch.sqrt(1.0 - 4.0 * eta) - 2.0 * eta) / (2.0 * eta)
+    # This should prevent NaNs
+    nudge_forward_(q, 1.0, 1e-6)
     m1 = 1.0 / (1.0 + q)  # Mass of the smaller BH for unit total mass M=1.
     m2 = q / (1.0 + q)  # Mass of the larger BH for unit total mass M=1.
     Sperp = chip * (
@@ -177,8 +179,6 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     s1z, s2z = s2z, s1z
     # from now on, m1 < m2
 
-    # m1_SI = m1 * MSUN
-    # m2_SI = m2 * MSUN
     (
         chi1_l,
         chi2_l,
@@ -190,6 +190,8 @@ def gen_IMRPhenomPv2(fs, theta, f_ref):
     ) = convert_spins(m1, m2, f_ref, phiRef, incl, s1x, s1y, s1z, s2x, s2y, s2z)
     phic = 2 * phi_aligned
     q = m2 / m1  # q>=1
+    # This should prevents NaNs
+    nudge_forward_(q, 1.0, 1e-6)
     M = m1 + m2
     chi_eff = (m1 * chi1_l + m2 * chi2_l) / M
     chil = (1.0 + q) / q * chi_eff
