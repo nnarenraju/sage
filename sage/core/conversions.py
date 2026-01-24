@@ -25,13 +25,12 @@ Documentation: NULL
 
 # Packages
 import torch
-import numpy as np
 
 
 def seconds_to_samples(nseconds, sample_rate, approx_mode=int, rounding=True):
     if rounding:
         # No need to change the base for rounding
-        return approx_mode(np.around(nseconds * sample_rate))
+        return approx_mode(torch.round(nseconds * sample_rate))
     else:
         return approx_mode(nseconds * sample_rate)
 
