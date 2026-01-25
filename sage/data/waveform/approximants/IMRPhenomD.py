@@ -28,12 +28,12 @@ Documentation: NULL
 import torch
 
 # LOCAL
-from sage.core.conversions import mchirp_eta_to_m1_m2
+from sage.core.conversions import mchirp_eta_to_mass1_mass2
 from sage.core.constants import EulerGamma, GM, C, PI, Mpc
-from sage.core.utils import torch_value_and_grad, torch_grad
+from sage.core.torch import torch_value_and_grad, torch_grad
 
-from sage.data.waveform import IMRPhenomD_QNMdata as qnm
-from sage.data.waveform import IMRPhenomD_utils as PhDutils
+from sage.data.waveform.approximants import IMRPhenomD_QNMdata as qnm
+from sage.data.waveform.approximants import IMRPhenomD_utils as PhDutils
 
 from sage.core.torch import nudge_backward_, nudge_forward_
 
@@ -660,7 +660,9 @@ def gen_IMRPhenomD(f, params, f_ref):
       h0 (array): Strain
     """
     # Lets make this easier by starting in Mchirp and eta space
-    m1, m2 = mchirp_eta_to_m1_m2(torch.tensor([params[0], params[1]], device="cuda"))
+    m1, m2 = mchirp_eta_to_mass1_mass2(
+        torch.tensor([params[0], params[1]], device="cuda")
+    )
     theta_intrinsic = torch.tensor([m1, m2, params[2], params[3]], device="cuda")
     theta_extrinsic = torch.tensor([params[4], params[5], params[6]], device="cuda")
 
