@@ -154,8 +154,8 @@ def torch_natural_cubic_coeffs(xp, fp):
 
     diag[0] = diag[-1] = 1.0  # natural BC
     diag[1:-1] = 2 * (h[:-1] + h[1:])
-    lower[1:] = h[1:-1]
-    upper[:-1] = h[1:-1]
+    lower[1:] = h[:-1]
+    upper[:-1] = h[1:]
 
     # Solve tridiagonal system (Thomas algorithm)
     # Forward sweep
@@ -173,7 +173,7 @@ def torch_natural_cubic_coeffs(xp, fp):
     return M
 
 
-def torch_natural_cubic_interp(x, xp, fp, M):
+def torch_natural_cubic_interp(x, xp, fp, M, derivative=False):
     """
     Compute a natural cubic spline interpolation of fp at points x using nodes xp.
     Matches gsl_spline_eval from LAL as much as possible.
@@ -225,4 +225,10 @@ def torch_natural_cubic_interp(x, xp, fp, M):
     a = (x_ip1 - x) / h
     b = (x - x_i) / h
 
-    return a * y_i + b * y_ip1 + ((a**3 - a) * M_i + (b**3 - b) * M_ip1) * (h**2) / 6
+    if not derivative:
+        return (
+            a * y_i + b * y_ip1 + ((a**3 - a) * M_i + (b**3 - b) * M_ip1) * (h**2) / 6
+        )
+
+    # derivative
+    return (y_ip1 - y_i) / h + h * ((3 * b * b - 1) * M_ip1 - (3 * a * a - 1) * M_i) / 6
