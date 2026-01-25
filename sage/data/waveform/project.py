@@ -27,7 +27,8 @@ Documentation: NULL
 import torch
 
 # LOCAL
-from sage.core.constants import C
+from sage.core.constants import PI, C
+from sage.core.math import rotation_matrix
 
 
 class Detector:
@@ -36,29 +37,80 @@ class Detector:
     All tensors should live on the same device as waveforms.
     """
 
-    def __init__(
-        self,
-        detector_name,
-        reference_time=1126259462.423,  # GPS seconds
-    ):
+    def __init__(self, detector_names, device="cuda"):
+        # CUDA device
+        self.device = device
+        # Detector
+        self.detector_names = detector_names
         # Detector tensor
+        # TODO: Set detector data as buffer once
+        # self.response shape = (batch_size, num_dets, response)
         self.response = response
         # Detector position (ECEF)
-        self.loc = location
-        self.longitude = longitude
-        self.latitude = latitude
+        location = location
+        # Earth center and relative positions of dets
+        earth_center = torch.stack([0, 0, 0], device=self.device)
+        self.dx = earth_center - self.location
 
-        # Reference times
-        self.gmst_reference = None
-        # GPS time of GW150914 by default
-        self.reference_time = reference_time
+    def get_detector_response(
+        self,
+        longitude,
+        latitude,
+        yangle=0,
+        xangle=None,
+        xaltitude=0,
+        yaltitude=0,
+    ):
+        """Add a new detector on the earth
+
+        Parameters
+        ----------
+        longitude: float
+            Longitude in radians using geodetic coordinates of the detector
+        latitude: float
+            Latitude in radians using geodetic coordinates of the detector
+        yangle: float
+            Azimuthal angle of the y-arm (angle drawn from pointing north)
+        xangle: float
+            Azimuthal angle of the x-arm (angle drawn from point north). If not set
+            we assume a right angle detector following the right-hand rule.
+        xaltitude: float
+            The altitude angle of the x-arm measured from the local horizon.
+        yaltitude: float
+            The altitude angle of the y-arm measured from the local horizon.
+
+        """
+        # Baseline response of a single arm pointed in the -X direction
+        resp = torch.stack([[-1, 0, 0], [0, 0, 0], [0, 0, 0]], device=self.device)
+        # Latitude and longitude provided in radians
+        # {x,y,z} -> {0,1,2}
+        rm2 = rotation_matrix(-longitude, 2)
+        rm1 = rotation_matrix(-1.0 * (PI / 2.0 - latitude), 1)
+
+        # Calculate response in earth centered coordinates
+        # by rotation of response in coordinates aligned
+        # with the detector arms
+        resps = []
+        # Only computed once; so for loop is fine
+        for angle, azi in [(yangle, yaltitude), (xangle, xaltitude)]:
+            # {x,y,z} -> {0,1,2}
+            rm0 = rotation_matrix(angle, 2)
+            rmN = rotation_matrix(-azi, 1)
+            rm = rm2 @ rm1 @ rm0 @ rmN
+            # apply rotation
+            resps.append(rm @ resp @ rm.T / 2.0)
+
+        full_response = resps[0] - resps[1]
+        return full_response
+
+    def random_gmst_estimate(self, batch_shape):
+        # Random GMST in radians to compute the antenna patterns
+        # Reference times to GMST requires table reads and is expensive
+        # Instead we simply randomise GMST in [0, 2PI)
+        return 2 * PI * torch.rand(batch_shape, device=self.device)
 
     def antenna_pattern(
-        self,
-        right_ascension,
-        declination,
-        polarization,
-        reference_time,
+        self, right_ascension, declination, polarization, gmst_estimate
     ):
         """Return the detector response.
 
@@ -70,8 +122,6 @@ class Detector:
             The declination of the source
         polarization: float or numpy.ndarray
             The polarization angle of the source
-        polarization_type: string flag: Tensor, Vector or Scalar
-            The gravitational wave polarizations. Default: 'Tensor'
 
         Returns
         -------
@@ -81,7 +131,7 @@ class Detector:
             The cross or vector-y or longitudnal polarization factor for this sky location / orientation
         """
 
-        gha = self.gmst_estimate(reference_time) - right_ascension
+        gha = gmst_estimate - right_ascension
 
         cosgha = torch.cos(gha)
         singha = torch.sin(gha)
@@ -90,35 +140,67 @@ class Detector:
         cospsi = torch.cos(polarization)
         sinpsi = torch.sin(polarization)
 
-        resp = self.response
-        ttype = torch.float64
+        # Basis vectors
+        x = torch.stack(
+            [
+                -cospsi * singha - sinpsi * cosgha * sindec,
+                -cospsi * cosgha + sinpsi * singha * sindec,
+                sinpsi * cosdec,
+            ],
+            dim=-1,
+        )
 
-        x0 = -cospsi * singha - sinpsi * cosgha * sindec
-        x1 = -cospsi * cosgha + sinpsi * singha * sindec
-        x2 = sinpsi * cosdec
+        y = torch.stack(
+            [
+                sinpsi * singha - cospsi * cosgha * sindec,
+                sinpsi * cosgha + cospsi * singha * sindec,
+                cospsi * cosdec,
+            ],
+            dim=-1,
+        )
 
-        x = np.array([x0, x1, x2], dtype=object)
-        dx = resp.dot(x)
+        # x & y are the same for all dets
+        # self.response should vary for each
+        dx = x @ self.response.T
+        dy = y @ self.response.T
 
-        y0 = sinpsi * singha - cospsi * cosgha * sindec
-        y1 = sinpsi * cosgha + cospsi * singha * sindec
-        y2 = cospsi * cosdec
-
-        y = np.array([y0, y1, y2], dtype=object)
-        dy = resp.dot(y)
-
-        if hasattr(dx, "shape"):
-            fplus = (x * dx - y * dy).sum(axis=0).astype(ttype)
-            fcross = (x * dy + y * dx).sum(axis=0).astype(ttype)
-        else:
-            fplus = (x * dx - y * dy).sum()
-            fcross = (x * dy + y * dx).sum()
+        fplus = torch.sum(x * dx - y * dy, dim=-1)
+        fcross = torch.sum(x * dy + y * dx, dim=-1)
 
         return fplus, fcross
 
-    def constant_project(self, hp, hc, ra, dec, polarization):
-        """Return the strain of a waveform as measured by the detector.
-        Apply the time shift for the given detector relative to the assumed
+    def time_delay_from_earth_center(self, right_ascension, declination, gmst_estimate):
+        """Return the time delay from the given location to detector for
+        a signal with the given sky location
+        In other words return `t1 - t2` where `t1` is the
+        arrival time in this detector and `t2` is the arrival time in the
+        other location.
+
+        Parameters
+        ----------
+        right_ascension : float
+            The right ascension (in rad) of the signal.
+        declination : float
+            The declination (in rad) of the signal.
+
+        Returns
+        -------
+        float
+            The arrival time difference between the detectors.
+        """
+        ra_angle = gmst_estimate - right_ascension
+        cosd = torch.cos(declination)
+
+        e0 = cosd * torch.cos(ra_angle)
+        e1 = cosd * -torch.sin(ra_angle)
+        e2 = torch.sin(declination)
+
+        ehat = torch.stack([e0, e1, e2], dim=-1)
+        return ehat @ self.dx.T / C
+
+    def constant_project(self, hp, hc, freqs, ra, dec, polarization):
+        """Return the strain of a waveform as measured by all detectors.
+        Apply the time shift for all given detectors relative to the assumed
         geocentric frame and apply the antenna patterns to the plus and cross
         polarizations.
 
@@ -135,20 +217,16 @@ class Detector:
         polarization: float
             Polarization angle of the source
         """
+        # Get GMST estimates for entire batch
+        # Batch shape should be (batch_size, num_dets, seq_len)
+        gmst_estimate = self.random_gmst_estimate(batch_shape=hp.size()[0])
         # 'constant' assume fixed orientation relative to source over the
         # duration of the signal, accurate for short duration signals
-        fp, fc = antenna_pattern(ra, dec, polarization, self.reference_time)
-        dt = time_delay_from_earth_center(ra, dec, self.reference_time)
-        ts = fp * hp + fc * hc
-        ts.start_time = float(ts.start_time) + dt
-        return ts
-
-    def gmst_estimate(self, gps_time):
-        if self.reference_time is None:
-            return gmst_accurate(gps_time)
-
-        if self.gmst_reference is None:
-            self.set_gmst_reference()
-        dphase = (gps_time - self.reference_time) / self.sday * (2.0 * np.pi)
-        gmst = (self.gmst_reference + dphase) % (2.0 * np.pi)
-        return gmst
+        fp, fc = self.antenna_pattern(ra, dec, polarization, gmst_estimate)
+        # Get time delay for all dets given the sky location
+        dt = self.time_delay_from_earth_center(ra, dec, gmst_estimate)
+        # Get hf from hp and hc given detector response
+        hf = fp[..., None] * hp + fc[..., None] * hc
+        # Apply time shift relative to detectors
+        hf *= torch.exp(-2j * PI * freqs * dt)
+        return hf
