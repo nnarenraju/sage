@@ -29,8 +29,7 @@ import torch
 
 # LOCAL
 from sage.core.constants import GM
-from sage.core.utils import torch_grad
-from sage.core.conversions import mchirp_eta_to_m1_m2
+from sage.core.conversions import mchirp_eta_to_mass1_mass2
 
 from .IMRPhenomD_utils import get_coeffs
 from .IMRPhenomD import Phase as PhDPhase
@@ -315,7 +314,7 @@ def gen_IMRPhenomPv2_hphc(f, params, f_ref):
     """
     Mc = params[0]
     eta = params[1]
-    m1, m2 = mchirp_eta_to_m1_m2(torch.tensor([Mc, eta]))
+    m1, m2 = mchirp_eta_to_mass1_mass2(Mc, eta)
     m1m2params = torch.tensor(
         [
             m1,
