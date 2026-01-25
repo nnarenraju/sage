@@ -25,32 +25,65 @@ Documentation: NULL
 
 # Packages
 import torch
+import numpy as np
+
+from astropy import coordinates, units
 
 # LOCAL
 from sage.core.constants import PI, C
 from sage.core.math import rotation_matrix
+from sage.core.hardcode import _DETMETADATA
 
 
-class Detector:
+class ProjectWave:
     """
     Minimal detector container for FD projection.
     All tensors should live on the same device as waveforms.
     """
 
     def __init__(self, detector_names, device="cuda"):
+
         # CUDA device
         self.device = device
         # Detector
-        self.detector_names = detector_names
+        self.detnames = detector_names
+
         # Detector tensor
-        # TODO: Set detector data as buffer once
-        # self.response shape = (batch_size, num_dets, response)
-        self.response = response
-        # Detector position (ECEF)
-        location = location
-        # Earth center and relative positions of dets
+        # self.response shape is (batch_size, num_dets, response)
+        self.response = torch.empty((len(self.detnames), 3, 3), device=self.device)
+
+        # Get relative position of DET from Earth center
         earth_center = torch.stack([0, 0, 0], device=self.device)
-        self.dx = earth_center - self.location
+        self.dx = torch.empty((len(self.detnames), 3), device=self.device)
+
+        # Get hardcoded detector metadata (obtained from LAL)
+        for ndet, detname in enumerate(self.detnames):
+            self.response[ndet] = self.get_detector_response(
+                _DETMETADATA[detname]["longitude"],
+                _DETMETADATA[detname]["latitude"],
+                _DETMETADATA[detname]["yangle"],
+                _DETMETADATA[detname]["xangle"],
+                _DETMETADATA[detname]["xaltitude"],
+                _DETMETADATA[detname]["yaltitude"],
+            )
+
+            # Relative position of DET of Earth center
+            loc = Project.get_relative_position(detname)
+            loc = torch.tensor(loc, device=self.device)
+            self.dx[ndet] = earth_center - loc
+
+    @staticmethod
+    def get_relative_position(detname):
+        # Get relative position of DET from Earth center
+        # Detector position (ECEF)
+        # TODO: Convert to PyTorch too at some point
+        loc = coordinates.EarthLocation.from_geodetic(
+            _DETMETADATA[detname]["longitude"] * units.rad,
+            _DETMETADATA[detname]["latitude"] * units.rad,
+            _DETMETADATA[detname]["height"] * units.meter,
+        )
+
+        return np.array([loc.x.value, loc.y.value, loc.z.value])
 
     def get_detector_response(
         self,
@@ -100,8 +133,7 @@ class Detector:
             # apply rotation
             resps.append(rm @ resp @ rm.T / 2.0)
 
-        full_response = resps[0] - resps[1]
-        return full_response
+        return resps[0] - resps[1]
 
     def random_gmst_estimate(self, batch_shape):
         # Random GMST in radians to compute the antenna patterns
@@ -161,11 +193,11 @@ class Detector:
 
         # x & y are the same for all dets
         # self.response should vary for each
-        dx = x @ self.response.T
-        dy = y @ self.response.T
+        dx = torch.einsum("...j,dij->...di", x, self.response)
+        dy = torch.einsum("...j,dij->...di", y, self.response)
 
-        fplus = torch.sum(x * dx - y * dy, dim=-1)
-        fcross = torch.sum(x * dy + y * dx, dim=-1)
+        fplus = torch.sum(x.unsqueeze(-2) * dx - y.unsqueeze(-2) * dy, dim=-1)
+        fcross = torch.sum(x.unsqueeze(-2) * dy + y.unsqueeze(-2) * dx, dim=-1)
 
         return fplus, fcross
 
@@ -196,6 +228,7 @@ class Detector:
         e2 = torch.sin(declination)
 
         ehat = torch.stack([e0, e1, e2], dim=-1)
+
         return ehat @ self.dx.T / C
 
     def constant_project(self, hp, hc, freqs, ra, dec, polarization):
@@ -228,5 +261,7 @@ class Detector:
         # Get hf from hp and hc given detector response
         hf = fp[..., None] * hp + fc[..., None] * hc
         # Apply time shift relative to detectors
-        hf *= torch.exp(-2j * PI * freqs * dt)
+        phase = torch.exp(-2j * PI * freqs[None, None, :] * dt[..., None])
+        hf *= phase
+
         return hf
