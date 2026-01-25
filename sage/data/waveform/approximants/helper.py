@@ -23,4 +23,12 @@ Documentation: NULL
 
 """
 
-# Packages
+# There are too many constants in the Phenom files which need to be tensors
+# Creating tensors during a hot-path iteration kills the torch graph
+# Here, we store lots of these constants and allow for device setting
+# Putting Phenom into a massive class is not torch.compile friendly
+# This will speed things up a lot
+
+class PhenomConstants:
+
+
