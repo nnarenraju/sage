@@ -24,7 +24,7 @@ Documentation: NULL
 """
 
 # Packages
-import numpy as np
+import torch
 
 
 class Normalise:
@@ -68,3 +68,46 @@ class Standardise:
     def unnorm(self, val):
         # Return original scale output
         return val * (self.std + self.eps) + self.mean
+
+
+# Refer: https://docs.astropy.org/en/stable/_modules/astropy/coordinates/matrix_utilities.html#rotation_matrix
+# Converted from astropy source to support torch computation
+def rotation_matrix(angle_in_rad, axis=2):
+    """
+    Generate matrices for rotation by some angle around some axis.
+    This version ONLY supports x,y,z axes; general axis version removed
+
+    Parameters
+    ----------
+    angle : angle-like
+        The amount of rotation the matrices should represent.  Can be an array.
+    axis : int
+        Only x,y,z supported. {x,y,z} -> {0,1,2}
+
+    Returns
+    -------
+    rmat : torch.tensor
+        A unitary rotation matrix.
+    """
+
+    if axis not in (0, 1, 2):
+        raise ValueError("Axis must be 0 (x), 1 (y), or 2 (z)")
+
+    s = torch.sin(angle_in_rad)
+    c = torch.cos(angle_in_rad)
+
+    R = torch.zeros(
+        angle_in_rad.shape + (3, 3),
+        device=angle_in_rad.device,
+        dtype=angle_in_rad.dtype,
+    )
+
+    a1 = (axis + 1) % 3
+    a2 = (axis + 2) % 3
+    R[..., axis, axis] = 1.0
+    R[..., a1, a1] = c
+    R[..., a1, a2] = s
+    R[..., a2, a1] = -s
+    R[..., a2, a2] = c
+
+    return R
