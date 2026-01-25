@@ -30,11 +30,6 @@ import torch
 # LOCAL
 from sage.core.constants import GM
 from sage.core.interpolation import torch_linear_interp
-from .IMRPhenomD_QNMdata import (
-    QNMData_a,
-    QNMData_fRD,
-    QNMData_fdamp,
-)
 
 from sage.core.torch import nudge_backward_
 
@@ -150,7 +145,7 @@ def FinalSpin0815_s(eta, S):
     )
 
 
-def get_fRD_fdamp(m1, m2, chi1, chi2):
+def get_fRD_fdamp(m1, m2, chi1, chi2, pv2const):
     m1_s = m1 * GM
     m2_s = m2 * GM
     M_s = m1_s + m2_s
@@ -160,16 +155,20 @@ def get_fRD_fdamp(m1, m2, chi1, chi2):
     a = FinalSpin0815_s(eta_s, S)
     Erad = EradRational0815(eta_s, chi1, chi2)
 
-    fRD = torch_linear_interp(a, QNMData_a, QNMData_fRD) / (1.0 - Erad)
-    fdamp = torch_linear_interp(a, QNMData_a, QNMData_fdamp) / (1.0 - Erad)
+    fRD = torch_linear_interp(a, pv2const.QNMData_a, pv2const.QNMData_fRD) / (
+        1.0 - Erad
+    )
+    fdamp = torch_linear_interp(a, pv2const.QNMData_a, pv2const.QNMData_fdamp) / (
+        1.0 - Erad
+    )
 
     return fRD / M_s, fdamp / M_s
 
 
-def get_transition_frequencies(theta, gamma2, gamma3):
+def get_transition_frequencies(theta, gamma2, gamma3, pv2const):
     m1, m2, chi1, chi2 = theta
     M = m1 + m2
-    f_RD, f_damp = get_fRD_fdamp(m1, m2, chi1, chi2)
+    f_RD, f_damp = get_fRD_fdamp(m1, m2, chi1, chi2, pv2const)
 
     # Phase transition frequencies
     f1 = 0.018 / (M * GM)
@@ -189,7 +188,7 @@ def get_transition_frequencies(theta, gamma2, gamma3):
     return f1, f2, f3, f4, f_RD, f_damp
 
 
-def get_coeffs(theta):
+def get_coeffs(theta, pv2const):
     # CL: jnp to torch; made coeff compute readable
     # Retrives the coefficients needed to produce the waveform
 
@@ -204,17 +203,17 @@ def get_coeffs(theta):
     # Definition of chiPN from lalsuite
     chi_s = (chi1 + chi2) / 2.0
     chi_a = (chi1 - chi2) / 2.0
-    seta = torch.sqrt(1 - 4 * eta)
-    chiPN = chi_s * (1 - 76 * eta / 113) + seta * chi_a
+    seta = torch.sqrt(pv2const.ONE - 4 * eta)
+    chiPN = chi_s * (pv2const.ONE - 76 * eta / 113) + seta * chi_a
 
     # chi powers
-    chi0 = 1.0
-    chi1 = chiPN - 1.0
+    chi0 = pv2const.ONE
+    chi1 = chiPN - pv2const.ONE
     chi2 = chi1**2
     chi3 = chi1**3
 
     # eta powers
-    eta0 = 1.0
+    eta0 = pv2const.ONE
     eta1 = eta
     eta2 = eta**2
 
@@ -232,7 +231,7 @@ def get_coeffs(theta):
             chi3 * eta1,
             chi3 * eta2,
         ],
-        device=theta.device,
+        device="cuda:0",
     )
 
     # NOTE: dict does not work well with torch.compile
@@ -623,5 +622,5 @@ PhenomD_coeff_table = torch.tensor(
             -2.0608879367971804,
         ],
     ],
-    device="cuda",
+    device="cuda:0",
 )

@@ -32,13 +32,12 @@ from sage.core.conversions import mchirp_eta_to_mass1_mass2
 from sage.core.constants import EulerGamma, GM, C, PI, Mpc
 from sage.core.torch import torch_value_and_grad, torch_grad
 
-from sage.data.waveform.approximants import IMRPhenomD_QNMdata as qnm
 from sage.data.waveform.approximants import IMRPhenomD_utils as PhDutils
 
 from sage.core.torch import nudge_backward_, nudge_forward_
 
 
-def get_inspiral_phase(fM_s, theta, coeffs):
+def get_inspiral_phase(fM_s, theta, coeffs, pv2const):
     """
     Calculate the inspiral phase for the IMRPhenomD waveform.
     """
@@ -46,8 +45,8 @@ def get_inspiral_phase(fM_s, theta, coeffs):
     # Mass variables
     m1, m2, chi1, chi2 = theta
     M = m1 + m2
-    m1_s = m1 * GM
-    m2_s = m2 * GM
+    m1_s = m1 * pv2const.GM
+    m2_s = m2 * pv2const.GM
     M_s = m1_s + m2_s
 
     # Sanity check eta
@@ -59,10 +58,10 @@ def get_inspiral_phase(fM_s, theta, coeffs):
     m1M = m1_s / M_s
     m2M = m2_s / M_s
 
-    phi0 = 1.0
-    phi1 = 0.0
+    phi0 = pv2const.ONE
+    phi1 = pv2const.ZERO
     phi2 = 5.0 * (74.3 / 8.4 + 11.0 * eta) / 9.0
-    phi3 = -16.0 * PI + (
+    phi3 = -pv2const.SIXTEEN * pv2const.PI + (
         m1M * (25.0 + 38.0 / 3.0 * m1M) * chi1 + m2M * (25.0 + 38.0 / 3.0 * m2M) * chi2
     )
     phi4 = 5.0 * (3058.673 / 7.056 + 5429.0 / 7.0 * eta + 617.0 * eta * eta) / 72.0
@@ -74,7 +73,7 @@ def get_inspiral_phase(fM_s, theta, coeffs):
         + ((240.0 / 9.6 * m1M * m1M) + (-7.0 / 9.6 * m1M * m1M)) * chi1 * chi1
         + ((240.0 / 9.6 * m2M * m2M) + (-7.0 / 9.6 * m2M * m2M)) * chi2 * chi2
     )
-    phi5 = 5.0 / 9.0 * (772.9 / 8.4 - 13.0 * eta) * PI
+    phi5 = 5.0 / 9.0 * (772.9 / 8.4 - 13.0 * eta) * pv2const.PI
     phi5 += (
         -m1M
         * (
@@ -90,7 +89,7 @@ def get_inspiral_phase(fM_s, theta, coeffs):
             + m2M * (1276.0 / 8.1 + m2M * (1.0 - m2M) * 170.0 / 9.0)
         )
     ) * chi2
-    phi5_log = (5.0 / 3.0) * (772.9 / 8.4 - 13.0 * eta) * PI
+    phi5_log = (5.0 / 3.0) * (772.9 / 8.4 - 13.0 * eta) * pv2const.PI
     phi5_log += 3.0 * (
         (
             -m1M
@@ -115,16 +114,16 @@ def get_inspiral_phase(fM_s, theta, coeffs):
     phi6 = (
         (
             11583.231236531 / 4.694215680
-            - 640.0 / 3.0 * PI * PI
+            - 640.0 / 3.0 * pv2const.PI * pv2const.PI
             - 684.8 / 2.1 * EulerGamma
         )
-        + eta * (-15737.765635 / 3.048192 + 225.5 / 1.2 * PI * PI)
+        + eta * (-15737.765635 / 3.048192 + 225.5 / 1.2 * pv2const.PI * pv2const.PI)
         + eta * eta * 76.055 / 1.728
         - eta * eta * eta * 127.825 / 1.296
-        + (-684.8 / 2.1) * torch.log(4.0)
+        + (-684.8 / 2.1) * torch.log(pv2const.FOUR)
     )
-    phi6 += (PI * m1M * (1490.0 / 3.0 + m1M * 260.0)) * chi1 + (
-        PI * m2M * (1490.0 / 3.0 + m2M * 260.0)
+    phi6 += (pv2const.PI * m1M * (1490.0 / 3.0 + m1M * 260.0)) * chi1 + (
+        pv2const.PI * m2M * (1490.0 / 3.0 + m2M * 260.0)
     ) * chi2
 
     ## --------- 3PN Spin-Spin Correction from TaylorF2 --------- ##
@@ -155,7 +154,7 @@ def get_inspiral_phase(fM_s, theta, coeffs):
 
     phi6_log = -684.8 / 2.1
 
-    phi7 = PI * (
+    phi7 = pv2const.PI * (
         770.96675 / 2.54016 + 378.515 / 1.512 * eta - 740.45 / 7.56 * eta * eta
     )
     phi7 += (
@@ -187,20 +186,20 @@ def get_inspiral_phase(fM_s, theta, coeffs):
     ) * chi2
 
     # Add frequency dependence here
-    v = (PI * fM_s) ** (1.0 / 3.0)
+    v = (pv2const.PI * fM_s) ** pv2const.ONE_BY_THREE
 
     phi_TF2 = (
-        phi0 * ((PI * fM_s) ** -(5.0 / 3.0))
-        + phi1 * ((PI * fM_s) ** -(4.0 / 3.0))
-        + phi2 * ((PI * fM_s) ** -1.0)
-        + phi3 * ((PI * fM_s) ** -(2.0 / 3.0))
-        + phi4 * ((PI * fM_s) ** -(1.0 / 3.0))
+        phi0 * ((pv2const.PI * fM_s) ** -pv2const.FIVE_BY_THREE)
+        + phi1 * ((pv2const.PI * fM_s) ** -(4.0 / 3.0))
+        + phi2 * ((pv2const.PI * fM_s) ** -1.0)
+        + phi3 * ((pv2const.PI * fM_s) ** -(2.0 / 3.0))
+        + phi4 * ((pv2const.PI * fM_s) ** -pv2const.ONE_BY_THREE)
         + phi5_log * torch.log(v)
         + phi5
-        + phi6_log * torch.log(v) * ((PI * fM_s) ** (1.0 / 3.0))
-        + phi6 * ((PI * fM_s) ** (1.0 / 3.0))
-        + phi7 * ((PI * fM_s) ** (2.0 / 3.0))
-    ) * (3.0 / (128.0 * eta)) - PI / 4.0
+        + phi6_log * torch.log(v) * ((pv2const.PI * fM_s) ** pv2const.ONE_BY_THREE)
+        + phi6 * ((pv2const.PI * fM_s) ** pv2const.ONE_BY_THREE)
+        + phi7 * ((pv2const.PI * fM_s) ** (2.0 / 3.0))
+    ) * (3.0 / (128.0 * eta)) - pv2const.PI / 4.0
     phi_Ins = (
         phi_TF2
         + (
@@ -452,7 +451,7 @@ def get_IIb_Amp(fM_s, theta, coeffs, f_RD, f_damp):
     return Amp_IIb
 
 
-def Phase(f, theta, coeffs, transition_freqs):
+def Phase(f, theta, coeffs, transition_freqs, pv2const=None):
     """
     Computes the phase of the PhenomD waveform following 1508.07253.
     Sets time and phase of coealence to be zero.
@@ -464,14 +463,14 @@ def Phase(f, theta, coeffs, transition_freqs):
     # First lets calculate some of the vairables that will be used below
     # Mass variables
     m1, m2, _, _ = theta
-    m1_s = m1 * GM
-    m2_s = m2 * GM
+    m1_s = m1 * pv2const.GM
+    m2_s = m2 * pv2const.GM
     M_s = m1_s + m2_s
 
     # Next we need to calculate the transition frequencies
     f1, f2, _, _, f_RD, f_damp = transition_freqs
 
-    phi_Ins = get_inspiral_phase(f * M_s, theta, coeffs)
+    phi_Ins = get_inspiral_phase(f * M_s, theta, coeffs, pv2const)
 
     # Next lets construct the phase of the late inspiral (region IIa)
     # beta0 is found by matching the phase between the region I and IIa
@@ -485,7 +484,7 @@ def Phase(f, theta, coeffs, transition_freqs):
     # ==> beta1_correction = phi_Ins'(f1*M_s) - phi_IIa'(f1*M_s)
     # ==> beta0 = phi_Ins(f1*M_s) - phi_IIa(f1*M_s) - beta1_correction*(f1*M_s)
     phi_Ins_f1, dphi_Ins_f1 = torch_value_and_grad(
-        get_inspiral_phase, (f1 * M_s, theta, coeffs)
+        get_inspiral_phase, (f1 * M_s, theta, coeffs, pv2const)
     )
     phi_IIa_f1, dphi_IIa_f1 = torch_value_and_grad(
         get_IIa_raw_phase, (f1 * M_s, theta, coeffs)
@@ -520,9 +519,11 @@ def Phase(f, theta, coeffs, transition_freqs):
 
     # And now we can combine them by multiplying by a set of heaviside functions
     phase = (
-        phi_Ins * torch.heaviside(f1 - f, 0.5)
-        + torch.heaviside(f - f1, 0.5) * phi_IIa * torch.heaviside(f2 - f, 0.5)
-        + phi_IIb * torch.heaviside(f - f2, 0.5)
+        phi_Ins * torch.heaviside(f1 - f, pv2const.HALF)
+        + torch.heaviside(f - f1, pv2const.HALF)
+        * phi_IIa
+        * torch.heaviside(f2 - f, pv2const.HALF)
+        + phi_IIb * torch.heaviside(f - f2, pv2const.HALF)
     )
 
     return phase
@@ -535,6 +536,7 @@ def Amp(
     transition_frequencies,
     fcut_true=None,
     D=1,
+    pv2const=None,
 ):
     """
     Computes the amplitude of the PhenomD frequency domain waveform following 1508.07253.
@@ -571,18 +573,22 @@ def Amp(
 
     # Check for fcut_true
     if fcut_true is None:
-        fcut_true = get_fcut_true(f, M_s)
+        fcut_true = get_fcut_true(f, M_s, pv2const)
 
     Amp = (
-        Amp_Ins * torch.heaviside(f3 - f, 0.5)
-        + torch.heaviside(f - f3, 0.5) * Amp_IIa * torch.heaviside(f4 - f, 0.5)
-        + torch.heaviside(f - f4, 0.5) * Amp_IIb * torch.heaviside(fcut_true - f, 0.0)
-        + 0.0 * torch.heaviside(f - fcut_true, 1.0)
+        Amp_Ins * torch.heaviside(f3 - f, pv2const.HALF)
+        + torch.heaviside(f - f3, pv2const.HALF)
+        * Amp_IIa
+        * torch.heaviside(f4 - f, pv2const.HALF)
+        + torch.heaviside(f - f4, pv2const.HALF)
+        * Amp_IIb
+        * torch.heaviside(fcut_true - f, pv2const.ZERO)
+        + 0.0 * torch.heaviside(f - fcut_true, pv2const.ONE)
     )
 
     # Prefactor
     Amp0 = get_Amp0(f * M_s, eta) * (
-        2.0 * torch.sqrt(5.0 / (64.0 * PI))
+        2.0 * torch.sqrt(pv2const.FIVE / (64.0 * PI))
     )  # This second factor is from lalsuite
 
     # Need to add in an overall scaling of M_s^2 to make the units correct
@@ -590,8 +596,8 @@ def Amp(
     return Amp0 * Amp * (M_s**2.0) / dist_s
 
 
-def get_fcut_true(f, M_s):
-    fcut = qnm.fM_CUT / M_s
+def get_fcut_true(f, M_s, pv2const=None):
+    fcut = pv2const.fM_CUT / M_s
     # Find the index where fcut_val would be inserted
     idx = torch.searchsorted(f, fcut, right=False) - 1
     idx = torch.clamp(idx, 0, f.numel() - 1)  # ensure valid index
