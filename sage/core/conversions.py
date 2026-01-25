@@ -30,7 +30,7 @@ import torch
 def seconds_to_samples(nseconds, sample_rate, approx_mode=int, rounding=True):
     if rounding:
         # No need to change the base for rounding
-        return approx_mode(torch.round(nseconds * sample_rate))
+        return approx_mode(round(nseconds * sample_rate))
     else:
         return approx_mode(nseconds * sample_rate)
 
@@ -39,7 +39,7 @@ def samples_to_seconds(nsamples, sample_rate):
     return nsamples / sample_rate
 
 
-def mchirp_eta_to_m1_m2(mchirp: torch.Tensor, eta: torch.Tensor):
+def mchirp_eta_to_mass1_mass2(mchirp: torch.Tensor, eta: torch.Tensor):
     """
     Convert chirp mass and symmetric mass ratio to individual component masses.
 
@@ -57,6 +57,22 @@ def mchirp_eta_to_m1_m2(mchirp: torch.Tensor, eta: torch.Tensor):
         - Component masses are in the same units as the input chirp mass.
     """
     M = mchirp / eta ** (3 / 5)
-    m2 = (M - torch.sqrt(M**2 - 4 * M**2 * eta)) / 2
-    m1 = M - m2
-    return m1, m2
+    mass2 = (M - torch.sqrt(M**2 - 4 * M**2 * eta)) / 2
+    mass1 = M - mass2
+    return mass1, mass2
+
+
+def eta_from_mass1_mass2(mass1, mass2):
+    """Returns the symmetric mass ratio from mass1 and mass2."""
+    return mass1 * mass2 / (mass1 + mass2) ** 2.0
+
+
+def mchirp_from_mass1_mass2(mass1, mass2):
+    """Returns the chirp mass from mass1 and mass2."""
+    return eta_from_mass1_mass2(mass1, mass2) ** (3.0 / 5) * (mass1 + mass2)
+
+
+def mass1_mass2_to_mchirp_eta(mass1, mass2):
+    mchirp = mchirp_from_mass1_mass2(mass1, mass2)
+    eta = eta_from_mass1_mass2(mass1, mass2)
+    return mchirp, eta
