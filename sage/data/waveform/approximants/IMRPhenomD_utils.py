@@ -30,7 +30,11 @@ import torch
 # LOCAL
 from sage.core.constants import GM
 from sage.core.interpolation import torch_linear_interp
-from sage.data.waveform import IMRPhenomD_QNMdata as qnm
+from .IMRPhenomD_QNMdata import (
+    QNMData_a,
+    QNMData_fRD,
+    QNMData_fdamp,
+)
 
 from sage.core.torch import nudge_backward_
 
@@ -156,8 +160,8 @@ def get_fRD_fdamp(m1, m2, chi1, chi2):
     a = FinalSpin0815_s(eta_s, S)
     Erad = EradRational0815(eta_s, chi1, chi2)
 
-    fRD = torch_linear_interp(a, qnm.QNMData_a, qnm.QNMData_fRD) / (1.0 - Erad)
-    fdamp = torch_linear_interp(a, qnm.QNMData_a, qnm.QNMData_fdamp) / (1.0 - Erad)
+    fRD = torch_linear_interp(a, QNMData_a, QNMData_fRD) / (1.0 - Erad)
+    fdamp = torch_linear_interp(a, QNMData_a, QNMData_fdamp) / (1.0 - Erad)
 
     return fRD / M_s, fdamp / M_s
 
