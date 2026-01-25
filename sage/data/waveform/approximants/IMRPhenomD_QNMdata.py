@@ -28,7 +28,7 @@ Documentation: NULL
 import torch
 
 # LOCAL
-from sage.core.interpolation import torch_cubic_interp
+from sage.core.interpolation import torch_scipylike_cubic_interp
 
 
 # Primary cite: Tables taken from https://git.ligo.org/lscsoft/lalsuite/-/blob/master/lalsimulation/lib/LALSimIMRPhenomD.h
@@ -3069,5 +3069,5 @@ fM_CUT = 0.2
 QNMData_a = torch.linspace(-1, 1, 500_000, device=_QNMData_a.device)
 
 # Interpolate using your torch cubic function
-QNMData_fRD = torch_cubic_interp(QNMData_a, _QNMData_a, _QNMData_fRD)
-QNMData_fdamp = torch_cubic_interp(QNMData_a, _QNMData_a, _QNMData_fdamp)
+QNMData_fRD = torch_scipylike_cubic_interp(QNMData_a, _QNMData_a, _QNMData_fRD)
+QNMData_fdamp = torch_scipylike_cubic_interp(QNMData_a, _QNMData_a, _QNMData_fdamp)
