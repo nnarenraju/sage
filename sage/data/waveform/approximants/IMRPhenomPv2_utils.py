@@ -41,7 +41,12 @@ from typing import Tuple
 from sage.core.constants import GM
 from sage.core.typing import TorchArray
 from sage.core.interpolation import torch_linear_interp, torch_natural_cubic_interp
-from sage.data.waveform import IMRPhenomD_QNMdata as qnm
+
+from .IMRPhenomD_QNMdata import (
+    QNMData_a,
+    QNMData_fRD,
+    QNMData_fdamp,
+)
 
 from sage.core.torch import nudge_backward_
 
@@ -173,7 +178,7 @@ def convert_spins(
     num = torch.maximum(ASp1, ASp2)
     # Adding this for safety
     # const REAL8 den = (m2 > m1) ? A2*m2_2 : A1*m1_2;
-    den = A2 * m2_2 if (m2 > m1) else A1 * m1_2
+    den = torch.where(m2 > m1, A2 * m2_2, A1 * m1_2)
     chip = num / den
 
     m_sec = M * GM
@@ -330,7 +335,7 @@ def WignerdCoefficients(
     return cos_beta_half, sin_beta_half
 
 
-def ComputeNNLOanglecoeffs(q, chil, chip, device):
+def ComputeNNLOanglecoeffs(q, chil, chip):
     m2 = q / (1.0 + q)
     m1 = 1.0 / (1.0 + q)
     dm = m1 - m2
@@ -463,7 +468,7 @@ def ComputeNNLOanglecoeffs(q, chil, chip, device):
             epsiloncoeff5,
         ],
         dim=0,
-    ).to(device)
+    ).to(q.device)
 
     return angcoeffs
 
@@ -494,10 +499,8 @@ def phP_get_fRD_fdamp(m1, m2, chi1_l, chi2_l, chip):
     M_s = m1_s + m2_s
     eta_s = m1_s * m2_s / (M_s * M_s)
     Erad = EradRational0815(eta_s, chi1_l, chi2_l)
-    fRD = torch_linear_interp(finspin, qnm.QNMData_a, qnm.QNMData_fRD) / (1.0 - Erad)
-    fdamp = torch_linear_interp(finspin, qnm.QNMData_a, qnm.QNMData_fdamp) / (
-        1.0 - Erad
-    )
+    fRD = torch_linear_interp(finspin, QNMData_a, QNMData_fRD) / (1.0 - Erad)
+    fdamp = torch_linear_interp(finspin, QNMData_a, QNMData_fdamp) / (1.0 - Erad)
 
     return fRD / M_s, fdamp / M_s
 
