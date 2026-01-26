@@ -629,12 +629,13 @@ def apply_time_shift_phase_correction(
         freqs_fixed,
         phase_fixed,
         M,
-    )[0] / (2 * torch.pi)
+        derivative=True,
+    )[0] / (2 * pv2const.PI)
 
     # Compute phase correction factor
     # phase_corr = exp(-2.PI.i f t_corr_fixed) = cos(...) - i sin(...)
     # For complex multiplication in PyTorch
-    phase_corr = torch.exp(-2j * torch.pi * freqs * t_corr_fixed)
+    phase_corr = torch.exp(pv2const.TWO_J * pv2const.PI * freqs * t_corr_fixed)
 
     # This extra correction term can shift the waveform to our desired tc
     # We don't include this for now to try and reproduce LAL closely
