@@ -175,9 +175,9 @@ def PhenomPOneFrequency(
     theta_ripple = torch.tensor([m1, m2, chi1, chi2], dtype=torch.float64)
 
     phase = PhDPhase(fs, theta_ripple, coeffs, transition_freqs, pv2const)
-    Dphi = lambda f: -PhDPhase(f, theta_ripple, coeffs, transition_freqs, pv2const)
+    # Dphi = lambda f: -PhDPhase(f, theta_ripple, coeffs, transition_freqs, pv2const)
 
-    phase -= phic
+    phase = phase - phic
     Amp = (
         PhDAmp(
             fs, theta_ripple, coeffs, transition_freqs, D=dist_mpc, pv2const=pv2const
@@ -187,7 +187,7 @@ def PhenomPOneFrequency(
 
     # phase -= 2. * phic; # line 1316 ???
     hPhenom = Amp * (torch.exp(-pv2const.ONE_J * phase))
-    return hPhenom, Dphi
+    return hPhenom, phase
 
 
 def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
@@ -346,7 +346,7 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
 
     print(transition_freqs)
 
-    hPhenomDs, phi_IIb = PhenomPOneFrequency(
+    hPhenomDs, _ = PhenomPOneFrequency(
         fs,
         m2,
         m1,
@@ -360,8 +360,6 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         transition_freqs,
         pv2const,
     )
-
-    print(hPhenomDs, phi_IIb)
 
     hp, hc = PhenomPCoreTwistUp(
         fs,
@@ -398,15 +396,27 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         freqs_fixed_stop,
         n_fixed,
         device=theta.device,
+        dtype=torch.float64,
     )
 
     # Compute phase on fixed grid
     # We have inverted m1 and m2 back to the convention m1 > m2 for PhenomD call
-    phase_fixed = PhDPhase(
-        freqs_fixed, theta_intrinsic, coeffs, transition_freqs, pv2const
+    phase_fixed = torch.empty(n_fixed, device=fs.device, dtype=torch.float64)
+
+    _, phase_fixed = PhenomPOneFrequency(
+        freqs_fixed,
+        m2,
+        m1,
+        chi2_l,
+        chi1_l,
+        chip,
+        phic,
+        M,
+        dist_mpc,
+        coeffs,
+        transition_freqs,
+        pv2const,
     )
-    # Shift by coalescence phase (if needed)
-    phase_fixed -= phic
 
     hp, hc = apply_time_shift_phase_correction(
         hptilde=hp,
