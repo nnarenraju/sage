@@ -266,8 +266,6 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         pv2const,
     )
 
-    print(angcoeffs)
-
     alphaNNLOoffset = (
         angcoeffs[0] / omega_ref
         + angcoeffs[1] / omega_ref_cbrt2
@@ -326,15 +324,11 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
     )
     Y2 = [Y2m2, Y2m1, Y20, Y21, Y22]
 
-    print(Y2)
-
     # Shift phase so that peak amplitude matches t = 0
     theta_intrinsic = torch.tensor(
         [m2, m1, chi2_l, chi1_l], device=theta.device, dtype=torch.float64
     )
     coeffs = get_coeffs(theta_intrinsic, pv2const)
-
-    print(coeffs)
 
     transition_freqs = phP_get_transition_frequencies(
         theta_intrinsic,
@@ -343,8 +337,6 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         chip,
         pv2const,
     )
-
-    print(transition_freqs)
 
     hPhenomDs, _ = PhenomPOneFrequency(
         fs,
@@ -377,9 +369,6 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
     )
     # unpack transition_freqs
     _, _, _, _, f_RD, _ = transition_freqs
-
-    print(phic)
-    print(hp, hc)  # ------------------------> We match till here!!!
 
     ## ** This is where we do the corrections to phase and time shift **
     # Fixed frequency grid around ringdown frequency for Pv2
@@ -436,10 +425,17 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
     final_hp = c2z * hp + s2z * hc
     final_hc = c2z * hc - s2z * hp
 
-    print(c2z, s2z)
-    print(final_hp, final_hc)
+    # Accounting for DC components and zero-padding below f_min
+    # Assuming f_ref is f_min
+    df = fs[1] - fs[0]
+    n_pad = int(f_ref / df) + 1
+    hp_pad = torch.zeros(n_pad + hp.numel(), dtype=hp.dtype, device=hp.device)
+    hc_pad = torch.zeros_like(hp_pad)
 
-    return final_hp, final_hc
+    hp_pad[n_pad:] = final_hp
+    hc_pad[n_pad:] = final_hc
+
+    return hp_pad, hc_pad
 
 
 def gen_IMRPhenomPv2_hphc(f, params, f_ref, pv2const):
@@ -468,8 +464,6 @@ def gen_IMRPhenomPv2_hphc(f, params, f_ref, pv2const):
         device=params.device,
         dtype=torch.float64,
     )
-
-    print(m1m2params, f, f_ref)
 
     hp, hc = gen_IMRPhenomPv2(f, m1m2params, f_ref, pv2const)
     return hp, hc
