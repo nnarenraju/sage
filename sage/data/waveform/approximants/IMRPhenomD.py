@@ -667,10 +667,14 @@ def gen_IMRPhenomD(f, params, f_ref):
     """
     # Lets make this easier by starting in Mchirp and eta space
     m1, m2 = mchirp_eta_to_mass1_mass2(
-        torch.tensor([params[0], params[1]], device="cuda")
+        torch.tensor([params[0], params[1]], device="cuda", dtype=torch.float64)
     )
-    theta_intrinsic = torch.tensor([m1, m2, params[2], params[3]], device="cuda")
-    theta_extrinsic = torch.tensor([params[4], params[5], params[6]], device="cuda")
+    theta_intrinsic = torch.tensor(
+        [m1, m2, params[2], params[3]], device="cuda", dtype=torch.float64
+    )
+    theta_extrinsic = torch.tensor(
+        [params[4], params[5], params[6]], device="cuda", dtype=torch.float64
+    )
 
     coeffs = PhDutils.get_coeffs(theta_intrinsic)
     h0 = _gen_IMRPhenomD(f, theta_intrinsic, theta_extrinsic, coeffs, f_ref)

@@ -1035,6 +1035,7 @@ _QNMData_a = torch.tensor(
         0.999,
         1.0,
     ],
+    dtype=torch.float64,
 )
 
 _QNMData_fRD = torch.tensor(
@@ -2043,6 +2044,7 @@ _QNMData_fRD = torch.tensor(
         0.1521282,
         0.1579619,
     ],
+    dtype=torch.float64
 )
 
 _QNMData_fdamp = torch.tensor(
@@ -3051,4 +3053,5 @@ _QNMData_fdamp = torch.tensor(
         0.0016762,
         0.0002908,
     ],
+    dtype=torch.float64
 )

@@ -115,7 +115,9 @@ def PhenomPCoreTwistUp(
     sBetah3 = sBetah2 * sBetah
     sBetah4 = sBetah3 * sBetah
 
-    Y2mA = torch.tensor(Y2m)  # need to pass Y2m in a 5-component list
+    Y2mA = torch.tensor(
+        Y2m, dtype=torch.float64
+    )  # need to pass Y2m in a 5-component list
     hp_sum = pv2const.ZERO
     hc_sum = pv2const.ZERO
 
@@ -170,7 +172,7 @@ def PhenomPOneFrequency(
     # Note that JAX does not give index errors, so if you pass in the
     # the wrong array it will behave strangely
     norm = 2.0 * torch.sqrt(pv2const.FIVE / (64.0 * pv2const.PI))
-    theta_ripple = torch.tensor([m1, m2, chi1, chi2])
+    theta_ripple = torch.tensor([m1, m2, chi1, chi2], dtype=torch.float64)
 
     phase = PhDPhase(fs, theta_ripple, coeffs, transition_freqs, pv2const)
     Dphi = lambda f: -PhDPhase(f, theta_ripple, coeffs, transition_freqs, pv2const)
@@ -224,6 +226,17 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         s2z,
         pv2const,
     )
+
+    print(
+        chi1_l,
+        chi2_l,
+        chip,
+        thetaJN,
+        alpha0,
+        phi_aligned,
+        zeta_polariz,
+    )
+
     phic = 2 * phi_aligned
     q = m2 / m1  # q>=1
     # This should prevents NaNs
@@ -252,6 +265,8 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         chip,
         pv2const,
     )
+
+    print(angcoeffs)
 
     alphaNNLOoffset = (
         angcoeffs[0] / omega_ref
@@ -311,9 +326,15 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
     )
     Y2 = [Y2m2, Y2m1, Y20, Y21, Y22]
 
+    print(Y2)
+
     # Shift phase so that peak amplitude matches t = 0
-    theta_intrinsic = torch.tensor([m2, m1, chi2_l, chi1_l], device=theta.device)
+    theta_intrinsic = torch.tensor(
+        [m2, m1, chi2_l, chi1_l], device=theta.device, dtype=torch.float64
+    )
     coeffs = get_coeffs(theta_intrinsic, pv2const)
+
+    print(coeffs)
 
     transition_freqs = phP_get_transition_frequencies(
         theta_intrinsic,
@@ -322,6 +343,8 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         chip,
         pv2const,
     )
+
+    print(transition_freqs)
 
     hPhenomDs, phi_IIb = PhenomPOneFrequency(
         fs,
@@ -337,6 +360,8 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         transition_freqs,
         pv2const,
     )
+
+    print(hPhenomDs, phi_IIb)
 
     hp, hc = PhenomPCoreTwistUp(
         fs,
@@ -354,6 +379,9 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
     )
     # unpack transition_freqs
     _, _, _, _, f_RD, _ = transition_freqs
+
+    print(phic)
+    print(hp, hc)  # ------------------------> We match till here!!!
 
     ## ** This is where we do the corrections to phase and time shift **
     # Fixed frequency grid around ringdown frequency for Pv2
@@ -397,6 +425,10 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
     s2z = torch.sin(2 * zeta_polariz)
     final_hp = c2z * hp + s2z * hc
     final_hc = c2z * hc - s2z * hp
+
+    print(c2z, s2z)
+    print(final_hp, final_hc)
+
     return final_hp, final_hc
 
 
@@ -424,6 +456,10 @@ def gen_IMRPhenomPv2_hphc(f, params, f_ref, pv2const):
             params[11],
         ],
         device=params.device,
+        dtype=torch.float64,
     )
+
+    print(m1m2params, f, f_ref)
+
     hp, hc = gen_IMRPhenomPv2(f, m1m2params, f_ref, pv2const)
     return hp, hc

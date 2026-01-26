@@ -232,6 +232,7 @@ def get_coeffs(theta, pv2const):
             chi3 * eta2,
         ],
         device="cuda:0",
+        dtype=torch.float64,
     )
 
     # NOTE: dict does not work well with torch.compile
@@ -623,4 +624,5 @@ PhenomD_coeff_table = torch.tensor(
         ],
     ],
     device="cuda:0",
+    dtype=torch.float64,
 )

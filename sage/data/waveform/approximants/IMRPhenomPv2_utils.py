@@ -487,7 +487,7 @@ def ComputeNNLOanglecoeffs(q, chil, chip, pv2const):
             epsiloncoeff5,
         ],
         dim=0,
-    )
+    ).to(dtype=torch.float64)
 
     return angcoeffs
 
@@ -625,7 +625,7 @@ def apply_time_shift_phase_correction(
     # Compute derivative of phase at f_final using natural cubic spline
     M = torch_natural_cubic_coeffs(freqs_fixed, phase_fixed)
     t_corr_fixed = torch_natural_cubic_interp(
-        torch.tensor([f_final], device=freqs.device, dtype=freqs.dtype),
+        torch.tensor([f_final], device=freqs.device, dtype=torch.float64),
         freqs_fixed,
         phase_fixed,
         M,
