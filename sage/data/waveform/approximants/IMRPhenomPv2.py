@@ -99,7 +99,6 @@ def PhenomPCoreTwistUp(
         + angcoeffs[9] * omega_cbrt
     ) - epsilonoffset
 
-    # print("alpha, epsilon: ", alpha, epsilon)
     cBetah, sBetah = WignerdCoefficients(
         omega_cbrt,
         SL,
@@ -225,16 +224,6 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
         s2y,
         s2z,
         pv2const,
-    )
-
-    print(
-        chi1_l,
-        chi2_l,
-        chip,
-        thetaJN,
-        alpha0,
-        phi_aligned,
-        zeta_polariz,
     )
 
     phic = 2 * phi_aligned
@@ -426,9 +415,10 @@ def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
     final_hc = c2z * hc - s2z * hp
 
     # Accounting for DC components and zero-padding below f_min
-    # Assuming f_ref is f_min
+    # We start from 0 Hz, df Hz, 2df Hz; not including f_min
+    # Assuming f_min included in fs
     df = fs[1] - fs[0]
-    n_pad = int(f_ref / df) + 1
+    n_pad = int(fs[0] / df)
     hp_pad = torch.zeros(n_pad + hp.numel(), dtype=hp.dtype, device=hp.device)
     hc_pad = torch.zeros_like(hp_pad)
 
