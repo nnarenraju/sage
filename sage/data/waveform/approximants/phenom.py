@@ -36,12 +36,21 @@ import torch
 from sage.core import constants
 from sage.core.interpolation import torch_scipylike_cubic_interp
 
-from .qnm_data import _QNMData_a, _QNMData_fdamp, _QNMData_fRD
+from .phenom_data import _QNMData_a, _QNMData_fdamp, _QNMData_fRD, PhenomD_coeff_table
 
 
 class PhenomConstants:
 
     def __init__(self, device="cuda"):
+
+        # Constants from sage.core
+        for name in constants.CONST_METADATA:
+            value = getattr(constants, name)
+            setattr(
+                self,
+                name,
+                torch.tensor(value, device=device, dtype=torch.float64),
+            )
 
         # Natural numbers
         self.ZERO = torch.tensor(0.0, device=device, dtype=torch.float64)
@@ -82,15 +91,7 @@ class PhenomConstants:
         # Complex
         self.ONE_J = torch.tensor(1j, dtype=torch.complex64, device=device)
         self.TWO_J = torch.tensor(2j, dtype=torch.complex64, device=device)
-
-        # Constants from sage.core
-        for name in constants.CONST_METADATA:
-            value = getattr(constants, name)
-            setattr(
-                self,
-                name,
-                torch.tensor(value, device=device, dtype=torch.float64),
-            )
+        self.TWOPI = 2.0 * self.PI
 
         ## Physical constants for Pv2
         self.fM_CUT = torch.tensor(0.2, device=device, dtype=torch.float64)
@@ -99,6 +100,11 @@ class PhenomConstants:
         self._QNMData_a = _QNMData_a.to(device=device, dtype=torch.float64)
         self._QNMData_fdamp = _QNMData_fdamp.to(device=device, dtype=torch.float64)
         self._QNMData_fRD = _QNMData_fRD.to(device=device, dtype=torch.float64)
+
+        # PhenomD Coefficients Table
+        self.PhenomD_coeff_table = PhenomD_coeff_table.to(
+            device=device, dtype=torch.float64
+        )
 
         # Target grid
         self.QNMData_a = torch.linspace(
@@ -111,4 +117,19 @@ class PhenomConstants:
         )
         self.QNMData_fdamp = torch_scipylike_cubic_interp(
             self.QNMData_a, self._QNMData_a, self._QNMData_fdamp
+        )
+
+        # Precompute slope and intercept for quick linear interpolation
+        self.fRD_slope = (self.QNMData_fRD[1:] - self.QNMData_fRD[:-1]) / (
+            self.QNMData_a[1:] - self.QNMData_a[:-1]
+        )
+        self.fRD_intercept = (
+            self.QNMData_fRD[:-1] - self.fRD_slope * self.QNMData_a[:-1]
+        )
+
+        self.fdamp_slope = (self.QNMData_fdamp[1:] - self.QNMData_fdamp[:-1]) / (
+            self.QNMData_a[1:] - self.QNMData_a[:-1]
+        )
+        self.fdamp_intercept = (
+            self.QNMData_fdamp[:-1] - self.fdamp_slope * self.QNMData_a[:-1]
         )
