@@ -3056,7 +3056,7 @@ _QNMData_fdamp = torch.tensor(
     dtype=torch.float64,
 )
 
-self.PhenomD_coeff_table = torch.tensor(
+PhenomD_coeff_table = torch.tensor(
     [
         [  # rho1 (element 0)
             3931.8979897196696,
