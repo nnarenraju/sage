@@ -28,5 +28,5 @@ from sage.data.waveform.approximants import (
     IMRPhenomD_utils,
     IMRPhenomPv2,
     IMRPhenomPv2_utils,
-    helper,
+    phenom,
 )
