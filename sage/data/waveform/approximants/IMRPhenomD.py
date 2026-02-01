@@ -26,9 +26,9 @@ Documentation: NULL
 
 # Packages
 import torch
+from torch.func import grad
 
 # LOCAL
-from sage.core.torch import torch_value_and_grad
 from sage.core.torch import nudge_backward_
 
 from sage.data.waveform.approximants import phenom
@@ -37,25 +37,23 @@ from sage.data.waveform.approximants import phenom
 class IMRPhenomD(phenom.PhenomConstants):
 
     def __init__(self, f, f_ref):
+        super().__init__(device=f.device)
         # Fixed frequency grid
         self.f = f
         self.f_numel = self.f.numel()
         self.f_ref = f_ref
-        # Fix device for all tensors
-        self.device = self.f.device
 
     def __call__(self, theta):
         # Compute derived quantities
         derived = self.compute_derived_parameters(theta)
 
-        # theta = {m1, m2, var2, var3, var4, var5, var6}
+        # theta = {m1, m2, var2, var3, var4, var5, var6, ...}
         # First four are intrinsic, next 3 are extrinsic
-        coeffs = self.get_coeffs(theta[2], theta[3], derived)
+        coeffs = self.get_coeffs(theta[:, 2], theta[:, 3], derived)
         h0 = self.get_h0(theta, coeffs, derived)
         # Compute hp and hc
-        # theta[7] is iota
-        hp = h0 * (1 / 2 * (1 + torch.cos(theta[7]) ** 2))
-        hc = -self.ONE_J * h0 * torch.cos(theta[7])
+        hp = h0 * (1 / 2 * (1 + torch.cos(theta[:, 7]) ** 2))
+        hc = -self.ONE_J * h0 * torch.cos(theta[:, 7])
 
         return hp, hc
 
@@ -63,8 +61,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Derived parameters are reused a lot; compute once
         # Putting this in self is unfortunately detrimental
         # torch.compile thinks class object is mutating dynamically
-        m1_s = theta[0] * self.GM
-        m2_s = theta[1] * self.GM
+        m1_s = theta[:, 0] * self.GM
+        m2_s = theta[:, 1] * self.GM
         M_s = m1_s + m2_s
         eta_s = m1_s * m2_s / (M_s * M_s)
         # This should prevents NaNs
@@ -82,13 +80,14 @@ class IMRPhenomD(phenom.PhenomConstants):
         chiPN = chi_s * (self.ONE - 76 * eta / 113) + seta * chi_a
 
         # chi powers
-        chi0 = self.ONE
+        B = eta.shape[0]
+        chi0 = self.ONE.expand(B)
         chi1 = chiPN - self.ONE
         chi2 = chi1**2
         chi3 = chi1**3
 
         # eta powers
-        eta0 = self.ONE
+        eta0 = self.ONE.expand(B)
         eta1 = eta
         eta2 = eta**2
 
@@ -106,6 +105,7 @@ class IMRPhenomD(phenom.PhenomConstants):
                 chi3 * eta1,
                 chi3 * eta2,
             ],
+            dim=1,
         )
 
         # torch stack is compile friendly
@@ -120,7 +120,9 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         # Compute transition frequencies
         # f1, f2, f3, f4, f_RD, f_damp
-        trans_fs = self.get_transition_frequencies(theta[:, :4], coeffs[5], coeffs[6])
+        trans_fs = self.get_transition_frequencies(
+            theta[:, :4], derived, coeffs[5], coeffs[6]
+        )
 
         # Precomputing required parameters
         f1_Ms = trans_fs[:, 0] * M_s
@@ -133,17 +135,17 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Central frequency point (used f_RD and f_damp)
         fmid_Ms = (trans_fs[:, 0] + trans_fs[:, 2]) / 2
         fx_Ms = torch.stack(
-            [f_Ms, fref_Ms, f1_Ms, f2_Ms, f3_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms]
+            [f_Ms, fref_Ms, f1_Ms, f2_Ms, f3_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms], dim=1
         )
 
+        # f4_scaled does *not* need requires_grad_()
+        # Calling autograd here breaks compile
         f4_scaled = trans_fs[:, 3] * M_s
-        f4_scaled.requires_grad_(True)
-        Psi_IIb = IMRPhenomD.get_IIb_raw_phase(f4_scaled, derived[:, 3], coeffs, fx_Ms)
-        t0 = torch.autograd.grad(
-            Psi_IIb,
-            f4_scaled,
-            grad_outputs=torch.ones_like(Psi_IIb),
-        )[0]
+        # create a grad function for IIb phase w.r.t first argument only
+        grad_IIb = grad(IMRPhenomD.get_IIb_raw_phase, argnums=0)
+        # evaluate both phase and its derivative (if we need the actual phase value)
+        # Psi_IIb = IMRPhenomD.get_IIb_raw_phase(f4_scaled, derived[:, 3], coeffs, fx_Ms)
+        t0 = grad_IIb(f4_scaled, derived[:, 3], coeffs, fx_Ms)
 
         ## Phase and Amplitude
         # Phase computation
@@ -173,8 +175,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         h0 = A * torch.exp(1j * -Psi)
         return h0
 
-    def get_transition_frequencies(self, m1, m2, chi1, chi2, M_s, gamma2, gamma3):
-        f_RD, f_damp = self.get_fRD_fdamp(m1, m2, chi1, chi2)
+    def get_transition_frequencies(self, theta, derived, gamma2, gamma3):
+        _, _, chi1, chi2 = theta.T
+        m1_s, m2_s, M_s, eta_s = derived.T
+        f_RD, f_damp = self.get_fRD_fdamp(chi1, chi2, m1_s, m2_s, M_s, eta_s)
 
         # Phase transition frequencies
         f1 = 0.018 / M_s
@@ -191,7 +195,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Select based on condition
         f4 = torch.where(gamma2 >= 1, f4_gammaneg_gtr_1, f4_gammaneg_less_1)
 
-        return torch.stack([f1, f2, f3, f4, f_RD, f_damp])
+        return torch.stack([f1, f2, f3, f4, f_RD, f_damp], dim=1)
 
     def get_fRD_fdamp(self, chi1, chi2, m1_s, m2_s, M_s, eta_s):
         # Compute Kerr-like total angular momentum
@@ -200,13 +204,21 @@ class IMRPhenomD(phenom.PhenomConstants):
         a = IMRPhenomD.final_spin_0815_s(eta_s, S)
         Erad = IMRPhenomD.erad_rational_0815(eta_s, chi1, chi2)
 
-        # Make linear interpolations of frequencies
-        # We have already precomputed the slope and intercept
-        idx = torch.searchsorted(self.QNMData_a, a) - 1
-        idx = idx.clamp(0, len(self.fRD_slope) - 1)
+        # Compute relative position in grid
+        # We could precompute slope and intercept but this is faster
+        # We have uniform indexing on QNMData_a which allows this to work
+        rel_idx = (a - self.QNMData_a[0]) / (self.QNMData_a[1] - self.QNMData_a[0])
+        idx_lower = rel_idx.floor().long().clamp(0, len(self.QNMData_a) - 2)
+        frac = rel_idx - idx_lower.float()
 
-        fRD = self.fRD_slope[idx] * a + self.fRD_intercept[idx]
-        fdamp = self.fdamp_slope[idx] * a + self.fdamp_intercept[idx]
+        fRD = (
+            self.QNMData_fRD[idx_lower] * (1 - frac)
+            + self.QNMData_fRD[idx_lower + 1] * frac
+        )
+        fdamp = (
+            self.QNMData_fdamp[idx_lower] * (1 - frac)
+            + self.QNMData_fdamp[idx_lower + 1] * frac
+        )
 
         factor = 1.0 / (1.0 - Erad)
         fRD *= factor
@@ -282,7 +294,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
 
     @staticmethod
-    def get_IIa_raw_phase(self, f_Ms, eta, coeffs):
+    def get_IIa_raw_phase(f_Ms, eta, coeffs):
         phi_IIa_raw = (
             coeffs[11] * f_Ms
             + coeffs[12] * torch.log(f_Ms)
@@ -318,24 +330,31 @@ class IMRPhenomD(phenom.PhenomConstants):
         # beta0 is found by matching the phase between the region I and IIa
         # C(1) continuity must be preserved. We therefore need to solve for an
         # additional contribution to beta1
-        phi_Ins_f1, dphi_Ins_f1 = torch_value_and_grad(
-            self.get_inspiral_phase, (f1_Ms, theta, coeffs)
-        )
-        phi_IIa_f1, dphi_IIa_f1 = torch_value_and_grad(
-            IMRPhenomD.get_IIa_raw_phase, (f1_Ms, derived[:, 3], coeffs)
-        )
+        grad_inspiral = grad(self.get_inspiral_phase, argnums=0)
+        grad_IIa_raw = grad(IMRPhenomD.get_IIa_raw_phase, argnums=0)
+        grad_phi_IIa = grad(IMRPhenomD.get_phi_IIa, argnums=0)
+        grad_IIb_raw = grad(IMRPhenomD.get_IIb_raw_phase, argnums=0)
+
+        # Evaluate phase and derivative at f1
+        phi_Ins_f1 = self.get_inspiral_phase(f1_Ms, theta, coeffs)
+        dphi_Ins_f1 = grad_inspiral(f1_Ms, theta, coeffs)
+
+        phi_IIa_f1 = IMRPhenomD.get_IIa_raw_phase(f1_Ms, derived[:, 3], coeffs)
+        dphi_IIa_f1 = grad_IIa_raw(f1_Ms, derived[:, 3], coeffs)
 
         beta1corr = dphi_Ins_f1 - dphi_IIa_f1
         beta0 = phi_Ins_f1 - beta1corr * f1_Ms - phi_IIa_f1
         phi_IIa = IMRPhenomD.get_phi_IIa(f_Ms, derived[:, 3], coeffs, beta0, beta1corr)
 
         # Phase of the merger-ringdown (region IIb)
-        phi_IIa_f2, dphi_IIa_f2 = torch_value_and_grad(
-            IMRPhenomD.get_phi_IIa, (f2_Ms, derived[:, 3], coeffs, beta0, beta1corr)
+        # Evaluate phase and derivative at f2
+        phi_IIa_f2 = IMRPhenomD.get_phi_IIa(
+            f2_Ms, derived[:, 3], coeffs, beta0, beta1corr
         )
-        phi_IIb_f2, dphi_IIb_f2 = torch_value_and_grad(
-            IMRPhenomD.get_IIb_raw_phase, (f2_Ms, derived[:, 3], coeffs, fx_Ms)
-        )
+        dphi_IIa_f2 = grad_phi_IIa(f2_Ms, derived[:, 3], coeffs, beta0, beta1corr)
+
+        phi_IIb_f2 = IMRPhenomD.get_IIb_raw_phase(f2_Ms, derived[:, 3], coeffs, fx_Ms)
+        dphi_IIb_f2 = grad_IIb_raw(f2_Ms, derived[:, 3], coeffs, fx_Ms)
 
         a1_correction = dphi_IIa_f2 - dphi_IIb_f2
         a0 = phi_IIa_f2 + beta0 - a1_correction * f2_Ms - phi_IIb_f2
@@ -421,7 +440,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         Calculate the inspiral phase for the IMRPhenomD waveform.
         """
         # Expand vars
-        m1_s, m2_s, M_s, eta_s = derived
+        m1_s, m2_s, M_s, eta_s = derived.T
         chi1, chi2 = chi
         # First lets construct the phase in the inspiral (region I)
         m1M = m1_s / M_s
@@ -554,7 +573,7 @@ class IMRPhenomD(phenom.PhenomConstants):
             + phi6_log * torch.log(v) * v
             + phi6 * v
             + phi7 * (PI_f_Ms ** (2.0 / 3.0))
-        ) * (3.0 / (128.0 * eta_s)) - self / 4.0
+        ) * (3.0 / (128.0 * eta_s)) - self.PI / 4.0
         phi_Ins = (
             phi_TF2
             + (
@@ -570,11 +589,9 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     def get_fcut_true(self, M_s):
         fcut = self.fM_CUT / M_s
-        # Find the index where fcut_val would be inserted
-        idx = torch.searchsorted(self.f, fcut, right=False) - 1
-        idx = torch.clamp(idx, 0, self.f_numel - 1)  # ensure valid index
-        # Use torch.where to handle the case when fcut_val is above f[-1]
-        return torch.where(fcut > self.f[-1], fcut, self.f[idx])
+        mask = self.f[None, :] <= fcut[:, None]
+        f_grid = self.f[None, :].expand_as(mask)
+        return torch.max(torch.where(mask, f_grid, -torch.inf), dim=1).values
 
     def amp(
         self,
@@ -591,8 +608,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         """
 
         # Required vars
-        _, _, M_s, eta_s = derived
-        _, _, chi1, chi2, D = theta
+        _, _, M_s, eta_s = derived.T
+        _, _, chi1, chi2, D = theta.T
 
         # First we get the inspiral amplitude
         Amp_Ins = self.get_inspiral_Amp(fx_Ms[:, 0], chi1, chi2, eta_s, coeffs)
@@ -750,17 +767,21 @@ class IMRPhenomD(phenom.PhenomConstants):
     def get_IIa_Amp(self, fx_Ms, theta, derived, coeffs):
         # Required vars
         # f1, f3, f_RD, f_damp
-        _, _, _, eta_s = derived
-        _, _, chi1, chi2, _ = theta
+        _, _, _, eta_s = derived.T
+        _, _, chi1, chi2, _ = theta.T
 
         # For this region, we also need to calculate the the values and derivatives
         # of the Ins and IIb regions
-        v1, d1 = torch_value_and_grad(
-            self.get_inspiral_Amp, (fx_Ms[:, 2], chi1, chi2, eta_s, coeffs)
-        )
-        v3, d3 = torch_value_and_grad(
-            IMRPhenomD.get_IIb_Amp, (fx_Ms[:, 4], fx_Ms, coeffs)
-        )
+        # Grad functions for amplitude
+        grad_inspiral_amp = grad(self.get_inspiral_Amp, argnums=0)
+        grad_IIb_amp = grad(IMRPhenomD.get_IIb_Amp, argnums=0)
+
+        # Evaluate amplitude and derivative
+        v1 = self.get_inspiral_Amp(fx_Ms[:, 2], chi1, chi2, eta_s, coeffs)
+        d1 = grad_inspiral_amp(fx_Ms[:, 2], chi1, chi2, eta_s, coeffs)
+
+        v3 = IMRPhenomD.get_IIb_Amp(fx_Ms[:, 4], fx_Ms, coeffs)
+        d3 = grad_IIb_amp(fx_Ms[:, 4], fx_Ms, coeffs)
 
         # Here we need the delta solutions
         delta0 = IMRPhenomD.get_delta0(
