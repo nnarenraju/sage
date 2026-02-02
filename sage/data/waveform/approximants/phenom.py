@@ -41,7 +41,7 @@ from .phenom_data import _QNMData_a, _QNMData_fdamp, _QNMData_fRD, PhenomD_coeff
 
 class PhenomConstants:
 
-    def __init__(self, device="cuda"):
+    def __init__(self, device="cuda", batch_size=None, dtype=None):
 
         # Constants from sage.core
         for name in constants.CONST_METADATA:
@@ -49,41 +49,39 @@ class PhenomConstants:
             setattr(
                 self,
                 name,
-                torch.tensor(value, device=device, dtype=torch.float64),
+                torch.tensor(value, device=device, dtype=dtype),
             )
 
         # Natural numbers
-        self.ZERO = torch.tensor(0.0, device=device, dtype=torch.float64)
-        self.ONE = torch.tensor(1.0, device=device, dtype=torch.float64)
-        self.THREE = torch.tensor(3.0, device=device, dtype=torch.float64)
-        self.FIVE = torch.tensor(5.0, device=device, dtype=torch.float64)
-        self.SIX = torch.tensor(6.0, device=device, dtype=torch.float64)
-        self.FIFTEEN = torch.tensor(15.0, device=device, dtype=torch.float64)
-        self.TWENTY_FOUR = torch.tensor(24.0, device=device, dtype=torch.float64)
-        self.FORTY_EIGHT = torch.tensor(48.0, device=device, dtype=torch.float64)
-        self.ONE_NINTY_TWO = torch.tensor(192.0, device=device, dtype=torch.float64)
+        self.ZERO = torch.tensor(0.0, device=device, dtype=dtype)
+        self.ONE = torch.tensor(1.0, device=device, dtype=dtype)
+        self.THREE = torch.tensor(3.0, device=device, dtype=dtype)
+        self.FIVE = torch.tensor(5.0, device=device, dtype=dtype)
+        self.SIX = torch.tensor(6.0, device=device, dtype=dtype)
+        self.FIFTEEN = torch.tensor(15.0, device=device, dtype=dtype)
+        self.TWENTY_FOUR = torch.tensor(24.0, device=device, dtype=dtype)
+        self.FORTY_EIGHT = torch.tensor(48.0, device=device, dtype=dtype)
+        self.ONE_NINTY_TWO = torch.tensor(192.0, device=device, dtype=dtype)
 
         # Powers of two (except 1)
-        self.TWO = torch.tensor(2.0, device=device, dtype=torch.float64)
-        self.FOUR = torch.tensor(4.0, device=device, dtype=torch.float64)
-        self.EIGHT = torch.tensor(8.0, device=device, dtype=torch.float64)
-        self.SIXTEEN = torch.tensor(16.0, device=device, dtype=torch.float64)
-        self.THIRTY_TWO = torch.tensor(32.0, device=device, dtype=torch.float64)
-        self.SIXTY_FOUR = torch.tensor(64.0, device=device, dtype=torch.float64)
-        self.ONE_TWENTY_EIGHT = torch.tensor(128.0, device=device, dtype=torch.float64)
-        self.TWO_FIFTY_SIX = torch.tensor(256.0, device=device, dtype=torch.float64)
-        self.FIVE_HUNDRED_AND_TWELVE = torch.tensor(
-            512.0, device=device, dtype=torch.float64
-        )
+        self.TWO = torch.tensor(2.0, device=device, dtype=dtype)
+        self.FOUR = torch.tensor(4.0, device=device, dtype=dtype)
+        self.EIGHT = torch.tensor(8.0, device=device, dtype=dtype)
+        self.SIXTEEN = torch.tensor(16.0, device=device, dtype=dtype)
+        self.THIRTY_TWO = torch.tensor(32.0, device=device, dtype=dtype)
+        self.SIXTY_FOUR = torch.tensor(64.0, device=device, dtype=dtype)
+        self.ONE_TWENTY_EIGHT = torch.tensor(128.0, device=device, dtype=dtype)
+        self.TWO_FIFTY_SIX = torch.tensor(256.0, device=device, dtype=dtype)
+        self.FIVE_HUNDRED_AND_TWELVE = torch.tensor(512.0, device=device, dtype=dtype)
         self.ONE_THOUSAND_AND_TWENTY_FOUR = torch.tensor(
-            1024.0, device=device, dtype=torch.float64
+            1024.0, device=device, dtype=dtype
         )
 
         # Fractions
-        self.HALF = torch.tensor(0.5, device=device, dtype=torch.float64)
-        self.ONE_BY_THREE = torch.tensor(1.0 / 3.0, device=device, dtype=torch.float64)
-        self.THREE_BY_TWO = torch.tensor(3.0 / 2.0, device=device, dtype=torch.float64)
-        self.FIVE_BY_THREE = torch.tensor(5.0 / 3.0, device=device, dtype=torch.float64)
+        self.HALF = torch.tensor(0.5, device=device, dtype=dtype)
+        self.ONE_BY_THREE = torch.tensor(1.0 / 3.0, device=device, dtype=dtype)
+        self.THREE_BY_TWO = torch.tensor(3.0 / 2.0, device=device, dtype=dtype)
+        self.FIVE_BY_THREE = torch.tensor(5.0 / 3.0, device=device, dtype=dtype)
 
         # Precomputed
         self.SQRT_6 = torch.sqrt(self.SIX)
@@ -94,22 +92,39 @@ class PhenomConstants:
         self.TWOPI = 2.0 * self.PI
 
         ## Physical constants for Pv2
-        self.fM_CUT = torch.tensor(0.2, device=device, dtype=torch.float64)
+        self.fM_CUT = torch.tensor(0.2, device=device, dtype=dtype)
 
         # QNM Data
-        self._QNMData_a = _QNMData_a.to(device=device, dtype=torch.float64)
-        self._QNMData_fdamp = _QNMData_fdamp.to(device=device, dtype=torch.float64)
-        self._QNMData_fRD = _QNMData_fRD.to(device=device, dtype=torch.float64)
+        self._QNMData_a = _QNMData_a.to(device=device, dtype=dtype)
+        self._QNMData_fdamp = _QNMData_fdamp.to(device=device, dtype=dtype)
+        self._QNMData_fRD = _QNMData_fRD.to(device=device, dtype=dtype)
+
+        # Ones/zeroes of batch size (B, 1)
+        self.ONES = torch.ones(
+            (batch_size, 1),
+            device=device,
+            dtype=dtype,
+        )
+
+        self.ZEROS = torch.zeros(
+            (batch_size, 1),
+            device=device,
+            dtype=dtype,
+        )
 
         # PhenomD Coefficients Table
-        self.PhenomD_coeff_table = PhenomD_coeff_table.to(
-            device=device, dtype=torch.float64
+        self.PhenomD_coeff_table = PhenomD_coeff_table.to(device=device, dtype=dtype)
+
+        # Specific PhenomD constants
+        self.PHI6LOG = torch.full(
+            (batch_size, 1),
+            -684.8 / 2.1,
+            device=device,
+            dtype=dtype,
         )
 
         # Target grid
-        self.QNMData_a = torch.linspace(
-            -1, 1, 500_000, device=device, dtype=torch.float64
-        )
+        self.QNMData_a = torch.linspace(-1, 1, 500_000, device=device, dtype=dtype)
 
         # Interpolate using your torch cubic function
         self.QNMData_fRD = torch_scipylike_cubic_interp(
