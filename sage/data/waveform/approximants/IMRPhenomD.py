@@ -26,11 +26,9 @@ Documentation: NULL
 
 # Packages
 import torch
-from torch.func import grad, vjp, vmap
 
 # LOCAL
 from sage.core.torch import nudge_backward_
-
 from sage.data.waveform.approximants import phenom
 
 
@@ -40,12 +38,13 @@ class IMRPhenomD(phenom.PhenomConstants):
         super().__init__(device=f.device, batch_size=f.shape[0], dtype=f.dtype)
         # Fixed frequency grid
         self.f = f
+        self.df = f[1] - f[0]
         self.f_numel = self.f.numel()
         self.f_ref = f_ref
         # Batch size
         self.B = f.shape[0]
 
-    @torch.compile(mode="max-autotune", fullgraph=True)
+    # @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def __call__(self, theta):
         # Compute derived quantities
         derived = self.compute_derived_parameters(theta)
@@ -59,6 +58,18 @@ class IMRPhenomD(phenom.PhenomConstants):
         hc = -self.ONE_J * h0 * torch.cos(theta[:, 7:8])
 
         return hp, hc
+
+    def pad_missing_frequencies(self, hp, hc):
+        # Accounting for DC components and zero-padding below f_min
+        # We start from 0 Hz, df Hz, 2df Hz; not including f_min
+        # Assuming f_min included in fs
+        # This accounts for LAL-like handlings of f
+        n_pad = int(self.f[0] / self.df)
+        hp_pad = torch.zeros(n_pad + hp.numel(), dtype=hp.dtype, device=hp.device)
+        hc_pad = torch.zeros_like(hp_pad)
+
+        hp_pad[n_pad:] = hp
+        hc_pad[n_pad:] = hc
 
     def compute_derived_parameters(self, theta):
         # Derived parameters are reused a lot; compute once
@@ -130,14 +141,15 @@ class IMRPhenomD(phenom.PhenomConstants):
         f1_Ms = trans_fs[:, 0:1] * M_s
         f2_Ms = trans_fs[:, 1:2] * M_s
         f3_Ms = trans_fs[:, 2:3] * M_s
+        f4_Ms = trans_fs[:, 3:4] * M_s
         f_Ms = self.f * M_s
         fref_Ms = self.f_ref * M_s
         f_RD_Ms = trans_fs[:, 4:5] * M_s
         f_damp_Ms = trans_fs[:, 5:6] * M_s
         # Central frequency point (used f_RD and f_damp)
-        fmid_Ms = (trans_fs[:, 0:1] + trans_fs[:, 2:3]) / 2
+        fmid_Ms = ((trans_fs[:, 2:3] + trans_fs[:, 3:4]) / 2) * M_s
         fx_Ms = torch.cat(
-            [fref_Ms, f1_Ms, f2_Ms, f3_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms], dim=1
+            [fref_Ms, f1_Ms, f2_Ms, f3_Ms, f4_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms], dim=1
         )
 
         # f4_scaled does *not* need requires_grad_()
@@ -176,6 +188,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
 
         h0 = A * torch.exp(self.ONE_J * -Psi)
+
         return h0
 
     @staticmethod
@@ -199,12 +212,12 @@ class IMRPhenomD(phenom.PhenomConstants):
         term3 = coeffs[:, 16:17] / torch.pow(f, 0.25)
 
         denom = (
-            fx_Ms[:, 5:6]
+            fx_Ms[:, 6:7]
             * Taulm
             * (
                 1
-                + (f - coeffs[:, 18:19] * fx_Ms[:, 4:5]) ** 2
-                / ((fx_Ms[:, 5:6] * Taulm * Rholm) ** 2)
+                + (f - coeffs[:, 18:19] * fx_Ms[:, 5:6]) ** 2
+                / ((fx_Ms[:, 6:7] * Taulm * Rholm) ** 2)
             )
         )
         term4 = coeffs[:, 17:18] / denom
@@ -329,10 +342,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
 
     @staticmethod
-    def get_phi_IIa(f_Ms, eta, coeffs, beta0, beta1corr):
-        return (
-            IMRPhenomD.get_IIa_raw_phase(f_Ms, eta, coeffs) + beta1corr * f_Ms + beta0
-        )
+    def get_phi_IIa(f_Ms, eta, coeffs, beta1corr):
+        return IMRPhenomD.get_IIa_raw_phase(f_Ms, eta, coeffs) + beta1corr * f_Ms
 
     @staticmethod
     def get_IIa_raw_phase(f_Ms, eta, coeffs):
@@ -351,7 +362,7 @@ class IMRPhenomD(phenom.PhenomConstants):
             - coeffs[:, 15:16] * (f_Ms**-1.0)
             + 4.0 * coeffs[:, 16:17] * (f_Ms ** (3.0 / 4.0)) / 3.0
             + coeffs[:, 17:18]
-            * torch.arctan((f_Ms - coeffs[:, 18:19] * fx_Ms[:, 4:5]) / fx_Ms[:, 5:6])
+            * torch.arctan((f_Ms - coeffs[:, 18:19] * fx_Ms[:, 5:6]) / fx_Ms[:, 6:7])
         ) / eta
 
         return phi_IIb_raw
@@ -360,7 +371,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Compute inspiral phase
         # Only intrinsic theta has been passed
         phi6corr = self.spin_spin_3pn_correction(theta, derived[:, 3:4])
-        phi_Ins_f1, TF2_coeffs, TF2_log_coeffs = self.get_inspiral_phase(
+        phi_Ins, _, _ = self.get_inspiral_phase(
             f_Ms, derived, theta[:, 2:4], coeffs, phi6corr
         )
 
@@ -371,6 +382,9 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         ## Evaluate phase and derivative at f1
         # Implementing DPhiInsAnsatzInt from LAL
+        phi_Ins_f1, TF2_coeffs, TF2_log_coeffs = self.get_inspiral_phase(
+            fx_Ms[:, 1:2], derived, theta[:, 2:4], coeffs, phi6corr
+        )
         dphi_Ins_f1 = self.DPhiInsAnsatzInt(
             fx_Ms[:, 1:2], coeffs, TF2_coeffs, TF2_log_coeffs, derived[:, 3:4]
         )
@@ -383,14 +397,14 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         beta1corr = dphi_Ins_f1 - dphi_IIa_f1
         beta0 = phi_Ins_f1 - beta1corr * fx_Ms[:, 1:2] - phi_IIa_f1
-        phi_IIa = IMRPhenomD.get_phi_IIa(
-            f_Ms, derived[:, 3:4], coeffs, beta0, beta1corr
+        phi_IIa = (
+            IMRPhenomD.get_phi_IIa(f_Ms, derived[:, 3:4], coeffs, beta1corr) + beta0
         )
 
         # Phase of the merger-ringdown (region IIb)
         # Evaluate phase and derivative at f2
         phi_IIa_f2 = IMRPhenomD.get_phi_IIa(
-            fx_Ms[:, 2:3], derived[:, 3:4], coeffs, beta0, beta1corr
+            fx_Ms[:, 2:3], derived[:, 3:4], coeffs, beta1corr
         )
         dphi_IIa_f2 = self.DPhiIntTemp(
             fx_Ms[:, 2:3], coeffs, derived[:, 3:4], beta1corr
@@ -418,7 +432,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Upside, this is faster when vectorised than heaviside
         phase = torch.where(
             f_Ms <= fx_Ms[:, 1:2],
-            phi_Ins_f1,
+            phi_Ins,
             torch.where(f_Ms <= fx_Ms[:, 2:3], phi_IIa, phi_IIb),
         )
 
@@ -477,6 +491,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         Dphasing /= v8 * 3.0
         Dphasing *= self.PI
+        Dphasing *= 3.0 / (128.0 * eta)
 
         # Add PhenomD calibrated higher-order terms
         Dphasing += (
@@ -559,8 +574,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         alpha4 = coeffs[:, 17:18]
         alpha5 = coeffs[:, 18:19]
 
-        fRD = fx_Ms[:, 4:5]
-        fDM = fx_Ms[:, 5:6]
+        fRD = fx_Ms[:, 5:6]
+        fDM = fx_Ms[:, 6:7]
 
         denom_inner = 1.0 + (f - alpha5 * fRD) ** 2 / ((fDM * Taulm * Rholm) ** 2)
 
@@ -795,10 +810,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         return phi_Ins, TF2_coeffs, TF2_log_coeffs
 
     def get_fcut_true(self, M_s):
-        fcut = self.fM_CUT / M_s
-        mask = self.f[None, :] <= fcut[:, None]
-        f_grid = self.f[None, :].expand_as(mask)
-        return torch.max(torch.where(mask, f_grid, -torch.inf), dim=1).values
+        # mask = self.f[None, :] <= fcut[:, None]
+        # f_grid = self.f[None, :].expand_as(mask)
+        # return torch.max(torch.where(mask, f_grid, -torch.inf), dim=1).values
+        return self.fM_CUT / M_s
 
     def amp(
         self,
@@ -987,28 +1002,28 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         ## Evaluate amplitude and derivative
         # Derivative of the inspiral amplitude
-        v1 = self.get_inspiral_Amp(fx_Ms[:, 1:2], chi1, chi2, eta_s, coeffs)
-        d1 = self.DAmpInsAnsatz(fx_Ms[:, 1:2], chi1, chi2, eta_s, coeffs)
+        v1 = self.get_inspiral_Amp(fx_Ms[:, 3:4], chi1, chi2, eta_s, coeffs)
+        d1 = self.DAmpInsAnsatz(fx_Ms[:, 3:4], chi1, chi2, eta_s, coeffs)
 
         # Derivative of the merger-ringdown amplitude
-        v3 = IMRPhenomD.get_IIb_Amp(fx_Ms[:, 3:4], fx_Ms, coeffs)
-        d3 = IMRPhenomD.DAmpMRDAnsatz(fx_Ms[:, 3:4], fx_Ms, coeffs)
+        v3 = IMRPhenomD.get_IIb_Amp(fx_Ms[:, 4:5], fx_Ms, coeffs)
+        d3 = IMRPhenomD.DAmpMRDAnsatz(fx_Ms[:, 4:5], fx_Ms, coeffs)
 
         # Here we need the delta solutions
         delta0 = IMRPhenomD.get_delta0(
-            fx_Ms[:, 1:2], fx_Ms[:, 6:7], fx_Ms[:, 3:4], v1, coeffs[:, 3:4], v3, d1, d3
+            fx_Ms[:, 3:4], fx_Ms[:, 7:8], fx_Ms[:, 4:5], v1, coeffs[:, 3:4], v3, d1, d3
         )
         delta1 = IMRPhenomD.get_delta1(
-            fx_Ms[:, 1:2], fx_Ms[:, 6:7], fx_Ms[:, 3:4], v1, coeffs[:, 3:4], v3, d1, d3
+            fx_Ms[:, 3:4], fx_Ms[:, 7:8], fx_Ms[:, 4:5], v1, coeffs[:, 3:4], v3, d1, d3
         )
         delta2 = IMRPhenomD.get_delta2(
-            fx_Ms[:, 1:2], fx_Ms[:, 6:7], fx_Ms[:, 3:4], v1, coeffs[:, 3:4], v3, d1, d3
+            fx_Ms[:, 3:4], fx_Ms[:, 7:8], fx_Ms[:, 4:5], v1, coeffs[:, 3:4], v3, d1, d3
         )
         delta3 = IMRPhenomD.get_delta3(
-            fx_Ms[:, 1:2], fx_Ms[:, 6:7], fx_Ms[:, 3:4], v1, coeffs[:, 3:4], v3, d1, d3
+            fx_Ms[:, 3:4], fx_Ms[:, 7:8], fx_Ms[:, 4:5], v1, coeffs[:, 3:4], v3, d1, d3
         )
         delta4 = IMRPhenomD.get_delta4(
-            fx_Ms[:, 1:2], fx_Ms[:, 6:7], fx_Ms[:, 3:4], v1, coeffs[:, 3:4], v3, d1, d3
+            fx_Ms[:, 3:4], fx_Ms[:, 7:8], fx_Ms[:, 4:5], v1, coeffs[:, 3:4], v3, d1, d3
         )
 
         Amp_IIa = (
@@ -1144,8 +1159,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         Matches LALSimIMRPhenomD_internals.c: DAmpMRDAnsatz exactly.
         """
         # Unpack from your specific tensor structures
-        fRD = fx_Ms[:, 4:5]
-        fDM = fx_Ms[:, 5:6]
+        fRD = fx_Ms[:, 5:6]
+        fDM = fx_Ms[:, 6:7]
         gamma1 = coeffs[:, 4:5]
         gamma2 = coeffs[:, 5:6]
         gamma3 = coeffs[:, 6:7]
@@ -1173,8 +1188,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         gamma2 = coeffs[:, 5:6]
         gamma3 = coeffs[:, 6:7]
 
-        fDMgamma3 = fx_Ms[:, 5:6] * gamma3
-        fminfRD = f_Ms - fx_Ms[:, 4:5]
+        fDMgamma3 = fx_Ms[:, 6:7] * gamma3
+        fminfRD = f_Ms - fx_Ms[:, 5:6]
         Amp_IIb = (
             torch.exp(-(fminfRD) * gamma2 / (fDMgamma3))
             * (fDMgamma3 * gamma1)
