@@ -35,14 +35,27 @@ from sage.data.waveform.approximants import phenom
 class IMRPhenomD(phenom.PhenomConstants):
 
     def __init__(self, f, f_ref):
-        super().__init__(device=f.device, batch_size=f.shape[0], dtype=f.dtype)
+        super().__init__(
+            device=f.device,
+            batch_size=f.shape[0],
+            dtype=f.dtype,
+        )
         # Fixed frequency grid
         self.f = f
-        self.df = f[1] - f[0]
+        self.df = f[0][1] - f[0][0]
         self.f_numel = self.f.numel()
         self.f_ref = f_ref
         # Batch size
         self.B = f.shape[0]
+        # Tensor of zeroes for hp and hc
+        # Accounts for freqs from DC to f_upper
+        self.n_pad = int(self.f[0][0] / self.df)
+        self.hp_buffer = torch.empty(
+            (self.B, self.n_pad + self.f_numel),
+            dtype=torch.complex128,
+            device=f.device,
+        )
+        self.hc_buffer = torch.empty_like(self.hp_buffer)
 
     # @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def __call__(self, theta):
@@ -57,6 +70,9 @@ class IMRPhenomD(phenom.PhenomConstants):
         hp = h0 * (1 / 2 * (1 + torch.cos(theta[:, 7:8]) ** 2))
         hc = -self.ONE_J * h0 * torch.cos(theta[:, 7:8])
 
+        # Pad missing frequencies from DC to f_low
+        hp, hc = self.pad_missing_frequencies(hp, hc)
+
         return hp, hc
 
     def pad_missing_frequencies(self, hp, hc):
@@ -64,17 +80,22 @@ class IMRPhenomD(phenom.PhenomConstants):
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
         # This accounts for LAL-like handlings of f
-        n_pad = int(self.f[0] / self.df)
-        hp_pad = torch.zeros(n_pad + hp.numel(), dtype=hp.dtype, device=hp.device)
-        hc_pad = torch.zeros_like(hp_pad)
+        hp_pad = self.hp_buffer
+        hc_pad = self.hc_buffer
+        # Zero out padded regions
+        hp_pad[:, : self.n_pad].zero_()
+        hc_pad[:, : self.n_pad].zero_()
+        # Fill empty buffer with hp and hc
+        hp_pad[:, self.n_pad :] = hp
+        hc_pad[:, self.n_pad :] = hc
 
-        hp_pad[n_pad:] = hp
-        hc_pad[n_pad:] = hc
+        return hp_pad, hc_pad
 
     def compute_derived_parameters(self, theta):
         # Derived parameters are reused a lot; compute once
-        # Putting this in self is unfortunately detrimental
+        # Putting this in self (now) is unfortunately detrimental
         # torch.compile thinks class object is mutating dynamically
+        # NOTE: Mutating contents of a preallocated tensor in self is fine
         m1_s = theta[:, 0:1] * self.GM
         m2_s = theta[:, 1:2] * self.GM
         M_s = m1_s + m2_s
