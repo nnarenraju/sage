@@ -24,7 +24,7 @@ Documentation: NULL
 """
 
 # Packages
-import torch
+import numpy as np
 
 
 class Normalise:
@@ -71,7 +71,6 @@ class Standardise:
 
 
 # Refer: https://docs.astropy.org/en/stable/_modules/astropy/coordinates/matrix_utilities.html#rotation_matrix
-# Converted from astropy source to support torch computation
 def rotation_matrix(angle_in_rad, axis=2):
     """
     Generate matrices for rotation by some angle around some axis.
@@ -93,14 +92,10 @@ def rotation_matrix(angle_in_rad, axis=2):
     if axis not in (0, 1, 2):
         raise ValueError("Axis must be 0 (x), 1 (y), or 2 (z)")
 
-    s = torch.sin(angle_in_rad)
-    c = torch.cos(angle_in_rad)
+    s = np.sin(angle_in_rad)
+    c = np.cos(angle_in_rad)
 
-    R = torch.zeros(
-        angle_in_rad.shape + (3, 3),
-        device=angle_in_rad.device,
-        dtype=angle_in_rad.dtype,
-    )
+    R = np.zeros((3, 3), dtype=float)
 
     a1 = (axis + 1) % 3
     a2 = (axis + 2) % 3
