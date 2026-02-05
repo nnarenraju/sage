@@ -41,7 +41,12 @@ class ProjectWave:
     All tensors should live on the same device as waveforms.
     """
 
-    def __init__(self, detector_names, batch_size, device="cuda", dtype=torch.float64):
+    def __init__(
+        self,
+        detector_names,
+        device="cuda",
+        dtype=torch.float64,
+    ):
 
         # CUDA device
         self.device = device
@@ -89,7 +94,10 @@ class ProjectWave:
             _DETMETADATA[detname]["height"] * units.meter,
         )
 
-        return torch.tensor([loc.x.value, loc.y.value, loc.z.value], device=self.device)
+        return torch.tensor(
+            [loc.x.value, loc.y.value, loc.z.value],
+            device=self.device,
+        )
 
     def get_detector_response(
         self,
@@ -162,9 +170,11 @@ class ProjectWave:
         Returns
         -------
         fplus(default) or fx or fb : float or numpy.ndarray
-            The plus or vector-x or breathing polarization factor for this sky location / orientation
+            The plus or vector-x or breathing polarization factor
+            for this sky location / orientation
         fcross(default) or fy or fl : float or numpy.ndarray
-            The cross or vector-y or longitudnal polarization factor for this sky location / orientation
+            The cross or vector-y or longitudnal polarization factor
+            for this sky location / orientation
         """
 
         gha = gmst_estimate - right_ascension
@@ -205,7 +215,12 @@ class ProjectWave:
 
         return fplus, fcross
 
-    def time_delay_from_earth_center(self, right_ascension, declination, gmst_estimate):
+    def time_delay_from_earth_center(
+        self,
+        right_ascension,
+        declination,
+        gmst_estimate,
+    ):
         """Return the time delay from the given location to detector for
         a signal with the given sky location
         In other words return `t1 - t2` where `t1` is the
