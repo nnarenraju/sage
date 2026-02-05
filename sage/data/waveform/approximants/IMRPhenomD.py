@@ -43,6 +43,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Fixed frequency grid
         self.f = f
         self.df = f[0][1] - f[0][0]
+        self.sample_length_in_s = 1.0 / self.df
         self.f_numel = self.f[0].numel()
         self.f_ref = f_ref
         # Batch size
@@ -57,7 +58,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
-    # @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
+    @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def __call__(self, theta):
         # Compute derived quantities
         derived = self.compute_derived_parameters(theta)
@@ -65,22 +66,49 @@ class IMRPhenomD(phenom.PhenomConstants):
         # theta = {m1, m2, var2, var3, var4, var5, var6, ...}
         # First four are intrinsic, next 3 are extrinsic
         coeffs = self.get_coeffs(theta[:, 2:3], theta[:, 3:4], derived)
-        A, Psi = self.get_h0(theta, coeffs, derived)
+        A, Psi, fcut_true = self.get_components(theta, coeffs, derived)
+
         # Compute hp and hc
+        # Replacing complex exp operations with polar
+        # 1J still exists but math ops are fully real
+        # Complex exp are not supported by TorchInductor
         # hp = h0 * (1 / 2 * (1 + torch.cos(theta[:, 7:8]) ** 2))
+        # hc = -self.ONE_J * h0 * torch.cos(theta[:, 7:8])
         hp = torch.polar(
             0.5 * A * (1.0 + torch.cos(theta[:, 7:8]) ** 2),
             -Psi,
         )
-        # hc = -self.ONE_J * h0 * torch.cos(theta[:, 7:8])
         hc = torch.polar(
             A * torch.cos(theta[:, 7:8]),
             -Psi - 0.5 * self.PI,
         )
 
+        # Frequency domain tapering
+        taper = IMRPhenomD.fd_taper(
+            f=self.f,
+            f_min=20.0,
+            f_cut=fcut_true,
+            df=self.df,
+        )
+        hp *= taper
+        hc *= taper
+
+        # Apply phase shift equivalent to applying tc
+        hp, hc = self.apply_tc(hp, hc, theta[:, 5:6])
+
         # Pad missing frequencies from DC to f_low
+        # Pad *AFTER* taper; not before
         hp, hc = self.pad_missing_frequencies(hp, hc)
 
+        return hp, hc
+
+    def apply_tc(self, hp, hc, tc):
+        # Apply time shift to account for tc
+        # Converting from tc in duration space to actual shift
+        _tc = tc - self.sample_length_in_s
+        # We do this in polar as well without torch exp
+        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
+        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
         return hp, hc
 
     def pad_missing_frequencies(self, hp, hc):
@@ -90,13 +118,61 @@ class IMRPhenomD(phenom.PhenomConstants):
         # This accounts for LAL-like handlings of f
         hp_pad = torch.zeros_like(self.hp_buffer)
         hc_pad = torch.zeros_like(self.hc_buffer)
-        print(hp_pad.size(), hc_pad.size())
-        print(hp.size(), hc.size())
         # Fill empty buffer with hp and hc
         hp_pad[:, self.n_pad :] = hp
         hc_pad[:, self.n_pad :] = hc
 
         return hp_pad, hc_pad
+
+    @staticmethod
+    def _taper(x, width):
+        """
+        x: distance from boundary (>= 0), shape (B, F)
+        width: taper width in bins (scalar or (B,1))
+        """
+        eps = 1e-12
+        x = torch.clamp(x, min=eps)
+        w = width - 1.0
+        z = w / x + w / (x - w)
+        return 1.0 / (1.0 + torch.exp(z))
+
+    @staticmethod
+    def fd_low_freq_taper(f, f_min, df, width_bins):
+        x = (f - f_min) / df
+        w = width_bins - 1.0
+        # Apply formula only in (0, w), 0 below, 1 above
+        return torch.where(
+            x <= 0,
+            torch.zeros_like(x),
+            torch.where(x >= w, torch.ones_like(x), IMRPhenomD._taper(x, width_bins)),
+        )
+
+    @staticmethod
+    def fd_high_freq_taper(f, f_cut, df, width_bins):
+        x = (f_cut - f) / df
+        w = width_bins - 1.0
+        # Apply formula only in (0, w), 0 beyond cut, 1 before taper start
+        return torch.where(
+            x <= 0,
+            torch.zeros_like(x),
+            torch.where(x >= w, torch.ones_like(x), IMRPhenomD._taper(x, width_bins)),
+        )
+
+    @staticmethod
+    def fd_taper(
+        f,
+        f_min,
+        f_cut,
+        df,
+        low_width=64,
+        high_width=64,
+    ):
+        """
+        Returns multiplicative taper of shape (B, F)
+        """
+        w_lo = IMRPhenomD.fd_low_freq_taper(f, f_min, df, low_width)
+        w_hi = IMRPhenomD.fd_high_freq_taper(f, f_cut, df, high_width)
+        return w_lo * w_hi
 
     def compute_derived_parameters(self, theta):
         # Derived parameters are reused a lot; compute once
@@ -154,7 +230,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         return coeff
 
-    def get_h0(self, theta, coeffs, derived):
+    def get_components(self, theta, coeffs, derived):
         ## Shift phase so that peak amplitude matches t = 0
         # Get required derived quantities
         M_s = derived[:, 2:3]
@@ -216,10 +292,11 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
 
         # Replacing complex exp with polar
+        # Complex exp are not supported by TorchInductor
         # h0 = A * torch.exp(self.ONE_J * -Psi)
         # h0 = torch.polar(A, -Psi)
 
-        return A, Psi
+        return A, Psi, fcut_true
 
     @staticmethod
     def DPhiMRD(f, coeffs, eta, fx_Ms, Rholm: float = 1.0, Taulm: float = 1.0):
