@@ -41,23 +41,28 @@ class ProjectWave:
     All tensors should live on the same device as waveforms.
     """
 
-    def __init__(self, detector_names, device="cuda"):
+    def __init__(self, detector_names, batch_size, device="cuda", dtype=torch.float64):
 
         # CUDA device
         self.device = device
+        self.dtype = dtype
         # Detector
         self.detnames = detector_names
 
         # Detector tensor
         # self.response shape is (batch_size, num_dets, response)
-        self.response = torch.empty((len(self.detnames), 3, 3), device=self.device)
+        self.response = torch.empty(
+            (len(self.detnames), 3, 3), device=self.device, dtype=self.dtype
+        )
 
         # Get relative position of DET from Earth center
-        earth_center = torch.stack([0, 0, 0], device=self.device)
-        self.dx = torch.empty((len(self.detnames), 3), device=self.device)
+        earth_center = torch.tensor([0, 0, 0], device=self.device, dtype=self.dtype)
+        self.dx = torch.empty(
+            (len(self.detnames), 3), device=self.device, dtype=self.dtype
+        )
 
         # Baseline response of a single arm pointed in the -X direction
-        self.resp = torch.stack([[-1, 0, 0], [0, 0, 0], [0, 0, 0]], device=self.device)
+        self.resp = np.array([[-1, 0, 0], [0, 0, 0], [0, 0, 0]])
 
         # Get hardcoded detector metadata (obtained from LAL)
         for ndet, detname in enumerate(self.detnames):
@@ -132,7 +137,7 @@ class ProjectWave:
             # apply rotation
             resps.append(rm @ self.resp @ rm.T / 2.0)
 
-        return resps[0] - resps[1]
+        return torch.tensor(resps[0] - resps[1], device=self.device, dtype=self.dtype)
 
     def random_gmst_estimate(self, batch_shape):
         # Random GMST in radians to compute the antenna patterns
@@ -192,8 +197,8 @@ class ProjectWave:
 
         # x & y are the same for all dets
         # self.response should vary for each
-        dx = torch.einsum("...j,dij->...di", x, self.response)
-        dy = torch.einsum("...j,dij->...di", y, self.response)
+        dx = torch.einsum("bi,dij->bdj", x, self.response)
+        dy = torch.einsum("bi,dij->bdj", y, self.response)
 
         fplus = torch.sum(x.unsqueeze(-2) * dx - y.unsqueeze(-2) * dy, dim=-1)
         fcross = torch.sum(x.unsqueeze(-2) * dy + y.unsqueeze(-2) * dx, dim=-1)
@@ -228,7 +233,7 @@ class ProjectWave:
 
         ehat = torch.stack([e0, e1, e2], dim=-1)
 
-        return ehat @ self.dx.T / C
+        return torch.einsum("bi,dj->bd", ehat, self.dx) / C
 
     @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def constant_project(self, hp, hc, freqs, ra, dec, polarization):
@@ -259,9 +264,15 @@ class ProjectWave:
         # Get time delay for all dets given the sky location
         dt = self.time_delay_from_earth_center(ra, dec, gmst_estimate)
         # Get hf from hp and hc given detector response
-        hf = fp[..., None] * hp + fc[..., None] * hc
+        hf = fp[..., None] * hp[:, None, :] + fc[..., None] * hc[:, None, :]
         # Apply time shift relative to detectors
-        phase = torch.exp(-2j * PI * freqs[None, None, :] * dt[..., None])
+        # phase = torch.exp(-2j * PI * freqs[:, None, :] * dt[..., None])
+        # Doing the same thing without torch exp
+        phase = torch.polar(
+            torch.ones(1, 1, len(freqs), device=self.device, dtype=self.dtype),
+            -2 * PI * freqs[None, None, :] * dt[:, :, None],
+        )
+        # hf is (B, N_ifo, seq_len) and phase is (B, 1, seq_len)
         hf *= phase
 
         return hf
