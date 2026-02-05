@@ -50,7 +50,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         self.B = f.shape[0]
         # Tensor of zeroes for hp and hc
         # Accounts for freqs from DC to f_upper
-        self.n_pad = int(self.f[0][0] / self.df)
+        self.n_pad = int(torch.round((self.f[0][0] - self.df) / self.df)) + 1
         self.hp_buffer = torch.empty(
             (self.B, self.n_pad + self.f_numel),
             dtype=torch.complex128,
