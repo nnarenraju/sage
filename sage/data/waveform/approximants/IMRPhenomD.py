@@ -43,7 +43,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Fixed frequency grid
         self.f = f
         self.df = f[0][1] - f[0][0]
-        self.f_numel = self.f.numel()
+        self.f_numel = self.f[0].numel()
         self.f_ref = f_ref
         # Batch size
         self.B = f.shape[0]
@@ -65,10 +65,18 @@ class IMRPhenomD(phenom.PhenomConstants):
         # theta = {m1, m2, var2, var3, var4, var5, var6, ...}
         # First four are intrinsic, next 3 are extrinsic
         coeffs = self.get_coeffs(theta[:, 2:3], theta[:, 3:4], derived)
-        h0 = self.get_h0(theta, coeffs, derived)
+        A, Psi = self.get_h0(theta, coeffs, derived)
         # Compute hp and hc
-        hp = h0 * (1 / 2 * (1 + torch.cos(theta[:, 7:8]) ** 2))
-        hc = -self.ONE_J * h0 * torch.cos(theta[:, 7:8])
+        # hp = h0 * (1 / 2 * (1 + torch.cos(theta[:, 7:8]) ** 2))
+        hp = torch.polar(
+            0.5 * A * (1.0 + torch.cos(theta[:, 7:8]) ** 2),
+            -Psi,
+        )
+        # hc = -self.ONE_J * h0 * torch.cos(theta[:, 7:8])
+        hc = torch.polar(
+            A * torch.cos(theta[:, 7:8]),
+            -Psi - 0.5 * self.PI,
+        )
 
         # Pad missing frequencies from DC to f_low
         hp, hc = self.pad_missing_frequencies(hp, hc)
@@ -80,11 +88,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
         # This accounts for LAL-like handlings of f
-        hp_pad = self.hp_buffer
-        hc_pad = self.hc_buffer
-        # Zero out padded regions
-        hp_pad[:, : self.n_pad].zero_()
-        hc_pad[:, : self.n_pad].zero_()
+        hp_pad = torch.zeros_like(self.hp_buffer)
+        hc_pad = torch.zeros_like(self.hc_buffer)
+        print(hp_pad.size(), hc_pad.size())
+        print(hp.size(), hc.size())
         # Fill empty buffer with hp and hc
         hp_pad[:, self.n_pad :] = hp
         hc_pad[:, self.n_pad :] = hc
@@ -208,9 +215,11 @@ class IMRPhenomD(phenom.PhenomConstants):
             fcut_true,
         )
 
-        h0 = A * torch.exp(self.ONE_J * -Psi)
+        # Replacing complex exp with polar
+        # h0 = A * torch.exp(self.ONE_J * -Psi)
+        # h0 = torch.polar(A, -Psi)
 
-        return h0
+        return A, Psi
 
     @staticmethod
     def DPhiMRD(f, coeffs, eta, fx_Ms, Rholm: float = 1.0, Taulm: float = 1.0):
