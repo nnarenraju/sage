@@ -56,6 +56,9 @@ class ProjectWave:
         earth_center = torch.stack([0, 0, 0], device=self.device)
         self.dx = torch.empty((len(self.detnames), 3), device=self.device)
 
+        # Baseline response of a single arm pointed in the -X direction
+        self.resp = torch.stack([[-1, 0, 0], [0, 0, 0], [0, 0, 0]], device=self.device)
+
         # Get hardcoded detector metadata (obtained from LAL)
         for ndet, detname in enumerate(self.detnames):
             self.response[ndet] = self.get_detector_response(
@@ -68,12 +71,10 @@ class ProjectWave:
             )
 
             # Relative position of DET of Earth center
-            loc = Project.get_relative_position(detname)
-            loc = torch.tensor(loc, device=self.device)
+            loc = self.get_relative_position(detname)
             self.dx[ndet] = earth_center - loc
 
-    @staticmethod
-    def get_relative_position(detname):
+    def get_relative_position(self, detname):
         # Get relative position of DET from Earth center
         # Detector position (ECEF)
         # TODO: Convert to PyTorch too at some point
@@ -83,7 +84,7 @@ class ProjectWave:
             _DETMETADATA[detname]["height"] * units.meter,
         )
 
-        return np.array([loc.x.value, loc.y.value, loc.z.value])
+        return torch.tensor([loc.x.value, loc.y.value, loc.z.value], device=self.device)
 
     def get_detector_response(
         self,
@@ -113,8 +114,6 @@ class ProjectWave:
             The altitude angle of the y-arm measured from the local horizon.
 
         """
-        # Baseline response of a single arm pointed in the -X direction
-        resp = torch.stack([[-1, 0, 0], [0, 0, 0], [0, 0, 0]], device=self.device)
         # Latitude and longitude provided in radians
         # {x,y,z} -> {0,1,2}
         rm2 = rotation_matrix(-longitude, 2)
@@ -131,7 +130,7 @@ class ProjectWave:
             rmN = rotation_matrix(-azi, 1)
             rm = rm2 @ rm1 @ rm0 @ rmN
             # apply rotation
-            resps.append(rm @ resp @ rm.T / 2.0)
+            resps.append(rm @ self.resp @ rm.T / 2.0)
 
         return resps[0] - resps[1]
 
@@ -231,6 +230,7 @@ class ProjectWave:
 
         return ehat @ self.dx.T / C
 
+    @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def constant_project(self, hp, hc, freqs, ra, dec, polarization):
         """Return the strain of a waveform as measured by all detectors.
         Apply the time shift for all given detectors relative to the assumed
