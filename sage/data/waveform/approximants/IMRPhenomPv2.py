@@ -131,6 +131,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
                 theta[:, 0:1],
                 converted_spins[:, 1:2],
                 converted_spins[:, 0:1],
+                theta[:, 8:9],
+                phic,
             ],
             dim=1,
         )
@@ -152,104 +154,111 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             phd_derived,
         )
 
-        hPhenomDs, _ = PhenomPOneFrequency(
-            fs,
-            m2,
-            m1,
-            chi2_l,
-            chi1_l,
-            chip,
-            phic,
-            M,
-            dist_mpc,
-            coeffs,
-            transition_freqs,
+        # Precomputing required parameters
+        f1_Ms = trans_fs[:, 0:1] * derived[:, 3:4]
+        f2_Ms = trans_fs[:, 1:2] * derived[:, 3:4]
+        f3_Ms = trans_fs[:, 2:3] * derived[:, 3:4]
+        f4_Ms = trans_fs[:, 3:4] * derived[:, 3:4]
+        f_Ms = self.f * derived[:, 3:4]
+        fref_Ms = self.f_ref * derived[:, 3:4]
+        f_RD_Ms = trans_fs[:, 4:5] * derived[:, 3:4]
+        f_damp_Ms = trans_fs[:, 5:6] * derived[:, 3:4]
+        # Central frequency point (used f_RD and f_damp)
+        fmid_Ms = ((trans_fs[:, 2:3] + trans_fs[:, 3:4]) / 2) * derived[:, 3:4]
+        fx_Ms = torch.cat(
+            [fref_Ms, f1_Ms, f2_Ms, f3_Ms, f4_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms], dim=1
         )
 
-        hp, hc = PhenomPCoreTwistUp(
-            fs,
-            hPhenomDs,
-            eta,
-            chi1_l,
-            chi2_l,
-            chip,
-            M,
+        fcut_true = super().get_fcut_true(derived[:, 3:4])
+
+        hPhenomD, _ = self.PhenomPOneFrequency(
+            f_Ms,
+            fx_Ms,
+            theta,
+            phd_derived,
+            coeffs,
+            trans_fs,
+            fcut_true,
+        )
+
+        hp, hc = self.PhenomPCoreTwistUp(
+            f_Ms,
+            hPhenomD,
+            derived[:, 1:2],
+            converted_spins[:, 0:1],
+            converted_spins[:, 1:2],
+            converted_spins[:, 2:3],
             angcoeffs,
             Y2,
-            alphaNNLOoffset - alpha0,
+            alphaNNLOoffset - converted_spins[:, 4:5],
             epsilonNNLOoffset,
         )
-
-
-        ## ------------------------------------------------------------------------- ##
-        # unpack transition_freqs
-        _, _, _, _, f_RD, _ = transition_freqs
 
         ## ** This is where we do the corrections to phase and time shift **
         # Fixed frequency grid around ringdown frequency for Pv2
         # 10 points should be enough for cubic interpolation
         # Same n_fixed used in LAL version
         n_fixed = 10
-        M_s = (theta_intrinsic[0] + theta_intrinsic[1]) * GM
-        fcut = pv2const.fM_CUT / M_s
-        f_final = f_RD
+        fcut = self.fM_CUT / derived[:, 3:4]
+        f_final = trans_fs[:, 4:5]
         freqs_fixed_start = 0.8 * f_final
-        freqs_fixed_stop = min(1.2 * f_final, fcut)  # clamp to fCut
+        # Clamp to fCut
+        freqs_fixed_stop = min(1.2 * f_final, fcut)
         freqs_fixed = torch.linspace(
             freqs_fixed_start,
             freqs_fixed_stop,
             n_fixed,
-            device=theta.device,
-            dtype=torch.float64,
+            device=self.f.device,
+            dtype=self.f.dtype,
         )
 
         # Compute phase on fixed grid
         # We have inverted m1 and m2 back to the convention m1 > m2 for PhenomD call
-        phase_fixed = torch.empty(n_fixed, device=fs.device, dtype=torch.float64)
+        phase_fixed = torch.empty(n_fixed, device=self.f.device, dtype=self.f.dtype)
 
-        _, phase_fixed = PhenomPOneFrequency(
+        _, phase_fixed = self.PhenomPOneFrequency(
             freqs_fixed,
-            m2,
-            m1,
-            chi2_l,
-            chi1_l,
-            chip,
-            phic,
-            M,
-            dist_mpc,
+            fx_Ms,
+            theta,
+            phd_derived,
             coeffs,
-            transition_freqs,
-            pv2const,
+            trans_fs,
+            fcut_true,
         )
 
-        hp, hc = apply_time_shift_phase_correction(
+        hp, hc = self.apply_time_shift_phase_correction(
             hptilde=hp,
             hctilde=hc,
-            freqs=fs,
             freqs_fixed=freqs_fixed,
             phase_fixed=phase_fixed,
             f_final=f_final,
         )
 
         # final touches to hp and hc, stolen from Scott
-        c2z = torch.cos(2 * zeta_polariz)
-        s2z = torch.sin(2 * zeta_polariz)
+        c2z = torch.cos(2 * converted_spins[:, 6:7])
+        s2z = torch.sin(2 * converted_spins[:, 6:7])
         final_hp = c2z * hp + s2z * hc
         final_hc = c2z * hc - s2z * hp
 
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
-        df = fs[1] - fs[0]
-        n_pad = int(fs[0] / df)
-        hp_pad = torch.zeros(n_pad + hp.numel(), dtype=hp.dtype, device=hp.device)
-        hc_pad = torch.zeros_like(hp_pad)
+        hp, hc = self.pad_missing_frequencies(final_hp, final_hc)
 
-        hp_pad[n_pad:] = final_hp
-        hc_pad[n_pad:] = final_hc
+        return hp, hc
+
+    def pad_missing_frequencies(self, hp, hc):
+        # Accounting for DC components and zero-padding below f_min
+        # We start from 0 Hz, df Hz, 2df Hz; not including f_min
+        # Assuming f_min included in fs
+        # This accounts for LAL-like handlings of f
+        hp_pad = torch.zeros_like(self.hp_buffer)
+        hc_pad = torch.zeros_like(self.hc_buffer)
+        # Fill empty buffer with hp and hc
+        hp_pad[:, self.n_pad :] = hp
+        hc_pad[:, self.n_pad :] = hc
 
         return hp_pad, hc_pad
-
 
     @staticmethod
     def swap_masses(theta):
@@ -761,33 +770,28 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
     def PhenomPCoreTwistUp(
         self,
-        fHz,
+        f_Ms,
         hPhenom,
         eta,
         chi1_l,
         chi2_l,
         chip,
-        M,
         angcoeffs,
         Y2m,
         alphaoffset,
         epsilonoffset,
     ):
-
-        # here it is used to be LAL_MTSUN_SI
-        f = fHz * self.GM * M  # Frequency in geometric units
         q = (self.ONE + torch.sqrt(self.ONE - 4.0 * eta) - 2.0 * eta) / (2.0 * eta)
-        # This should prevent NaNs
-        nudge_forward_(q, 1.0, 1e-6)
-        m1 = 1.0 / (1.0 + q)  # Mass of the smaller BH for unit total mass M=1.
-        m2 = q / (1.0 + q)  # Mass of the larger BH for unit total mass M=1.
+        # Mass of the smaller BH for unit total mass M=1
+        m1 = 1.0 / (1.0 + q)
+        # Mass of the larger BH for unit total mass M=1
+        m2 = q / (1.0 + q)
         # Dimensionfull spin component in the orbital plane. S_perp = S_2_perp
         Sperp = chip * (m2 * m2)
-
         # Dimensionfull aligned spin
         SL = chi1_l * m1 * m1 + chi2_l * m2 * m2
 
-        omega = self.PI * f
+        omega = self.PI * f_Ms
         logomega = torch.log(omega)
         omega_cbrt = omega**self.ONE_BY_THREE
         omega_cbrt2 = omega_cbrt * omega_cbrt
@@ -822,9 +826,6 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         sBetah3 = sBetah2 * sBetah
         sBetah4 = sBetah3 * sBetah
 
-        Y2mA = torch.tensor(
-            Y2m, dtype=torch.float64
-        )  # need to pass Y2m in a 5-component list
         hp_sum = self.ZERO
         hc_sum = self.ZERO
 
@@ -833,18 +834,18 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         cexp_mi_alpha = 1.0 / cexp_i_alpha
         cexp_m2i_alpha = cexp_mi_alpha * cexp_mi_alpha
         T2m = (
-            cexp_2i_alpha * cBetah4 * Y2mA[0]
-            - cexp_i_alpha * 2 * cBetah3 * sBetah * Y2mA[1]
-            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * Y2mA[2]
-            - cexp_mi_alpha * 2 * cBetah * sBetah3 * Y2mA[3]
-            + cexp_m2i_alpha * sBetah4 * Y2mA[4]
+            cexp_2i_alpha * cBetah4 * Y2m[0]
+            - cexp_i_alpha * 2 * cBetah3 * sBetah * Y2m[1]
+            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * Y2m[2]
+            - cexp_mi_alpha * 2 * cBetah * sBetah3 * Y2m[3]
+            + cexp_m2i_alpha * sBetah4 * Y2m[4]
         )
         Tm2m = (
-            cexp_m2i_alpha * sBetah4 * torch.conj(Y2mA[0])
-            + cexp_mi_alpha * 2 * cBetah * sBetah3 * torch.conj(Y2mA[1])
-            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * torch.conj(Y2mA[2])
-            + cexp_i_alpha * 2 * cBetah3 * sBetah * torch.conj(Y2mA[3])
-            + cexp_2i_alpha * cBetah4 * torch.conj(Y2mA[4])
+            cexp_m2i_alpha * sBetah4 * torch.conj(Y2m[0])
+            + cexp_mi_alpha * 2 * cBetah * sBetah3 * torch.conj(Y2m[1])
+            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * torch.conj(Y2m[2])
+            + cexp_i_alpha * 2 * cBetah3 * sBetah * torch.conj(Y2m[3])
+            + cexp_2i_alpha * cBetah4 * torch.conj(Y2m[4])
         )
         hp_sum = T2m + Tm2m
         hc_sum = self.ONE_J * (T2m - Tm2m)
@@ -872,39 +873,34 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
     def PhenomPOneFrequency(
         self,
-        fs,
-        m1,
-        m2,
-        chi1,
-        chi2,
-        chip,
-        phic,
-        M,
-        dist_mpc,
+        f_Ms,
+        fx_Ms,
+        theta,
+        phd_derived,
         coeffs,
-        transition_freqs,
+        trans_fs,
+        fcut_true,
     ):
         """
         m1, m2: in solar masses
         phic: Orbital phase at the peak of the underlying non precessing model (rad)
         M: Total mass (Solar masses)
         """
-        # These are the parametrs that go into the waveform generator
-        # Note that JAX does not give index errors, so if you pass in the
-        # the wrong array it will behave strangely
+        ## PHASE
+        phase = super().phase(theta[:, :4], coeffs, phd_derived, f_Ms, fx_Ms)
+        phase = phase - theta[:, 5:6]
+
+        ## AMPLITUDE
         norm = 2.0 * torch.sqrt(self.FIVE / (64.0 * self.PI))
-        theta_ripple = torch.tensor([m1, m2, chi1, chi2], dtype=torch.float64)
-
-        phase = PhDPhase(fs, theta_ripple, coeffs, transition_freqs)
-
-        phase = phase - phic
         Amp = (
-            PhDAmp(
-                fs,
-                theta_ripple,
+            super().amp(
+                theta[:, :5],
                 coeffs,
-                transition_freqs,
-                D=dist_mpc,
+                trans_fs,
+                phd_derived,
+                f_Ms,
+                fx_Ms,
+                fcut_true,
             )
             / norm
         )
@@ -918,7 +914,6 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         self,
         hptilde,
         hctilde,
-        freqs,
         freqs_fixed,
         phase_fixed,
         f_final,
@@ -942,7 +937,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         # Compute derivative of phase at f_final using natural cubic spline
         M = torch_natural_cubic_coeffs(freqs_fixed, phase_fixed)
         t_corr_fixed = torch_natural_cubic_interp(
-            torch.tensor([f_final], device=freqs.device, dtype=torch.float64),
+            torch.tensor([f_final], device=self.f.device, dtype=self.f.dtype),
             freqs_fixed,
             phase_fixed,
             M,
@@ -952,19 +947,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         # Compute phase correction factor
         # phase_corr = exp(-2.PI.i f t_corr_fixed) = cos(...) - i sin(...)
         # For complex multiplication in PyTorch
-        phase_corr = torch.exp(self.TWO_J * self.PI * freqs * t_corr_fixed)
+        phase_corr = torch.exp(self.TWO_J * self.PI * self.f * t_corr_fixed)
 
         # Apply to waveform, respecting offset
-        hptilde[..., offset : offset + freqs.numel()] *= phase_corr
-        hctilde[..., offset : offset + freqs.numel()] *= phase_corr
+        hptilde[..., offset : offset + self.f_numel] *= phase_corr
+        hctilde[..., offset : offset + self.f_numel] *= phase_corr
 
         return hptilde, hctilde
-
-
-def gen_IMRPhenomPv2(fs, theta, f_ref, pv2const):
-    """
-    Thetas are waveform parameters.
-    m1 must be larger than m2.
-    """
-
-    
