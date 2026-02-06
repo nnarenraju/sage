@@ -65,7 +65,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         # theta = {m1, m2, var2, var3, var4, var5, var6, ...}
         # First four are intrinsic, next 3 are extrinsic
-        coeffs = self.get_coeffs(theta[:, 2:3], theta[:, 3:4], derived)
+        coeffs = self.get_coeffs(theta[:, 2:3], theta[:, 3:4], derived[:, 3:4])
         A, Psi, fcut_true = self.get_components(theta, coeffs, derived)
 
         # Compute hp and hc
@@ -188,9 +188,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         return torch.cat([m1_s, m2_s, M_s, eta_s], dim=1)
 
-    def get_coeffs(self, chi1, chi2, derived):
-        # Derived quantities used
-        eta = derived[:, 3:4]
+    def get_coeffs(self, chi1, chi2, eta):
         # Definition of chiPN from lalsuite
         chi_s = (chi1 + chi2) / 2.0
         chi_a = (chi1 - chi2) / 2.0
