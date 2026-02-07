@@ -59,7 +59,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
     @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
-    def __call__(self, theta):
+    def __call__(self, theta, reproduce_lal=False):
         # Compute derived quantities
         derived = self.compute_derived_parameters(theta)
 
@@ -83,18 +83,19 @@ class IMRPhenomD(phenom.PhenomConstants):
             -Psi - 0.5 * self.PI,
         )
 
-        # Frequency domain tapering
-        taper = IMRPhenomD.fd_taper(
-            f=self.f,
-            f_min=20.0,
-            f_cut=fcut_true,
-            df=self.df,
-        )
-        hp *= taper
-        hc *= taper
+        if not reproduce_lal:
+            # Frequency domain tapering
+            taper = IMRPhenomD.fd_taper(
+                f=self.f,
+                f_min=20.0,
+                f_cut=fcut_true,
+                df=self.df,
+            )
+            hp *= taper
+            hc *= taper
 
-        # Apply phase shift equivalent to applying tc
-        hp, hc = self.apply_tc(hp, hc, theta[:, 5:6])
+            # Apply phase shift equivalent to applying tc
+            hp, hc = self.apply_tc(hp, hc, theta[:, 5:6])
 
         # Pad missing frequencies from DC to f_low
         # Pad *AFTER* taper; not before
@@ -270,7 +271,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         Psi = self.phase(theta[:, :4], coeffs, derived, f_Ms, fx_Ms)
         Psi_ref = self.phase(theta[:, :4], coeffs, derived, fref_Ms, fx_Ms)
         Psi -= t0 * ((f_Ms) - fref_Ms) + Psi_ref
-        ext_phase_contrib = self.TWOPI * self.f * theta[:, 4:5] - 2 * theta[:, 5:6]
+        # Originally this term included tc and phic contribution
+        # We remove tc here to explicitly apply it later when needed
+        # ext_phase_contrib = self.TWOPI * self.f * theta[:, 5:6] - 2 * theta[:, 6:7]
+        ext_phase_contrib = -2 * theta[:, 6:7]
         Psi += ext_phase_contrib
 
         # And now we can combine them by multiplying by a set of heaviside functions
@@ -280,6 +284,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         Psi = torch.where(self.f <= fcut_true, Psi, self.TWOPI)
 
         A = self.amp(
+            self.f,
             theta[:, :5],
             coeffs,
             trans_fs,
@@ -346,9 +351,11 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Amplitude transition frequencies
         f3 = 0.014 / M_s
         # Compute both branches
+        sqrt_term = torch.sqrt(torch.clamp(1.0 - gamma2**2, min=0.0))
+
         f4_gammaneg_gtr_1 = torch.abs(f_RD + (-f_damp * gamma3) / gamma2)
         f4_gammaneg_less_1 = torch.abs(
-            f_RD + (f_damp * (-1 + torch.sqrt(1 - gamma2**2)) * gamma3) / gamma2
+            f_RD + (f_damp * (-1 + sqrt_term) * gamma3) / gamma2
         )
 
         # Select based on condition
@@ -922,6 +929,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     def amp(
         self,
+        f,
         theta,
         coeffs,
         trans_fs,
@@ -957,12 +965,12 @@ class IMRPhenomD(phenom.PhenomConstants):
             fcut_true = self.get_fcut_true(M_s)
 
         Amp = torch.where(
-            self.f <= trans_fs[:, 2:3],
+            f <= trans_fs[:, 2:3],
             Amp_Ins,
             torch.where(
-                self.f <= trans_fs[:, 3:4],
+                f <= trans_fs[:, 3:4],
                 Amp_IIa,
-                torch.where(self.f <= fcut_true, Amp_IIb, torch.zeros_like(self.f)),
+                torch.where(f <= fcut_true, Amp_IIb, torch.zeros_like(f)),
             ),
         )
 
