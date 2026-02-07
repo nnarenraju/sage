@@ -421,7 +421,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Compute standard Phenom effective spin combination
         m1sf = m1f * m1f
         m2sf = m2f * m2f
-        s = (m1sf * chi1 + m2sf * chi2) / (m1sf + m2sf)
+        # NOTE: LAL does not include this denominator?
+        # Including this will cause mismatch in equal mass
+        # high spin cases; but still not by much given noise floor
+        s = m1sf * chi1 + m2sf * chi2 / (m1sf + m2sf)
 
         eta2 = eta * eta
         eta3 = eta2 * eta
@@ -762,159 +765,161 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     def get_inspiral_phase(self, fxi_Ms, derived, chi, coeffs, phi6corr):
         """
-        Calculate the inspiral phase for the IMRPhenomD waveform.
+        Calculate the inspiral phase for IMRPhenomD exactly equivalent to LAL.
         """
-        # Expand vars
-        m1_s = derived[:, 0:1]
-        m2_s = derived[:, 1:2]
-        M_s = derived[:, 2:3]
-        eta_s = derived[:, 3:4]
-        chi1 = chi[:, 0:1]
-        chi2 = chi[:, 1:2]
+        # Unpack derived parameters
+        m1_s, m2_s, M_s, eta_s = (
+            derived[:, 0:1],
+            derived[:, 1:2],
+            derived[:, 2:3],
+            derived[:, 3:4],
+        )
+        chi1, chi2 = chi[:, 0:1], chi[:, 1:2]
 
-        # First lets construct the phase in the inspiral (region I)
         m1M = m1_s / M_s
         m2M = m2_s / M_s
+        chi1sq = chi1 * chi1
+        chi2sq = chi2 * chi2
+        chi12 = chi1 * chi2  # chi1 * chi2 for aligned spin is chi1 . chi2
 
+        # Newtonian and 1PN
         phi0 = self.ONES
         phi1 = self.ZEROS
-        phi2 = 5.0 * (74.3 / 8.4 + 11.0 * eta_s) / 9.0
-        phi3 = -self.SIXTEEN * self.PI + (
-            m1M * (25.0 + 38.0 / 3.0 * m1M) * chi1
-            + m2M * (25.0 + 38.0 / 3.0 * m2M) * chi2
-        )
-        phi4 = (
-            5.0
-            * (3058.673 / 7.056 + 5429.0 / 7.0 * eta_s + 617.0 * eta_s * eta_s)
-            / 72.0
-        )
+        phi2 = 5.0 * (743.0 / 84.0 + 11.0 * eta_s) / 9.0
+
+        # 1.5PN
+        phi3 = -16.0 * self.PI * self.ONES
+        phi3 += m1M * (25.0 + 38.0 / 3.0 * m1M) * chi1
+        phi3 += m2M * (25.0 + 38.0 / 3.0 * m2M) * chi2
+
+        # 2PN
+        phi4 = 5.0 * (3058.673 / 7.056 + 5429.0 / 7.0 * eta_s + 617.0 * eta_s**2) / 72.0
+        # Add SS, QM, and Self-Spin terms
+        phi4 += (247.0 / 4.8 * eta_s) * chi12  # S1S2
+        phi4 += (-721.0 / 4.8 * eta_s) * chi1 * chi2  # S1S2O
         phi4 += (
-            (247.0 / 4.8 * eta_s) * chi1 * chi2
-            + (-721.0 / 4.8 * eta_s) * chi1 * chi2
-            + ((-720.0 / 9.6 * m1M * m1M) + (1.0 / 9.6 * m1M * m1M)) * chi1 * chi1
-            + ((-720.0 / 9.6 * m2M * m2M) + (1.0 / 9.6 * m2M * m2M)) * chi2 * chi2
-            + ((240.0 / 9.6 * m1M * m1M) + (-7.0 / 9.6 * m1M * m1M)) * chi1 * chi1
-            + ((240.0 / 9.6 * m2M * m2M) + (-7.0 / 9.6 * m2M * m2M)) * chi2 * chi2
-        )
+            -720.0 / 9.6 * m1M**2 + 1.0 / 9.6 * m1M**2
+        ) * chi1sq  # QM2SO + Self2SO (m1)
+        phi4 += (
+            -720.0 / 9.6 * m2M**2 + 1.0 / 9.6 * m2M**2
+        ) * chi2sq  # QM2SO + Self2SO (m2)
+        phi4 += (
+            240.0 / 9.6 * m1M**2 - 7.0 / 9.6 * m1M**2
+        ) * chi1sq  # QM2S + Self2S (m1)
+        phi4 += (
+            240.0 / 9.6 * m2M**2 - 7.0 / 9.6 * m2M**2
+        ) * chi2sq  # QM2S + Self2S (m2)
+
+        # 2.5PN
         phi5 = 5.0 / 9.0 * (772.9 / 8.4 - 13.0 * eta_s) * self.PI
-        phi5 += (
+        so5 = (
             -m1M
             * (
                 1391.5 / 8.4
                 - m1M * (1.0 - m1M) * 10.0 / 3.0
                 + m1M * (1276.0 / 8.1 + m1M * (1.0 - m1M) * 170.0 / 9.0)
             )
-        ) * chi1 + (
+            * chi1
+        )
+        so5 += (
             -m2M
             * (
                 1391.5 / 8.4
                 - m2M * (1.0 - m2M) * 10.0 / 3.0
                 + m2M * (1276.0 / 8.1 + m2M * (1.0 - m2M) * 170.0 / 9.0)
             )
-        ) * chi2
-        phi5_log = self.FIVE_BY_THREE * (772.9 / 8.4 - 13.0 * eta_s) * self.PI
-        phi5_log += 3.0 * (
-            (
-                -m1M
-                * (
-                    1391.5 / 8.4
-                    - m1M * (1.0 - m1M) * 10.0 / 3.0
-                    + m1M * (1276.0 / 8.1 + m1M * (1.0 - m1M) * 170.0 / 9.0)
-                )
-            )
-            * chi1
-            + (
-                -m2M
-                * (
-                    1391.5 / 8.4
-                    - m2M * (1.0 - m2M) * 10.0 / 3.0
-                    + m2M * (1276.0 / 8.1 + m2M * (1.0 - m2M) * 170.0 / 9.0)
-                )
-            )
             * chi2
         )
-
-        phi6 = (
-            (
-                11583.231236531 / 4.694215680
-                - 640.0 / 3.0 * self.PI * self.PI
-                - 684.8 / 2.1 * self.EulerGamma
-            )
-            + eta_s * (-15737.765635 / 3.048192 + 225.5 / 1.2 * self.PI * self.PI)
-            + eta_s * eta_s * 76.055 / 1.728
-            - eta_s * eta_s * eta_s * 127.825 / 1.296
-            + (-684.8 / 2.1) * torch.log(self.FOUR)
+        phi5 += so5
+        phi5_log = (
+            self.FIVE_BY_THREE * (772.9 / 8.4 - 13.0 * eta_s) * self.PI + 3.0 * so5
         )
-        phi6 += (self.PI * m1M * (1490.0 / 3.0 + m1M * 260.0)) * chi1 + (
-            self.PI * m2M * (1490.0 / 3.0 + m2M * 260.0)
-        ) * chi2
 
-        # Applying the 3PN spin-spin correction
+        # 3PN
+        phi6 = (
+            11583.231236531 / 4.694215680
+            - 640.0 / 3.0 * self.PI**2
+            - 684.8 / 2.1 * self.EulerGamma
+        ) * self.ONES
+        phi6 += eta_s * (-15737.765635 / 3.048192 + 225.5 / 1.2 * self.PI**2)
+        phi6 += eta_s**2 * 76.055 / 1.728 - eta_s**3 * 127.825 / 1.296
+        phi6 += (-684.8 / 2.1) * torch.log(self.FOUR)
+        # Add 3PN SO/SS/QM terms
+        phi6 += (self.PI * m1M * (1490.0 / 3.0 + m1M * 260.0)) * chi1
+        phi6 += (self.PI * m2M * (1490.0 / 3.0 + m2M * 260.0)) * chi2
+        phi6 += ((326.75 / 1.12 + 557.5 / 1.8 * eta_s) * eta_s) * chi1 * chi2  # S1S2O
+        phi6 += (
+            (4703.5 / 8.4 + 2935.0 / 6.0 * m1M - 120.0 * m1M**2) * m1M**2
+            + (-4108.25 / 6.72 - 108.5 / 1.2 * m1M + 125.5 / 3.6 * m1M**2) * m1M**2
+        ) * chi1sq
+        phi6 += (
+            (4703.5 / 8.4 + 2935.0 / 6.0 * m2M - 120.0 * m2M**2) * m2M**2
+            + (-4108.25 / 6.72 - 108.5 / 1.2 * m2M + 125.5 / 3.6 * m2M**2) * m2M**2
+        ) * chi2sq
+        # Subtract 3PN SS correction as done in driver
         phi6 = phi6 - phi6corr
-
         phi6_log = self.PHI6LOG
 
+        # 3.5PN
         phi7 = self.PI * (
-            770.96675 / 2.54016
-            + 378.515 / 1.512 * eta_s
-            - 740.45 / 7.56 * eta_s * eta_s
+            770.96675 / 2.54016 + 378.515 / 1.512 * eta_s - 740.45 / 7.56 * eta_s**2
         )
         phi7 += (
             m1M
             * (
                 -17097.8035 / 4.8384
                 + eta_s * 28764.25 / 6.72
-                + eta_s * eta_s * 47.35 / 1.44
+                + eta_s**2 * 47.35 / 1.44
                 + m1M
                 * (
                     -7189.233785 / 1.524096
                     + eta_s * 458.555 / 3.024
-                    - eta_s * eta_s * 534.5 / 7.2
+                    - eta_s**2 * 534.5 / 7.2
                 )
             )
-        ) * chi1 + (
+        ) * chi1
+        phi7 += (
             m2M
             * (
                 -17097.8035 / 4.8384
                 + eta_s * 28764.25 / 6.72
-                + eta_s * eta_s * 47.35 / 1.44
+                + eta_s**2 * 47.35 / 1.44
                 + m2M
                 * (
                     -7189.233785 / 1.524096
                     + eta_s * 458.555 / 3.024
-                    - eta_s * eta_s * 534.5 / 7.2
+                    - eta_s**2 * 534.5 / 7.2
                 )
             )
         ) * chi2
 
-        # Save all TaylorF2 coefficients
+        # Frequency-domain assembly
         TF2_coeffs = torch.cat([phi0, phi1, phi2, phi3, phi4, phi5, phi6, phi7], dim=1)
         TF2_log_coeffs = torch.cat([phi5_log, phi6_log], dim=1)
 
-        # Add frequency dependence here
         PI_f_Ms = self.PI * fxi_Ms
         v = PI_f_Ms**self.ONE_BY_THREE
-        _v = 1.0 / v
 
         phi_TF2 = (
             phi0 * (PI_f_Ms**-self.FIVE_BY_THREE)
-            + phi1 * (PI_f_Ms ** -(4.0 / 3.0))
             + phi2 * (PI_f_Ms**-1.0)
             + phi3 * (PI_f_Ms ** -(2.0 / 3.0))
-            + phi4 * _v
+            + phi4 * (v**-1.0)
             + phi5_log * torch.log(v)
             + phi5
             + phi6_log * torch.log(v) * v
             + phi6 * v
             + phi7 * (PI_f_Ms ** (2.0 / 3.0))
         ) * (3.0 / (128.0 * eta_s)) - self.PI / 4.0
+
+        # Add higher-order phenomenological sigma terms
         phi_Ins = (
             phi_TF2
             + (
                 coeffs[:, 7:8] * fxi_Ms
                 + (3.0 / 4.0) * coeffs[:, 8:9] * (fxi_Ms ** (4.0 / 3.0))
                 + (3.0 / 5.0) * coeffs[:, 9:10] * (fxi_Ms ** (5.0 / 3.0))
-                + self.HALF * coeffs[:, 10:11] * (fxi_Ms * fxi_Ms)
+                + 0.5 * coeffs[:, 10:11] * (fxi_Ms**2)
             )
             / eta_s
         )

@@ -54,7 +54,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
-    # @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
+    @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def __call__(self, theta):
         # TODO: Remove after completing code.
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
