@@ -35,11 +35,7 @@ from sage.core.torch import nudge_backward_, nudge_forward_
 class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
     def __init__(self, f, f_ref):
-        super().__init__(
-            device=f.device,
-            batch_size=f.shape[0],
-            dtype=f.dtype,
-        )
+        super().__init__(f, f_ref)
         # Fixed frequency grid
         self.f = f
         self.df = f[0][1] - f[0][0]
@@ -58,13 +54,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
-    @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
+    # @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def __call__(self, theta):
         # TODO: Remove after completing code.
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
         # s2z=7, dist_mpc=8, tc=9, phiRef=10, incl=11
         # Swapping masses and spins
-        IMRPhenomPv2.swap_masses(theta)
+        # IMRPhenomPv2.swap_masses(theta)
 
         # Compute generic derived quantities from masses
         derived = self.compute_derived_parameters(theta)
@@ -80,18 +76,20 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
         # Other one-off derived quantities
         chi_eff = (
-            theta[:, 0:1] * converted_spins[:, 0:1]
-            + theta[:, 1:2] * converted_spins[:, 1:2]
+            theta[:, 1:2] * converted_spins[:, 0:1]
+            + theta[:, 0:1] * converted_spins[:, 1:2]
         ) / derived[:, 0:1]
+
         chil = (1.0 + derived[:, 2:3]) / derived[:, 2:3] * chi_eff
-        piM = self.pi * derived[:, 3:4]
+
+        piM = self.PI * derived[:, 3:4]
 
         omega_ref = piM * self.f_ref
         logomega_ref = torch.log(omega_ref)
         omega_ref_cbrt = (piM * self.f_ref) ** self.ONE_BY_THREE
         omega_ref_cbrt2 = omega_ref_cbrt * omega_ref_cbrt
 
-        # angcoeffs is a torch.stack with the following values in order
+        # angcoeffs is a torch.cat with the following values in order
         # alphacoeff1, alphacoeff2, alphacoeff3, alphacoeff4, alphacoeff5,
         # epsiloncoeff1, epsiloncoeff2, epsiloncoeff3, epsiloncoeff4, epsiloncoeff5,
         angcoeffs = self.ComputeNNLOanglecoeffs(
@@ -101,19 +99,19 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         )
 
         alphaNNLOoffset = (
-            angcoeffs[0] / omega_ref
-            + angcoeffs[1] / omega_ref_cbrt2
-            + angcoeffs[2] / omega_ref_cbrt
-            + angcoeffs[3] * logomega_ref
-            + angcoeffs[4] * omega_ref_cbrt
+            angcoeffs[:, 0:1] / omega_ref
+            + angcoeffs[:, 1:2] / omega_ref_cbrt2
+            + angcoeffs[:, 2:3] / omega_ref_cbrt
+            + angcoeffs[:, 3:4] * logomega_ref
+            + angcoeffs[:, 4:5] * omega_ref_cbrt
         )
 
         epsilonNNLOoffset = (
-            angcoeffs[5] / omega_ref
-            + angcoeffs[6] / omega_ref_cbrt2
-            + angcoeffs[7] / omega_ref_cbrt
-            + angcoeffs[8] * logomega_ref
-            + angcoeffs[9] * omega_ref_cbrt
+            angcoeffs[:, 5:6] / omega_ref
+            + angcoeffs[:, 6:7] / omega_ref_cbrt2
+            + angcoeffs[:, 7:8] / omega_ref_cbrt
+            + angcoeffs[:, 8:9] * logomega_ref
+            + angcoeffs[:, 9:10] * omega_ref_cbrt
         )
 
         Y2m2 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -2)
@@ -121,14 +119,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         Y20 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -0)
         Y21 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, 1)
         Y22 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, 2)
-        Y2 = torch.stack([Y2m2, Y2m1, Y20, Y21, Y22], dim=1)
+        Y2 = torch.cat([Y2m2, Y2m1, Y20, Y21, Y22], dim=1)
 
         # Shift phase so that peak amplitude matches t = 0
         # Calling PhenomD functions which require swapped masses
-        theta_swapped = torch.stack(
+        theta_swapped = torch.cat(
             [
-                theta[:, 1:2],
                 theta[:, 0:1],
+                theta[:, 1:2],
                 converted_spins[:, 1:2],
                 converted_spins[:, 0:1],
                 theta[:, 8:9],
@@ -172,9 +170,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         fcut_true = super().get_fcut_true(derived[:, 3:4])
 
         hPhenomD, _ = self.PhenomPOneFrequency(
+            self.f,
             f_Ms,
             fx_Ms,
-            theta,
+            theta_swapped,
             phd_derived,
             coeffs,
             trans_fs,
@@ -198,19 +197,26 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         # Fixed frequency grid around ringdown frequency for Pv2
         # 10 points should be enough for cubic interpolation
         # Same n_fixed used in LAL version
-        n_fixed = 10
+        n_fixed = 1000
+
         fcut = self.fM_CUT / derived[:, 3:4]
         f_final = trans_fs[:, 4:5]
+
         freqs_fixed_start = 0.8 * f_final
-        # Clamp to fCut
-        freqs_fixed_stop = min(1.2 * f_final, fcut)
-        freqs_fixed = torch.linspace(
-            freqs_fixed_start,
-            freqs_fixed_stop,
+        freqs_fixed_stop = torch.minimum(1.2 * f_final, fcut)
+
+        # Create linspace weights once
+        t = torch.linspace(
+            0.0,
+            1.0,
             n_fixed,
             device=self.f.device,
             dtype=self.f.dtype,
         )
+
+        # Broadcast to (B, n_fixed)
+        freqs_fixed = freqs_fixed_start + (freqs_fixed_stop - freqs_fixed_start) * t
+        ff_Ms = freqs_fixed * derived[:, 3:4]
 
         # Compute phase on fixed grid
         # We have inverted m1 and m2 back to the convention m1 > m2 for PhenomD call
@@ -218,8 +224,9 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
         _, phase_fixed = self.PhenomPOneFrequency(
             freqs_fixed,
+            ff_Ms,
             fx_Ms,
-            theta,
+            theta_swapped,
             phd_derived,
             coeffs,
             trans_fs,
@@ -276,10 +283,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
     def compute_derived_parameters(self, theta):
         # Overriding inherited method
         # Derived params different from PhenomD
-        M = theta[:, 0:1] + theta[:, 1:2]
-        eta = theta[:, 0:1] * theta[:, 1:2] / (M * M)
-        q = theta[:, 1:2] / theta[:, 0:1]  # q>=1 due to swapped masses
-        M_s = (theta[:, 0:1] + theta[:, 1:2]) * self.GM  # also called m_sec
+        M = theta[:, 1:2] + theta[:, 0:1]
+        eta = theta[:, 1:2] * theta[:, 0:1] / (M * M)
+        q = theta[:, 0:1] / theta[:, 1:2]  # q>=1 due to swapped masses
+        M_s = (theta[:, 1:2] + theta[:, 0:1]) * self.GM  # also called m_sec
         # This should prevent NaNs
         nudge_backward_(eta, 0.25, 1e-6)
         nudge_forward_(q, 1.0, 1e-6)
@@ -287,8 +294,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         return torch.cat([M, eta, q, M_s], dim=1)
 
     def convert_spins(self, theta, derived):
-        m1_2 = theta[:, 0:1] * theta[:, 0:1]
-        m2_2 = theta[:, 1:2] * theta[:, 1:2]
+        m1_2 = theta[:, 1:2] * theta[:, 1:2]
+        m2_2 = theta[:, 0:1] * theta[:, 0:1]
 
         # From the components in the source frame, we can easily determine
         # chi1_l, chi2_l, chip and phi_aligned, which we need to return.
@@ -296,21 +303,21 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         # which we need to transform to the J frame
 
         # Aligned spins
-        chi1_l = theta[:, 4:5]  # Dimensionless aligned spin on BH 1
-        chi2_l = theta[:, 7:8]  # Dimensionless aligned spin on BH 2
+        chi1_l = theta[:, 7:8]  # Dimensionless aligned spin on BH 1
+        chi2_l = theta[:, 4:5]  # Dimensionless aligned spin on BH 2
 
         # Magnitude of the spin projections in the orbital plane
-        S1_perp = m1_2 * torch.sqrt(theta[:, 2:3] ** 2 + theta[:, 3:4] ** 2)
-        S2_perp = m2_2 * torch.sqrt(theta[:, 5:6] ** 2 + theta[:, 6:7] ** 2)
+        S1_perp = m1_2 * torch.sqrt(theta[:, 5:6] ** 2 + theta[:, 6:7] ** 2)
+        S2_perp = m2_2 * torch.sqrt(theta[:, 2:3] ** 2 + theta[:, 3:4] ** 2)
 
-        A1 = self.TWO + (3 * theta[:, 1:2]) / (2 * theta[:, 0:1])
-        A2 = self.TWO + (3 * theta[:, 0:1]) / (2 * theta[:, 1:2])
+        A1 = self.TWO + (3 * theta[:, 0:1]) / (2 * theta[:, 1:2])
+        A2 = self.TWO + (3 * theta[:, 1:2]) / (2 * theta[:, 0:1])
         ASp1 = A1 * S1_perp
         ASp2 = A2 * S2_perp
         num = torch.maximum(ASp1, ASp2)
         # Adding this for safety (we shouldn't need it)
         # const REAL8 den = (m2 > m1) ? A2*m2_2 : A1*m1_2;
-        den = torch.where(theta[:, 1:2] > theta[:, 0:1], A2 * m2_2, A1 * m1_2)
+        den = torch.where(theta[:, 0:1] > theta[:, 1:2], A2 * m2_2, A1 * m1_2)
         chip = num / den
 
         m_sec = derived[:, 0:1] * self.GM
@@ -324,9 +331,9 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
                 derived[:, 1:2],
             )
         )
-        J0x_sf = m1_2 * theta[:, 2:3] + m2_2 * theta[:, 5:6]
-        J0y_sf = m1_2 * theta[:, 3:4] + m2_2 * theta[:, 6:7]
-        J0z_sf = L0 + m1_2 * theta[:, 4:5] + m2_2 * theta[:, 7:8]
+        J0x_sf = m1_2 * theta[:, 5:6] + m2_2 * theta[:, 2:3]
+        J0y_sf = m1_2 * theta[:, 6:7] + m2_2 * theta[:, 3:4]
+        J0z_sf = L0 + m1_2 * theta[:, 7:8] + m2_2 * theta[:, 4:5]
         J0 = torch.sqrt(J0x_sf * J0x_sf + J0y_sf * J0y_sf + J0z_sf * J0z_sf)
 
         thetaJ_sf = torch.arccos(J0z_sf / J0)
@@ -335,8 +342,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
         # First we determine kappa
         # in the source frame, the components of N are given in Eq (35c) of T1500606-v6
-        Nx_sf = torch.sin(theta[:, 11:12]) * torch.cos(torch.pi / 2.0 - theta[:, 10:11])
-        Ny_sf = torch.sin(theta[:, 11:12]) * torch.sin(torch.pi / 2.0 - theta[:, 10:11])
+        Nx_sf = torch.sin(theta[:, 11:12]) * torch.cos(self.PI / 2.0 - theta[:, 10:11])
+        Ny_sf = torch.sin(theta[:, 11:12]) * torch.sin(self.PI / 2.0 - theta[:, 10:11])
         Nz_sf = torch.cos(theta[:, 11:12])
 
         tmp_x = Nx_sf
@@ -401,7 +408,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
         zeta_polariz = torch.arctan2(XdotQArun, XdotPArun)
 
-        return torch.stack(
+        return torch.cat(
             [
                 chi1_l,
                 chi2_l,
@@ -486,8 +493,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         )
 
         alphacoeff4 = (
-            -(35 * torch.pi) / 48.0
-            - (5 * dm * torch.pi) / (16.0 * m2)
+            -(35 * self.PI) / 48.0
+            - (5 * dm * self.PI) / (16.0 * m2)
             + (5 * dm2 * chil) / (16.0 * mtot2)
             + (5 * dm * m2 * chil) / (3.0 * mtot2)
             + (2545 * m2_2 * chil) / (1152.0 * mtot2)
@@ -514,8 +521,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             + (15 * dm3 * eta2) / (1024.0 * m2_3)
             + (35 * dm2 * eta2) / (256.0 * m2_2)
             + (2725 * dm * eta2) / (3072.0 * m2)
-            - (15 * dm * m2 * torch.pi * chil) / (16.0 * mtot2 * eta)
-            - (35 * m2_2 * torch.pi * chil) / (16.0 * mtot2 * eta)
+            - (15 * dm * m2 * self.PI * chil) / (16.0 * mtot2 * eta)
+            - (35 * m2_2 * self.PI * chil) / (16.0 * mtot2 * eta)
             + (15 * chip2 * dm * m2_7 * chil2) / (128.0 * mtot8 * eta4)
             + (35 * chip2 * m2_8 * chil2) / (128.0 * mtot8 * eta4)
             + (375 * dm2 * m2_2 * chil2) / (256.0 * mtot4 * eta)
@@ -535,8 +542,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             - (175 * dm * eta) / (256.0 * m2)
         )
         epsiloncoeff4 = (
-            -(35 * torch.pi) / 48.0
-            - (5 * dm * torch.pi) / (16.0 * m2)
+            -(35 * self.PI) / 48.0
+            - (5 * dm * self.PI) / (16.0 * m2)
             + (5 * dm2 * chil) / (16.0 * mtot2)
             + (5 * dm * m2 * chil) / (3.0 * mtot2)
             + (2545 * m2_2 * chil) / (1152.0 * mtot2)
@@ -553,14 +560,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             + (15 * dm3 * eta2) / (1024.0 * m2_3)
             + (35 * dm2 * eta2) / (256.0 * m2_2)
             + (2725 * dm * eta2) / (3072.0 * m2)
-            - (15 * dm * m2 * torch.pi * chil) / (16.0 * mtot2 * eta)
-            - (35 * m2_2 * torch.pi * chil) / (16.0 * mtot2 * eta)
+            - (15 * dm * m2 * self.PI * chil) / (16.0 * mtot2 * eta)
+            - (35 * m2_2 * self.PI * chil) / (16.0 * mtot2 * eta)
             + (375 * dm2 * m2_2 * chil2) / (256.0 * mtot4 * eta)
             + (1815 * dm * m2_3 * chil2) / (256.0 * mtot4 * eta)
             + (1645 * m2_4 * chil2) / (192.0 * mtot4 * eta)
         )
 
-        angcoeffs = torch.stack(
+        angcoeffs = torch.cat(
             [
                 alphacoeff1,
                 alphacoeff2,
@@ -584,31 +591,31 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             if l == 2:
                 if m == -2:
                     fac = (
-                        torch.sqrt(self.FIVE / (64.0 * torch.pi))
+                        torch.sqrt(self.FIVE / (64.0 * self.PI))
                         * (1.0 - torch.cos(theta))
                         * (1.0 - torch.cos(theta))
                     )
                 elif m == -1:
                     fac = (
-                        torch.sqrt(self.FIVE / (16.0 * torch.pi))
+                        torch.sqrt(self.FIVE / (16.0 * self.PI))
                         * torch.sin(theta)
                         * (1.0 - torch.cos(theta))
                     )
                 elif m == 0:
                     fac = (
-                        torch.sqrt(self.FIFTEEN / (32.0 * torch.pi))
+                        torch.sqrt(self.FIFTEEN / (32.0 * self.PI))
                         * torch.sin(theta)
                         * torch.sin(theta)
                     )
                 elif m == 1:
                     fac = (
-                        torch.sqrt(self.FIVE / (16.0 * torch.pi))
+                        torch.sqrt(self.FIVE / (16.0 * self.PI))
                         * torch.sin(theta)
                         * (1.0 + torch.cos(theta))
                     )
                 elif m == 2:
                     fac = (
-                        torch.sqrt(self.FIVE / (64.0 * torch.pi))
+                        torch.sqrt(self.FIVE / (64.0 * self.PI))
                         * (1.0 + torch.cos(theta))
                         * (1.0 + torch.cos(theta))
                     )
@@ -797,19 +804,19 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         omega_cbrt2 = omega_cbrt * omega_cbrt
 
         alpha = (
-            angcoeffs[0] / omega
-            + angcoeffs[1] / omega_cbrt2
-            + angcoeffs[2] / omega_cbrt
-            + angcoeffs[3] * logomega
-            + angcoeffs[4] * omega_cbrt
+            angcoeffs[:, 0:1] / omega
+            + angcoeffs[:, 1:2] / omega_cbrt2
+            + angcoeffs[:, 2:3] / omega_cbrt
+            + angcoeffs[:, 3:4] * logomega
+            + angcoeffs[:, 4:5] * omega_cbrt
         ) - alphaoffset
 
         epsilon = (
-            angcoeffs[5] / omega
-            + angcoeffs[6] / omega_cbrt2
-            + angcoeffs[7] / omega_cbrt
-            + angcoeffs[8] * logomega
-            + angcoeffs[9] * omega_cbrt
+            angcoeffs[:, 5:6] / omega
+            + angcoeffs[:, 6:7] / omega_cbrt2
+            + angcoeffs[:, 7:8] / omega_cbrt
+            + angcoeffs[:, 8:9] * logomega
+            + angcoeffs[:, 9:10] * omega_cbrt
         ) - epsilonoffset
 
         cBetah, sBetah = self.WignerdCoefficients(
@@ -834,18 +841,18 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         cexp_mi_alpha = 1.0 / cexp_i_alpha
         cexp_m2i_alpha = cexp_mi_alpha * cexp_mi_alpha
         T2m = (
-            cexp_2i_alpha * cBetah4 * Y2m[0]
-            - cexp_i_alpha * 2 * cBetah3 * sBetah * Y2m[1]
-            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * Y2m[2]
-            - cexp_mi_alpha * 2 * cBetah * sBetah3 * Y2m[3]
-            + cexp_m2i_alpha * sBetah4 * Y2m[4]
+            cexp_2i_alpha * cBetah4 * Y2m[:, 0:1]
+            - cexp_i_alpha * 2 * cBetah3 * sBetah * Y2m[:, 1:2]
+            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * Y2m[:, 2:3]
+            - cexp_mi_alpha * 2 * cBetah * sBetah3 * Y2m[:, 3:4]
+            + cexp_m2i_alpha * sBetah4 * Y2m[:, 4:5]
         )
         Tm2m = (
-            cexp_m2i_alpha * sBetah4 * torch.conj(Y2m[0])
-            + cexp_mi_alpha * 2 * cBetah * sBetah3 * torch.conj(Y2m[1])
-            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * torch.conj(Y2m[2])
-            + cexp_i_alpha * 2 * cBetah3 * sBetah * torch.conj(Y2m[3])
-            + cexp_2i_alpha * cBetah4 * torch.conj(Y2m[4])
+            cexp_m2i_alpha * sBetah4 * torch.conj(Y2m[:, 0:1])
+            + cexp_mi_alpha * 2 * cBetah * sBetah3 * torch.conj(Y2m[:, 1:2])
+            + 1 * self.SQRT_6 * sBetah2 * cBetah2 * torch.conj(Y2m[:, 2:3])
+            + cexp_i_alpha * 2 * cBetah3 * sBetah * torch.conj(Y2m[:, 3:4])
+            + cexp_2i_alpha * cBetah4 * torch.conj(Y2m[:, 4:5])
         )
         hp_sum = T2m + Tm2m
         hc_sum = self.ONE_J * (T2m - Tm2m)
@@ -873,6 +880,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
     def PhenomPOneFrequency(
         self,
+        f,
         f_Ms,
         fx_Ms,
         theta,
@@ -894,6 +902,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         norm = 2.0 * torch.sqrt(self.FIVE / (64.0 * self.PI))
         Amp = (
             super().amp(
+                f,
                 theta[:, :5],
                 coeffs,
                 trans_fs,
@@ -934,19 +943,41 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             Tuple of corrected (hptilde, hctilde)
         """
 
+        # Compute relative index (uniform grid assumption)
+        rel_idx = (f_final - freqs_fixed[:, :1]) / (
+            freqs_fixed[:, 1:2] - freqs_fixed[:, :1]
+        )
+
+        # Fast local estimate of dphi/df at f_final using a 3-point central difference
+        # on the reduced (n_fixed) frequency grid. This avoids constructing a full
+        # cubic spline, which is unnecessary when only a single derivative per batch
+        # is required and the phase is smooth in the matching region.
+        idx = rel_idx.floor().long().clamp(1, freqs_fixed.shape[1] - 2)
+
+        f_prev = freqs_fixed.gather(1, idx - 1)
+        f_next = freqs_fixed.gather(1, idx + 1)
+        p_prev = phase_fixed.gather(1, idx - 1)
+        p_next = phase_fixed.gather(1, idx + 1)
+
+        t_corr_fixed = (p_next - p_prev) / (f_next - f_prev) / (2 * self.PI)
+
+        """
         # Compute derivative of phase at f_final using natural cubic spline
         M = torch_natural_cubic_coeffs(freqs_fixed, phase_fixed)
+
         t_corr_fixed = torch_natural_cubic_interp(
-            torch.tensor([f_final], device=self.f.device, dtype=self.f.dtype),
+            f_final.squeeze(-1),
             freqs_fixed,
             phase_fixed,
             M,
             derivative=True,
-        )[0] / (2 * self.PI)
+        ) / (2 * self.PI)
+
+        # Reshape for broadcasting over frequency axis
+        t_corr_fixed = t_corr_fixed.unsqueeze(-1)
+        """
 
         # Compute phase correction factor
-        # phase_corr = exp(-2.PI.i f t_corr_fixed) = cos(...) - i sin(...)
-        # For complex multiplication in PyTorch
         phase_corr = torch.exp(self.TWO_J * self.PI * self.f * t_corr_fixed)
 
         # Apply to waveform, respecting offset
