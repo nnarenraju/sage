@@ -31,6 +31,8 @@ import torch
 from sage.data.waveform.approximants import IMRPhenomD
 from sage.core.torch import nudge_backward_, nudge_forward_
 
+from sage.data.waveform import taper
+
 
 class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
@@ -79,8 +81,46 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
         Y2 = self.compute_spin_weighted_Y(converted_spins)
 
+        # Calling PhenomD functions which require swapped masses
+        theta_swapped = torch.cat(
+            [
+                theta[:, 0:1],
+                theta[:, 1:2],
+                converted_spins[:, 1:2],
+                converted_spins[:, 0:1],
+                theta[:, 8:9],
+                phic,
+            ],
+            dim=1,
+        )
+
+        phd_derived = super().compute_derived_parameters(theta_swapped)
+
+        # This is an IMRPhenomD function and required m1 > m2
+        # So we swap back before calling get_coeffs
+        coeffs = super().get_coeffs(
+            converted_spins[:, 1:2], converted_spins[:, 0:1], phd_derived[:, 3:4]
+        )
+
+        f_Ms, fx_Ms, fcut_true, trans_fs = self.get_derived_freqs(
+            theta_swapped,
+            derived,
+            phd_derived,
+            coeffs,
+            converted_spins,
+        )
+
         # Do PhenomD mass swapped operations (m1 > m2)
-        self.compute_swapped_ops(theta, derived, converted_spins, phic)
+        hPhenomD, _ = self.PhenomPOneFrequency(
+            self.f,
+            f_Ms,
+            fx_Ms,
+            theta_swapped,
+            phd_derived,
+            coeffs,
+            trans_fs,
+            fcut_true,
+        )
 
         # PhenomP get hp and hc
         hp, hc = self.PhenomPCoreTwistUp(
@@ -97,7 +137,17 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         )
 
         # Do corrections for time shift and phase
-        self.compute_time_and_phase()
+        hp, hc = self.correct_time_and_phase(
+            hp,
+            hc,
+            theta_swapped,
+            derived,
+            phd_derived,
+            trans_fs,
+            fx_Ms,
+            coeffs,
+            fcut_true,
+        )
 
         # final touches to hp and hc, stolen from Scott
         c2z = torch.cos(2 * converted_spins[:, 6:7])
@@ -107,14 +157,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
         if not reproduce_lal:
             # Frequency domain tapering
-            taper = taper.fd_taper(
+            _taper = taper.fd_taper(
                 f=self.f,
                 f_min=20.0,
                 f_cut=fcut_true,
                 df=self.df,
             )
-            hp *= taper
-            hc *= taper
+            hp *= _taper
+            hc *= _taper
 
             # Apply phase shift equivalent to applying tc
             hp, hc = self.apply_tc(hp, hc, theta[:, 9:10])
@@ -212,28 +262,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         Y22 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, 2)
         return torch.cat([Y2m2, Y2m1, Y20, Y21, Y22], dim=1)
 
-    def compute_swapped_ops(self, theta, derived, converted_spins, phic):
-        # Shift phase so that peak amplitude matches t = 0
-        # Calling PhenomD functions which require swapped masses
-        theta_swapped = torch.cat(
-            [
-                theta[:, 0:1],
-                theta[:, 1:2],
-                converted_spins[:, 1:2],
-                converted_spins[:, 0:1],
-                theta[:, 8:9],
-                phic,
-            ],
-            dim=1,
-        )
-
-        phd_derived = super().compute_derived_parameters(theta_swapped)
-        # This is an IMRPhenomD function and required m1 > m2
-        # So we swap back before calling get_coeffs
-        coeffs = super().get_coeffs(
-            converted_spins[:, 1:2], converted_spins[:, 0:1], phd_derived[:, 3:4]
-        )
-
+    def get_derived_freqs(
+        self,
+        theta_swapped,
+        derived,
+        phd_derived,
+        coeffs,
+        converted_spins,
+    ):
         # {f1, f2, f3, f4, f_RD, f_damp}
         trans_fs = self.phP_get_transition_frequencies(
             theta_swapped,
@@ -243,6 +279,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             derived,
             phd_derived,
         )
+
+        fcut_true = super().get_fcut_true(derived[:, 3:4])
 
         # Precomputing required parameters
         f1_Ms = trans_fs[:, 0:1] * derived[:, 3:4]
@@ -259,22 +297,20 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             [fref_Ms, f1_Ms, f2_Ms, f3_Ms, f4_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms], dim=1
         )
 
-        fcut_true = super().get_fcut_true(derived[:, 3:4])
+        return f_Ms, fx_Ms, fcut_true, trans_fs
 
-        hPhenomD, _ = self.PhenomPOneFrequency(
-            self.f,
-            f_Ms,
-            fx_Ms,
-            theta_swapped,
-            phd_derived,
-            coeffs,
-            trans_fs,
-            fcut_true,
-        )
-
-        return hPhenomD
-
-    def correct_time_and_phase(self):
+    def correct_time_and_phase(
+        self,
+        hp,
+        hc,
+        theta_swapped,
+        derived,
+        phd_derived,
+        trans_fs,
+        fx_Ms,
+        coeffs,
+        fcut_true,
+    ):
         ## ** This is where we do the corrections to phase and time shift **
         # Fixed frequency grid around ringdown frequency for Pv2
         # 10 points should be enough for cubic interpolation
@@ -322,6 +358,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             phase_fixed=phase_fixed,
             f_final=f_final,
         )
+
+        return hp, hc
 
     def convert_spins(self, theta, derived):
         m1_2 = theta[:, 1:2] * theta[:, 1:2]
@@ -653,6 +691,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
                     raise ValueError(
                         f"Invalid mode s={s}, l={l}, m={m} require |m| <= l"
                     )
+
+        # TODO: Replacing with polar since here it might be more efficient
         return fac * torch.exp(self.ONE_J * m * phi)
 
     def phP_get_transition_frequencies(
@@ -866,7 +906,9 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         hp_sum = self.ZERO
         hc_sum = self.ZERO
 
-        cexp_i_alpha = torch.exp(self.ONE_J * alpha)
+        # Replacing complex ops with real ops and complex label
+        # cexp_i_alpha = torch.exp(self.ONE_J * alpha)
+        cexp_i_alpha = torch.polar(torch.ones_like(alpha), alpha)
         cexp_2i_alpha = cexp_i_alpha * cexp_i_alpha
         cexp_mi_alpha = 1.0 / cexp_i_alpha
         cexp_m2i_alpha = cexp_mi_alpha * cexp_mi_alpha
@@ -886,6 +928,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         )
         hp_sum = T2m + Tm2m
         hc_sum = self.ONE_J * (T2m - Tm2m)
+        # Doing polar here will be less efficient since it requires abs and angle ops
+        # torch.polar(torch.abs(hPhenom) / 2.0, torch.angle(hPhenom) - 2.0 * epsilon)
         eps_phase_hP = torch.exp(-self.TWO_J * epsilon) * hPhenom / 2.0
 
         hp = eps_phase_hP * hp_sum
@@ -946,6 +990,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
         # phase -= 2. * phic on line 1316
         # LAL assumed orbital phase and we have already accounted for this
+        # Similar reason; no abs or angle if not using polar
         hPhenom = Amp * (torch.exp(-self.ONE_J * phase))
         return hPhenom, phase
 
