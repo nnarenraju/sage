@@ -30,6 +30,7 @@ import torch
 # LOCAL
 from sage.core.torch import nudge_backward_
 from sage.data.waveform.approximants import phenom
+from sage.data.waveform import taper
 
 
 class IMRPhenomD(phenom.PhenomConstants):
@@ -85,14 +86,14 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         if not reproduce_lal:
             # Frequency domain tapering
-            taper = IMRPhenomD.fd_taper(
+            _taper = taper.fd_taper(
                 f=self.f,
                 f_min=20.0,
                 f_cut=fcut_true,
                 df=self.df,
             )
-            hp *= taper
-            hc *= taper
+            hp *= _taper
+            hc *= _taper
 
             # Apply phase shift equivalent to applying tc
             hp, hc = self.apply_tc(hp, hc, theta[:, 5:6])
@@ -124,56 +125,6 @@ class IMRPhenomD(phenom.PhenomConstants):
         hc_pad[:, self.n_pad :] = hc
 
         return hp_pad, hc_pad
-
-    @staticmethod
-    def _taper(x, width):
-        """
-        x: distance from boundary (>= 0), shape (B, F)
-        width: taper width in bins (scalar or (B,1))
-        """
-        eps = 1e-12
-        x = torch.clamp(x, min=eps)
-        w = width - 1.0
-        z = w / x + w / (x - w)
-        return 1.0 / (1.0 + torch.exp(z))
-
-    @staticmethod
-    def fd_low_freq_taper(f, f_min, df, width_bins):
-        x = (f - f_min) / df
-        w = width_bins - 1.0
-        # Apply formula only in (0, w), 0 below, 1 above
-        return torch.where(
-            x <= 0,
-            torch.zeros_like(x),
-            torch.where(x >= w, torch.ones_like(x), IMRPhenomD._taper(x, width_bins)),
-        )
-
-    @staticmethod
-    def fd_high_freq_taper(f, f_cut, df, width_bins):
-        x = (f_cut - f) / df
-        w = width_bins - 1.0
-        # Apply formula only in (0, w), 0 beyond cut, 1 before taper start
-        return torch.where(
-            x <= 0,
-            torch.zeros_like(x),
-            torch.where(x >= w, torch.ones_like(x), IMRPhenomD._taper(x, width_bins)),
-        )
-
-    @staticmethod
-    def fd_taper(
-        f,
-        f_min,
-        f_cut,
-        df,
-        low_width=64,
-        high_width=64,
-    ):
-        """
-        Returns multiplicative taper of shape (B, F)
-        """
-        w_lo = IMRPhenomD.fd_low_freq_taper(f, f_min, df, low_width)
-        w_hi = IMRPhenomD.fd_high_freq_taper(f, f_cut, df, high_width)
-        return w_lo * w_hi
 
     def compute_derived_parameters(self, theta):
         # Derived parameters are reused a lot; compute once
@@ -308,7 +259,8 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         Args:
             f: Tensor of frequencies, shape (B,1) or (B,)
-            p: object with attributes alpha1, alpha2, alpha3, alpha4, alpha5, fDM, fRD, etaInv
+            p: object with attributes alpha1, alpha2,
+            alpha3, alpha4, alpha5, fDM, fRD, etaInv
             Rholm: ratio of fRD22/fRDlm, default 1.0
             Taulm: ratio of damping times, default 1.0
 
@@ -944,7 +896,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         fcut_true=None,
     ):
         """
-        Computes the amplitude of the PhenomD frequency domain waveform following 1508.07253.
+        Computes the amplitude of the PhenomD frequency domain waveform
+        Refer 1508.07253 for more details
         Note that this waveform also assumes that object one is the more massive.
         """
 
@@ -959,7 +912,8 @@ class IMRPhenomD(phenom.PhenomConstants):
         Amp_Ins = self.get_inspiral_Amp(f_Ms, chi1, chi2, eta_s, coeffs)
 
         # Next lets construct the phase of the late inspiral (region IIa)
-        # Note that this part is a little harder since we need to solve a system of equations for deltas
+        # Note that this part is a little harder since we need to
+        # solve a system of equations for deltas
         Amp_IIa = self.get_IIa_Amp(f_Ms, fx_Ms, theta, derived, coeffs)
 
         # And finally, we construct the amplitude of the merger-ringdown (region IIb)

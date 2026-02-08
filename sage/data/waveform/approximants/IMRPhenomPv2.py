@@ -55,12 +55,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
     @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
-    def __call__(self, theta):
-        # TODO: Remove after completing code.
+    def __call__(self, theta, reproduce_lal=False):
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
         # s2z=7, dist_mpc=8, tc=9, phiRef=10, incl=11
-        # Swapping masses and spins
-        # IMRPhenomPv2.swap_masses(theta)
+        # Pv2 requires m2 > m1; Swapping masses and spins done internally
 
         # Compute generic derived quantities from masses
         derived = self.compute_derived_parameters(theta)
@@ -247,11 +245,34 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         final_hp = c2z * hp + s2z * hc
         final_hc = c2z * hc - s2z * hp
 
+        if not reproduce_lal:
+            # Frequency domain tapering
+            taper = taper.fd_taper(
+                f=self.f,
+                f_min=20.0,
+                f_cut=fcut_true,
+                df=self.df,
+            )
+            hp *= taper
+            hc *= taper
+
+            # Apply phase shift equivalent to applying tc
+            hp, hc = self.apply_tc(hp, hc, theta[:, 9:10])
+
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
         hp, hc = self.pad_missing_frequencies(final_hp, final_hc)
 
+        return hp, hc
+
+    def apply_tc(self, hp, hc, tc):
+        # Apply time shift to account for tc
+        # Converting from tc in duration space to actual shift
+        _tc = tc - self.sample_length_in_s
+        # We do this in polar as well without torch exp
+        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
+        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
         return hp, hc
 
     def pad_missing_frequencies(self, hp, hc):
@@ -266,19 +287,6 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         hc_pad[:, self.n_pad :] = hc
 
         return hp_pad, hc_pad
-
-    @staticmethod
-    def swap_masses(theta):
-        # Swapping m1 and m2 for Pv2
-        # Pv2 requires m2 > m1 as a condition
-        # Assumption: input theta follows m1 > m2
-        theta[:, 0:1], theta[:, 1:2] = theta[:, 1:2], theta[:, 0:1]
-        # Swapping spin componenets
-        theta[:, 2:3], theta[:, 5:6] = theta[:, 5:6], theta[:, 2:3]
-        theta[:, 3:4], theta[:, 6:7] = theta[:, 6:7], theta[:, 3:4]
-        theta[:, 4:5], theta[:, 7:8] = theta[:, 7:8], theta[:, 4:5]
-
-        return theta
 
     def compute_derived_parameters(self, theta):
         # Overriding inherited method
@@ -960,22 +968,6 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         p_next = phase_fixed.gather(1, idx + 1)
 
         t_corr_fixed = (p_next - p_prev) / (f_next - f_prev) / (2 * self.PI)
-
-        """
-        # Compute derivative of phase at f_final using natural cubic spline
-        M = torch_natural_cubic_coeffs(freqs_fixed, phase_fixed)
-
-        t_corr_fixed = torch_natural_cubic_interp(
-            f_final.squeeze(-1),
-            freqs_fixed,
-            phase_fixed,
-            M,
-            derivative=True,
-        ) / (2 * self.PI)
-
-        # Reshape for broadcasting over frequency axis
-        t_corr_fixed = t_corr_fixed.unsqueeze(-1)
-        """
 
         # Compute phase correction factor
         phase_corr = torch.exp(self.TWO_J * self.PI * self.f * t_corr_fixed)
