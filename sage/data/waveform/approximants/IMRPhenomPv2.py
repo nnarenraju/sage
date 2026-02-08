@@ -72,112 +72,17 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         # Converting to orbital phase
         phic = 2 * converted_spins[:, 5:6]
 
-        # Other one-off derived quantities
-        chi_eff = (
-            theta[:, 1:2] * converted_spins[:, 0:1]
-            + theta[:, 0:1] * converted_spins[:, 1:2]
-        ) / derived[:, 0:1]
-
-        chil = (1.0 + derived[:, 2:3]) / derived[:, 2:3] * chi_eff
-
-        piM = self.PI * derived[:, 3:4]
-
-        omega_ref = piM * self.f_ref
-        logomega_ref = torch.log(omega_ref)
-        omega_ref_cbrt = (piM * self.f_ref) ** self.ONE_BY_THREE
-        omega_ref_cbrt2 = omega_ref_cbrt * omega_ref_cbrt
-
-        # angcoeffs is a torch.cat with the following values in order
-        # alphacoeff1, alphacoeff2, alphacoeff3, alphacoeff4, alphacoeff5,
-        # epsiloncoeff1, epsiloncoeff2, epsiloncoeff3, epsiloncoeff4, epsiloncoeff5,
-        angcoeffs = self.ComputeNNLOanglecoeffs(
-            derived[:, 2:3],
-            chil,
-            converted_spins[:, 2:3],
+        # Get all required coefficients and offsets
+        angcoeffs, alphaNNLOoffset, epsilonNNLOoffset = self.compute_pv2_coeffs(
+            theta, derived, converted_spins
         )
 
-        alphaNNLOoffset = (
-            angcoeffs[:, 0:1] / omega_ref
-            + angcoeffs[:, 1:2] / omega_ref_cbrt2
-            + angcoeffs[:, 2:3] / omega_ref_cbrt
-            + angcoeffs[:, 3:4] * logomega_ref
-            + angcoeffs[:, 4:5] * omega_ref_cbrt
-        )
+        Y2 = self.compute_spin_weighted_Y(converted_spins)
 
-        epsilonNNLOoffset = (
-            angcoeffs[:, 5:6] / omega_ref
-            + angcoeffs[:, 6:7] / omega_ref_cbrt2
-            + angcoeffs[:, 7:8] / omega_ref_cbrt
-            + angcoeffs[:, 8:9] * logomega_ref
-            + angcoeffs[:, 9:10] * omega_ref_cbrt
-        )
+        # Do PhenomD mass swapped operations (m1 > m2)
+        self.compute_swapped_ops(theta, derived, converted_spins, phic)
 
-        Y2m2 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -2)
-        Y2m1 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -1)
-        Y20 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -0)
-        Y21 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, 1)
-        Y22 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, 2)
-        Y2 = torch.cat([Y2m2, Y2m1, Y20, Y21, Y22], dim=1)
-
-        # Shift phase so that peak amplitude matches t = 0
-        # Calling PhenomD functions which require swapped masses
-        theta_swapped = torch.cat(
-            [
-                theta[:, 0:1],
-                theta[:, 1:2],
-                converted_spins[:, 1:2],
-                converted_spins[:, 0:1],
-                theta[:, 8:9],
-                phic,
-            ],
-            dim=1,
-        )
-
-        phd_derived = super().compute_derived_parameters(theta_swapped)
-        # This is an IMRPhenomD function and required m1 > m2
-        # So we swap back before calling get_coeffs
-        coeffs = super().get_coeffs(
-            converted_spins[:, 1:2], converted_spins[:, 0:1], phd_derived[:, 3:4]
-        )
-
-        # {f1, f2, f3, f4, f_RD, f_damp}
-        trans_fs = self.phP_get_transition_frequencies(
-            theta_swapped,
-            coeffs[:, 5:6],
-            coeffs[:, 6:7],
-            converted_spins[:, 2:3],
-            derived,
-            phd_derived,
-        )
-
-        # Precomputing required parameters
-        f1_Ms = trans_fs[:, 0:1] * derived[:, 3:4]
-        f2_Ms = trans_fs[:, 1:2] * derived[:, 3:4]
-        f3_Ms = trans_fs[:, 2:3] * derived[:, 3:4]
-        f4_Ms = trans_fs[:, 3:4] * derived[:, 3:4]
-        f_Ms = self.f * derived[:, 3:4]
-        fref_Ms = self.f_ref * derived[:, 3:4]
-        f_RD_Ms = trans_fs[:, 4:5] * derived[:, 3:4]
-        f_damp_Ms = trans_fs[:, 5:6] * derived[:, 3:4]
-        # Central frequency point (used f_RD and f_damp)
-        fmid_Ms = ((trans_fs[:, 2:3] + trans_fs[:, 3:4]) / 2) * derived[:, 3:4]
-        fx_Ms = torch.cat(
-            [fref_Ms, f1_Ms, f2_Ms, f3_Ms, f4_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms], dim=1
-        )
-
-        fcut_true = super().get_fcut_true(derived[:, 3:4])
-
-        hPhenomD, _ = self.PhenomPOneFrequency(
-            self.f,
-            f_Ms,
-            fx_Ms,
-            theta_swapped,
-            phd_derived,
-            coeffs,
-            trans_fs,
-            fcut_true,
-        )
-
+        # PhenomP get hp and hc
         hp, hc = self.PhenomPCoreTwistUp(
             f_Ms,
             hPhenomD,
@@ -191,53 +96,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             epsilonNNLOoffset,
         )
 
-        ## ** This is where we do the corrections to phase and time shift **
-        # Fixed frequency grid around ringdown frequency for Pv2
-        # 10 points should be enough for cubic interpolation
-        # Same n_fixed used in LAL version
-        n_fixed = 1000
-
-        fcut = self.fM_CUT / derived[:, 3:4]
-        f_final = trans_fs[:, 4:5]
-
-        freqs_fixed_start = 0.8 * f_final
-        freqs_fixed_stop = torch.minimum(1.2 * f_final, fcut)
-
-        # Create linspace weights once
-        t = torch.linspace(
-            0.0,
-            1.0,
-            n_fixed,
-            device=self.f.device,
-            dtype=self.f.dtype,
-        )
-
-        # Broadcast to (B, n_fixed)
-        freqs_fixed = freqs_fixed_start + (freqs_fixed_stop - freqs_fixed_start) * t
-        ff_Ms = freqs_fixed * derived[:, 3:4]
-
-        # Compute phase on fixed grid
-        # We have inverted m1 and m2 back to the convention m1 > m2 for PhenomD call
-        phase_fixed = torch.empty(n_fixed, device=self.f.device, dtype=self.f.dtype)
-
-        _, phase_fixed = self.PhenomPOneFrequency(
-            freqs_fixed,
-            ff_Ms,
-            fx_Ms,
-            theta_swapped,
-            phd_derived,
-            coeffs,
-            trans_fs,
-            fcut_true,
-        )
-
-        hp, hc = self.apply_time_shift_phase_correction(
-            hptilde=hp,
-            hctilde=hc,
-            freqs_fixed=freqs_fixed,
-            phase_fixed=phase_fixed,
-            f_final=f_final,
-        )
+        # Do corrections for time shift and phase
+        self.compute_time_and_phase()
 
         # final touches to hp and hc, stolen from Scott
         c2z = torch.cos(2 * converted_spins[:, 6:7])
@@ -300,6 +160,168 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         nudge_forward_(q, 1.0, 1e-6)
 
         return torch.cat([M, eta, q, M_s], dim=1)
+
+    def compute_pv2_coeffs(self, theta, derived, converted_spins):
+        # Other one-off derived quantities
+        chi_eff = (
+            theta[:, 1:2] * converted_spins[:, 0:1]
+            + theta[:, 0:1] * converted_spins[:, 1:2]
+        ) / derived[:, 0:1]
+
+        chil = (1.0 + derived[:, 2:3]) / derived[:, 2:3] * chi_eff
+
+        piM = self.PI * derived[:, 3:4]
+
+        omega_ref = piM * self.f_ref
+        logomega_ref = torch.log(omega_ref)
+        omega_ref_cbrt = (piM * self.f_ref) ** self.ONE_BY_THREE
+        omega_ref_cbrt2 = omega_ref_cbrt * omega_ref_cbrt
+
+        # angcoeffs is a torch.cat with the following values in order
+        # alphacoeff1, alphacoeff2, alphacoeff3, alphacoeff4, alphacoeff5,
+        # epsiloncoeff1, epsiloncoeff2, epsiloncoeff3, epsiloncoeff4, epsiloncoeff5,
+        angcoeffs = self.ComputeNNLOanglecoeffs(
+            derived[:, 2:3],
+            chil,
+            converted_spins[:, 2:3],
+        )
+
+        alphaNNLOoffset = (
+            angcoeffs[:, 0:1] / omega_ref
+            + angcoeffs[:, 1:2] / omega_ref_cbrt2
+            + angcoeffs[:, 2:3] / omega_ref_cbrt
+            + angcoeffs[:, 3:4] * logomega_ref
+            + angcoeffs[:, 4:5] * omega_ref_cbrt
+        )
+
+        epsilonNNLOoffset = (
+            angcoeffs[:, 5:6] / omega_ref
+            + angcoeffs[:, 6:7] / omega_ref_cbrt2
+            + angcoeffs[:, 7:8] / omega_ref_cbrt
+            + angcoeffs[:, 8:9] * logomega_ref
+            + angcoeffs[:, 9:10] * omega_ref_cbrt
+        )
+
+        return angcoeffs, alphaNNLOoffset, epsilonNNLOoffset
+
+    def compute_spin_weighted_Y(self, converted_spins):
+        Y2m2 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -2)
+        Y2m1 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -1)
+        Y20 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -0)
+        Y21 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, 1)
+        Y22 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, 2)
+        return torch.cat([Y2m2, Y2m1, Y20, Y21, Y22], dim=1)
+
+    def compute_swapped_ops(self, theta, derived, converted_spins, phic):
+        # Shift phase so that peak amplitude matches t = 0
+        # Calling PhenomD functions which require swapped masses
+        theta_swapped = torch.cat(
+            [
+                theta[:, 0:1],
+                theta[:, 1:2],
+                converted_spins[:, 1:2],
+                converted_spins[:, 0:1],
+                theta[:, 8:9],
+                phic,
+            ],
+            dim=1,
+        )
+
+        phd_derived = super().compute_derived_parameters(theta_swapped)
+        # This is an IMRPhenomD function and required m1 > m2
+        # So we swap back before calling get_coeffs
+        coeffs = super().get_coeffs(
+            converted_spins[:, 1:2], converted_spins[:, 0:1], phd_derived[:, 3:4]
+        )
+
+        # {f1, f2, f3, f4, f_RD, f_damp}
+        trans_fs = self.phP_get_transition_frequencies(
+            theta_swapped,
+            coeffs[:, 5:6],
+            coeffs[:, 6:7],
+            converted_spins[:, 2:3],
+            derived,
+            phd_derived,
+        )
+
+        # Precomputing required parameters
+        f1_Ms = trans_fs[:, 0:1] * derived[:, 3:4]
+        f2_Ms = trans_fs[:, 1:2] * derived[:, 3:4]
+        f3_Ms = trans_fs[:, 2:3] * derived[:, 3:4]
+        f4_Ms = trans_fs[:, 3:4] * derived[:, 3:4]
+        f_Ms = self.f * derived[:, 3:4]
+        fref_Ms = self.f_ref * derived[:, 3:4]
+        f_RD_Ms = trans_fs[:, 4:5] * derived[:, 3:4]
+        f_damp_Ms = trans_fs[:, 5:6] * derived[:, 3:4]
+        # Central frequency point (used f_RD and f_damp)
+        fmid_Ms = ((trans_fs[:, 2:3] + trans_fs[:, 3:4]) / 2) * derived[:, 3:4]
+        fx_Ms = torch.cat(
+            [fref_Ms, f1_Ms, f2_Ms, f3_Ms, f4_Ms, f_RD_Ms, f_damp_Ms, fmid_Ms], dim=1
+        )
+
+        fcut_true = super().get_fcut_true(derived[:, 3:4])
+
+        hPhenomD, _ = self.PhenomPOneFrequency(
+            self.f,
+            f_Ms,
+            fx_Ms,
+            theta_swapped,
+            phd_derived,
+            coeffs,
+            trans_fs,
+            fcut_true,
+        )
+
+        return hPhenomD
+
+    def correct_time_and_phase(self):
+        ## ** This is where we do the corrections to phase and time shift **
+        # Fixed frequency grid around ringdown frequency for Pv2
+        # 10 points should be enough for cubic interpolation
+        # Same n_fixed used in LAL version
+        n_fixed = 1000
+
+        fcut = self.fM_CUT / derived[:, 3:4]
+        f_final = trans_fs[:, 4:5]
+
+        freqs_fixed_start = 0.8 * f_final
+        freqs_fixed_stop = torch.minimum(1.2 * f_final, fcut)
+
+        # Create linspace weights once
+        t = torch.linspace(
+            0.0,
+            1.0,
+            n_fixed,
+            device=self.f.device,
+            dtype=self.f.dtype,
+        )
+
+        # Broadcast to (B, n_fixed)
+        freqs_fixed = freqs_fixed_start + (freqs_fixed_stop - freqs_fixed_start) * t
+        ff_Ms = freqs_fixed * derived[:, 3:4]
+
+        # Compute phase on fixed grid
+        # We have inverted m1 and m2 back to the convention m1 > m2 for PhenomD call
+        phase_fixed = torch.empty(n_fixed, device=self.f.device, dtype=self.f.dtype)
+
+        _, phase_fixed = self.PhenomPOneFrequency(
+            freqs_fixed,
+            ff_Ms,
+            fx_Ms,
+            theta_swapped,
+            phd_derived,
+            coeffs,
+            trans_fs,
+            fcut_true,
+        )
+
+        hp, hc = self.apply_time_shift_phase_correction(
+            hptilde=hp,
+            hctilde=hc,
+            freqs_fixed=freqs_fixed,
+            phase_fixed=phase_fixed,
+            f_final=f_final,
+        )
 
     def convert_spins(self, theta, derived):
         m1_2 = theta[:, 1:2] * theta[:, 1:2]
