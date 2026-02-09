@@ -128,6 +128,11 @@ class TorchWelch:
         self.require_exact_data_fit = require_exact_data_fit
         self.minimum_segments = minimum_segments
 
+        self.delta_f = 1.0 / (self.seg_len * self.delta_t)
+        self.freqs = (
+            torch.arange(self.seg_len // 2 + 1, dtype=torch.float64) * self.delta_f
+        )
+
         # Window
         if isinstance(window, str):
             if window.lower() == "hann":
