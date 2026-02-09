@@ -587,3 +587,130 @@ class TimelineQuery:
 
         if rm_short_segments:
             self._remove_short_segments(rm_min_duration)
+
+    def split_into_mini_segments(
+        self,
+        mini_segment_length=512.0,
+        minimum_segment_duration=20.0,
+    ):
+        """
+        Split segments in a structured array into mini-segments for training.
+
+        Each mini-segment:
+        - Length mini_segment_length (seconds)
+        - Starts exactly 1 sample after previous mini-segment end
+        - Last mini-segment kept if >= minimum_segment_duration
+
+        Args:
+            struct_array: np.ndarray
+                Structured array of detectors and segments (same as your input)
+            mini_segment_length: float
+                Length of mini-segments in seconds
+            minimum_segment_duration: float
+                Minimum segment length to keep
+
+        Returns:
+            np.ndarray
+                Structured array in same format, with 'segments' replaced by mini-segments
+        """
+        output_records = []
+        prune_timeline = self.timeline.copy()
+        for record in prune_timeline:
+            detector = record["detector"]
+            flag = record["flag"]
+            start_time = record["start_time"]
+            end_time = record["end_time"]
+            run = record["observing_run"]
+            original_segments = record["segments"]  # shape (N,2)
+
+            mini_segments = []
+
+            for seg in original_segments:
+                seg_start, seg_end = seg
+                cursor = seg_start
+
+                # Slide through the segment
+                while True:
+                    next_end = cursor + mini_segment_length
+                    if next_end < seg_end:
+                        mini_segments.append([cursor, next_end])
+                        # move cursor to 1 sample after previous
+                        # mini-segment start + mini_segment_length
+                        # assuming 1-second resolution for simplicity;
+                        # replace with 1/sample_rate if needed
+                        cursor = cursor + mini_segment_length + 1e-12
+                    else:
+                        # Remaining part of segment
+                        remaining = seg_end - cursor
+                        if remaining >= minimum_segment_duration:
+                            mini_segments.append([cursor, seg_end])
+                        break
+
+            # Convert to numpy array
+            mini_segments_arr = np.array(mini_segments, dtype=np.float64)
+
+            # Build new record
+            new_record = (detector, flag, start_time, end_time, run, mini_segments_arr)
+            output_records.append(new_record)
+
+        # Preserve dtype
+        self.timeline = np.array(output_records, dtype=prune_timeline.dtype)
+
+    def sanity_check_mini_segments(
+        self,
+        mini_segment_length=512.0,
+        minimum_segment_duration=20.0,
+        verbose=True,
+    ):
+        """
+        Check the integrity of mini-segments in a structured array.
+
+        Args:
+            struct_array: np.ndarray
+                Structured array with 'segments' field containing mini-segments
+            mini_segment_length: float
+                Expected mini-segment length (for reference)
+            minimum_segment_duration: float
+                Minimum segment duration allowed
+            verbose: bool
+                Whether to print warnings
+
+        Raises:
+            ValueError if any check fails
+        """
+        prune_timeline = self.timeline.copy()
+        for rec in prune_timeline:
+            detector = rec["detector"]
+            original_segments = rec["segments"]
+            N = len(original_segments)
+
+            for i, seg in enumerate(original_segments):
+                start, end = seg
+                duration = end - start
+
+                # Check minimum segment duration
+                if duration < minimum_segment_duration:
+                    raise ValueError(
+                        f"Mini-segment too short: Detector {detector}, segment {i}, duration {duration}"
+                    )
+
+                # Check that no segment is longer than expected (optional)
+                if duration > mini_segment_length + 1e-6:
+                    if verbose:
+                        print(
+                            f"Warning: Mini-segment longer than intended: Detector {detector}, segment {i}, duration {duration}"
+                        )
+
+                # Check gap from previous segment
+                if i > 0:
+                    prev_end = original_segments[i - 1][1]
+                    gap = start - prev_end
+                    if gap < 1e-12:
+                        raise ValueError(
+                            f"Mini-segment {i} overlaps previous segment for detector {detector}"
+                        )
+                    elif gap > 1.0:  # much larger than 1 sample
+                        if verbose:
+                            print(
+                                f"Warning: Large gap between segments: Detector {detector}, segment {i}, gap {gap} s"
+                            )
