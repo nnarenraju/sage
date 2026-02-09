@@ -23,11 +23,10 @@ Documentation: NULL
 """
 
 
-class Whiten(TransformWrapperPerChannel):
-    # PSDs can be different between the channels, so we use perChannel method
+class Whiten:
+
     def __init__(
         self,
-        always_apply=True,
         trunc_method="hann",
         remove_corrupted=True,
         estimated=False,

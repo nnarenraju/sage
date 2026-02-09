@@ -31,7 +31,6 @@ from tqdm import tqdm
 
 # LOCAL
 from sage.data.primer import NoBlackout
-from sage.dsp.welch import WelchPSD
 from sage.core.conversions import seconds_to_samples
 
 
