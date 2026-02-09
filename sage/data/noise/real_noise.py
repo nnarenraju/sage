@@ -25,14 +25,20 @@ Documentation: NULL
 # Packages
 import os
 import h5py
+import json
+import torch
 import numpy as np
 
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 from pycbc import DYN_RANGE_FAC
 
+import threading
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor
 
-class GenerateRealNoise:
+
+class HDF5NoiseSampler:
     """
     Duration-weighted random noise sampler from GW noise datasets.
 
@@ -129,7 +135,7 @@ class GenerateRealNoise:
             start = self._pick_start(seg_len, requested_nsamples)
             noise = np.asarray(
                 dset[start : start + requested_nsamples],
-                dtype=np.float64,
+                dtype=np.float32,
             )
 
             noise /= DYN_RANGE_FAC
@@ -143,3 +149,160 @@ class GenerateRealNoise:
 
     def __call__(self, nsamples: int, **kwargs):
         return self.sample(nsamples)
+
+
+class MemmapNoiseSampler:
+    """
+    GPU batch sampler for monolithic .bin files with async prefetch.
+
+    Features:
+    - Multiple detectors/files
+    - Weighted random sampling by segment duration
+    - Precompute random starts per batch
+    - Prefetch N batches to GPU asynchronously
+    """
+
+    def __init__(
+        self,
+        bin_files: List[Path],
+        seq_len: int,
+        device: str = "cuda",
+        batch_size: int = 64,
+        prefetch: int = 2,
+    ):
+        self.seq_len = seq_len
+        self.device = device
+        self.prefetch = prefetch
+        self.bin_files = [Path(f) for f in bin_files]
+        self.n_detectors = len(bin_files)
+        self._batch_size = batch_size
+
+        self.mmaps = []
+        self.seg_index = []
+        self.segment_probs = []
+        self.dtypes = []
+
+        # Load metadata and memmaps
+        for p in self.bin_files:
+            meta_path = p.parent / f"{p.stem}_segments.json"
+            if not meta_path.exists():
+                raise FileNotFoundError(f"Metadata {meta_path} not found")
+
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+
+            dtype = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
+            self.dtypes.append(dtype)
+
+            mm = np.memmap(p, dtype=dtype, mode="r")
+            self.mmaps.append(mm)
+
+            seg_idx_arr = np.array(
+                [
+                    (
+                        seg["segment_index"],
+                        seg["sample_start_idx"],
+                        seg["sample_start_idx"] + seg["nsamples"],
+                        seg["nsamples"],
+                    )
+                    for seg in meta
+                ],
+                dtype=[
+                    ("idx", "i4"),
+                    ("start", "i8"),
+                    ("end", "i8"),
+                    ("nsamples", "i8"),
+                ],
+            )
+            self.seg_index.append(seg_idx_arr)
+
+            usable = seg_idx_arr["nsamples"] - self.seq_len
+            usable[usable < 0] = 0
+            total = usable.sum()
+            if total == 0:
+                raise ValueError("seq_len exceeds all segments")
+            probs = usable / total
+            self.segment_probs.append(probs)
+
+        self.rng = np.random.default_rng()
+
+        # Prefetch queue
+        self.queue = Queue(maxsize=self.prefetch)
+        self._stop_event = threading.Event()
+        self._prefetch_thread = threading.Thread(
+            target=self._prefetch_loop, daemon=True
+        )
+        self._prefetch_thread.start()
+
+    def _sample_starts_batch(self, batch_size: int):
+        start_indices = []
+        for d in range(self.n_detectors):
+            seg_idx = self.seg_index[d]
+            probs = self.segment_probs[d]
+            chosen_segments = self.rng.choice(len(seg_idx), size=batch_size, p=probs)
+
+            starts = np.empty(batch_size, dtype=np.int64)
+            for i, seg_i in enumerate(chosen_segments):
+                seg = seg_idx[seg_i]
+                max_offset = seg["nsamples"] - self.seq_len
+                offset = self.rng.integers(0, max_offset + 1) if max_offset > 0 else 0
+                starts[i] = seg["start"] + offset
+            start_indices.append(starts)
+        return start_indices
+
+    def _read_batch(self, batch_size: int):
+        B = batch_size
+        D = self.n_detectors
+        seq_len = self.seq_len
+
+        start_indices = self._sample_starts_batch(B)
+        batch_tensor = torch.empty(
+            (B, D, seq_len), dtype=torch.float32, device=self.device
+        )
+
+        def read_detector(d):
+            mm = self.mmaps[d]
+            starts = start_indices[d]
+            arr = np.empty((B, seq_len), dtype=np.float32)
+
+            for i, s in enumerate(starts):
+                arr[i] = mm[s : s + seq_len]
+
+            # Get the original scale back
+            arr /= DYN_RANGE_FAC
+
+            return arr
+
+        with ThreadPoolExecutor(max_workers=D) as executor:
+            results = list(executor.map(read_detector, range(D)))
+
+        for d, arr in enumerate(results):
+            cpu_tensor = torch.from_numpy(arr).pin_memory()
+            batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=True)
+
+        return batch_tensor
+
+    def _prefetch_loop(self):
+        while not self._stop_event.is_set():
+            if not self.queue.full():
+                batch_tensor = self._read_batch(self._batch_size)
+                self.queue.put(batch_tensor)
+            else:
+                # sleep briefly to yield CPU
+                self._stop_event.wait(0.01)
+
+    def sample_batch(self, batch_size: int):
+        """
+        Return a GPU batch. Starts async prefetching if first call.
+        """
+        self._batch_size = batch_size
+        # If queue has a ready batch, return it
+        batch_tensor = self.queue.get()
+        return batch_tensor
+
+    def shutdown(self):
+        """Stop prefetch thread"""
+        self._stop_event.set()
+        self._prefetch_thread.join()
+        for mm in self.mmaps:
+            del mm
