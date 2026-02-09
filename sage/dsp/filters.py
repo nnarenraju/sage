@@ -24,6 +24,8 @@ Documentation: NULL
 """
 
 # Packages
+import numpy as np
+
 from scipy.signal import (
     butter,
     sosfiltfilt,
@@ -67,6 +69,7 @@ def pycbc_downsample(
     pycbc_strain = TS(strain, delta_t=1.0 / old_sample_rate)
     res = resample_to_delta_t(pycbc_strain, delta_t=1.0 / new_sample_rate)
     ret = pycbc_highpass(res, noise_low_freq_cutoff).numpy()
+    ret = ret.astype(np.float32, copy=False)
 
     # Remove corrupted regions for edge effects
     # Defaults to 0.2, but user can be more conservative
