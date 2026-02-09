@@ -38,7 +38,7 @@ from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 
 
-class HDF5NoiseSampler:
+class HDF5SingleNoiseSampler:
     """
     Duration-weighted random noise sampler from GW noise datasets.
 
@@ -146,6 +146,148 @@ class HDF5NoiseSampler:
     def close(self):
         for f in self.files:
             f.close()
+
+    def __call__(self, nsamples: int, **kwargs):
+        return self.sample(nsamples)
+
+
+class MemmapSingleNoiseSampler:
+    """
+    Duration-weighted random noise sampler from GW noise datasets.
+
+    Supports:
+    - single monolithic .bin file with sidecar *_segments.json
+
+    Sampling:
+    - segment chosen ∝ usable duration
+    - random contiguous slice returned
+    """
+
+    def __init__(
+        self, source: Union[str, Path], return_tensor=False, tensor_dtype=torch.float32
+    ):
+        """
+        Args:
+            source:
+                - path to monolithic .bin file
+        """
+        source = Path(source)
+        if not source.exists():
+            raise FileNotFoundError(source)
+
+        self.bin_file = source
+
+        # We can return tensors if downstream ops rely on torch
+        self.return_tensor = return_tensor
+        self.tensor_dtype = tensor_dtype
+
+        meta_path = source.parent / f"{source.stem}_segments.json"
+        if not meta_path.exists():
+            raise FileNotFoundError(meta_path)
+
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+
+        if len(meta) == 0:
+            raise RuntimeError("No segments found in metadata.")
+
+        # dtype handling
+        dt = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
+        self.dtype = dt
+
+        # Open memmap
+        self.mm = np.memmap(self.bin_file, dtype=dt, mode="r")
+
+        # Build segment table
+        self.segments = np.array(
+            [
+                (
+                    seg["sample_start_idx"],
+                    seg["nsamples"],
+                )
+                for seg in meta
+            ],
+            dtype=[
+                ("start", "i8"),
+                ("nsamples", "i8"),
+            ],
+        )
+
+        self.seg_lengths = self.segments["nsamples"].astype(np.int64)
+
+        # Cache of probabilities per requested_nsamples
+        self._prob_cache = {}
+
+        if len(self.segments) == 0:
+            raise RuntimeError("No segments found.")
+
+    def _segment_probabilities(self, requested_nsamples: int) -> np.ndarray:
+        """
+        Compute probabilities ∝ usable duration for each segment.
+        """
+        if requested_nsamples in self._prob_cache:
+            return self._prob_cache[requested_nsamples]
+
+        usable = self.seg_lengths - requested_nsamples
+        usable[usable < 0] = 0
+
+        total = usable.sum()
+        if total == 0:
+            raise ValueError("Requested sample length exceeds all available segments.")
+
+        probs = usable / total
+        self._prob_cache[requested_nsamples] = probs
+        return probs
+
+    @staticmethod
+    def _pick_start(seg_len: int, nsamples: int, rng: np.random.Generator) -> int:
+        max_start = seg_len - nsamples
+        return rng.integers(0, max_start + 1)
+
+    def sample(
+        self,
+        requested_nsamples: int,
+        rng: np.random.Generator | None = None,
+    ) -> np.ndarray:
+        """
+        Draw a random noise slice.
+
+        Args:
+            requested_nsamples (int):
+                Total samples required (already includes corruption padding)
+
+        Returns:
+            np.ndarray of shape (requested_nsamples,)
+        """
+        rng = rng or np.random.default_rng()
+        probs = self._segment_probabilities(requested_nsamples)
+
+        while True:
+            idx = rng.choice(len(self.segments), p=probs)
+            seg = self.segments[idx]
+            seg_len = seg["nsamples"]
+
+            start_offset = self._pick_start(seg_len, requested_nsamples, rng)
+            start = seg["start"] + start_offset
+
+            noise = np.asarray(
+                self.mm[start : start + requested_nsamples],
+                dtype=np.float32,
+                copy=True,
+            )
+
+            # Undo dynamic range scaling
+            noise /= DYN_RANGE_FAC
+
+            if not np.any(np.isnan(noise)):
+                if self.return_tensor:
+                    return torch.tensor(noise, dtype=self.tensor_dtype)
+                else:
+                    return noise
+
+    def close(self):
+        """Release memmap"""
+        del self.mm
 
     def __call__(self, nsamples: int, **kwargs):
         return self.sample(nsamples)
