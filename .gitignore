@@ -153,6 +153,7 @@ source/baseline/data/psds/
 *.h5
 *.hdf5
 *.hdf
+*.bin
 
 # Do not ignore these files
 !requirements.txt
