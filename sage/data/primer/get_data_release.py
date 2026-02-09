@@ -28,6 +28,7 @@ import os
 import time
 import h5py
 import json
+import hashlib
 import warnings
 
 # Utilities
@@ -69,6 +70,55 @@ class DownloadConfig:
     delay: float
 
 
+def validate_segment(
+    bin_path,
+    seg_meta,
+    *,
+    strict=True,
+):
+    algo = seg_meta["checksum_algo"]
+
+    with open(bin_path, "rb") as f:
+        f.seek(seg_meta["byte_offset"])
+        raw = f.read(seg_meta["byte_length"])
+
+    h = hashlib.new(algo)
+    h.update(raw)
+    digest = h.hexdigest()
+
+    ok = digest == seg_meta["checksum"]
+
+    if not ok and strict:
+        raise IOError(f"Checksum mismatch for segment {seg_meta['segment_index']}")
+
+    return ok
+
+
+def validate_all_segments(bin_path, metadata):
+    failures = []
+
+    with open(bin_path, "rb") as f:
+        for seg in metadata:
+            f.seek(seg["byte_offset"])
+            raw = f.read(seg["byte_length"])
+
+            h = hashlib.new(seg["checksum_algo"])
+            h.update(raw)
+
+            if h.hexdigest() != seg["checksum"]:
+                failures.append(seg["segment_index"])
+
+    return failures
+
+
+def file_checksum(path, algo="sha256", block=1 << 20):
+    h = hashlib.new(algo)
+    with open(path, "rb") as f:
+        while chunk := f.read(block):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class DataReleaseDownloader:
 
     def __init__(
@@ -82,6 +132,7 @@ class DataReleaseDownloader:
         retry_delay: float = 0.5,
         num_workers: int = 4,
         make_monolithic_file: bool = True,
+        save_bin: bool = False,
         sample_rate: float = 2048.0,
     ):
 
@@ -111,6 +162,12 @@ class DataReleaseDownloader:
         # This is immutable and pickleable
         self.dcfg = self._return_download_config()
 
+        # Save data in binary format instead
+        self.save_bin = save_bin
+        self._bin_metadata = []
+        self._bin_sample_cursor = 0
+        self._bin_byte_cursor = 0
+
     def __enter__(self):
         pass
 
@@ -129,7 +186,7 @@ class DataReleaseDownloader:
                 return data, True
             except Exception as e:
                 logger.warning(
-                    f"Chunk {n} failed. Retrying ({ntry}/{cfg.max_retries})..."
+                    f"Chunk {ntry} failed. Retrying ({ntry}/{cfg.max_retries})..."
                 )
                 last_exception = e
                 time.sleep(cfg.delay)
@@ -180,6 +237,36 @@ class DataReleaseDownloader:
             "sample_rate": cfg.sample_rate,
         }
         return n, data, metadata
+
+    def _checksum_array(self, data: np.ndarray, algo="sha256"):
+        """
+        Compute checksum over raw bytes of a NumPy array.
+        """
+        h = hashlib.new(algo)
+        h.update(memoryview(data))
+        return h.hexdigest()
+
+    def _bin_open(self, filename):
+        filepath = self.save_dir / filename
+        return open(filepath, "wb")
+
+    def _save_segment_bin(self, fh, data):
+        """
+        Append raw samples to an open binary file.
+        Returns (nsamples, nbytes, written_dtype).
+        """
+        if data is None or not isinstance(data, np.ndarray):
+            return 0, 0, None
+
+        # Force canonical little-endian dtype
+        dt = np.dtype(data.dtype).newbyteorder("<")
+        data = np.ascontiguousarray(data.astype(dt, copy=False))
+
+        raw = data.tobytes(order="C")
+        fh.write(raw)
+        checksum = hashlib.sha256(raw).hexdigest()
+
+        return data.size, len(raw), dt, checksum
 
     def _return_download_config(self):
         """Return download config dict for MP runs"""
@@ -298,13 +385,22 @@ class DataReleaseDownloader:
         )
 
         # Setup monolithic file
-        if self.monolithic:
+        if self.monolithic and not self.save_bin:
             # Make save dir
             self._savepath_handling(f"data_release")
             # Make save file
             hf = self._h5py_mkfile(f"data_{det}_{run}.h5")
             # Store full metadata ONCE for the full dataset
             self._save_metadata(hf, "metadata", self.full_metadata)
+
+        elif self.monolithic and self.save_bin:
+            self._savepath_handling("data_release")
+            bin_fh = self._bin_open(f"data_{det}_{run}.bin")
+            # reset cursors
+            self._bin_metadata = []
+            self._bin_sample_cursor = 0
+            self._bin_byte_cursor = 0
+
         else:
             # Make save dir
             self._savepath_handling(f"data_release_{det}_{run}")
@@ -322,7 +418,40 @@ class DataReleaseDownloader:
                 ):
                     # NOTE: Always so save_chunk outside in main process
                     # DO NOT write let workers write to same HDF5
-                    self._save_segment(hf, n, data, det, run, metadata)
+                    if self.save_bin:
+                        nsamp, nbytes, dt, checksum = self._save_segment_bin(
+                            bin_fh, data
+                        )
+
+                        seg_meta = {
+                            "segment_index": int(n),
+                            "detector": det,
+                            "observing_run": run,
+                            "gps_start": metadata["gps_start"],
+                            "gps_end": metadata["gps_end"],
+                            "sample_rate": metadata["sample_rate"],
+                            "nsamples": nsamp,
+                            "dtype": dt.name,
+                            "endianness": dt.byteorder,
+                            "sample_start_idx": self._bin_sample_cursor,
+                            "byte_offset": self._bin_byte_cursor,
+                            "byte_length": nbytes,
+                            "checksum": checksum,
+                            "checksum_algorithm": "sha256",
+                            "dyn_range_fac": float(DYN_RANGE_FAC),
+                            "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
+                        }
+
+                        # Sanity check for truncation bugs
+                        assert nbytes == nsamp * dt.itemsize
+
+                        self._bin_metadata.append(seg_meta)
+                        self._bin_sample_cursor += nsamp
+                        self._bin_byte_cursor += nbytes
+
+                    else:
+                        self._save_segment(hf, n, data, det, run, metadata)
+
                     pbar.update()
         else:
             with tqdm(total=len(segments)) as pbar:
@@ -335,10 +464,17 @@ class DataReleaseDownloader:
                     pbar.update()
 
         # Close monolithic output file
-        if self.monolithic:
+        if self.monolithic and not self.save_bin:
             hf.close()
 
-        if not self.monolithic:
+        elif self.monolithic and self.save_bin:
+            bin_fh.close()
+
+            meta_path = self.save_dir / f"data_{det}_{run}_segments.json"
+            with open(meta_path, "w") as f:
+                json.dump(self._bin_metadata, f, indent=2)
+
+        elif not self.monolithic:
             metadata_path = Path(self.save_parent_dir) / "full_metadata.json"
             with open(metadata_path, "w") as f:
                 json.dump(self.full_metadata, f, indent=2)
