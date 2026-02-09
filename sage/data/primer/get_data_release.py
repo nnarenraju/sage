@@ -291,11 +291,11 @@ class DataReleaseDownloader:
         # Create metadata group
         grp = hf.require_group(group_name)
 
-        # --- Write simple numeric fields directly ---
+        # Write simple numeric fields directly
         grp.create_dataset("start_time", data=metadata["start_time"])
         grp.create_dataset("end_time", data=metadata["end_time"])
 
-        # --- Write string fields as standalone UTF-8 datasets ---
+        # Write string fields as standalone UTF-8 datasets
         # Define the target dtype for the HDF5 file: variable-length UTF-8
         dt_str = h5py.string_dtype(encoding="utf-8")
 
@@ -310,7 +310,7 @@ class DataReleaseDownloader:
         observing_run_list = [str(x) for x in metadata["observing_run"]]
         grp.create_dataset("observing_run", data=observing_run_list, dtype=dt_str)
 
-        # --- Store segments data ---
+        # Store segments data
         seg_grp = grp.require_group("segments")
 
         # And store a simple index array
