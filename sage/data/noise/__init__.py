@@ -23,8 +23,9 @@ Documentation: NULL
 
 """
 
-from .real_noise import GenerateRealNoise
+from .real_noise import HDF5NoiseSampler, MemmapNoiseSampler
 
 __all__ = [
-    "GenerateRealNoise",
+    "HDF5NoiseSampler",
+    "MemmapNoiseSampler",
 ]
