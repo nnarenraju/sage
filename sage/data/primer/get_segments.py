@@ -592,6 +592,7 @@ class TimelineQuery:
         self,
         mini_segment_length=512.0,
         minimum_segment_duration=20.0,
+        sample_rate=4096.0,
     ):
         """
         Split segments in a structured array into mini-segments for training.
@@ -634,11 +635,10 @@ class TimelineQuery:
                     next_end = cursor + mini_segment_length
                     if next_end < seg_end:
                         mini_segments.append([cursor, next_end])
-                        # move cursor to 1 sample after previous
-                        # mini-segment start + mini_segment_length
-                        # assuming 1-second resolution for simplicity;
-                        # replace with 1/sample_rate if needed
-                        cursor = cursor + mini_segment_length + 1e-12
+                        # move cursor to 1 sample after previous sample
+                        cursor = (
+                            next_end - minimum_segment_duration + (1.0 / sample_rate)
+                        )
                     else:
                         # Remaining part of segment
                         remaining = seg_end - cursor
@@ -660,6 +660,7 @@ class TimelineQuery:
         self,
         mini_segment_length=512.0,
         minimum_segment_duration=20.0,
+        sample_rate=4096.0,
         verbose=True,
     ):
         """
@@ -705,11 +706,11 @@ class TimelineQuery:
                 if i > 0:
                     prev_end = original_segments[i - 1][1]
                     gap = start - prev_end
-                    if gap < 1e-12:
+                    if gap < -(minimum_segment_duration - (1.0 / sample_rate)):
                         raise ValueError(
                             f"Mini-segment {i} overlaps previous segment for detector {detector}"
                         )
-                    elif gap > 1.0:  # much larger than 1 sample
+                    elif gap > 1.0:
                         if verbose:
                             print(
                                 f"Warning: Large gap between segments: Detector {detector}, segment {i}, gap {gap} s"
