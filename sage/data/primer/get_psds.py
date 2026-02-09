@@ -26,12 +26,20 @@ Documentation: NULL
 # Packages
 import os
 import h5py
+import json
+import torch
 import numpy as np
+
 from tqdm import tqdm
+from pathlib import Path
+from pycbc import DYN_RANGE_FAC
 
 # LOCAL
 from sage.data.primer import NoBlackout
 from sage.core.conversions import seconds_to_samples
+from sage.dsp.inverse_spectrum_truncation import inverse_spectrum_truncation_single
+
+import matplotlib.pyplot as plt
 
 
 class EstimatePSD:
@@ -46,44 +54,47 @@ class EstimatePSD:
         num_samples: int = 200_000,
         psd_method=None,
         blackout_policy=None,
-        store_raw_psds: bool = False,
+        store_psds_as_hdf5: bool = False,
+        store_psds_as_bin: bool = False,
+        apply_inverse_spectrum_truncation: bool = False,
+        max_filter_len: int | None = None,
+        low_frequency_cutoff: float | None = None,
+        trunc_method: str = "hann",
+        **kwargs,
     ):
         self.detector = detector
         self.num_samples = int(num_samples)
         self.psd_method = psd_method
         self.blackout_policy = blackout_policy or NoBlackout()
-        self.store_raw_psds = store_raw_psds
+        self.store_psds_as_hdf5 = store_psds_as_hdf5
+        self.store_psds_as_bin = store_psds_as_bin
 
-    def __call__(self, *, noise_source, **kwargs):
-        """
-        Run PSD estimation.
-
-        Expected kwargs injected by CodeflowManager:
-            - noise_source
-            - cfg
-            - data_cfg
-            - rng
-        """
+        self.apply_ist = apply_inverse_spectrum_truncation
+        self.max_filter_len = max_filter_len
+        self.low_frequency_cutoff = low_frequency_cutoff
+        self.trunc_method = trunc_method
 
         # Pull required runtime context
-        cfg = kwargs["cfg"]
-        data_cfg = kwargs["data_cfg"]
+        self.cfg = kwargs["cfg"]
+        self.data_cfg = kwargs["data_cfg"]
 
-        sample_rate = data_cfg.sample_rate
+        # Sanity checks
+        if self.apply_ist:
+            if self.max_filter_len is None:
+                raise ValueError(
+                    "max_filter_len must be set for inverse spectrum truncation"
+                )
 
-        if hasattr(data_cfg, "sample_length"):
-            duration = data_cfg.sample_length
-        elif hasattr(data_cfg, "sample_length_in_seconds"):
-            duration = seconds_to_samples(
-                data_cfg.sample_length_in_seconds, data_cfg.sample_rate
-            )
+    def estimate_raw_psds(self, *, noise_sampler, duration, return_fiducial=False):
+        """Run PSD estimation to get recolour and fiducial psds"""
+        sample_rate = self.data_cfg.sample_rate
 
         # Save directories for PSDs and Fiducial PSDs
-        export_dir = os.path.join(cfg.export_dir, "fiducial_psds")
-        data_dir = os.path.join(data_cfg.data_dir, "raw_psds")
+        fiducial_dir = os.path.join(self.cfg.export_dir, "fiducial_psds")
+        recolour_dir = os.path.join(self.data_cfg.data_dir, "recolour_psds")
 
-        os.makedirs(export_dir, exist_ok=True)
-        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(fiducial_dir, exist_ok=True)
+        os.makedirs(recolour_dir, exist_ok=True)
 
         psds = []
 
@@ -92,10 +103,23 @@ class EstimatePSD:
             desc=f"Estimating PSDs for {self.detector}",
         ):
             # Sample noise sample given duration
-            noise = noise_source(duration)
+            noise = noise_sampler(duration)
 
             # Compute PSD using the Welch method
-            freqs, pxx = self.psd_method(noise)
+            pxx = self.psd_method(noise)
+            freqs = self.psd_method.freqs
+
+            if self.apply_ist:
+                psd_t = torch.from_numpy(pxx).to(torch.float64)
+                delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
+                psd_t = inverse_spectrum_truncation_single(
+                    psd=psd_t,
+                    max_filter_len=self.max_filter_len,
+                    low_frequency_cutoff=self.low_frequency_cutoff,
+                    delta_f=delta_f,
+                    trunc_method=self.trunc_method,
+                )
+                pxx = psd_t.cpu().numpy()
 
             # To save each PSD if requested
             psds.append(pxx)
@@ -104,8 +128,8 @@ class EstimatePSD:
         psds = np.stack(psds, axis=0)
 
         # Store each raw PSD for recolouring module
-        if self.store_raw_psds:
-            self._save_raw_psds(psds, freqs, data_dir, sample_rate)
+        if self.store_psds_as_bin or self.store_psds_as_hdf5:
+            self._save_raw_psds(psds, freqs, recolour_dir, sample_rate)
 
         # Compute median PSD, blackout difficult regions
         median_psd = self._aggregate_psds(psds)
@@ -116,11 +140,12 @@ class EstimatePSD:
             fiducial_psd,
             freqs,
             blackout_idxs,
-            export_dir,
+            fiducial_dir,
             sample_rate,
         )
 
-        return fiducial_psd, freqs
+        if return_fiducial:
+            return freqs, fiducial_psd
 
     def _aggregate_psds(self, psds):
         # Median of medians is memory efficient
@@ -130,55 +155,216 @@ class EstimatePSD:
         median_psd = np.median(medians, axis=0)
         return median_psd
 
-    def _save_raw_psds(self, psds, freqs, data_dir, sample_rate):
-        # Save all raw PSDs into one file
-        # Saved inside individual detector directories
-        path = os.path.join(data_dir, f"raw_{self.detector}_psds.h5")
+    @staticmethod
+    def _to_float(x):
+        if torch.is_tensor(x):
+            return float(x.item())
+        return float(x)
 
-        with h5py.File(path, "w") as hf:
-            hf.create_dataset(
-                "psds",
-                data=psds,
-                compression="gzip",
-                compression_opts=9,
-                shuffle=True,
-            )
-            hf.create_dataset("freqs", data=freqs)
-            hf.attrs["sample_rate"] = sample_rate
+    def _save_raw_psds(self, psds, freqs, save_dir, sample_rate):
+        # Save all raw PSDs into one file
+        if self.store_psds_as_hdf5:
+            hdf5_path = os.path.join(save_dir, f"raw_{self.detector}_psds.h5")
+
+            with h5py.File(hdf5_path, "w") as hf:
+                hf.create_dataset(
+                    "psds",
+                    data=psds,
+                    compression="gzip",
+                    compression_opts=9,
+                    shuffle=True,
+                )
+                hf.create_dataset("freqs", data=freqs)
+                hf.attrs["sample_rate"] = sample_rate
+
+        elif self.store_psds_as_bin:
+            bin_path = os.path.join(save_dir, f"raw_{self.detector}_psds.bin")
+            psds.astype(np.float64).tofile(bin_path)
+
+            # Add metadata
+            meta_path = os.path.join(save_dir, f"raw_{self.detector}_psds.json")
+            meta = {
+                "detector": self.detector,
+                "num_psds": psds.shape[0],
+                "num_freq_bins": psds.shape[1],
+                "dtype": "float64",
+                "byte_order": "little",
+                "layout": "row-major",
+                "sample_rate": sample_rate,
+                "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
+                "freq_start": EstimatePSD._to_float(freqs[0]),
+                "freq_end": EstimatePSD._to_float(freqs[-1]),
+                "psd_method": self.psd_method.__class__.__name__,
+                "apply_inverse_spectrum_truncation": self.apply_ist,
+                "low_frequency_cutoff": self.low_frequency_cutoff,
+                "max_filter_len": self.max_filter_len,
+            }
+
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
 
     def _save_fiducial_psd(
         self,
         psd,
         freqs,
         blackout_idxs,
-        export_dir,
+        fiducial_dir,
         sample_rate,
     ):
         # Fiducial PSDs saved in export directory
-        path = os.path.join(export_dir, f"fiducial_{self.detector}_psd.h5")
+        if self.store_psds_as_hdf5:
+            hdf5_path = os.path.join(fiducial_dir, f"fiducial_{self.detector}_psd.h5")
 
-        if os.path.exists(path):
-            os.remove(path)
+            if os.path.exists(hdf5_path):
+                os.remove(hdf5_path)
 
-        with h5py.File(path, "w") as hf:
-            hf.create_dataset(
-                "psd",
-                data=psd,
-                compression="gzip",
-                compression_opts=9,
-                shuffle=True,
-            )
+            with h5py.File(hdf5_path, "w") as hf:
+                hf.create_dataset(
+                    "psd",
+                    data=psd,
+                    compression="gzip",
+                    compression_opts=9,
+                    shuffle=True,
+                )
 
-            hf.create_dataset("freqs", data=freqs)
-            # Handles when blackout_idxs is None
-            hf.create_dataset("blackout_indices", data=blackout_idxs)
+                hf.create_dataset("freqs", data=freqs)
+                # Handles when blackout_idxs is None
+                hf.create_dataset("blackout_indices", data=blackout_idxs)
 
-            hf.attrs.update(
-                {
-                    "detector": self.detector,
-                    "delta_f": freqs[1] - freqs[0],
-                    "blackout_policy": self.blackout_policy.__class__.__name__,
-                    "num_samples": self.num_samples,
-                    "sample_rate": sample_rate,
-                }
-            )
+                hf.attrs.update(
+                    {
+                        "detector": self.detector,
+                        "delta_f": freqs[1] - freqs[0],
+                        "num_freq_bins": len(psd),
+                        "freq_start": freqs[0],
+                        "freq_end": freqs[-1],
+                        "blackout_policy": self.blackout_policy.__class__.__name__,
+                        "num_samples_used": self.num_samples,
+                        "sample_rate": sample_rate,
+                        "psd_aggregation": "median",
+                        "blackout_indices": (
+                            blackout_idxs.tolist()
+                            if blackout_idxs is not None
+                            else None
+                        ),
+                        "low_frequency_cutoff": self.low_frequency_cutoff,
+                        "max_filter_len": self.max_filter_len,
+                    }
+                )
+
+        elif self.store_psds_as_bin:
+            bin_path = os.path.join(fiducial_dir, f"fiducial_{self.detector}_psd.bin")
+            np.asarray(psd, dtype=np.float64).tofile(bin_path)
+
+            meta = {
+                "detector": self.detector,
+                "num_freq_bins": len(psd),
+                "dtype": "float64",
+                "byte_order": "little",
+                "sample_rate": sample_rate,
+                "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
+                "freq_start": EstimatePSD._to_float(freqs[0]),
+                "freq_end": EstimatePSD._to_float(freqs[-1]),
+                "num_samples_used": self.num_samples,
+                "psd_aggregation": "median",
+                "blackout_policy": self.blackout_policy.__class__.__name__,
+                "blackout_indices": (
+                    blackout_idxs.tolist() if blackout_idxs is not None else None
+                ),
+                "apply_inverse_spectrum_truncation": self.apply_ist,
+                "low_frequency_cutoff": self.low_frequency_cutoff,
+                "max_filter_len": self.max_filter_len,
+            }
+
+            meta_path = os.path.join(fiducial_dir, f"fiducial_{self.detector}_psd.json")
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
+
+    def estimate_segment_psds(self, *, noise_segments_file):
+        """
+        Compute Welch PSD for each noise segment in a bin file.
+
+        Args:
+            noise_segments_file: path to noise .bin file
+            output_dir: directory to write PSD bin + metadata
+        """
+        noise_segments_file = Path(noise_segments_file)
+        output_dir = Path(self.data_cfg.data_dir) / "segment_psds"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        meta_path = (
+            noise_segments_file.parent / f"{noise_segments_file.stem}_segments.json"
+        )
+        if not meta_path.exists():
+            raise FileNotFoundError(meta_path)
+
+        with open(meta_path, "r") as f:
+            seg_meta = json.load(f)
+
+        # dtype
+        dt = np.dtype(seg_meta[0]["dtype"]).newbyteorder(seg_meta[0]["endianness"])
+        mm = np.memmap(noise_segments_file, dtype=dt, mode="r")
+
+        psd_bin_path = output_dir / f"{noise_segments_file.stem}_psds.bin"
+        psd_meta_path = output_dir / f"{noise_segments_file.stem}_psds_segments.json"
+
+        psd_meta = []
+        psd_cursor = 0
+
+        with open(psd_bin_path, "wb") as psd_fh:
+            for seg in tqdm(seg_meta, desc="Computing PSDs per segment"):
+                start = seg["sample_start_idx"]
+                nsamp = seg["nsamples"]
+
+                data = np.array(
+                    mm[start : start + nsamp],
+                    dtype=np.float32,
+                    copy=True,
+                )
+                data /= DYN_RANGE_FAC
+
+                ts = torch.from_numpy(data)
+
+                psd = self.psd_method(ts).cpu().numpy()
+
+                # Apply inverse spectrum truncation
+                if self.apply_ist:
+                    psd = torch.from_numpy(psd).to(torch.float64)
+                    delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
+                    psd = inverse_spectrum_truncation_single(
+                        psd=psd,
+                        max_filter_len=self.max_filter_len,
+                        low_frequency_cutoff=self.low_frequency_cutoff,
+                        delta_f=delta_f,
+                        trunc_method=self.trunc_method,
+                    )
+                    psd = psd.cpu().numpy()
+
+                nbytes = psd.nbytes
+
+                psd_fh.write(psd.tobytes())
+
+                psd_meta.append(
+                    {
+                        "noise_segment_index": seg["segment_index"],
+                        "gps_start": seg["gps_start"],
+                        "gps_end": seg["gps_end"],
+                        "sample_rate": seg["sample_rate"],
+                        "psd_len": psd.shape[0],
+                        "byte_offset": psd_cursor,
+                        "byte_length": nbytes,
+                        "delta_f": 1.0
+                        / (self.psd_method.seg_len * self.psd_method.delta_t),
+                        "seg_len": self.psd_method.seg_len,
+                        "seg_stride": self.psd_method.seg_stride,
+                        "window": "hann",
+                        "inverse_spectrum_truncation": 1 if self.apply_ist else 0,
+                        "max_filter_len": self.max_filter_len,
+                        "low_frequency_cutoff": self.low_frequency_cutoff,
+                    }
+                )
+
+                psd_cursor += nbytes
+
+        with open(psd_meta_path, "w") as f:
+            json.dump(psd_meta, f, indent=2)
