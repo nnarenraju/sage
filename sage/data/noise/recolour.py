@@ -55,7 +55,11 @@ class FFTOnlyPostprocess:
         if seq_len <= 0:
             raise ValueError("seq_len must be positive")
 
-    def __call__(self, batch_td: torch.Tensor) -> torch.Tensor:
+    def __call__(
+        self,
+        batch_td: torch.Tensor,
+        segment_ids: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Convert batch of TD noise to FD.
 
