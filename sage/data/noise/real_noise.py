@@ -311,6 +311,7 @@ class MemmapNoiseSampler:
         device: str = "cuda",
         batch_size: int = 64,
         prefetch: int = 2,
+        postprocess_fn=None,
     ):
         self.seq_len = seq_len
         self.device = device
@@ -318,6 +319,7 @@ class MemmapNoiseSampler:
         self.bin_files = [Path(f) for f in bin_files]
         self.n_detectors = len(bin_files)
         self._batch_size = batch_size
+        self.postprocess_fn = postprocess_fn
 
         self.mmaps = []
         self.seg_index = []
@@ -378,26 +380,33 @@ class MemmapNoiseSampler:
 
     def _sample_starts_batch(self, batch_size: int):
         start_indices = []
+        segment_indices = []
+
         for d in range(self.n_detectors):
             seg_idx = self.seg_index[d]
             probs = self.segment_probs[d]
             chosen_segments = self.rng.choice(len(seg_idx), size=batch_size, p=probs)
 
             starts = np.empty(batch_size, dtype=np.int64)
+            seg_ids = np.empty(batch_size, dtype=np.int32)
             for i, seg_i in enumerate(chosen_segments):
                 seg = seg_idx[seg_i]
                 max_offset = seg["nsamples"] - self.seq_len
                 offset = self.rng.integers(0, max_offset + 1) if max_offset > 0 else 0
                 starts[i] = seg["start"] + offset
+                seg_ids[i] = seg["idx"]
+
             start_indices.append(starts)
-        return start_indices
+            segment_indices.append(seg_ids)
+
+        return start_indices, segment_indices
 
     def _read_batch(self, batch_size: int):
         B = batch_size
         D = self.n_detectors
         seq_len = self.seq_len
 
-        start_indices = self._sample_starts_batch(B)
+        start_indices, segment_indices = self._sample_starts_batch(B)
         batch_tensor = torch.empty(
             (B, D, seq_len), dtype=torch.float32, device=self.device
         )
@@ -421,6 +430,21 @@ class MemmapNoiseSampler:
         for d, arr in enumerate(results):
             cpu_tensor = torch.from_numpy(arr).pin_memory()
             batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=True)
+
+        # convert segment indices to a GPU tensor
+        segment_ids = torch.empty((B, D), dtype=torch.int32, device=self.device)
+
+        for d in range(D):
+            segment_ids[:, d].copy_(
+                torch.from_numpy(segment_indices[d]).to(self.device),
+                non_blocking=True,
+            )
+
+        if self.postprocess_fn is not None:
+            batch_tensor = self.postprocess_fn(batch_tensor, segment_ids)
+        else:
+            # default: TD to FD only
+            batch_tensor = torch.fft.rfft(batch_tensor, dim=-1)
 
         return batch_tensor
 
