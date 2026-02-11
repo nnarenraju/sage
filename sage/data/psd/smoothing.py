@@ -29,7 +29,13 @@ import numpy as np
 from scipy.interpolate import UnivariateSpline
 
 
-def smooth_psd_log_spline(freqs, psd, line_regions=None, smooth_factor=None):
+def smooth_psd_log_spline(
+    freqs,
+    psd,
+    upweight_regions=None,
+    smooth_factor=None,
+    return_coeffs=False,
+):
     """
     Smooth a noisy PSD estimate using a spline in log-log space.
 
@@ -63,9 +69,9 @@ def smooth_psd_log_spline(freqs, psd, line_regions=None, smooth_factor=None):
     # default weights
     weights = np.ones_like(logp)
 
-    # upweight line regions if provided
-    if line_regions is not None:
-        for f_low, f_high in line_regions:
+    # upweight special regions in freq space
+    if upweight_regions is not None:
+        for f_low, f_high in upweight_regions:
             line_mask = (f >= f_low) & (f <= f_high)
             weights[line_mask] = 2
 
