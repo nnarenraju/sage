@@ -99,6 +99,7 @@ class HDF5SingleNoiseSampler:
             return self._prob_cache[requested_nsamples]
 
         usable = self.seg_lengths - requested_nsamples
+        usable[usable == 0] = 1
         usable[usable < 0] = 0
 
         total = usable.sum()
@@ -229,6 +230,7 @@ class MemmapSingleNoiseSampler:
             return self._prob_cache[requested_nsamples]
 
         usable = self.seg_lengths - requested_nsamples
+        usable[usable == 0] = 1
         usable[usable < 0] = 0
 
         total = usable.sum()
@@ -352,7 +354,7 @@ class MemmapNoiseSampler:
                     for seg in meta
                 ],
                 dtype=[
-                    ("idx", "i4"),
+                    ("idx", "i8"),
                     ("start", "i8"),
                     ("end", "i8"),
                     ("nsamples", "i8"),
@@ -361,6 +363,7 @@ class MemmapNoiseSampler:
             self.seg_index.append(seg_idx_arr)
 
             usable = seg_idx_arr["nsamples"] - self.seq_len
+            usable[usable == 0] = 1
             usable[usable < 0] = 0
             total = usable.sum()
             if total == 0:
@@ -388,7 +391,7 @@ class MemmapNoiseSampler:
             chosen_segments = self.rng.choice(len(seg_idx), size=batch_size, p=probs)
 
             starts = np.empty(batch_size, dtype=np.int64)
-            seg_ids = np.empty(batch_size, dtype=np.int32)
+            seg_ids = np.empty(batch_size, dtype=np.int64)
             for i, seg_i in enumerate(chosen_segments):
                 seg = seg_idx[seg_i]
                 max_offset = seg["nsamples"] - self.seq_len
@@ -431,13 +434,13 @@ class MemmapNoiseSampler:
             cpu_tensor = torch.from_numpy(arr).pin_memory()
             batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=True)
 
-        # convert segment indices to a GPU tensor
-        segment_ids = torch.empty((B, D), dtype=torch.int32, device=self.device)
+        # convert segment indices to a CPU tensor
+        # We deliberately place this in CPU (check postprocess)
+        segment_ids = torch.empty((B, D), dtype=torch.int64)
 
         for d in range(D):
             segment_ids[:, d].copy_(
-                torch.from_numpy(segment_indices[d]).to(self.device),
-                non_blocking=True,
+                torch.from_numpy(segment_indices[d]),
             )
 
         if self.postprocess_fn is not None:
