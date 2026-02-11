@@ -42,6 +42,116 @@ import warnings
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 import lalsimulation as lalsim
 
+import torch
+import torch.nn as nn
+import torch.fft
+
+
+class FDMultiRateSampler(nn.Module):
+    """
+    FD multirate sampling for a batch of signals (B, D, seq_len).
+    - Inputs are in frequency domain (rFFT)
+    - Bins: precomputed [(start_idx, end_idx, decim_factor), ...]
+    - Performs IRFFT internally to handle decimation in TD
+    """
+
+    def __init__(self, tfcurve):
+        super().__init__()
+        # Precompute bins
+        bins = FDMultiRateSampler.compute_multirate_bins(tfcurve)
+        # Store bins as buffer for torch.compile / tracing
+        self.register_buffer("bins_tensor", torch.tensor(bins, dtype=torch.long))
+
+    @staticmethod
+    def compute_multirate_bins(
+        tf_times: np.ndarray,
+        tf_freqs: np.ndarray,
+        seq_len: int,
+        base_sample_rate: float,
+        target_decimation_factor: int = 2,
+        min_bin_size: int = 16,
+        max_decimation_factor: int = 16,
+    ):
+        """
+        Compute FD bins for multirate sampling using a tf (time-frequency) curve.
+
+        Args:
+            tf_times: np.ndarray, time points (s)
+            tf_freqs: np.ndarray, instantaneous frequency at each time point (Hz)
+            seq_len: int, length of TD signal (number of samples)
+            base_sample_rate: float, original TD sample rate
+            target_decimation_factor: int, factor to increase decimation each time freq halves
+            min_bin_size: int, minimum number of FD bins per segment
+            max_decimation_factor: int, maximum allowed decimation factor (power of 2)
+
+        Returns:
+            bins: list of tuples (start_idx, end_idx, decimation_factor)
+        """
+
+        # Compute FD bin frequencies
+        nfft = seq_len
+        freqs = np.fft.rfftfreq(nfft, 1.0 / base_sample_rate)
+
+        # Interpolate the tf curve onto FD bin frequencies
+        # Each FD bin corresponds to a time in tf_times via instantaneous frequency
+        # We'll assign each FD bin a target decimation factor based on frequency
+        tf_freqs_interp = np.interp(
+            freqs, tf_freqs[::-1], tf_times[::-1], left=tf_times[0], right=tf_times[-1]
+        )
+
+        bins = []
+        current_decim = 1
+        start_idx = 0
+
+        # Iterate over FD bins
+        for i in range(1, len(freqs)):
+            freq_ratio = freqs[i - 1] / freqs[i] if freqs[i] != 0 else 1.0
+            if (
+                freq_ratio >= target_decimation_factor
+                and current_decim * target_decimation_factor <= max_decimation_factor
+            ):
+                end_idx = i
+                if end_idx - start_idx >= min_bin_size:
+                    bins.append((start_idx, end_idx, current_decim))
+                start_idx = i
+                current_decim *= target_decimation_factor
+
+        # Append final bin
+        if len(freqs) - start_idx >= min_bin_size:
+            bins.append((start_idx, len(freqs), current_decim))
+
+        return bins
+
+    @torch.no_grad()
+    def forward(self, X_fd: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            X_fd: (B, D, F) complex tensor (rFFT output)
+        Returns:
+            X_fd_mr: (B, D, F_new) FD tensor after multirate decimation
+        """
+        B, D, F = X_fd.shape
+        out_chunks = []
+
+        # Convert rFFT -> TD for safe decimation
+        X_td = torch.fft.irfft(X_fd, n=(F - 1) * 2, dim=-1)
+
+        for bstart, bend, decim in self.bins_tensor.tolist():
+            # Slice TD
+            chunk_td = X_td[..., bstart:bend]
+
+            if decim > 1:
+                # Safe decimation: keep every decim-th sample
+                chunk_td = chunk_td[..., ::decim]
+
+            # Convert back to FD
+            chunk_fd = torch.fft.rfft(chunk_td, dim=-1)
+            out_chunks.append(chunk_fd)
+
+        # Concatenate along FD axis
+        X_fd_mr = torch.cat(out_chunks, dim=-1)
+        return X_fd_mr
+
 
 def prime_factors(n):
     # Return the prime factors, to be used in decimation
