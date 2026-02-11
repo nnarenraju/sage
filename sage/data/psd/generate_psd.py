@@ -24,97 +24,113 @@ Documentation: NULL
 """
 
 
-# Packages
 import torch
-import numpy as np
-
-# Principal component analysis
-from sklearn.decomposition import PCA
-
-# Normalising flow
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 from nflows.flows import Flow
-from nflows.distributions import StandardNormal
 from nflows.transforms import CompositeTransform, MaskedAffineAutoregressiveTransform
+from nflows.distributions import StandardNormal
+import numpy as np
+import logging
 
-# LOCAL
-from sage.core.logger import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class PSDGenerator:
 
-    def __init__(self, psds, n_components=20, num_layers=5, hidden_features=64):
-        # PSD realisations for training
-        self.psds = psds
-        # Principal component analysis
-        self.pca = None
-        self.n_components = n_components
-        # Normalising flow
+    def __init__(
+        self,
+        spline_coeffs: np.ndarray,
+        num_layers=5,
+        hidden_features=64,
+    ):
+        """
+        Args:
+            spline_coeffs: np.ndarray of shape (N_psd, num_spline_coeffs)
+            num_layers: number of flow layers
+            hidden_features: hidden features in MADE layers
+        """
+        self.spline_coeffs = torch.tensor(spline_coeffs, dtype=torch.float32)
         self.num_layers = num_layers
         self.hidden_features = hidden_features
-        # Learning
+        self.flow = None
         self.learning_rate = 1e-3
-        self.batch_size = batch_size
-        self.n_epochs = n_epochs
+        self.batch_size = 128
+        self.n_epochs = 50
 
-    def proprocess_psds(self):
-        """Preprocess PSDs: log + shape-only"""
-        # Log transform
-        log_psds = np.log(self.psds + 1e-12)  # avoid log(0)
-        # Remove scale per PSD (median=0)
-        self.psds = log_psds - np.median(log_psds, axis=1, keepdims=True)
-
-    def get_psd_componenets(self):
-        """Principal Component Analysis"""
-        self.pca = PCA(n_components=self.n_components)
-        pca_coeffs = self.pca.fit_transform(
-            log_psds_norm
-        )  # shape (N_psd, n_components)
-        logger.info("PCA explained variance ratio:", pca.explained_variance_ratio_)
-        # Convert to torch tensor
-        self.pca_coeffs = torch.tensor(pca_coeffs, dtype=torch.float32)
+        self.num_coeffs = self.spline_coeffs.shape[1]
 
     def build_flow(self):
-        """Build the normalizing flow in PCA space"""
+        """Build normalising flow in spline coefficient space."""
         transforms = []
         for _ in range(self.num_layers):
             transforms.append(
                 MaskedAffineAutoregressiveTransform(
-                    features=self.n_components, hidden_features=self.hidden_features
+                    features=self.num_coeffs, hidden_features=self.hidden_features
                 )
             )
-
         transform = CompositeTransform(transforms)
-        base_dist = StandardNormal([self.n_components])
+        base_dist = StandardNormal([self.num_coeffs])
         self.flow = Flow(transform, base_dist)
-
-    def train_flow(self):
-        """Training loop"""
-        optimizer = torch.optim.Adam(self.flow.parameters(), lr=self.learning_rate)
-
-        dataset = torch.utils.data.TensorDataset(self.pca_coeffs)
-        dataloader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=True
+        self.base_dist = base_dist
+        logger.info(
+            f"Flow built with {self.num_layers} layers and {self.num_coeffs} coefficients"
         )
 
+    def train_flow(self):
+        """Train the flow on spline coefficients."""
+        optimizer = torch.optim.Adam(self.flow.parameters(), lr=self.learning_rate)
+        dataset = TensorDataset(self.spline_coeffs)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+
         for epoch in range(self.n_epochs):
-            total_loss = 0
+            total_loss = 0.0
             for (batch,) in dataloader:
                 optimizer.zero_grad()
                 loss = -self.flow.log_prob(batch).mean()
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item() * len(batch)
-            logger.info(f"Epoch {epoch+1}, loss: {total_loss / len(train_data):.4f}")
+            logger.info(
+                f"Epoch {epoch+1}/{self.n_epochs}, loss: {total_loss / len(dataset):.6f}"
+            )
 
-    def sample_psds(nsamples=10):
-        """Sampling new PSD shapes"""
+    def spline_to_psd(
+        self,
+        coeffs: np.ndarray,
+        freqs: np.ndarray,
+        smoothing_spline=None,
+    ) -> np.ndarray:
+        """
+        Convert spline coefficients to PSD values.
+
+        Args:
+            coeffs: (num_spline_coeffs,) or (N_samples, num_spline_coeffs)
+            freqs: frequency array corresponding to PSD
+            smoothing_spline: optional UnivariateSpline object to reconstruct PSD
+
+        Returns:
+            psd: (len(freqs),) or (N_samples, len(freqs))
+        """
+        from scipy.interpolate import UnivariateSpline
+
+        coeffs = np.atleast_2d(coeffs)
+        psds = []
+        for c in coeffs:
+            if smoothing_spline is None:
+                # default: reconstruct spline from coefficients
+                spline = UnivariateSpline(range(len(c)), c, s=0)
+            else:
+                spline = smoothing_spline
+            logp = spline(np.linspace(0, len(c) - 1, len(freqs)))
+            psds.append(np.exp(logp))
+        return np.array(psds)
+
+    def sample_psds(self, nsamples: int, freqs: np.ndarray) -> np.ndarray:
+        """Sample new PSDs from the trained flow."""
+        self.flow.eval()
         with torch.no_grad():
-            z = base_dist.sample((nsamples,))
-            new_coeffs = self.flow.inverse(z)  # shape (n_samples, n_components)
-
-        # Reconstruct PSDs
-        reconstructed_log_psds = self.pca.inverse_transform(new_coeffs.numpy())
-        reconstructed_psds = np.exp(reconstructed_log_psds)
-        return reconstructed_psds
+            z = self.base_dist.sample((nsamples,))
+            new_coeffs = self.flow.inverse(z).cpu().numpy()
+        psds = self.spline_to_psd(new_coeffs, freqs)
+        return psds
