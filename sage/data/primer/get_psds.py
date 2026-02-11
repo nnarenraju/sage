@@ -36,10 +36,8 @@ from pycbc import DYN_RANGE_FAC
 
 # LOCAL
 from sage.data.primer import NoBlackout
-from sage.core.conversions import seconds_to_samples
+from sage.data.psd.smoothing import smooth_psd_log_spline
 from sage.dsp.inverse_spectrum_truncation import inverse_spectrum_truncation_single
-
-import matplotlib.pyplot as plt
 
 
 class EstimatePSD:
@@ -60,6 +58,8 @@ class EstimatePSD:
         max_filter_len: int | None = None,
         low_frequency_cutoff: float | None = None,
         trunc_method: str = "hann",
+        interpolate_psd: bool = False,
+        training_sample_length=None,
         **kwargs,
     ):
         self.detector = detector
@@ -74,6 +74,10 @@ class EstimatePSD:
         self.low_frequency_cutoff = low_frequency_cutoff
         self.trunc_method = trunc_method
 
+        # Interpolation
+        self.interpolate_psd = interpolate_psd
+        self.training_sample_length = training_sample_length
+
         # Pull required runtime context
         self.cfg = kwargs["cfg"]
         self.data_cfg = kwargs["data_cfg"]
@@ -84,6 +88,66 @@ class EstimatePSD:
                 raise ValueError(
                     "max_filter_len must be set for inverse spectrum truncation"
                 )
+
+    @staticmethod
+    def _interpolate(
+        psd,
+        *,
+        delta_f_psd: float,
+        sample_length: int,
+        sample_rate: float,
+    ):
+        """
+        Interpolate PSD to match FFT grid of a given sample length.
+        Works with NumPy arrays or torch tensors (CPU only).
+
+        Args:
+            psd:
+                shape (F,) or (..., F)
+            delta_f_psd:
+                frequency spacing of input PSD
+            sample_length:
+                time-domain sample length
+            sample_rate:
+                sampling rate in Hz
+
+        Returns:
+            psd_interp:
+                shape (..., sample_length//2 + 1)
+        """
+        # Determine backend
+        if "torch" in str(type(psd)):
+            psd = psd.detach().cpu().numpy()
+
+        psd = np.asarray(psd)
+        orig_shape = psd.shape
+        F_psd = orig_shape[-1]
+
+        # Frequency grids
+        delta_f_new = sample_rate / sample_length
+        F_new = sample_length // 2 + 1
+
+        f_psd = np.arange(F_psd) * delta_f_psd
+        f_new = np.arange(F_new) * delta_f_new
+
+        # Reshape to 2D for interpolation
+        psd_flat = psd.reshape(-1, F_psd)
+        out = np.empty((psd_flat.shape[0], F_new), dtype=psd.dtype)
+
+        # Interpolate
+        for i in range(psd_flat.shape[0]):
+            out[i] = np.interp(
+                f_new,
+                f_psd,
+                psd_flat[i],
+                left=psd_flat[i, 0],
+                right=psd_flat[i, -1],
+            )
+
+        # Restore shape
+        out = out.reshape(*orig_shape[:-1], F_new)
+
+        return out, delta_f_new, f_new
 
     def estimate_raw_psds(self, *, noise_sampler, duration, return_fiducial=False):
         """Run PSD estimation to get recolour and fiducial psds"""
@@ -108,10 +172,10 @@ class EstimatePSD:
             # Compute PSD using the Welch method
             pxx = self.psd_method(noise)
             freqs = self.psd_method.freqs
+            delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
 
             if self.apply_ist:
-                psd_t = torch.from_numpy(pxx).to(torch.float64)
-                delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
+                psd_t = torch.from_numpy(pxx).to(torch.float32)
                 psd_t = inverse_spectrum_truncation_single(
                     psd=psd_t,
                     max_filter_len=self.max_filter_len,
@@ -120,6 +184,15 @@ class EstimatePSD:
                     trunc_method=self.trunc_method,
                 )
                 pxx = psd_t.cpu().numpy()
+
+            # Interpolate if requested
+            if self.interpolate_psd:
+                pxx, delta_f, freqs = EstimatePSD._interpolate(
+                    psd=pxx,
+                    delta_f_psd=delta_f,
+                    sample_length=self.training_sample_length,
+                    sample_rate=sample_rate,
+                )
 
             # To save each PSD if requested
             psds.append(pxx)
@@ -179,7 +252,9 @@ class EstimatePSD:
 
         elif self.store_psds_as_bin:
             bin_path = os.path.join(save_dir, f"raw_{self.detector}_psds.bin")
-            psds.astype(np.float64).tofile(bin_path)
+            psds.astype(np.float32).tofile(bin_path)
+
+            print(psds.shape)
 
             # Add metadata
             meta_path = os.path.join(save_dir, f"raw_{self.detector}_psds.json")
@@ -187,7 +262,7 @@ class EstimatePSD:
                 "detector": self.detector,
                 "num_psds": psds.shape[0],
                 "num_freq_bins": psds.shape[1],
-                "dtype": "float64",
+                "dtype": "float32",
                 "byte_order": "little",
                 "layout": "row-major",
                 "sample_rate": sample_rate,
@@ -254,12 +329,12 @@ class EstimatePSD:
 
         elif self.store_psds_as_bin:
             bin_path = os.path.join(fiducial_dir, f"fiducial_{self.detector}_psd.bin")
-            np.asarray(psd, dtype=np.float64).tofile(bin_path)
+            np.asarray(psd, dtype=np.float32).tofile(bin_path)
 
             meta = {
                 "detector": self.detector,
                 "num_freq_bins": len(psd),
-                "dtype": "float64",
+                "dtype": "float32",
                 "byte_order": "little",
                 "sample_rate": sample_rate,
                 "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
@@ -326,11 +401,11 @@ class EstimatePSD:
                 ts = torch.from_numpy(data)
 
                 psd = self.psd_method(ts).cpu().numpy()
+                delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
 
                 # Apply inverse spectrum truncation
                 if self.apply_ist:
-                    psd = torch.from_numpy(psd).to(torch.float64)
-                    delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
+                    psd = torch.from_numpy(psd).to(torch.float32)
                     psd = inverse_spectrum_truncation_single(
                         psd=psd,
                         max_filter_len=self.max_filter_len,
@@ -340,8 +415,16 @@ class EstimatePSD:
                     )
                     psd = psd.cpu().numpy()
 
-                nbytes = psd.nbytes
+                # Interpolate if requested
+                if self.interpolate_psd:
+                    psd, delta_f, freqs = EstimatePSD._interpolate(
+                        psd=psd,
+                        delta_f_psd=delta_f,
+                        sample_length=self.training_sample_length,
+                        sample_rate=self.data_cfg.sample_rate,
+                    )
 
+                nbytes = psd.nbytes
                 psd_fh.write(psd.tobytes())
 
                 psd_meta.append(
@@ -353,14 +436,14 @@ class EstimatePSD:
                         "psd_len": psd.shape[0],
                         "byte_offset": psd_cursor,
                         "byte_length": nbytes,
-                        "delta_f": 1.0
-                        / (self.psd_method.seg_len * self.psd_method.delta_t),
+                        "delta_f": delta_f,
                         "seg_len": self.psd_method.seg_len,
                         "seg_stride": self.psd_method.seg_stride,
                         "window": "hann",
                         "inverse_spectrum_truncation": 1 if self.apply_ist else 0,
                         "max_filter_len": self.max_filter_len,
                         "low_frequency_cutoff": self.low_frequency_cutoff,
+                        "interpolation": 1 if self.interpolate_psd else 0,
                     }
                 )
 
