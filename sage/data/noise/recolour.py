@@ -30,6 +30,8 @@ import numpy as np
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+
 
 class FFTOnlyPostprocess:
     """
@@ -84,14 +86,14 @@ class FFTOnlyPostprocess:
 
 class RecolourPostprocess:
     """
-    GPU postprocessing: whitening + stochastic recolouring in FD.
+    GPU postprocessing: conditional whitening + stochastic recolouring in FD.
 
     Inputs:
-        batch_td: (B, D, T) float32
-        segment_ids: (B, D) int32
+        batch_td:   (B, D, T) float32
+        segment_ids:(B, D) int32
 
     Output:
-        batch_fd: (B, D, F) complex64
+        batch_fd:   (B, D, F) complex64
     """
 
     def __init__(
@@ -103,7 +105,7 @@ class RecolourPostprocess:
         sample_rate: float,
         p_recolour: float,
         device: str = "cuda",
-        eps: float = 1e-12,
+        eps: float = 1e-60,
     ):
         self.data_dir = Path(data_dir)
         self.detectors = detectors
@@ -115,57 +117,67 @@ class RecolourPostprocess:
 
         self.n_detectors = len(detectors)
 
-        self.delta_f_psd = None
-        self.psd_freqs = None
+        # We expect this length from the PSDs
+        # Interpolate them after production
+        self.n_freq = seq_len // 2 + 1
 
-        self.delta_f_fft = 1.0 / (self.seq_len / self.sample_rate)
-        self.fft_freqs = (
-            torch.arange(self.seq_len // 2 + 1, device=self.device) * self.delta_f_fft
-        )
-
-        # Load PSDs (CPU --> pinned --> GPU once)
+        # Load PSDs to torch.float32 on GPU
         self._load_segment_psds()
         self._load_recolour_psds()
 
     def _load_segment_psds(self):
         """
-        Loads per-segment PSDs into GPU tensors.
+        Loads pre-interpolated per-segment PSDs.
+        We need to pad the bank to a rectangular format
+        This supports tensor ops downstream
 
         Result:
-            self.segment_psds[d][seg_idx] -> (F,) float64
+            self.segment_psds: (D, N_seg_max, F) float32
         """
-        self.segment_psds = []
+        psds_per_det = []
+        max_nseg = 0
 
         for det in self.detectors:
             psd_dir = self.data_dir / "segment_psds"
-            bin_path = psd_dir / f"data_{det}_psds.bin"
-            meta_path = psd_dir / f"data_{det}_psds_segments.json"
+            bin_path = psd_dir / f"data_{det}_O3a_psds.bin"
+            meta_path = psd_dir / f"data_{det}_O3a_psds_segments.json"
 
             with open(meta_path, "r") as f:
                 meta = json.load(f)
 
-            # Read entire bin
-            psds = np.fromfile(bin_path, dtype=np.float64)
+            raw = np.fromfile(bin_path, dtype=np.float32)
 
-            psd_list = []
+            psds = []
             cursor = 0
-
             for m in meta:
-                n = m["psd_len"]
-                psd = psds[cursor : cursor + n]
+                n = m["psd_len"]  # should already be == F
+                psds.append(raw[cursor : cursor + n])
                 cursor += n
-                psd_list.append(psd)
 
-            self.segment_psds.append(np.stack(psd_list, axis=0))
+            psds = np.stack(psds, axis=0)  # (N_seg, F)
+            psds_per_det.append(psds)
+            max_nseg = max(max_nseg, psds.shape[0])
+
+        # Pad to rectangular (D, N_seg_max, F)
+        padded = []
+        for psds in psds_per_det:
+            pad = max_nseg - psds.shape[0]
+            if pad > 0:
+                psds = np.pad(psds, ((0, pad), (0, 0)), constant_values=1.0)
+            padded.append(psds)
+
+        self.segment_psds = torch.from_numpy(np.stack(padded, axis=0)).float()
 
     def _load_recolour_psds(self):
         """
-        Loads recolour PSD bank.
+        Loads recolour PSD bank (already interpolated).
+        Bank size should be the same for all dets;
+        So we don't need to pad this to form a rectangular tensor
 
         Result:
-            self.recolour_psds[d] -> (N_psd, F)
+            self.recolour_psds: (D, N_psd, F) float32
         """
-        self.recolour_psds = []
+        psds_all = []
 
         for det in self.detectors:
             psd_dir = self.data_dir / "recolour_psds"
@@ -176,12 +188,13 @@ class RecolourPostprocess:
                 meta = json.load(f)
 
             n_psd = meta["num_psds"]
-            n_freq = meta["num_freq_bins"]
+            n_freq = meta["num_freq_bins"]  # should == F
 
-            psds = np.fromfile(bin_path, dtype=np.float64)
-            psds = psds.reshape(n_psd, n_freq)
+            psds = np.fromfile(bin_path, dtype=np.float32).reshape(n_psd, n_freq)
+            psds_all.append(psds)
 
-            self.recolour_psds.append(psds)
+        self.recolour_psds = torch.from_numpy(np.stack(psds_all, axis=0)).float()
+        self.n_recolour_psd = self.recolour_psds.shape[1]
 
     def __call__(
         self,
@@ -189,39 +202,34 @@ class RecolourPostprocess:
         segment_ids: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Whitening + stochastic recolouring in FD (torch.compile safe)
+        torch.compile-safe FD recolouring
         """
-        B, D, T = batch_td.shape
+        B, D, _ = batch_td.shape
 
-        # TD → FD
+        # TD to FD
         X = torch.fft.rfft(batch_td, dim=-1)  # (B, D, F)
-        F = X.shape[-1]
 
-        # Whitening
-        # Gather PSDs: (B, D, F)
-        psd_whiten = torch.gather(
-            self.segment_psds, dim=1, index=segment_ids.unsqueeze(-1).expand(-1, -1, F)
-        ).transpose(0, 1)
+        # Bernoulli recolour mask
+        mask = torch.rand(B, D, 1, device=X.device) < self.p_recolour  # (B, D, 1)
 
-        X = X / torch.sqrt(psd_whiten + self.eps)
+        # Whitening PSD (only where mask == True, else ones)
+        det_idx = torch.arange(D).view(1, D).expand(B, D)
+        gathered_seg_psd = self.segment_psds[det_idx, segment_ids]
+        gathered_seg_psd = gathered_seg_psd.to(X.device, non_blocking=True)
 
-        # Stochastic recolouring
-        # Mask: (B, D) to (B, D, 1)
-        recolour_mask = torch.rand(B, D, device=X.device) < self.p_recolour
-        recolour_mask = recolour_mask.unsqueeze(-1)
+        X = torch.where(
+            mask,
+            X / torch.sqrt(gathered_seg_psd + self.eps),
+            X,
+        )
 
-        # Sample PSD indices for *all* samples (cheap, avoids branching)
-        N_psd = self.recolour_psds.shape[1]
-        psd_idx = torch.randint(0, N_psd, (B, D), device=X.device)
+        # Recolour PSD (only where mask == True)
+        recol_idx = torch.randint(0, self.n_recolour_psd, (B, D))
+        gathered_recol_psd = self.recolour_psds[det_idx, recol_idx]
+        gathered_recol_psd = gathered_recol_psd.to(X.device)
 
-        # Gather recolour PSDs: (B, D, F)
-        psd_recolour = torch.gather(
-            self.recolour_psds, dim=1, index=psd_idx.unsqueeze(-1).expand(-1, -1, F)
-        ).transpose(0, 1)
+        recol_gain = torch.sqrt(gathered_recol_psd + self.eps)
 
-        recolour_gain = torch.sqrt(psd_recolour + self.eps)
-
-        # Apply only where masked
-        X = torch.where(recolour_mask, X * recolour_gain, X)
+        X = torch.where(mask, X * recol_gain, X)
 
         return X
