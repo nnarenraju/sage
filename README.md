@@ -1,5 +1,7 @@
 ## Sage - Addressing machine learning bias in gravitational-wave detection
 
+> ⚠️ **Major refactor in progress in the 'cleanup' branch.** APIs and internal structure are actively changing; (last update: Feb 12 2026)
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/ceabdb59-2847-45e6-a618-2153278049d0" alt="SAGE logo" width="400"/>
 </p>
@@ -16,10 +18,6 @@ Matched-filtering is a long-standing technique for the optimal detection of know
 
 [Published PRD version of the paper](https://journals.aps.org/prd/abstract/10.1103/zwj9-ycyz)
 
-### TODO
-1. Add documentation
-2. Notes to reproduce results in the paper (ongoing; last update 18/01/2026)
-3. Code cleanup (ongoing; last update 21/01/2026)
 
 ### Cite
 If you found this work useful in your research, please consider citing:
