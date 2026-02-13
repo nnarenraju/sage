@@ -250,7 +250,7 @@ class ProjectWave:
 
         return torch.einsum("bi,dj->bd", ehat, self.dx) / C
 
-    @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
+    # @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
     def constant_project(self, hp, hc, freqs, ra, dec, polarization):
         """Return the strain of a waveform as measured by all detectors.
         Apply the time shift for all given detectors relative to the assumed
