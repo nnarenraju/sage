@@ -36,7 +36,6 @@ from pycbc import DYN_RANGE_FAC
 
 # LOCAL
 from sage.data.primer import NoBlackout
-from sage.data.psd.smoothing import smooth_psd_log_spline
 from sage.dsp.inverse_spectrum_truncation import inverse_spectrum_truncation_single
 
 
@@ -51,6 +50,7 @@ class EstimatePSD:
         detector: str,
         num_samples: int = 200_000,
         psd_method=None,
+        noise_low_frequency_cutoff: float = 15.0,
         blackout_policy=None,
         store_psds_as_hdf5: bool = False,
         store_psds_as_bin: bool = False,
@@ -60,6 +60,7 @@ class EstimatePSD:
         trunc_method: str = "hann",
         interpolate_psd: bool = False,
         training_sample_length=None,
+        psd_smoothener=None,
         **kwargs,
     ):
         self.detector = detector
@@ -74,9 +75,14 @@ class EstimatePSD:
         self.low_frequency_cutoff = low_frequency_cutoff
         self.trunc_method = trunc_method
 
+        self.noise_low_frequency_cutoff = noise_low_frequency_cutoff
+
         # Interpolation
         self.interpolate_psd = interpolate_psd
         self.training_sample_length = training_sample_length
+
+        # Smoothen PSD
+        self.psd_smoothener = psd_smoothener
 
         # Pull required runtime context
         self.cfg = kwargs["cfg"]
@@ -193,6 +199,13 @@ class EstimatePSD:
                     sample_length=self.training_sample_length,
                     sample_rate=sample_rate,
                 )
+
+            # Spline smooth the PSD before saving
+            if self.psd_smoothener is not None:
+                pxx = self.psd_smoothener.smooth(freqs, pxx)
+
+            # Kill all values below low frequency cutoff
+            pxx[freqs < self.noise_low_frequency_cutoff] = 1e30
 
             # To save each PSD if requested
             psds.append(pxx)
@@ -401,6 +414,7 @@ class EstimatePSD:
                 ts = torch.from_numpy(data)
 
                 psd = self.psd_method(ts).cpu().numpy()
+                freqs = self.psd_method.freqs
                 delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
 
                 # Apply inverse spectrum truncation
@@ -423,6 +437,15 @@ class EstimatePSD:
                         sample_length=self.training_sample_length,
                         sample_rate=self.data_cfg.sample_rate,
                     )
+
+                # Spline smooth the PSD before saving
+                if self.psd_smoothener is not None:
+                    psd = self.psd_smoothener.smooth(
+                        freqs, psd, smooth_factor=0.01 * len(freqs)
+                    )
+
+                # Kill all values below low frequency cutoff
+                psd[freqs < self.noise_low_frequency_cutoff] = 1e30
 
                 nbytes = psd.nbytes
                 psd_fh.write(psd.tobytes())
