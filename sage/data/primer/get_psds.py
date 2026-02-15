@@ -50,19 +50,22 @@ class EstimatePSD:
         detector: str,
         num_samples: int = 200_000,
         psd_method=None,
-        noise_low_frequency_cutoff: float = 15.0,
         blackout_policy=None,
         store_psds_as_hdf5: bool = False,
         store_psds_as_bin: bool = False,
         apply_inverse_spectrum_truncation: bool = False,
         max_filter_len: int | None = None,
-        low_frequency_cutoff: float | None = None,
+        low_frequency_cutoff: float | None = 15.0,
         trunc_method: str = "hann",
         interpolate_psd: bool = False,
         training_sample_length=None,
         psd_smoothener=None,
         **kwargs,
     ):
+        # Pull required runtime context
+        self.cfg = kwargs["cfg"]
+        self.data_cfg = kwargs["data_cfg"]
+
         self.detector = detector
         self.num_samples = int(num_samples)
         self.psd_method = psd_method
@@ -75,18 +78,12 @@ class EstimatePSD:
         self.low_frequency_cutoff = low_frequency_cutoff
         self.trunc_method = trunc_method
 
-        self.noise_low_frequency_cutoff = noise_low_frequency_cutoff
-
         # Interpolation
         self.interpolate_psd = interpolate_psd
         self.training_sample_length = training_sample_length
 
         # Smoothen PSD
         self.psd_smoothener = psd_smoothener
-
-        # Pull required runtime context
-        self.cfg = kwargs["cfg"]
-        self.data_cfg = kwargs["data_cfg"]
 
         # Sanity checks
         if self.apply_ist:
@@ -155,6 +152,22 @@ class EstimatePSD:
 
         return out, delta_f_new, f_new
 
+    def taper(self, freqs, psd, psd_floor=1e-40):
+        # Tapering down to a noise floor
+        # This imposes C1 continuity and reduces ringing effects in TD
+        # Make a tapering function below low freq cutoff
+        taper = np.ones_like(psd)
+        mask = freqs < self.low_frequency_cutoff
+        # All values below f_low down to 0.0 Hz
+        x = freqs[mask] / self.low_frequency_cutoff  # 0 to 1
+        # Cosine roll-off from floor to 1
+        taper[mask] = psd_floor + (psd[mask] - psd_floor) * 0.5 * (
+            1 - np.cos(np.pi * x)
+        )
+        # Tapering will take effect and impose a floor
+        psd[mask] = taper[mask]
+        return psd
+
     def estimate_raw_psds(self, *, noise_sampler, duration, return_fiducial=False):
         """Run PSD estimation to get recolour and fiducial psds"""
         sample_rate = self.data_cfg.sample_rate
@@ -204,8 +217,12 @@ class EstimatePSD:
             if self.psd_smoothener is not None:
                 pxx = self.psd_smoothener.smooth(freqs, pxx)
 
+            # DO NOT do the following although its tempting
             # Kill all values below low frequency cutoff
-            pxx[freqs < self.noise_low_frequency_cutoff] = 1e30
+            # pxx[freqs < self.low_frequency_cutoff] = 1e30
+            # This introduces long lasting ringing effects in TD
+            # Instead we make a slow taper
+            pxx = self.taper(freqs, pxx)
 
             # To save each PSD if requested
             psds.append(pxx)
@@ -266,8 +283,6 @@ class EstimatePSD:
         elif self.store_psds_as_bin:
             bin_path = os.path.join(save_dir, f"raw_{self.detector}_psds.bin")
             psds.astype(np.float32).tofile(bin_path)
-
-            print(psds.shape)
 
             # Add metadata
             meta_path = os.path.join(save_dir, f"raw_{self.detector}_psds.json")
@@ -444,8 +459,12 @@ class EstimatePSD:
                         freqs, psd, smooth_factor=0.01 * len(freqs)
                     )
 
+                # DO NOT do the following although its tempting
                 # Kill all values below low frequency cutoff
-                psd[freqs < self.noise_low_frequency_cutoff] = 1e30
+                # psd[freqs < self.low_frequency_cutoff] = 1e30
+                # This introduces long lasting ringing effects in TD
+                # Instead we make a slow taper
+                psd = self.taper(freqs, psd)
 
                 nbytes = psd.nbytes
                 psd_fh.write(psd.tobytes())
