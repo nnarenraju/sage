@@ -37,6 +37,25 @@ import torch
 
 from typing import Dict, Any, Callable
 
+# LOCAL
+from sage.data.waveform.distributions import (
+    angular,
+    powerlaw,
+    sky,
+    uniform,
+)
+
+# Conversions
+from sage.data.waveform.conversions import (
+    mass1_mass2_to_mchirp_q,
+    chirp_distance_to_distance,
+)
+
+# Transformation constraints
+import sage.data.waveform.constraints as constraints
+
+_NAMED_CONSTRAINTS = ["mass_order"]
+
 
 def spherical_to_cartesian(radial, polar, azimuthal):
     sin_theta = torch.sin(polar)
@@ -45,16 +64,6 @@ def spherical_to_cartesian(radial, polar, azimuthal):
         radial * sin_theta * torch.sin(azimuthal),
         radial * torch.cos(polar),
     )
-
-
-def mass1_mass2_to_mchirp_q(m1, m2):
-    q = m2 / m1
-    mchirp = (m1 * m2) ** (3 / 5) / (m1 + m2) ** (1 / 5)
-    return mchirp, q
-
-
-def chirp_distance_to_distance(chirp_distance, mchirp):
-    return chirp_distance * (mchirp / 1.2) ** (5 / 6)
 
 
 def read_from_config(path, device="cuda"):
@@ -72,6 +81,21 @@ class ConstraintChecker:
         return eval(self.expr, {}, params)
 
 
+class NamedConstraint:
+    def __init__(self, name, params=None):
+        self.name = name
+        self.params = params or []
+
+
+class ExpressionConstraint:
+    def __init__(self, expr: str):
+        self.name = "custom"
+        self.expr = expr
+
+    def check(self, params):
+        return eval(self.expr, {}, params)
+
+
 class DistributionSampler:
 
     def __init__(self, config: Dict[str, Any], device="cuda"):
@@ -79,7 +103,6 @@ class DistributionSampler:
         self.cfg = config
 
         self.variable_params = config["variable_params"]
-        self.static_params = config.get("static_params", {})
 
         self.distributions = {}
         self.transforms = []
@@ -89,19 +112,25 @@ class DistributionSampler:
         self._build_transforms()
         self._build_constraints()
 
+    @staticmethod
+    def get_named_constraints():
+        return _NAMED_CONSTRAINTS
+
     def _make_dist(self, name, args):
         if name == "uniform":
-            return Uniform(args["min"], args["max"])
+            return uniform.Uniform(args["min"], args["max"])
         if name == "uniform_angle":
-            return UniformAngle()
+            return angular.UniformAngle()
         if name == "sin_angle":
-            return SinAngle()
+            return angular.SinAngle()
         if name == "uniform_sky":
-            return UniformSky()
+            return sky.UniformSky()
         if name == "uniform_solidangle":
-            return UniformSolidAngle(args["polar-angle"], args["azimuthal-angle"])
+            return angular.UniformSolidAngle(
+                args["polar-angle"], args["azimuthal-angle"]
+            )
         if name == "uniform_radius":
-            return UniformRadius(args["min"], args["max"])
+            return powerlaw.UniformRadius(args["min"], args["max"])
         raise ValueError(f"Unknown distribution {name}")
 
     def _build_distributions(self):
@@ -124,19 +153,36 @@ class DistributionSampler:
                 self.transforms.append(("distance", tcfg))
 
     def _build_constraints(self):
+        self.constraints = []
+
         for c in self.cfg.get("constraints", []):
-            self.constraints.append(ConstraintChecker(c["expr"]))
+
+            # deterministic projection constraint
+            if c["name"] in constraints._NAMED_CONSTRAINTS:
+                self.constraints.append(NamedConstraint(c["name"], c.get("params")))
+
+            # rejection constraint
+            elif c["name"] == "custom":
+                self.constraints.append(ExpressionConstraint(c["expr"]))
+
+            else:
+                raise ValueError(
+                    f"Unknown constraint type '{c['name']}'. "
+                    f"Available named: {constraints._NAMED_CONSTRAINTS} or 'custom'"
+                )
 
     def _sample_base(self, N):
         params = {}
 
-        for name in self.variable_params:
-            if name in self.distributions:
-                params[name] = self.distributions[name].sample((N,), self.device)
+        for name, dist in self.distributions.items():
+            sampled = dist.sample((N,), self.device)
 
-        # add static params as tensors
-        for k, v in self.static_params.items():
-            params[k] = torch.full((N,), float(v), device=self.device)
+            # eg. if the distribution is a solid-angle type, it returns a dict
+            # It should add polar/azimuthal keys as an update
+            if isinstance(sampled, dict):
+                params.update(sampled)
+            else:
+                params[name] = sampled
 
         return params
 
@@ -169,28 +215,55 @@ class DistributionSampler:
         if not self.constraints:
             return params
 
-        mask = torch.ones(N, dtype=torch.bool, device=self.device)
-
+        # Apply named deterministic constraints (projections)
         for c in self.constraints:
-            mask &= c.check(params)
+            if c.name in constraints._NAMED_CONSTRAINTS:
+                params = getattr(constraints, c.name)(params)
+            else:
+                raise ValueError(
+                    f"Unknown named constraint '{c.name}'. "
+                    f"Available: {constraints._NAMED_CONSTRAINTS}"
+                )
 
-        if mask.all():
+        # Collect only boolean constraints
+        bool_constraints = [
+            c for c in self.constraints if c.name not in _NAMED_CONSTRAINTS
+        ]
+
+        if not bool_constraints:
             return params
 
-        # resample only bad rows
-        bad = ~mask
-        new_params = self._sample_base(bad.sum().item())
-        self._apply_transforms(new_params)
+        # Partial resampling loop
+        while True:
 
-        for k in params:
-            params[k][bad] = new_params[k]
+            mask = torch.ones(N, dtype=torch.bool, device=self.device)
 
-        return params
+            for c in bool_constraints:
+                mask &= c.check(params)
+
+            if mask.all():
+                return params
+
+            # resample only failed rows
+            bad = ~mask
+            n_bad = bad.sum().item()
+
+            new_params = self._sample_base(n_bad)
+            self._apply_transforms(new_params)
+
+            # deterministic constraints must ALSO apply to resampled values
+            for c in self.constraints:
+                if c.name in _NAMED_CONSTRAINTS:
+                    transform = globals()[c.name]
+                    new_params = transform(new_params)
+
+            for k in params:
+                params[k][bad] = new_params[k]
 
     def sample(self, N: int):
 
         params = self._sample_base(N)
-        self._apply_transforms(params)
         params = self._enforce_constraints(params, N)
+        self._apply_transforms(params)
 
         return params
