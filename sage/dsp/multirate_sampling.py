@@ -43,114 +43,293 @@ warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 import lalsimulation as lalsim
 
 import torch
-import torch.nn as nn
-import torch.fft
+import torch.nn.functional as F
+from typing import List, Tuple
+
+import numpy as np
+from typing import Optional, List, Tuple
+import lalsimulation as lalsim
+from lal import MSUN_SI
+from pycbc.detector import Detector
 
 
-class FDMultiRateSampler(nn.Module):
+class TFUtils:
     """
-    FD multirate sampling for a batch of signals (B, D, seq_len).
-    - Inputs are in frequency domain (rFFT)
-    - Bins: precomputed [(start_idx, end_idx, decim_factor), ...]
-    - Performs IRFFT internally to handle decimation in TD
+    Utility class for waveform time-frequency evolution and
+    multi-rate sampling bin calculation.
     """
 
-    def __init__(self, tfcurve):
-        super().__init__()
-        # Precompute bins
-        bins = FDMultiRateSampler.compute_multirate_bins(tfcurve)
-        # Store bins as buffer for torch.compile / tracing
-        self.register_buffer("bins_tensor", torch.tensor(bins, dtype=torch.long))
+    def __init__(self, data_cfg):
+        self.cfg = data_cfg
+        self.sample_rate = data_cfg.sample_rate
+        self.prior_low_mass = data_cfg.prior_low_mass
+        self.prior_high_mass = data_cfg.prior_high_mass
+        self.signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff
+        self.signal_length = data_cfg.signal_length
+        self.decimation_start_freq = data_cfg.decimation_start_freq
+        self.num_blocks = data_cfg.num_blocks
+        self.lowest_allowed_fs = data_cfg.lowest_allowed_fs
+        self.gap_bw_nyquist_and_fs = data_cfg.gap_bw_nyquist_and_fs
+        self.override_freqs = data_cfg.override_freqs
+        self.split_with_freqs = data_cfg.split_with_freqs
+        self.split_with_times = data_cfg.split_with_times
+        self.tc_inject_lower = data_cfg.tc_inject_lower
+        self.tc_inject_upper = data_cfg.tc_inject_upper
+        self.post_fudge_factor = data_cfg.post_fudge_factor
+        self.noise_pad = getattr(data_cfg, "noise_pad", 0)
+
+        # Precompute inspiral time-frequency evolution
+        self.t, self.f = self._get_tf_evolution_before_tc(self.prior_low_mass)
+
+    # -----------------------
+    # Time-Frequency helpers
+    # -----------------------
+    @staticmethod
+    def get_time_at_freq(t: np.ndarray, f: np.ndarray, search_freq: float) -> float:
+        idx = (np.abs(f - search_freq)).argmin()
+        return -t[idx]
 
     @staticmethod
-    def compute_multirate_bins(
-        tf_times: np.ndarray,
-        tf_freqs: np.ndarray,
-        seq_len: int,
-        base_sample_rate: float,
-        target_decimation_factor: int = 2,
-        min_bin_size: int = 16,
-        max_decimation_factor: int = 16,
-    ):
-        """
-        Compute FD bins for multirate sampling using a tf (time-frequency) curve.
+    def get_freq_at_time(t: np.ndarray, f: np.ndarray, search_time: float) -> float:
+        idx = (np.abs(-t - search_time)).argmin()
+        return f[idx]
 
-        Args:
-            tf_times: np.ndarray, time points (s)
-            tf_freqs: np.ndarray, instantaneous frequency at each time point (Hz)
-            seq_len: int, length of TD signal (number of samples)
-            base_sample_rate: float, original TD sample rate
-            target_decimation_factor: int, factor to increase decimation each time freq halves
-            min_bin_size: int, minimum number of FD bins per segment
-            max_decimation_factor: int, maximum allowed decimation factor (power of 2)
-
-        Returns:
-            bins: list of tuples (start_idx, end_idx, decimation_factor)
-        """
-
-        # Compute FD bin frequencies
-        nfft = seq_len
-        freqs = np.fft.rfftfreq(nfft, 1.0 / base_sample_rate)
-
-        # Interpolate the tf curve onto FD bin frequencies
-        # Each FD bin corresponds to a time in tf_times via instantaneous frequency
-        # We'll assign each FD bin a target decimation factor based on frequency
-        tf_freqs_interp = np.interp(
-            freqs, tf_freqs[::-1], tf_times[::-1], left=tf_times[0], right=tf_times[-1]
+    @staticmethod
+    def get_imr_chirp_time(
+        m1: float, m2: float, s1z: float, s2z: float, fl: float
+    ) -> float:
+        # Multiply masses by solar mass to get SI units
+        return 1.1 * lalsim.SimIMRPhenomDChirpTime(
+            m1 * 1.989e30, m2 * 1.989e30, s1z, s2z, fl
         )
 
-        bins = []
-        current_decim = 1
-        start_idx = 0
+    def _get_tf_evolution_before_tc(self, mass: float) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute inspiral time-frequency evolution for lowest mass binary."""
+        npoints = int(
+            self.get_imr_chirp_time(mass, mass, 0.99, 0.99, self.signal_low_freq_cutoff)
+            * self.sample_rate
+        )
+        t, f = pnutils.get_inspiral_tf(
+            tc=0.0,
+            mass1=mass,
+            mass2=mass,
+            spin1=0.99,
+            spin2=0.99,
+            f_low=self.signal_low_freq_cutoff,
+            n_points=npoints,
+            pn_2order=7,
+            approximant="IMRPhenomD",
+        )
+        return t, f
 
-        # Iterate over FD bins
-        for i in range(1, len(freqs)):
-            freq_ratio = freqs[i - 1] / freqs[i] if freqs[i] != 0 else 1.0
-            if (
-                freq_ratio >= target_decimation_factor
-                and current_decim * target_decimation_factor <= max_decimation_factor
-            ):
-                end_idx = i
-                if end_idx - start_idx >= min_bin_size:
-                    bins.append((start_idx, end_idx, current_decim))
-                start_idx = i
-                current_decim *= target_decimation_factor
+    # -----------------------
+    # Multi-rate bin calculation
+    # -----------------------
+    def get_sampling_rate_bins_type2(self) -> np.ndarray:
+        """Compute multi-rate sampling bins for type2 strategy."""
+        t, f = self.t, self.f
 
-        # Append final bin
-        if len(freqs) - start_idx >= min_bin_size:
-            bins.append((start_idx, len(freqs), current_decim))
+        # Compute pre-fudge factor
+        time_at_decim_start_freq = self.get_time_at_freq(
+            t, f, self.decimation_start_freq
+        )
+        light_travel_time = (
+            Detector("H1").light_travel_time_to_detector(Detector("V1")) * 1.1
+        )
+        pre_fudge_factor = (light_travel_time + time_at_decim_start_freq) * 1.1
 
-        return bins
+        bins = {}
+        bins["noise"] = []
+        bins["unchanged"] = []
 
-    @torch.no_grad()
-    def forward(self, X_fd: torch.Tensor) -> torch.Tensor:
+        # Determine block frequencies
+        if self.split_with_times:
+            block_times = np.linspace(
+                -time_at_decim_start_freq, min(t), self.num_blocks
+            )
+            block_freqs = np.array(
+                [self.get_freq_at_time(t, f, -st) for st in block_times]
+            )[::-1]
+            block_freqs = np.floor(block_freqs)
+        elif self.split_with_freqs:
+            block_freqs = np.linspace(
+                self.signal_low_freq_cutoff,
+                self.decimation_start_freq,
+                self.num_blocks,
+                dtype=int,
+            )
+            block_freqs = block_freqs // 10 * 10
+
+        if len(self.override_freqs) != 0:
+            block_freqs = self.override_freqs
+
+        ends = []
+        start_unchanged = int(
+            (self.tc_inject_lower - pre_fudge_factor) * self.sample_rate
+        )
+        len_unchanged = int(
+            (
+                pre_fudge_factor
+                + (self.tc_inject_upper - self.tc_inject_lower)
+                + self.post_fudge_factor
+            )
+            * self.sample_rate
+        )
+        end_unchanged = start_unchanged + len_unchanged
+
+        bins["unchanged"].extend(
+            [start_unchanged, end_unchanged, int(self.sample_rate)]
+        )
+        ends.append(start_unchanged)
+
+        # Remaining blocks
+        for n, bfq in enumerate(block_freqs[-2::-1]):
+            bname = f"block_{n}"
+            bins[bname] = []
+
+            injstart = self.tc_inject_lower - light_travel_time
+            start = int(
+                (injstart - self.get_time_at_freq(t, f, bfq)) * self.sample_rate
+            )
+            start = start if bfq != self.signal_low_freq_cutoff else 0
+            bins[bname].extend(
+                [
+                    start,
+                    ends[-1],
+                    max(
+                        int(block_freqs[-(n + 1)] * 2.0 + self.gap_bw_nyquist_and_fs),
+                        self.lowest_allowed_fs,
+                    ),
+                ]
+            )
+            ends.append(start)
+
+        # Noise block after ringdown
+        bins["noise"].extend(
+            [
+                end_unchanged,
+                int(self.signal_length * self.sample_rate),
+                self.lowest_allowed_fs,
+            ]
+        )
+
+        # Convert to ordered array
+        bins = dict(reversed(bins.items()))
+        detailed_bins = np.array([v for v in bins.values()])
+        return detailed_bins
+
+
+class TDMultirateSampler:
+    def __init__(self, data_cfg):
         """
-        Args:
-            X_fd: (B, D, F) complex tensor (rFFT output)
-        Returns:
-            X_fd_mr: (B, D, F_new) FD tensor after multirate decimation
+        Multi-rate sampler for batched signals (B, D, seq_len) using multi-stage decimation.
+        data_cfg.dbins: list of tuples (start_idx, end_idx, new_sample_rate)
+        data_cfg.sample_rate: original sampling rate
+        data_cfg.corrupted_len: int or [left, right]
         """
-        B, D, F = X_fd.shape
-        out_chunks = []
+        self.dbins = getattr(data_cfg, "dbins", None)
+        self.sample_rate = data_cfg.sample_rate
+        self.corrupted_len = getattr(data_cfg, "corrupted_len", 0)
 
-        # Convert rFFT -> TD for safe decimation
-        X_td = torch.fft.irfft(X_fd, n=(F - 1) * 2, dim=-1)
+        # Precompute FIR kernels for powers-of-2 decimation
+        self.max_power = 16  # max decimation 2**16
+        self.fir_kernels = {}
+        self._precompute_fir_kernels()
 
-        for bstart, bend, decim in self.bins_tensor.tolist():
-            # Slice TD
-            chunk_td = X_td[..., bstart:bend]
+    def _precompute_fir_kernels(self):
+        """Precompute low-pass FIR kernels for powers-of-2 decimation factors"""
+        for i in range(1, self.max_power + 1):
+            factor = 2**i
+            kernel_size = 2 * factor + 1
+            t = torch.arange(-factor, factor + 1, dtype=torch.float32)
+            h = torch.sinc(t / factor)
+            h *= torch.hamming_window(kernel_size, periodic=False)
+            h /= h.sum()
+            self.fir_kernels[factor] = h.view(1, 1, -1)
 
-            if decim > 1:
-                # Safe decimation: keep every decim-th sample
-                chunk_td = chunk_td[..., ::decim]
+    @staticmethod
+    def _power_of_two_factors(n: int) -> List[int]:
+        """Return list of powers-of-2 factors for multi-stage decimation"""
+        factors = []
+        while n > 1:
+            p = 2 ** (n.bit_length() - 1)
+            factors.append(p)
+            n //= p
+        return factors
 
-            # Convert back to FD
-            chunk_fd = torch.fft.rfft(chunk_td, dim=-1)
-            out_chunks.append(chunk_fd)
+    @staticmethod
+    def _slice_indices(
+        start_idx: int, end_idx: int, dec_factor: int, seq_len: int
+    ) -> Tuple[int, int]:
+        """Compute decimated start/end indices for a bin"""
+        num_dec = seq_len // dec_factor
+        sidx = int(start_idx / seq_len * num_dec)
+        eidx = int(end_idx / seq_len * num_dec)
+        return sidx, eidx
 
-        # Concatenate along FD axis
-        X_fd_mr = torch.cat(out_chunks, dim=-1)
-        return X_fd_mr
+    def _decimate_stage(self, signal: torch.Tensor, factor: int) -> torch.Tensor:
+        """Single-stage decimation by a power-of-2 factor"""
+        kernel = self.fir_kernels[factor].to(signal.device, signal.dtype)
+        pad = kernel.shape[-1] // 2
+        sig_padded = F.pad(signal, (pad, pad), mode="replicate")
+        B, D, L = sig_padded.shape
+        sig_reshaped = sig_padded.view(B * D, 1, L)
+        filtered = F.conv1d(sig_reshaped, kernel, stride=1)
+        decimated = filtered[:, :, ::factor]
+        return decimated.view(B, D, decimated.shape[-1])
+
+    def _multi_stage_decimate(
+        self, signal: torch.Tensor, dec_factor: int
+    ) -> torch.Tensor:
+        """Multi-stage decimation via powers-of-2"""
+        stages = self._power_of_two_factors(dec_factor)
+        dec_sig = signal
+        for f in stages:
+            dec_sig = self._decimate_stage(dec_sig, f)
+        return dec_sig
+
+    def multirate_sample(self, signals: torch.Tensor) -> torch.Tensor:
+        """
+        signals: (B, D, seq_len)
+        Returns: (B, D, new_seq_len)
+        """
+        if self.dbins is None:
+            raise ValueError("dbins must be set in data_cfg.")
+
+        B, D, seq_len = signals.shape
+        chunks = []
+
+        for start_idx, end_idx, new_fs in self.dbins:
+            if new_fs == self.sample_rate:
+                # No decimation
+                chunk = signals[:, :, start_idx:end_idx]
+            else:
+                dec_factor = int(round(self.sample_rate / new_fs))
+                dec_sig = self._multi_stage_decimate(signals, dec_factor)
+                sidx, eidx = self._slice_indices(
+                    start_idx, end_idx, dec_factor, seq_len
+                )
+                chunk = dec_sig[:, :, sidx:eidx]
+
+            chunks.append(chunk)
+
+        multirate_signal = torch.cat(chunks, dim=-1)
+
+        # Remove corrupted regions
+        if isinstance(self.corrupted_len, list):
+            lcor, rcor = self.corrupted_len
+        else:
+            lcor = rcor = self.corrupted_len
+
+        if lcor != 0 or rcor != 0:
+            multirate_signal = multirate_signal[
+                :, :, lcor : -rcor if rcor != 0 else None
+            ]
+
+        return multirate_signal
+
+
+####################################################################################
 
 
 def prime_factors(n):
@@ -166,191 +345,6 @@ def prime_factors(n):
     if n > 1:
         factors.append(n)
     return factors
-
-
-def velocity_to_frequency(v, M):
-    """Calculate the gravitational-wave frequency from the
-    total mass and invariant velocity.
-    Taken from:
-        https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
-
-    Parameters
-    ----------
-    v : float
-        Invariant velocity
-    M : float
-        Binary total mass
-
-    Returns
-    -------
-    f : float
-        Gravitational-wave frequency
-    """
-    MTSUN_SI = 4.92549102554e-06
-    return v ** (3.0) / (M * MTSUN_SI * np.pi)
-
-
-def f_schwarzchild_isco(M):
-    """
-    Innermost stable circular orbit (ISCO) for a test particle
-    orbiting a Schwarzschild black hole.
-    Taken from:
-        https://pycbc.org/pycbc/latest/html/_modules/pycbc/conversions.html
-
-    Parameters
-    ----------
-    M : float or numpy.array
-        Total mass in solar mass units
-
-    Returns
-    -------
-    f : float or numpy.array
-        Frequency in Hz
-    """
-    return velocity_to_frequency((1.0 / 6.0) ** (0.5), M)
-
-
-def get_sampling_rate_bins_type1(data_cfg):
-
-    # Get data_cfg input params
-    signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff
-    sample_rate = data_cfg.sample_rate
-    low_mass = data_cfg.prior_low_mass
-    max_signal_length = data_cfg.max_signal_length
-    tc_inject_lower = data_cfg.tc_inject_lower
-    tc_inject_upper = data_cfg.tc_inject_upper
-    ringdown_leeway = data_cfg.ringdown_leeway
-    merger_leeway = data_cfg.merger_leeway
-    start_freq_factor = data_cfg.start_freq_factor
-    fs_reduction_factor = data_cfg.fs_reduction_factor
-    fbin_reduction_factor = data_cfg.fbin_reduction_factor
-
-    # Signal low freq cutoff is taken to happen at max_signal_length for worst case
-    ## Approximate value for f_ISCO with BBH system both with lowest mass in priors
-    # f_ISCO = 4400./(low_mass+low_mass) # Hz
-    ## Closer value of f_ISCO
-    f_ISCO = f_schwarzchild_isco(low_mass + low_mass)
-    # Get necessary constants
-    C = signal_low_freq_cutoff / f_ISCO  # used to obtain upper fval when freq>=f_ISCO
-    # Function to obtain frequencies wrt time
-    f_check = lambda t_: signal_low_freq_cutoff / (
-        (t_ / 20.0) ** (3.0 / 8.0) + C * delta(t_)
-    )
-    # delta function at dt_merg_old == 0.0, to activate 'C'
-    delta = lambda t_: 1.0 if t_ == 0 else 0.0
-    # Clip the frequency response for all values greater than f_ISCO
-    clip_f = lambda f_: f_ISCO if f_ > f_ISCO else f_
-
-    # Times given as input to get the frequencies must take into account tc_inject_lower
-    offset = max_signal_length - tc_inject_lower
-    # Getting the bins with decaying sampling frequencies
-    offset_signal_length = max_signal_length - offset
-    t = np.linspace(
-        -1.0 * offset, offset_signal_length, int(max_signal_length * sample_rate)
-    )
-
-    # Get check frequencies
-    f_edge = f_ISCO
-    f_hqual = 750.0
-    f_bad = 50.0
-    bad_chunk = True
-    hqual_chunk = True
-    bins = [0]  # bin always starts at 0
-    check_f = []
-    for n, t_ in enumerate(t):
-        # The last bin end val will be the last value in signal
-        if f_edge < signal_low_freq_cutoff:
-            break
-        # Adding a tc_upper and ringdown leeway
-        # TODO: Add 2s to end_time to account for ringdown and light-travel delay
-        leeway = tc_inject_upper - tc_inject_lower + ringdown_leeway
-        if (t_ < 0.0 and t_ >= -1 * leeway) or (t_ >= 0.0 and t_ < merger_leeway):
-            f = f_hqual
-        elif t_ > 0 and t_ > merger_leeway:
-            f = clip_f(f_check(t_))
-        else:
-            f = f_bad  # bad value check
-
-        # Save output response for plotting
-        check_f.append(f)
-
-        # Adding the freq edges
-        if f == f_hqual and bad_chunk:
-            # this is where the bad chunk ends and ringdown+merger phase should start
-            bins.append(n)
-            bad_chunk = False
-        elif f < f_hqual and f > f_ISCO / 2.0 and hqual_chunk:
-            # if freq is f_ISCO, we transition into inspiral phase from ringdown+merger phase
-            # this should correspond to the ringdown phase and add a merger leeway
-            bins.append(n)
-            hqual_chunk = False
-        elif f < f_edge / fbin_reduction_factor and f != f_bad:
-            # get the time when frequency of the inspiral reduces by a factor of 2.0 (or fbin_reduction_factor)
-            bins.append(n)
-            f_edge = f_edge / fbin_reduction_factor
-
-    bins.append(len(t))
-    check_f = np.array(check_f)
-
-    # Add the bins and sampling frequency for the pure noise chunks
-    bad_bin = [[bins[0], bins[1], 64.0]]  # using low sampling freq for bad bin
-    hqual_bin = [
-        [bins[1], bins[2], sample_rate]
-    ]  # using highest sampling freq for ringdown+merger phase
-    # Starting freq. at time of merger is given based on f_ISCO
-    # We use a sampling freq. a factor of 4 higher than f_ISCO
-    if start_freq_factor < 2.0:
-        raise ValueError(
-            "Reduction factor has to be *at least* 2.0 to abide by the Nyquist Limit"
-        )
-    if start_freq_factor == 2.0:
-        warnings.warn(
-            "buffer_factor is at Nyquist Limit. Good performace is not gauranteed."
-        )
-
-    ### Using a factor of 2.0 sampling freq.
-    # for n in range(16): # goes up to 2**16 = 65.536 KHz
-    #     if 2.**n > f_ISCO * red_factor:
-    #         if red_factor==2.0 and 2.**n - f_ISCO*red_factor < 50.0:
-    #             raise ValueError("Sampling freq. too close to Nyquist Frequency")
-    #         start_freq = 2.**n
-    #         break
-
-    # Set the starting frequency based on a buffer_factor
-    start_freq = f_ISCO * start_freq_factor
-    # Get the bin start and end idx along with the required sampling rate
-    # Two bin addition are already done above, so we start range at 2
-    detailed_bins = [
-        [bins[n], bins[n + 1], start_freq / fs_reduction_factor ** (n - 2)]
-        for n in range(2, len(bins[:-1]))
-    ]
-    # Adding bad bins
-    detailed_bins = bad_bin + hqual_bin + detailed_bins
-    # Manipulate detailed bins to account for reversed perspective of sample
-    man = lambda b: int(max_signal_length * sample_rate) - b
-    detailed_bins = [[man(b[1]), man(b[0]), b[2]] for b in detailed_bins]
-    # Sort the bins based on start idx so its easier to concatenate later on
-    detailed_bins = sorted(detailed_bins, key=itemgetter(0))
-
-    """ Plotting the sampling frequency response wrt bins """
-    check_t = t[::-1]  # Only these offset values can be used with clip_f(f_check())
-    check_f = check_f[::-1] * 2.0
-    for sbin, ebin, fs in detailed_bins:
-        if ebin == len(t):
-            ebin = ebin - 1
-        # Check whether the freq. difference between the nyquist limit and the sampling freq.
-        # is above a certain small threshold. If not, it may cause decimation artifacts.
-        tlim_check = check_t[ebin]
-
-        if tlim_check > 0.0 + merger_leeway:
-            flim_check = clip_f(f_check(tlim_check))
-            if fs - flim_check * 2.0 < 20.0 and False:
-                raise ValueError(
-                    "The sampling frequency and the Nyquist Limit are too close to each other!"
-                )
-
-    # Return contains (bin_start_idx, bin_end_idx, sample_rate_required)
-    return np.array(detailed_bins)
 
 
 def get_time_at_freq(t, f, search_freq):
@@ -624,13 +618,3 @@ def multirate_sampling(signal, data_cfg, check=False):
         return None, None
     else:
         return multirate_signal
-
-
-class MultirateSampling(TransformWrapperPerChannel):
-    def __init__(self, always_apply=True):
-        super().__init__(always_apply)
-
-    def apply(self, y: np.ndarray, channel: int, special: dict):
-        # Call multi-rate sampling module for usage
-        # This module is kept separate since further experimentation might be required
-        return multirate_sampling(y, special["data_cfg"])
