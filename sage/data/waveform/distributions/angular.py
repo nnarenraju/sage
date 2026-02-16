@@ -30,22 +30,30 @@ import torch
 from .uniform import Uniform
 
 
-class UniformAngle(Uniform):
-    TWO_PI = 2 * torch.pi
+class UniformAngle:
+    """GPU-friendly uniform distribution with optional arbitrary bounds and cyclic domain."""
 
-    def __init__(self):
-        super().__init__(0.0, self.TWO_PI)
-
-    @staticmethod
-    def wrap(x):
-        return torch.remainder(x, UniformAngle.TWO_PI)
+    def __init__(self, lower=0.0, upper=2 * torch.pi, cyclic_domain=True):
+        """
+        Args:
+            lower (float): lower bound (radians)
+            upper (float): upper bound (radians)
+            cyclic_domain (bool): whether to wrap samples into [lower, upper)
+        """
+        self.lower = lower
+        self.upper = upper
+        self.cyclic = cyclic_domain
+        self.range = upper - lower
 
     def sample(self, shape, device=None, dtype=torch.float32):
-        # sample like uniform
-        theta = super().sample(shape, device=device, dtype=dtype)
+        x = torch.rand(shape, device=device, dtype=dtype) * self.range + self.lower
+        if self.cyclic:
+            x = self.wrap(x)
+        return x
 
-        # ensure strict periodic domain
-        return self.wrap(theta)
+    def wrap(self, x):
+        """Wrap values into [lower, upper)"""
+        return (x - self.lower) % self.range + self.lower
 
 
 class SinAngle(UniformAngle):
