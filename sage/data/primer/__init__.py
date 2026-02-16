@@ -31,7 +31,7 @@ from sage.data.primer.get_segments import (
 )
 from sage.data.primer.get_segments import TimelineQuery
 
-from sage.data.primer.blackout import (
+from sage.data.psd.blackout import (
     NoBlackout,
     HardRatioBlackout,
     SoftRatioBlackout,
