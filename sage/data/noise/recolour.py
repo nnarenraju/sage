@@ -145,7 +145,7 @@ class RecolourPostprocess:
             with open(meta_path, "r") as f:
                 meta = json.load(f)
 
-            raw = np.fromfile(bin_path, dtype=np.float32)
+            raw = np.fromfile(bin_path, dtype=np.float64)
 
             psds = []
             cursor = 0
@@ -166,7 +166,7 @@ class RecolourPostprocess:
                 psds = np.pad(psds, ((0, pad), (0, 0)), constant_values=1.0)
             padded.append(psds)
 
-        self.segment_psds = torch.from_numpy(np.stack(padded, axis=0)).float()
+        self.segment_psds = torch.from_numpy(np.stack(padded, axis=0))
 
     def _load_recolour_psds(self):
         """
@@ -190,10 +190,10 @@ class RecolourPostprocess:
             n_psd = meta["num_psds"]
             n_freq = meta["num_freq_bins"]  # should == F
 
-            psds = np.fromfile(bin_path, dtype=np.float32).reshape(n_psd, n_freq)
+            psds = np.fromfile(bin_path, dtype=np.float64).reshape(n_psd, n_freq)
             psds_all.append(psds)
 
-        self.recolour_psds = torch.from_numpy(np.stack(psds_all, axis=0)).float()
+        self.recolour_psds = torch.from_numpy(np.stack(psds_all, axis=0))
         self.n_recolour_psd = self.recolour_psds.shape[1]
 
     def __call__(
