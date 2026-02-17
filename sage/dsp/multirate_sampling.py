@@ -52,171 +52,7 @@ import lalsimulation as lalsim
 from lal import MSUN_SI
 from pycbc.detector import Detector
 
-
-class TFUtils:
-    """
-    Utility class for waveform time-frequency evolution and
-    multi-rate sampling bin calculation.
-    """
-
-    def __init__(self, data_cfg):
-        self.cfg = data_cfg
-        self.sample_rate = data_cfg.sample_rate
-        self.prior_low_mass = data_cfg.prior_low_mass
-        self.prior_high_mass = data_cfg.prior_high_mass
-        self.signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff
-        self.signal_length = data_cfg.signal_length
-        self.decimation_start_freq = data_cfg.decimation_start_freq
-        self.num_blocks = data_cfg.num_blocks
-        self.lowest_allowed_fs = data_cfg.lowest_allowed_fs
-        self.gap_bw_nyquist_and_fs = data_cfg.gap_bw_nyquist_and_fs
-        self.override_freqs = data_cfg.override_freqs
-        self.split_with_freqs = data_cfg.split_with_freqs
-        self.split_with_times = data_cfg.split_with_times
-        self.tc_inject_lower = data_cfg.tc_inject_lower
-        self.tc_inject_upper = data_cfg.tc_inject_upper
-        self.post_fudge_factor = data_cfg.post_fudge_factor
-        self.noise_pad = getattr(data_cfg, "noise_pad", 0)
-
-        # Precompute inspiral time-frequency evolution
-        self.t, self.f = self._get_tf_evolution_before_tc(self.prior_low_mass)
-
-    # -----------------------
-    # Time-Frequency helpers
-    # -----------------------
-    @staticmethod
-    def get_time_at_freq(t: np.ndarray, f: np.ndarray, search_freq: float) -> float:
-        idx = (np.abs(f - search_freq)).argmin()
-        return -t[idx]
-
-    @staticmethod
-    def get_freq_at_time(t: np.ndarray, f: np.ndarray, search_time: float) -> float:
-        idx = (np.abs(-t - search_time)).argmin()
-        return f[idx]
-
-    @staticmethod
-    def get_imr_chirp_time(
-        m1: float, m2: float, s1z: float, s2z: float, fl: float
-    ) -> float:
-        # Multiply masses by solar mass to get SI units
-        return 1.1 * lalsim.SimIMRPhenomDChirpTime(
-            m1 * 1.989e30, m2 * 1.989e30, s1z, s2z, fl
-        )
-
-    def _get_tf_evolution_before_tc(self, mass: float) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute inspiral time-frequency evolution for lowest mass binary."""
-        npoints = int(
-            self.get_imr_chirp_time(mass, mass, 0.99, 0.99, self.signal_low_freq_cutoff)
-            * self.sample_rate
-        )
-        t, f = pnutils.get_inspiral_tf(
-            tc=0.0,
-            mass1=mass,
-            mass2=mass,
-            spin1=0.99,
-            spin2=0.99,
-            f_low=self.signal_low_freq_cutoff,
-            n_points=npoints,
-            pn_2order=7,
-            approximant="IMRPhenomD",
-        )
-        return t, f
-
-    # -----------------------
-    # Multi-rate bin calculation
-    # -----------------------
-    def get_sampling_rate_bins_type2(self) -> np.ndarray:
-        """Compute multi-rate sampling bins for type2 strategy."""
-        t, f = self.t, self.f
-
-        # Compute pre-fudge factor
-        time_at_decim_start_freq = self.get_time_at_freq(
-            t, f, self.decimation_start_freq
-        )
-        light_travel_time = (
-            Detector("H1").light_travel_time_to_detector(Detector("V1")) * 1.1
-        )
-        pre_fudge_factor = (light_travel_time + time_at_decim_start_freq) * 1.1
-
-        bins = {}
-        bins["noise"] = []
-        bins["unchanged"] = []
-
-        # Determine block frequencies
-        if self.split_with_times:
-            block_times = np.linspace(
-                -time_at_decim_start_freq, min(t), self.num_blocks
-            )
-            block_freqs = np.array(
-                [self.get_freq_at_time(t, f, -st) for st in block_times]
-            )[::-1]
-            block_freqs = np.floor(block_freqs)
-        elif self.split_with_freqs:
-            block_freqs = np.linspace(
-                self.signal_low_freq_cutoff,
-                self.decimation_start_freq,
-                self.num_blocks,
-                dtype=int,
-            )
-            block_freqs = block_freqs // 10 * 10
-
-        if len(self.override_freqs) != 0:
-            block_freqs = self.override_freqs
-
-        ends = []
-        start_unchanged = int(
-            (self.tc_inject_lower - pre_fudge_factor) * self.sample_rate
-        )
-        len_unchanged = int(
-            (
-                pre_fudge_factor
-                + (self.tc_inject_upper - self.tc_inject_lower)
-                + self.post_fudge_factor
-            )
-            * self.sample_rate
-        )
-        end_unchanged = start_unchanged + len_unchanged
-
-        bins["unchanged"].extend(
-            [start_unchanged, end_unchanged, int(self.sample_rate)]
-        )
-        ends.append(start_unchanged)
-
-        # Remaining blocks
-        for n, bfq in enumerate(block_freqs[-2::-1]):
-            bname = f"block_{n}"
-            bins[bname] = []
-
-            injstart = self.tc_inject_lower - light_travel_time
-            start = int(
-                (injstart - self.get_time_at_freq(t, f, bfq)) * self.sample_rate
-            )
-            start = start if bfq != self.signal_low_freq_cutoff else 0
-            bins[bname].extend(
-                [
-                    start,
-                    ends[-1],
-                    max(
-                        int(block_freqs[-(n + 1)] * 2.0 + self.gap_bw_nyquist_and_fs),
-                        self.lowest_allowed_fs,
-                    ),
-                ]
-            )
-            ends.append(start)
-
-        # Noise block after ringdown
-        bins["noise"].extend(
-            [
-                end_unchanged,
-                int(self.signal_length * self.sample_rate),
-                self.lowest_allowed_fs,
-            ]
-        )
-
-        # Convert to ordered array
-        bins = dict(reversed(bins.items()))
-        detailed_bins = np.array([v for v in bins.values()])
-        return detailed_bins
+import matplotlib.pyplot as plt
 
 
 class TDMultirateSampler:
@@ -329,167 +165,405 @@ class TDMultirateSampler:
         return multirate_signal
 
 
-####################################################################################
+class TDMultirateSampler:
+    MTSUN_SI = 4.92549102554e-06
+    MSUN_SI = 1.989e30
 
+    def __init__(
+        self,
+        prior_low_mass,
+        prior_high_mass,
+        signal_low_freq_cutoff,
+        sample_rate,
+        signal_length,
+        lowest_allowed_fs,
+        tc_inject_lower,
+        tc_inject_upper,
+        safe_nyquist_gap=8.0,
+    ):
 
-def prime_factors(n):
-    # Return the prime factors, to be used in decimation
-    i = 2
-    factors = []
-    while i**2 <= n:
-        if n % i:
-            i += 1
+        self.prior_low_mass = prior_low_mass
+        self.prior_high_mass = prior_high_mass
+        self.signal_low_freq_cutoff = signal_low_freq_cutoff
+        self.sample_rate = sample_rate
+        self.signal_length = signal_length
+        self.lowest_allowed_fs = lowest_allowed_fs
+        self.tc_inject_lower = tc_inject_lower
+        self.tc_inject_upper = tc_inject_upper
+        self.safe_nyquist_gap = safe_nyquist_gap
+
+        # Checks
+        if not (sample_rate != 0 and ((sample_rate & (sample_rate - 1)) == 0)):
+            raise ValueError("sample_rate must be a power of 2")
+
+        # Precompute tf for lowest mass system
+        self.t, self.f = self._get_tf_evolution_before_tc()
+
+        # Physics driven starting frequency
+        self.f_isco = self._f_schwarzschild_isco(2.0 * self.prior_low_mass)
+        self.fs_anchor = self._next_pow2((2.0 * self.f_isco) + self.safe_nyquist_gap)
+
+        # Pre/Post fudge
+        self.light_travel_time = (
+            Detector("H1").light_travel_time_to_detector(Detector("V1")) * 1.1
+        )
+        self.pre_fudge_factor = (
+            self._get_time_at_freq(self.f_isco) * 1.1 + self.light_travel_time
+        )
+        self.post_fudge_factor = self._get_post_fudge_factor()
+
+        # Construct bins immediately
+        self.detailed_bins = self._construct_multirate_bins()
+
+    def _velocity_to_frequency(self, v, M):
+        return v**3 / (M * self.MTSUN_SI * np.pi)
+
+    def _f_schwarzschild_isco(self, M):
+        return self._velocity_to_frequency((1.0 / 6.0) ** 0.5, M)
+
+    def _get_time_at_freq(self, search_freq):
+        idx = (np.abs(self.f - search_freq)).argmin()
+        return self.t[idx]
+
+    def _get_freq_at_time(self, search_time):
+        idx = (np.abs(self.t - search_time)).argmin()
+        return self.f[idx]
+
+    def _get_tf_evolution_before_tc(self):
+        # Get npoints from tau
+        npoints = (
+            self.get_imr_chirp_time(
+                self.prior_low_mass,
+                self.prior_low_mass,
+                0.99,
+                0.99,
+                self.signal_low_freq_cutoff,
+            )
+            * self.sample_rate
+        )
+        # Get tf of given waveform
+        t, f = pnutils.get_inspiral_tf(
+            tc=0.0,
+            mass1=self.prior_low_mass,
+            mass2=self.prior_low_mass,
+            spin1=0.99,
+            spin2=0.99,
+            f_low=self.signal_low_freq_cutoff,
+            n_points=int(npoints),
+            pn_2order=7,
+            approximant="IMRPhenomD",
+        )
+        return (t, f)
+
+    def _get_post_fudge_factor(self):
+        # Get fudge factor that accounts for wrap around from PyCBC
+        # This can be used to estimate the merger+ringdown leeway for MR sampling
+        # This should account for waveform content after tc
+        m_final, spin_final = get_final_from_initial(
+            mass1=self.prior_high_mass,
+            mass2=self.prior_high_mass,
+            spin1z=0.99,
+            spin2z=0.99,
+        )
+        post_fudge_factor = (
+            tau_from_final_mass_spin(m_final, spin_final) * 10 * 1.5
+        )  # just in case
+        # Adding light travel time between detectors H1 and V1 (We use H1 and L1, but just in case)
+        light_travel_time = (
+            Detector("H1").light_travel_time_to_detector(Detector("V1")) * 1.1
+        )
+        post_fudge_factor += light_travel_time
+        return post_fudge_factor
+
+    def _next_pow2(self, x):
+        return 1 << int(np.ceil(np.log2(x)))
+
+    def get_imr_chirp_time(self, m1, m2, s1z, s2z, fl):
+        return 1.1 * lalsim.SimIMRPhenomDChirpTime(
+            m1 * 1.989e30, m2 * 1.989e30, s1z, s2z, fl
+        )
+
+    def plot_multirate_tf(self):
+
+        import matplotlib.pyplot as plt
+        import matplotlib as mpl
+        import matplotlib.cm as cm
+        import numpy as np
+
+        fontsize = 16
+
+        fig, ax = plt.subplots(figsize=(8.0, 6.0), dpi=300)
+
+        # Plot prior tf manifold (optional but useful sanity check)
+        for m1 in np.linspace(self.prior_low_mass + 0.1, self.prior_high_mass, 256):
+
+            m2 = m1 - 0.1
+
+            t, f = pnutils.get_inspiral_tf(
+                tc=0.0,
+                mass1=m1,
+                mass2=m2,
+                spin1=0.99,
+                spin2=0.99,
+                f_low=self.signal_low_freq_cutoff,
+                n_points=512,
+                pn_2order=7,
+                approximant="IMRPhenomD",
+            )
+
+            ax.plot(t, f, linewidth=0.6, alpha=0.2, c="gray")
+
+        # Longest waveform used for bin construction
+        ax.plot(self.t, self.f, linestyle="dashed", linewidth=2.0, color="k")
+
+        # tc placement inside segment
+        tc = (self.tc_inject_upper + self.tc_inject_lower) / 2.0 + 0.05
+
+        # Build Nyquist curve exactly like your example
+        x = []
+        y = []
+
+        for foo in self.detailed_bins:
+            x.extend([foo[0] / self.sample_rate - tc, foo[1] / self.sample_rate - tc])
+            y.extend([foo[2] / 2.0, foo[2] / 2.0])
+
+        ax.plot(
+            x, y, linestyle="dashed", c=np.array([191, 44, 35]) / 255.0, linewidth=2.0
+        )
+
+        # Padding
+        lpad = self.tc_inject_lower - self.get_imr_chirp_time(
+            self.prior_low_mass,
+            self.prior_low_mass,
+            0.99,
+            0.99,
+            self.signal_low_freq_cutoff,
+        )
+
+        rpad = self.signal_length - (self.tc_inject_upper + self.post_fudge_factor)
+
+        # Secondary x-axis
+        x_to_altx = lambda x: x + tc
+        altx_to_x = lambda altx: altx - tc
+
+        secax = ax.secondary_xaxis("top", functions=(x_to_altx, altx_to_x))
+        secax.set_xlabel("Time [seconds]", fontsize=fontsize)
+
+        ax.set_ylabel("Frequency [Hertz]", fontsize=fontsize)
+        ax.set_xlabel(
+            "Relative Time (tc = 0.0) [seconds]", labelpad=7.5, fontsize=fontsize
+        )
+        ax.set_yscale("log")
+
+        ax.set_xlim(
+            -self.get_imr_chirp_time(
+                self.prior_low_mass,
+                self.prior_low_mass,
+                0.99,
+                0.99,
+                self.signal_low_freq_cutoff,
+            )
+            - lpad,
+            rpad,
+        )
+
+        ax.set_ylim(self.signal_low_freq_cutoff, self.sample_rate)
+        plt.tick_params(axis="both", which="major", labelsize=fontsize)
+        secax.tick_params(axis="both", which="major", labelsize=fontsize)
+
+        plt.tight_layout()
+        plt.show()
+
+    def _construct_multirate_bins(self):
+
+        bins = []
+
+        # Unchanged region around tc (original fs)
+
+        start_unchanged = int(
+            (self.tc_inject_lower - self.pre_fudge_factor) * self.sample_rate
+        )
+
+        len_unchanged = int(
+            (
+                self.pre_fudge_factor
+                + (self.tc_inject_upper - self.tc_inject_lower)
+                + self.post_fudge_factor
+            )
+            * self.sample_rate
+        )
+
+        end_unchanged = start_unchanged + len_unchanged
+        bins.append([start_unchanged, end_unchanged, int(self.sample_rate)])
+
+        min_fs = self._next_pow2(self.lowest_allowed_fs)
+
+        # STEP 1: Compute segment-limited f_min_segment
+        t_available = -(self.tc_inject_lower - self.pre_fudge_factor)
+        t_low = self.t[0]
+
+        # Remember: values are negative
+        # We ask if available time is enough to cover cutoff
+        if t_low >= t_available:
+            f_min_segment = self.signal_low_freq_cutoff
         else:
-            n //= i
-            factors.append(i)
-    if n > 1:
-        factors.append(n)
-    return factors
+            f_min_segment = self._get_freq_at_time(t_available)
 
+        # STEP 2: Build frequency ladder
+        freqs = []
+        f = self.f_isco
 
-def get_time_at_freq(t, f, search_freq):
-    idx = (np.abs(f - search_freq)).argmin()
-    time_at_search_freq = -t[idx]
-    return time_at_search_freq
+        while f > f_min_segment:
+            freqs.append(f)
+            f /= 2.0
 
+        freqs.append(f_min_segment)
 
-def get_freq_at_time(t, f, search_time):
-    t = -t
-    idx = (np.abs(t - search_time)).argmin()
-    freq_at_search_time = f[idx]
-    return freq_at_search_time
+        # STEP 3: Convert freq -> time -> sample index
+        starts = []
 
+        for f_k in freqs:
+            t_k = self._get_time_at_freq(f_k)
+            start = int((self.tc_inject_lower + t_k) * self.sample_rate)
+            starts.append(start)
 
-def get_imr_chirp_time(m1, m2, s1z, s2z, fl):
-    return 1.1 * lalsim.SimIMRPhenomDChirpTime(
-        m1 * 1.989e30, m2 * 1.989e30, s1z, s2z, fl
-    )
+        print(bins)
+        print()
+        print(f_min_segment)
+        print(freqs)
+        print(starts)
+        print(self._get_time_at_freq(self.signal_low_freq_cutoff))
+        print(self._get_time_at_freq(freqs[-1]))
+        raise
 
+        # -------------------------------------------------
+        # STEP 4: Build bins between ladder boundaries
+        # -------------------------------------------------
 
-def get_tf_evolution_before_tc(prior_low_mass, signal_low_freq_cutoff, sample_rate):
-    # Get npoints from tau
-    npoints = (
-        get_imr_chirp_time(
-            prior_low_mass, prior_low_mass, 0.99, 0.99, signal_low_freq_cutoff
+        ends = [start_unchanged]
+
+        for k in range(len(starts)):
+
+            f_k = freqs[k]
+            required_fs = 2.0 * f_k + self.safe_nyquist_gap
+            fs_k = max(self._next_pow2(required_fs), min_fs)
+
+            bins.append([starts[k], ends[-1], int(fs_k)])
+
+            ends.append(starts[k])
+
+        # -------------------------------------------------
+        # If ladder didn't reach segment start → prepend
+        # -------------------------------------------------
+
+        if ends[-1] > 0:
+            bins.append([0, ends[-1], int(min_fs)])
+
+        # -------------------------------------------------
+        # Trailing noise
+        # -------------------------------------------------
+
+        bins.append(
+            [end_unchanged, int(self.signal_length * self.sample_rate), int(min_fs)]
         )
-        * sample_rate
-    )
-    # Get tf of given waveform
-    t, f = pnutils.get_inspiral_tf(
-        tc=0.0,
-        mass1=prior_low_mass,
-        mass2=prior_low_mass,
-        spin1=0.99,
-        spin2=0.99,
-        f_low=signal_low_freq_cutoff,
-        n_points=int(npoints),
-        pn_2order=7,
-        approximant="IMRPhenomD",
-    )
-    return (t, f)
 
+        bins = np.array(bins)
+        bins = bins[np.argsort(bins[:, 0])]
 
-def get_sampling_rate_bins_type2(data_cfg):
-    # Get data_cfg input params
-    signal_low_freq_cutoff = data_cfg.signal_low_freq_cutoff
-    sample_rate = data_cfg.sample_rate
-    prior_low_mass = data_cfg.prior_low_mass
-    prior_high_mass = data_cfg.prior_high_mass
-    signal_length = data_cfg.signal_length
+        # assert np.all(bins[:-1, 1] == bins[1:, 0]), "Bins are not contiguous in time"
 
-    decimation_start_freq = data_cfg.decimation_start_freq
-    noise_pad = data_cfg.noise_pad
-    num_blocks = data_cfg.num_blocks
-    lowest_allowed_fs = data_cfg.lowest_allowed_fs
-    gap_bw_nyquist_and_fs = data_cfg.gap_bw_nyquist_and_fs
-    override_freqs = data_cfg.override_freqs
+        return bins
 
-    split_with_freqs = data_cfg.split_with_freqs
-    split_with_times = data_cfg.split_with_times
+    def _construct_multirate_bins_(self):
 
-    post_fudge_factor = data_cfg.post_fudge_factor
-    tc_inject_lower = data_cfg.tc_inject_lower
-    tc_inject_upper = data_cfg.tc_inject_upper
+        bins = {}
+        ends = []
 
-    """ Pre Fudge Factor """
-    # Calculate fudge factor at left end of the waveform injection
-    # Get t, f from lowest mass binary system
-    # The times should vary from 0.0 to -tau starting at tc
-    t, f = get_tf_evolution_before_tc(
-        prior_low_mass, signal_low_freq_cutoff, sample_rate
-    )
-    time_at_decim_start_freq = get_time_at_freq(t, f, search_freq=decimation_start_freq)
-    light_travel_time = (
-        Detector("H1").light_travel_time_to_detector(Detector("V1")) * 1.1
-    )
-    pre_fudge_factor = (
-        light_travel_time + time_at_decim_start_freq
-    ) * 1.1  # just in case
-    # print('Pre fudge duration = {} s'.format(pre_fudge_factor))
-
-    """ MR Sampling params """
-    bins = {}
-    # Noise block after ringdown
-    bins["noise"] = []
-    # Block for unchanged sampling rate
-    bins["unchanged"] = []
-    # Get block start freqs
-    if split_with_times:
-        block_times = np.linspace(
-            -get_time_at_freq(t, f, decimation_start_freq), min(t), num_blocks
+        # Unchanged region around tc (at original sampling frequency)
+        start_unchanged = int(
+            (self.tc_inject_lower - self.pre_fudge_factor) * self.sample_rate
         )
-        block_freqs = np.array(
-            [get_freq_at_time(t, f, -search_t) for search_t in block_times]
-        )[::-1]
-        block_freqs = block_freqs // 1 * 1
-    if split_with_freqs:
-        block_freqs = np.linspace(
-            signal_low_freq_cutoff, decimation_start_freq, num_blocks, dtype=int
+
+        len_unchanged = int(
+            (
+                self.pre_fudge_factor
+                + (self.tc_inject_upper - self.tc_inject_lower)
+                + self.post_fudge_factor
+            )
+            * self.sample_rate
         )
-        block_freqs = block_freqs // 10 * 10
 
-    if len(override_freqs) != 0:
-        block_freqs = override_freqs
+        end_unchanged = start_unchanged + len_unchanged
+        bins["unchanged"] = [start_unchanged, end_unchanged, int(self.sample_rate)]
+        ends.append(start_unchanged)
 
-    ## Get start and stop of all blocks
-    ends = []
-    # 2048 Hz sampling rate bin (unchanged sampling rate)
-    start_unchanged = int((tc_inject_lower - pre_fudge_factor) * sample_rate)
-    len_unchanged = int(
-        (pre_fudge_factor + (tc_inject_upper - tc_inject_lower) + post_fudge_factor)
-        * sample_rate
-    )
-    end_unchanged = start_unchanged + len_unchanged
-    bins["unchanged"].append(start_unchanged)
-    bins["unchanged"].append(end_unchanged)
-    bins["unchanged"].append(int(sample_rate))
-    # Ends will contain end idxs of all other blocks
-    ends.append(start_unchanged)
-    # Iterate through all other blocks and get start, end times
-    for n, bfq in enumerate(block_freqs[-2::-1]):
-        bname = "block_{}".format(n)
-        bins[bname] = []
-        # Get start and end times
-        injstart = tc_inject_lower - light_travel_time
-        start = int((injstart - get_time_at_freq(t, f, bfq)) * sample_rate)
-        bins[bname].append(start if bfq != signal_low_freq_cutoff else 0)
-        bins[bname].append(ends[-1])
-        block_fs = (block_freqs[-(n + 1)] * 2.0) + gap_bw_nyquist_and_fs
-        block_fs = int(block_fs) if block_fs >= lowest_allowed_fs else lowest_allowed_fs
-        bins[bname].append(block_fs)
-        # Add the start idx of this block as end idx for next block in iter
-        ends.append(start)
+        # Build octave ladder from fISCO downward
+        k = 1
+        # Bit shift operator moves lowest_allowed_fs to nearest power of 2
+        # If it is already a power of 2, nothing happens
+        min_fs = self._next_pow2(self.lowest_allowed_fs)
+        injstart = self.tc_inject_lower - self.light_travel_time
+        start = int(injstart * self.sample_rate)
 
-    # Add noise pad after ringdown as lowest fs
-    bins["noise"].append(end_unchanged)
-    bins["noise"].append(int(signal_length * sample_rate))
-    bins["noise"].append(lowest_allowed_fs)
+        while start > 0:
 
-    # Prepare bins to be used by mrsampling function
-    bins = dict(reversed(bins.items()))
-    detailed_bins = np.array([foo for foo in bins.values()])
+            # Instance of the frequency ladder
+            f_k = self.f_isco / (2.0**k)
+            f_kminus1 = self.f_isco / (2.0 ** (k - 1))
+            required_fs = 2.0 * f_kminus1 + self.safe_nyquist_gap
+            fs_k = max(self._next_pow2(required_fs), min_fs)
 
-    return detailed_bins
+            if f_k >= self.signal_low_freq_cutoff:
+                f_k_start = f_k
+            else:
+                # We can't go below signal low frequency cutoff
+                # _get_time_at_freq is only valid till cutoff
+                f_k_start = self.signal_low_freq_cutoff
+
+            start = int(
+                (injstart - self._get_time_at_freq(f_k_start)) * self.sample_rate
+            )
+
+            # We likely cutoff some very low f part of signals given sample length
+            # Start will become negative in this case and we break
+            if start < 0:
+                start = 0
+
+            bins[f"block_{k}"] = [
+                start,
+                ends[-1],
+                int(fs_k),
+            ]
+
+            ends.append(start)
+            k += 1
+
+        # Trailing noise and presignal
+        bins["noise"] = [
+            end_unchanged,
+            int(self.signal_length * self.sample_rate),
+            int(self.lowest_allowed_fs),
+        ]
+
+        bins["pre_signal"] = [
+            0,
+            ends[-1],
+            int(min_fs),
+        ]
+
+        bins = dict(reversed(bins.items()))
+        bins = np.array([v for v in bins.values()])
+        detailed_bins = bins[np.argsort(bins[:, 0])]
+
+        # Check contiguity
+        assert np.all(
+            detailed_bins[:-1, 1] == detailed_bins[1:, 0]
+        ), "Bins are not contiguous in time"
+
+        return detailed_bins
+
+
+####################################################################################
 
 
 def multirate_sampling(signal, data_cfg, check=False):
