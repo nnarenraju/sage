@@ -31,6 +31,8 @@ import scipy.signal as ss
 # LOCAL
 from sage.core.conversions import seconds_to_samples
 
+import matplotlib.pyplot as plt
+
 
 class ScipyWelch:
     """
@@ -180,17 +182,22 @@ class TorchWelch:
         delta_f = 1.0 / (self.seg_len * self.delta_t)
         segment_psds = []
 
+        # Normalizes power of window
+        fs = 1.0 / self.delta_t
+        # window power normalization
+        U = (self.window**2).sum()
+
         # Compute PSD for each segment
         for i in range(num_segments):
             start = i * self.seg_stride
-            segment = timeseries[start : start + self.seg_len] * self.window
+            segment = timeseries[start : start + self.seg_len]
+            # Constant detrending similar to scipy welch
+            segment = segment - segment.mean()
+            segment = segment * self.window
             fft_seg = torch.fft.rfft(segment)
-            seg_psd = fft_seg.abs() ** 2
-
-            # halve DC and Nyquist
-            seg_psd[0] /= 2
-            seg_psd[-1] /= 2
-
+            # Correct scaling factors
+            seg_psd = fft_seg.abs() ** 2 / (fs * U)
+            seg_psd[1:-1] *= 2  # one-sided
             segment_psds.append(seg_psd)
 
         segment_psds = torch.stack(segment_psds, dim=0)
@@ -209,9 +216,6 @@ class TorchWelch:
             psd = 0.5 * (odd_med + even_med)
         else:
             raise ValueError(f"Unknown avg_method {self.avg_method}")
-
-        # Normalize
-        psd *= 2 * delta_f * self.seg_len / (self.window**2).sum()
 
         return psd
 
