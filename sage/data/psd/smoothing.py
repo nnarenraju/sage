@@ -71,7 +71,7 @@ class LogSplineSmoothing:
         # float32 normal range is upto ~1e-38
         # float32 subnormal range is till ~1e-45
         # so we pick the smallest representable value > 0
-        p = np.maximum(p, 1e-45)
+        p = np.maximum(p, 1e-60)
 
         # define cutoff
         mask = f >= self.noise_low_frequency_cutoff
