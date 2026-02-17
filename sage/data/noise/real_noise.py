@@ -136,7 +136,7 @@ class HDF5SingleNoiseSampler:
             start = self._pick_start(seg_len, requested_nsamples)
             noise = np.asarray(
                 dset[start : start + requested_nsamples],
-                dtype=np.float32,
+                dtype=np.float64,
             )
 
             noise /= DYN_RANGE_FAC
@@ -165,7 +165,7 @@ class MemmapSingleNoiseSampler:
     """
 
     def __init__(
-        self, source: Union[str, Path], return_tensor=False, tensor_dtype=torch.float32
+        self, source: Union[str, Path], return_tensor=False, tensor_dtype=torch.float64
     ):
         """
         Args:
@@ -274,7 +274,7 @@ class MemmapSingleNoiseSampler:
 
             noise = np.asarray(
                 self.mm[start : start + requested_nsamples],
-                dtype=np.float32,
+                dtype=np.float64,
                 copy=True,
             )
 
@@ -420,13 +420,13 @@ class MemmapNoiseSampler:
 
         start_indices, segment_indices = self._sample_starts_batch(B)
         batch_tensor = torch.empty(
-            (B, D, seq_len), dtype=torch.float32, device=self.device
+            (B, D, seq_len), dtype=torch.float64, device=self.device
         )
 
         def read_detector(d):
             mm = self.mmaps[d]
             starts = start_indices[d]
-            arr = np.empty((B, seq_len), dtype=np.float32)
+            arr = np.empty((B, seq_len), dtype=np.float64)
 
             for i, s in enumerate(starts):
                 arr[i] = mm[s : s + seq_len]
