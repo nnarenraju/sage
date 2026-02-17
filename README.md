@@ -1,6 +1,6 @@
 ## Sage - Addressing machine learning bias in gravitational-wave detection
 
-> ⚠️ **Major refactor in progress in the 'cleanup' branch.** APIs and internal structure are actively changing; (last update: Feb 12 2026)
+> ⚠️ **Major refactor in progress in the 'cleanup' branch.** APIs and internal structure are actively changing; (last update: Feb 17 2026)
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/ceabdb59-2847-45e6-a618-2153278049d0" alt="SAGE logo" width="400"/>
