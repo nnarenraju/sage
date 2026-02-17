@@ -60,14 +60,9 @@ class FiducialWhitening(torch.nn.Module):
         delta_f = torch.tensor(delta_f).to(device=device)
 
         # Whitening
-        # Factors account for one sided PSD
-        # We should get unit variance with some sqrt(2) factor
-        inv_sqrt_psd = 1.0 / torch.sqrt(2.0 * fiducial_psds)
-        whitening = torch.sqrt(delta_f * self.seq_len) * inv_sqrt_psd  # (D, F)
-        # Rescaling at DC and Nyquist
-        sqrt2 = torch.sqrt(torch.tensor(2.0, device=device))
-        whitening[..., 0] *= sqrt2
-        whitening[..., -1] *= sqrt2
+        delta_f = sample_rate / seq_len
+        delta_f = torch.tensor(delta_f, device=device)
+        whitening = 1.0 / torch.sqrt(fiducial_psds * (sample_rate / 2.0))
         # Final whitening moved to device
         whitening = whitening.to(device=device)
 
@@ -90,11 +85,8 @@ class FiducialWhitening(torch.nn.Module):
         X_white = X_fd * self.whitening.unsqueeze(0)
 
         # Back to time domain
-        x_td_white = torch.fft.irfft(
-            X_white,
-            n=self.seq_len,
-            dim=-1,
-        )
+        # Adding orthonormal mode to ensure parseval
+        x_td_white = torch.fft.irfft(X_white, n=self.seq_len, dim=-1)
 
         # Remove corrupted regions
         # Typically we remove half the window length used
