@@ -152,7 +152,7 @@ class EstimatePSD:
 
         return out, delta_f_new, f_new
 
-    def taper(self, freqs, psd, psd_floor=1e-40):
+    def taper(self, freqs, psd, psd_floor=1e-45):
         # Tapering down to a noise floor
         # This imposes C1 continuity and reduces ringing effects in TD
         # Make a tapering function below low freq cutoff
@@ -194,7 +194,7 @@ class EstimatePSD:
             delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
 
             if self.apply_ist:
-                psd_t = torch.from_numpy(pxx).to(torch.float32)
+                psd_t = torch.from_numpy(pxx).to(torch.float64)
                 psd_t = inverse_spectrum_truncation_single(
                     psd=psd_t,
                     max_filter_len=self.max_filter_len,
@@ -215,7 +215,9 @@ class EstimatePSD:
 
             # Spline smooth the PSD before saving
             if self.psd_smoothener is not None:
-                pxx = self.psd_smoothener.smooth(freqs, pxx)
+                pxx = self.psd_smoothener.smooth(
+                    freqs, pxx, smooth_factor=0.2 * len(freqs)
+                )
 
             # DO NOT do the following although its tempting
             # Kill all values below low frequency cutoff
@@ -282,7 +284,7 @@ class EstimatePSD:
 
         elif self.store_psds_as_bin:
             bin_path = os.path.join(save_dir, f"raw_{self.detector}_psds.bin")
-            psds.astype(np.float32).tofile(bin_path)
+            psds.astype(np.float64).tofile(bin_path)
 
             # Add metadata
             meta_path = os.path.join(save_dir, f"raw_{self.detector}_psds.json")
@@ -290,7 +292,7 @@ class EstimatePSD:
                 "detector": self.detector,
                 "num_psds": psds.shape[0],
                 "num_freq_bins": psds.shape[1],
-                "dtype": "float32",
+                "dtype": "float64",
                 "byte_order": "little",
                 "layout": "row-major",
                 "sample_rate": sample_rate,
@@ -357,12 +359,12 @@ class EstimatePSD:
 
         elif self.store_psds_as_bin:
             bin_path = os.path.join(fiducial_dir, f"fiducial_{self.detector}_psd.bin")
-            np.asarray(psd, dtype=np.float32).tofile(bin_path)
+            np.asarray(psd, dtype=np.float64).tofile(bin_path)
 
             meta = {
                 "detector": self.detector,
                 "num_freq_bins": len(psd),
-                "dtype": "float32",
+                "dtype": "float64",
                 "byte_order": "little",
                 "sample_rate": sample_rate,
                 "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
@@ -421,7 +423,7 @@ class EstimatePSD:
 
                 data = np.array(
                     mm[start : start + nsamp],
-                    dtype=np.float32,
+                    dtype=np.float64,
                     copy=True,
                 )
                 data /= DYN_RANGE_FAC
@@ -434,7 +436,7 @@ class EstimatePSD:
 
                 # Apply inverse spectrum truncation
                 if self.apply_ist:
-                    psd = torch.from_numpy(psd).to(torch.float32)
+                    psd = torch.from_numpy(psd).to(torch.float64)
                     psd = inverse_spectrum_truncation_single(
                         psd=psd,
                         max_filter_len=self.max_filter_len,
@@ -456,7 +458,7 @@ class EstimatePSD:
                 # Spline smooth the PSD before saving
                 if self.psd_smoothener is not None:
                     psd = self.psd_smoothener.smooth(
-                        freqs, psd, smooth_factor=0.01 * len(freqs)
+                        freqs, psd, smooth_factor=0.004 * len(freqs)
                     )
 
                 # DO NOT do the following although its tempting
