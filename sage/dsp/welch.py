@@ -31,8 +31,6 @@ import scipy.signal as ss
 # LOCAL
 from sage.core.conversions import seconds_to_samples
 
-import matplotlib.pyplot as plt
-
 
 class ScipyWelch:
     """
