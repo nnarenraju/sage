@@ -152,8 +152,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         # final touches to hp and hc, stolen from Scott
         c2z = torch.cos(2 * converted_spins[:, 6:7])
         s2z = torch.sin(2 * converted_spins[:, 6:7])
-        final_hp = c2z * hp + s2z * hc
-        final_hc = c2z * hc - s2z * hp
+        hp = c2z * hp + s2z * hc
+        hc = c2z * hc - s2z * hp
 
         if not reproduce_lal:
             # Frequency domain tapering
@@ -172,7 +172,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
-        hp, hc = self.pad_missing_frequencies(final_hp, final_hc)
+        hp, hc = self.pad_missing_frequencies(hp, hc)
 
         return hp, hc
 
