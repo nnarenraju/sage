@@ -28,7 +28,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 
-from typing import List, Tuple
+from typing import List, Tuple, Iterable
 
 # LAL and PyCBC
 import warnings
@@ -56,13 +56,15 @@ class TorchMultiRateSampler(torch.nn.Module):
 
     def __init__(
         self,
-        bins: List[Tuple[int, int, int]],
+        bins: Iterable[Tuple[int, int, int]],
         original_fs: int,
         min_fs: int,
-        max_power: int = 12,
-        corrupted_len: int = 0,
+        reflect_pad: int | None = None,
     ):
         super().__init__()
+
+        if isinstance(bins, np.ndarray):
+            bins = bins.tolist()
 
         self.register_buffer(
             "bins_tensor",
@@ -72,8 +74,21 @@ class TorchMultiRateSampler(torch.nn.Module):
 
         self.original_fs = int(original_fs)
         self.min_fs = int(min_fs)
+
+        max_dec_factor = int(original_fs // min_fs)
+        max_power = max_dec_factor.bit_length() - 1
         self.max_power = max_power
-        self.corrupted_len = corrupted_len
+
+        # Reflect Padding
+        # Largest FIR kernel size if 2 * dec factor + 1
+        # if max factor = 64 -> kernel size = 129 -> half = 64
+        # So using 128 to 256 is very conservative
+        # NOTE: Adjust if needed (and remove conservative assertion)
+        if reflect_pad is not None:
+            assert self.pad >= 2 * max_dec_factor
+            self.pad = reflect_pad
+        else:
+            self.pad = 2 * max_dec_factor
 
         # Precompute FIR kernels for powers of 2
         self.kernels = torch.nn.ModuleDict()
@@ -99,7 +114,7 @@ class TorchMultiRateSampler(torch.nn.Module):
     def _decimate_once(self, x: torch.Tensor, factor: int) -> torch.Tensor:
 
         kernel = getattr(self, f"kernel_{factor}")
-        kernel = kernel.to(dtype=x.dtype)
+        kernel = kernel.to(dtype=x.dtype, device=x.device)
 
         pad = kernel.shape[-1] // 2
 
@@ -143,10 +158,16 @@ class TorchMultiRateSampler(torch.nn.Module):
         """
 
         B, D, L = signals.shape
+
+        signals = F.pad(signals, (self.pad, self.pad), mode="reflect")
+
         pyramid = self._build_pyramid(signals)
         chunks = []
 
         for start_idx, end_idx, new_fs in self.bins_tensor:
+
+            start_idx = start_idx + self.pad
+            end_idx = end_idx + self.pad
 
             dec_factor = self.original_fs // new_fs
 
@@ -163,10 +184,6 @@ class TorchMultiRateSampler(torch.nn.Module):
             chunks.append(chunk)
 
         out = torch.cat(chunks, dim=-1)
-
-        # Trim corrupted edges globally
-        if self.corrupted_len > 0:
-            out = out[:, :, self.corrupted_len : -self.corrupted_len]
 
         return out
 
