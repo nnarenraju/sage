@@ -18,13 +18,55 @@ __status__      = ['inProgress', 'Archived', 'inUsage', 'Debugging']
 
 GitHub Repository: NULL
 
-Documentation: NULL
+Documentation:
+
+    pipeline_config = [
+        NoiseRead(),
+        Choice(
+            modules=[NoiseAug1(), NoiseAug2()],
+            probabilities=[0.2, 0.8]
+        ),
+        SignalGenerate(),
+        MakeNoisySignal(),
+        Choice(
+            modules=[GeneralAug1(), GeneralAug2(), GeneralAug3()],
+            probabilities=[0.1, 0.5, 0.4]
+        ),
+        Whiten(),
+        MultiRateSample(),
+    ]
+
+    pipeline = Sequential(pipeline_config)
+
+    for batch in loader:
+    output = pipeline(batch)
+
+    For the config:
+
+    config = [
+        NoiseRead,
+        ([NoiseAug1, NoiseAug2], [0.2, 0.8]),
+        SignalGenerate,
+        MakeNoisySignal,
+        ([GeneralAug1, GeneralAug2, GeneralAug3], [0.1, 0.5, 0.4]),
+        Whiten,
+        MultiRateSample
+    ]
+
+
 
 """
 
-
-from typing import List, Type, Optional, Union
+# Packages
+import inspect
 import numpy as np
+
+from functools import wraps
+from typing import List, Type, Optional, Union
+
+# Torch
+import torch
+import torch.nn as nn
 
 
 class ProbabilityManager:
@@ -86,6 +128,17 @@ class Sequential:
         return results
 
 
+class TorchSequential(nn.Module):
+    def __init__(self, modules: List[nn.Module]):
+        super().__init__()
+        self.modules_list = nn.ModuleList(modules)
+
+    def forward(self, x):
+        for module in self.modules_list:
+            x = module(x)
+        return x
+
+
 class Choice:
     """Selects one class probabilistically. Can handle single class as well."""
 
@@ -109,17 +162,99 @@ class Choice:
         return cls(*args, **kwargs)
 
 
+class TorchBatchChoice(nn.Module):
+    def __init__(self, modules: List[nn.Module], probabilities: List[float]):
+        super().__init__()
+
+        assert len(modules) == len(probabilities)
+
+        self.modules_list = nn.ModuleList(modules)
+
+        probs = torch.tensor(probabilities, dtype=torch.float32)
+        probs = probs / probs.sum()
+        self.register_buffer("probs", probs)
+
+    def forward(self, x, generator=None):
+        """
+        x: Tensor of shape [B, ...]
+        """
+        B = x.shape[0]
+        device = x.device
+
+        probs = self.probs.to(device)
+
+        dist = torch.distributions.Categorical(probs)
+        choices = dist.sample((B,), generator=generator)  # one choice per sample
+
+        # Prepare output container
+        output = torch.empty_like(x)
+
+        for idx, module in enumerate(self.modules_list):
+            mask = choices == idx
+            if mask.any():
+                selected = x[mask]
+                processed = module(selected)
+                output[mask] = processed
+
+        return output
+
+
+class TorchChoice(nn.Module):
+    def __init__(self, modules: List[nn.Module], probabilities: List[float]):
+        super().__init__()
+
+        assert len(modules) == len(probabilities)
+
+        self.modules_list = nn.ModuleList(modules)
+
+        probs = torch.tensor(probabilities, dtype=torch.float32)
+        probs = probs / probs.sum()
+
+        self.register_buffer("probs", probs)
+
+    def forward(self, x):
+        dist = torch.distributions.Categorical(self.probs)
+        idx = dist.sample()
+        return self.modules_list[idx](x)
+
+
 # === Main Codeflow Manager ===
-class CodeflowManager:
-    """
-    Internal manager: handles sequential, probabilistic, or single-class flows.
-    """
 
-    def __init__(self, flow: Union[Sequential, Choice, Type]):
-        # Wrap single class as Sequential internally
-        if isinstance(flow, type):
-            flow = Sequential(flow)
-        self.flow = flow
 
-    def run(self, *args, **kwargs):
-        return self.flow.execute(*args, **kwargs)
+def build_pipeline(config):
+    modules = []
+
+    for item in config:
+        if isinstance(item, tuple):
+            classes, probs = item
+            modules.append(
+                Choice(modules=[cls() for cls in classes], probabilities=probs)
+            )
+        else:
+            modules.append(item())
+
+    return Sequential(modules)
+
+
+class CodeFlowManager:
+    def __init__(self, **global_kwargs):
+        """
+        Store all global flow objects.
+        Example:
+            CodeFlowManager(cfg=cfg, data_cfg=data_cfg)
+        """
+        self.global_kwargs = global_kwargs
+
+    def call(self, target, *args, **kwargs):
+        """
+        Calls a function or instantiates a class.
+        Automatically merges global kwargs.
+        """
+        merged_kwargs = {**self.global_kwargs, **kwargs}
+
+        if isinstance(target, type):  # class
+            return target(*args, **merged_kwargs)
+        elif callable(target):  # function
+            return target(*args, **merged_kwargs)
+        else:
+            raise TypeError("Target must be callable or class")
