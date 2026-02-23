@@ -41,8 +41,11 @@ from pycbc.conversions import tau_from_final_mass_spin, get_final_from_initial
 from pycbc.detector import Detector
 from pycbc import pnutils
 
+# LOCAL
+from sage.core.manager import SharedConfig
 
-class TorchMultiRateSampler(torch.nn.Module):
+
+class TorchMultiRateSampler(SharedConfig, torch.nn.Module):
     """
     Multi-rate decimator for batched GW time-domain data.
 
@@ -60,8 +63,9 @@ class TorchMultiRateSampler(torch.nn.Module):
         original_fs: int,
         min_fs: int,
         reflect_pad: int | None = None,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
 
         if isinstance(bins, np.ndarray):
             bins = bins.tolist()

@@ -37,6 +37,9 @@ import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 
+# LOCAL
+from sage.core.manager import SharedConfig
+
 
 class HDF5SingleNoiseSampler:
     """
@@ -295,7 +298,7 @@ class MemmapSingleNoiseSampler:
         return self.sample(nsamples)
 
 
-class MemmapNoiseSampler:
+class MemmapNoiseSampler(SharedConfig):
     """
     GPU batch sampler for monolithic .bin files with async prefetch.
 
@@ -316,9 +319,8 @@ class MemmapNoiseSampler:
         postprocess_fn=None,
         **kwargs,
     ):
-        # Set cfg and data_cfg
-        self.cfg = kwargs["cfg"]
-        self.data_cfg = kwargs["data_cfg"]
+        # Get shared configs
+        super().__init__(**kwargs)
 
         self.seq_len = seq_len
         self.device = device

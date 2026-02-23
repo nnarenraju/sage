@@ -24,11 +24,13 @@ Documentation: NULL
 
 # Packages
 import torch
-
 import matplotlib.pyplot as plt
 
+# LOCAL
+from sage.core.manager import SharedConfig
 
-class FiducialWhitening(torch.nn.Module):
+
+class FiducialWhitening(SharedConfig, torch.nn.Module):
     """
     Whiten frequency-domain strain using fixed fiducial PSDs.
 
@@ -46,8 +48,9 @@ class FiducialWhitening(torch.nn.Module):
         sample_rate: float,
         corrupted_length: float = 2,
         device="cuda",
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
 
         self.device = device
 

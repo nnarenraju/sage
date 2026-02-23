@@ -39,9 +39,9 @@ Documentation:
     pipeline = Sequential(pipeline_config)
 
     for batch in loader:
-    output = pipeline(batch)
+        output = pipeline(batch)
 
-    For the config:
+    For the batch config:
 
     config = [
         NoiseRead,
@@ -258,7 +258,7 @@ class SharedConfig(nn.Module):
     """
 
     def __init__(self, **kwargs):
-        super().__init__()
+        super().__init__(**kwargs)
         self.__dict__.update(kwargs)
 
 

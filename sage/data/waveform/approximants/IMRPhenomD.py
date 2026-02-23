@@ -32,10 +32,12 @@ from sage.core.torch import nudge_backward_
 from sage.data.waveform.approximants import phenom
 from sage.data.waveform import taper
 
+from sage.core.manager import SharedConfig
 
-class IMRPhenomD(phenom.PhenomConstants):
 
-    def __init__(self, f, f_ref):
+class IMRPhenomD(phenom.PhenomConstants, SharedConfig):
+
+    def __init__(self, f, f_ref, **kwargs):
         super().__init__(
             device=f.device,
             batch_size=f.shape[0],

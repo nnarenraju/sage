@@ -41,7 +41,9 @@ from .phenom_data import _QNMData_a, _QNMData_fdamp, _QNMData_fRD, PhenomD_coeff
 
 class PhenomConstants:
 
-    def __init__(self, device="cuda", batch_size=None, dtype=None):
+    def __init__(self, device="cuda", batch_size=None, dtype=None, **kwargs):
+
+        super().__init__(**kwargs)
 
         # Constants from sage.core
         for name in constants.CONST_METADATA:
