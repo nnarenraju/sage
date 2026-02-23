@@ -111,6 +111,7 @@ class RecolourPostprocess:
         self.detectors = detectors
         self.seq_len = seq_len
         self.sample_rate = sample_rate
+        self.deltat = 1.0 / self.sample_rate
         self.p_recolour = float(p_recolour)
         self.device = device
         self.eps = eps
@@ -206,8 +207,8 @@ class RecolourPostprocess:
         """
         B, D, _ = batch_td.shape
 
-        # TD to FD
-        X = torch.fft.rfft(batch_td, dim=-1)  # (B, D, F)
+        # TD to FD (B, D, F)
+        X = torch.fft.rfft(batch_td, dim=-1, norm="forward")
 
         # Bernoulli recolour mask
         mask = torch.rand(B, D, 1, device=X.device) < self.p_recolour  # (B, D, 1)
