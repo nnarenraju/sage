@@ -310,7 +310,6 @@ class MemmapNoiseSampler:
         self,
         bin_files: List[Path],
         seq_len: int,
-        pad_len: float,
         device: str = "cuda",
         batch_size: int = 64,
         prefetch: int = 2,
@@ -333,9 +332,6 @@ class MemmapNoiseSampler:
         self.seg_index = []
         self.segment_probs = []
         self.dtypes = []
-
-        # Padding
-        self.pad_len = int(pad_len * self.data_cfg.sample_rate)
 
         # Load metadata and memmaps
         for p in self.bin_files:
@@ -451,17 +447,6 @@ class MemmapNoiseSampler:
             segment_ids[:, d].copy_(
                 torch.from_numpy(segment_indices[d]),
             )
-
-        # Add zero padding (circular convolution to linear convolution later)
-        # F.pad expects (last_dim_left, last_dim_right)
-        # So for 1D time dimension (last dim), use (pad_len, pad_len)
-        # Note: use 'constant' mode to pad with zeros
-        batch_tensor = torch.nn.functional.pad(
-            batch_tensor,
-            (self.pad_len, self.pad_len),
-            mode="constant",
-            value=0.0,
-        )
 
         if self.postprocess_fn is not None:
             batch_tensor = self.postprocess_fn(batch_tensor, segment_ids)
