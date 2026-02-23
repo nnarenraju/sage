@@ -98,6 +98,11 @@ class IMRPhenomD(phenom.PhenomConstants):
             # Apply phase shift equivalent to applying tc
             hp, hc = self.apply_tc(hp, hc, theta[:, 5:6])
 
+            # Make hf consistent with the scale of other data
+            # LAL works in continuous Fourier regime
+            hp *= self.df
+            hc *= self.df
+
         # Pad missing frequencies from DC to f_low
         # Pad *AFTER* taper; not before
         hp, hc = self.pad_missing_frequencies(hp, hc)

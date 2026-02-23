@@ -169,6 +169,11 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
             # Apply phase shift equivalent to applying tc
             hp, hc = self.apply_tc(hp, hc, theta[:, 9:10])
 
+            # Make hf consistent with the scale of other data
+            # LAL works in continuous Fourier regime
+            hp *= self.df
+            hc *= self.df
+
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
