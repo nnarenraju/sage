@@ -111,7 +111,6 @@ class RecolourPostprocess:
         self.detectors = detectors
         self.seq_len = seq_len
         self.sample_rate = sample_rate
-        self.deltat = 1.0 / self.sample_rate
         self.p_recolour = float(p_recolour)
         self.device = device
         self.eps = eps
