@@ -57,12 +57,10 @@ class FiducialWhitening(torch.nn.Module):
 
         # Frequency resolution
         delta_f = sample_rate / seq_len
-        delta_f = torch.tensor(delta_f).to(device=device)
+        self.delta_f = torch.tensor(delta_f).to(device=device)
 
         # Whitening
-        delta_f = sample_rate / seq_len
-        delta_f = torch.tensor(delta_f, device=device)
-        whitening = 1.0 / torch.sqrt(fiducial_psds * (sample_rate / 2.0))
+        whitening = 2 * self.delta_f / torch.sqrt(0.5 * fiducial_psds)
         # Final whitening moved to device
         whitening = whitening.to(device=device)
 
@@ -85,8 +83,7 @@ class FiducialWhitening(torch.nn.Module):
         X_white = X_fd * self.whitening.unsqueeze(0)
 
         # Back to time domain
-        # Adding orthonormal mode to ensure parseval
-        x_td_white = torch.fft.irfft(X_white, n=self.seq_len, dim=-1)
+        x_td_white = torch.fft.irfft(X_white, dim=-1, norm="forward") * self.delta_f
 
         # Remove corrupted regions
         # Typically we remove half the window length used
