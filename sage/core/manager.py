@@ -53,7 +53,11 @@ Documentation:
         MultiRateSample
     ]
 
+    Incorporating full flow manager:
 
+    flow = CodeFlowManager(cfg=cfg, data_cfg=data_cfg)
+    pipeline = build_pipeline(config, flow)
+    output = pipeline(batch)
 
 """
 
@@ -182,19 +186,23 @@ class TorchBatchChoice(nn.Module):
         device = x.device
 
         probs = self.probs.to(device)
-
         dist = torch.distributions.Categorical(probs)
-        choices = dist.sample((B,), generator=generator)  # one choice per sample
 
-        # Prepare output container
+        # one choice per sample
+        choices = dist.sample((B,), generator=generator)
+
         output = torch.empty_like(x)
 
         for idx, module in enumerate(self.modules_list):
-            mask = choices == idx
-            if mask.any():
-                selected = x[mask]
-                processed = module(selected)
-                output[mask] = processed
+            idxs = torch.nonzero(choices == idx, as_tuple=False).squeeze(1)
+
+            if idxs.numel() == 0:
+                continue
+
+            selected = x.index_select(0, idxs)
+            processed = module(selected)
+
+            output.index_copy_(0, idxs, processed)
 
         return output
 
@@ -221,19 +229,37 @@ class TorchChoice(nn.Module):
 # === Main Codeflow Manager ===
 
 
-def build_pipeline(config):
+def build_pipeline(config, flow_manager):
     modules = []
 
     for item in config:
         if isinstance(item, tuple):
             classes, probs = item
-            modules.append(
-                Choice(modules=[cls() for cls in classes], probabilities=probs)
-            )
+
+            # inject cfg, data_cfg here
+            branch_modules = [flow_manager.call(cls) for cls in classes]
+
+            modules.append(Choice(modules=branch_modules, probabilities=probs))
         else:
-            modules.append(item())
+            # inject here too
+            modules.append(flow_manager.call(item))
 
     return Sequential(modules)
+
+
+class SharedConfig(nn.Module):
+    """
+    Make a class as follows for CodeFlowManager
+
+    class NoiseAug1(SharedConfig):
+    def forward(self, x):
+        return x + torch.randn_like(x) * self.cfg.noise_level
+
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.__dict__.update(kwargs)
 
 
 class CodeFlowManager:
