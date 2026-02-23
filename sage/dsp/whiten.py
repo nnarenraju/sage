@@ -44,7 +44,7 @@ class FiducialWhitening(torch.nn.Module):
         fiducial_psds: torch.Tensor,  # (D, F) float32
         seq_len: int,
         sample_rate: float,
-        corrupted_seconds: float = 2,
+        corrupted_length: float = 2,
         device="cuda",
     ):
         super().__init__()
@@ -53,7 +53,7 @@ class FiducialWhitening(torch.nn.Module):
 
         self.seq_len = seq_len
         self.sample_rate = sample_rate
-        self.corrupted_len = int(round(corrupted_seconds * self.sample_rate))
+        self.corrupted_len = int(round(corrupted_length * self.sample_rate))
 
         # Frequency resolution
         delta_f = sample_rate / seq_len
