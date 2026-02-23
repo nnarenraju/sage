@@ -467,7 +467,7 @@ class MemmapNoiseSampler:
             batch_tensor = self.postprocess_fn(batch_tensor, segment_ids)
         else:
             # default: TD to FD only
-            batch_tensor = torch.fft.rfft(batch_tensor, dim=-1)
+            batch_tensor = torch.fft.rfft(batch_tensor, dim=-1, norm="forward")
 
         return batch_tensor
 
