@@ -35,7 +35,7 @@ Documentation:
 import yaml
 import torch
 
-from typing import Dict, Any, Callable
+from typing import Any, Dict
 
 # LOCAL
 from sage.data.waveform.distributions import (
@@ -73,14 +73,6 @@ def read_from_config(path, device="cuda"):
     return DistributionSampler(config, device=device)
 
 
-class ConstraintChecker:
-    def __init__(self, expr: str):
-        self.expr = expr
-
-    def check(self, params: Dict[str, torch.Tensor]):
-        return eval(self.expr, {}, params)
-
-
 class NamedConstraint:
     def __init__(self, name, params=None):
         self.name = name
@@ -107,6 +99,41 @@ class DistributionSampler:
         self.distributions = {}
         self.transforms = []
         self.constraints = []
+
+        ## Fix parameters
+        self.param_names = []
+
+        # Priors
+        for pname, pcfg in self.cfg["priors"].items():
+
+            if pcfg["name"] == "uniform_solidangle":
+                self.param_names.append(pcfg["polar-angle"])
+                self.param_names.append(pcfg["azimuthal-angle"])
+
+            elif pcfg["name"] == "uniform_sky":
+                self.param_names.append(pcfg["ra"])
+                self.param_names.append(pcfg["dec"])
+
+            else:
+                self.param_names.append(pname)
+
+        # Transforms
+        for _, tcfg in self.cfg.get("waveform_transforms", {}).items():
+
+            name = tcfg["name"]
+
+            if name == "spherical_to_cartesian":
+                self.param_names.extend([tcfg["x"], tcfg["y"], tcfg["z"]])
+
+            elif name == "mass1_mass2_to_mchirp_q":
+                self.param_names.extend(["mchirp", "q"])
+
+            elif name == "chirp_distance_to_distance":
+                self.param_names.append("distance")
+
+        self.param_names = sorted(self.param_names)
+        self.param_index = {name: i for i, name in enumerate(self.param_names)}
+        self.num_params = len(self.param_names)
 
         self._build_distributions()
         self._build_transforms()
@@ -172,98 +199,84 @@ class DistributionSampler:
                 )
 
     def _sample_base(self, N):
-        params = {}
+        params = torch.empty(N, self.num_params, device=self.device)
 
         for name, dist in self.distributions.items():
-            sampled = dist.sample((N,), self.device)
+            sampled = dist.sample((N,), device=self.device)
 
-            # eg. if the distribution is a solid-angle type, it returns a dict
-            # It should add polar/azimuthal keys as an update
             if isinstance(sampled, dict):
-                params.update(sampled)
+                for sub_name, value in sampled.items():
+                    idx = self.param_index[sub_name]
+                    params[:, idx] = value
             else:
-                params[name] = sampled
+                idx = self.param_index[name]
+                params[:, idx] = sampled
 
         return params
 
     def _apply_transforms(self, params):
 
         for tname, cfg in self.transforms:
-
             if tname == "spin_cartesian":
+                r_idx = self.param_index[cfg["radial"]]
+                p_idx = self.param_index[cfg["polar"]]
+                a_idx = self.param_index[cfg["azimuthal"]]
+
                 x, y, z = spherical_to_cartesian(
-                    params[cfg["radial"]],
-                    params[cfg["polar"]],
-                    params[cfg["azimuthal"]],
+                    params[:, r_idx],
+                    params[:, p_idx],
+                    params[:, a_idx],
                 )
-                params[cfg["x"]] = x
-                params[cfg["y"]] = y
-                params[cfg["z"]] = z
+
+                params[:, self.param_index[cfg["x"]]] = x
+                params[:, self.param_index[cfg["y"]]] = y
+                params[:, self.param_index[cfg["z"]]] = z
 
             elif tname == "mass":
-                mchirp, q = mass1_mass2_to_mchirp_q(params["mass1"], params["mass2"])
-                params["mchirp"] = mchirp
-                params["q"] = q
+                m1 = params[:, self.param_index["mass1"]]
+                m2 = params[:, self.param_index["mass2"]]
+
+                mchirp, q = mass1_mass2_to_mchirp_q(m1, m2)
+
+                params[:, self.param_index["mchirp"]] = mchirp
+                params[:, self.param_index["q"]] = q
 
             elif tname == "distance":
-                params["distance"] = chirp_distance_to_distance(
-                    params["chirp_distance"], params["mchirp"]
-                )
+                cd = params[:, self.param_index["chirp_distance"]]
+                mc = params[:, self.param_index["mchirp"]]
 
-    def _enforce_constraints(self, params, N):
+                d = chirp_distance_to_distance(cd, mc)
+
+                params[:, self.param_index["distance"]] = d
+
+    def _enforce_constraints(self, params):
 
         if not self.constraints:
             return params
 
-        # Apply named deterministic constraints (projections)
         for c in self.constraints:
+
             if c.name in constraints._NAMED_CONSTRAINTS:
-                params = getattr(constraints, c.name)(params)
+                fn = getattr(constraints, c.name)
+
+                params = fn(
+                    params,
+                    self.param_index,
+                    c.params,  # optional extra config
+                )
+
             else:
                 raise ValueError(
                     f"Unknown named constraint '{c.name}'. "
                     f"Available: {constraints._NAMED_CONSTRAINTS}"
                 )
 
-        # Collect only boolean constraints
-        bool_constraints = [
-            c for c in self.constraints if c.name not in _NAMED_CONSTRAINTS
-        ]
-
-        if not bool_constraints:
-            return params
-
-        # Partial resampling loop
-        while True:
-
-            mask = torch.ones(N, dtype=torch.bool, device=self.device)
-
-            for c in bool_constraints:
-                mask &= c.check(params)
-
-            if mask.all():
-                return params
-
-            # resample only failed rows
-            bad = ~mask
-            n_bad = bad.sum().item()
-
-            new_params = self._sample_base(n_bad)
-            self._apply_transforms(new_params)
-
-            # deterministic constraints must ALSO apply to resampled values
-            for c in self.constraints:
-                if c.name in _NAMED_CONSTRAINTS:
-                    transform = globals()[c.name]
-                    new_params = transform(new_params)
-
-            for k in params:
-                params[k][bad] = new_params[k]
+        return params
 
     def sample(self, N: int):
 
         params = self._sample_base(N)
-        params = self._enforce_constraints(params, N)
+        params = self._enforce_constraints(params)
         self._apply_transforms(params)
 
         return params
