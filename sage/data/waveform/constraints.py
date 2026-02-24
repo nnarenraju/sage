@@ -29,21 +29,24 @@ import torch
 import inspect
 
 
-def mass_order(params):
-    """Ensure mass1 >= mass2 by swapping where needed."""
-    m1 = params["mass1"]
-    m2 = params["mass2"]
+def mass_order(params, param_index, extra_params=None):
+    idx_m1 = param_index["mass1"]
+    idx_m2 = param_index["mass2"]
+
+    m1 = params[:, idx_m1]
+    m2 = params[:, idx_m2]
 
     swap_mask = m2 > m1
 
     if swap_mask.any():
         m1_new = m1.clone()
         m2_new = m2.clone()
+
         m1_new[swap_mask] = m2[swap_mask]
         m2_new[swap_mask] = m1[swap_mask]
 
-        params["mass1"] = m1_new
-        params["mass2"] = m2_new
+        params[:, idx_m1] = m1_new
+        params[:, idx_m2] = m2_new
 
     return params
 
