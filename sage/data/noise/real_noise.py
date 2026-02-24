@@ -37,9 +37,6 @@ import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 
-# LOCAL
-from sage.core.manager import SharedConfig
-
 
 class HDF5SingleNoiseSampler:
     """
@@ -298,7 +295,7 @@ class MemmapSingleNoiseSampler:
         return self.sample(nsamples)
 
 
-class MemmapNoiseSampler(SharedConfig):
+class MemmapNoiseSampler(torch.nn.Module):
     """
     GPU batch sampler for monolithic .bin files with async prefetch.
 
@@ -319,8 +316,11 @@ class MemmapNoiseSampler(SharedConfig):
         postprocess_fn=None,
         **kwargs,
     ):
+        super().__init__()
+
         # Get shared configs
-        super().__init__(**kwargs)
+        self.cfg = kwargs["cfg"]
+        self.data_cfg = kwargs["data_cfg"]
 
         self.seq_len = seq_len
         self.device = device
@@ -467,14 +467,16 @@ class MemmapNoiseSampler(SharedConfig):
                 # sleep briefly to yield CPU
                 self._stop_event.wait(0.01)
 
-    def sample_batch(self, batch_size: int):
+    def sample_batch(self):
         """
         Return a GPU batch. Starts async prefetching if first call.
         """
-        self._batch_size = batch_size
         # If queue has a ready batch, return it
         batch_tensor = self.queue.get()
         return batch_tensor
+
+    def forward(self):
+        return self.sample_batch()
 
     def shutdown(self):
         """Stop prefetch thread"""

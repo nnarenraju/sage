@@ -26,11 +26,8 @@ Documentation: NULL
 import torch
 import matplotlib.pyplot as plt
 
-# LOCAL
-from sage.core.manager import SharedConfig
 
-
-class FiducialWhitening(SharedConfig, torch.nn.Module):
+class FiducialWhitening(torch.nn.Module):
     """
     Whiten frequency-domain strain using fixed fiducial PSDs.
 

@@ -43,8 +43,6 @@ class PhenomConstants:
 
     def __init__(self, device="cuda", batch_size=None, dtype=None, **kwargs):
 
-        super().__init__(**kwargs)
-
         # Constants from sage.core
         for name in constants.CONST_METADATA:
             value = getattr(constants, name)
