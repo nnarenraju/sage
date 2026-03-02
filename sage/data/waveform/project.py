@@ -33,41 +33,54 @@ from astropy import coordinates, units
 from sage.core.constants import PI, C
 from sage.core.math import rotation_matrix
 from sage.core.hardcode import _DETMETADATA
+from sage.data.waveform import waveform_utils
+from sage.core.config import get_cfg, get_data_cfg
 
 
-class ProjectWave:
+class ConstantProjection(torch.nn.Module):
     """
     Minimal detector container for FD projection.
     All tensors should live on the same device as waveforms.
     """
 
-    def __init__(
-        self,
-        detector_names,
-        freqs,
-        device="cuda",
-        dtype=torch.float64,
-    ):
+    def __init__(self):
+
+        super().__init__()
+
+        # Setup configs
+        cfg = get_cfg()
+        data_cfg = get_data_cfg()
 
         # CUDA device
-        self.device = device
-        self.dtype = dtype
+        self.device = cfg.device
+        self.dtype = cfg.dtype
         # Detector
-        self.detnames = detector_names
+        self.detnames = cfg.detectors
 
         # Frequencies
+        freqs, _ = waveform_utils.get_freqs(
+            f_l=0.0,
+            f_u=data_cfg.sample_rate / 2.0,
+            sample_length_in_s=data_cfg.padded_length_in_s,
+            device=cfg.device,
+            dtype=cfg.dtype,
+        )
         self.freqs = freqs
 
         # Detector tensor
         # self.response shape is (batch_size, num_dets, response)
         self.response = torch.empty(
-            (len(self.detnames), 3, 3), device=self.device, dtype=self.dtype
+            (len(self.detnames), 3, 3),
+            device=self.device,
+            dtype=self.dtype,
         )
 
         # Get relative position of DET from Earth center
         earth_center = torch.tensor([0, 0, 0], device=self.device, dtype=self.dtype)
         self.dx = torch.empty(
-            (len(self.detnames), 3), device=self.device, dtype=self.dtype
+            (len(self.detnames), 3),
+            device=self.device,
+            dtype=self.dtype,
         )
 
         # Baseline response of a single arm pointed in the -X direction
@@ -254,7 +267,7 @@ class ProjectWave:
 
         return torch.einsum("bi,dj->bd", ehat, self.dx) / C
 
-    def constant_project(self, hp, hc, ra, dec, polarization):
+    def forward(self, hp, hc, ra, dec, polarization):
         """Return the strain of a waveform as measured by all detectors.
         Apply the time shift for all given detectors relative to the assumed
         geocentric frame and apply the antenna patterns to the plus and cross
