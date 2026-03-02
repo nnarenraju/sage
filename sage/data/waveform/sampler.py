@@ -45,6 +45,8 @@ from sage.data.waveform.distributions import (
     uniform,
 )
 
+from sage.core.config import get_cfg, get_data_cfg
+
 # Conversions
 from sage.data.waveform.conversions import (
     mass1_mass2_to_mchirp_q,
@@ -66,11 +68,17 @@ def spherical_to_cartesian(radial, polar, azimuthal):
     )
 
 
-def read_from_config(path, device="cuda", dtype=torch.float64):
+def read_from_config(path):
     with open(path, "r") as f:
         config = yaml.safe_load(f)
 
-    return DistributionSampler(config, device=device, dtype=dtype)
+    sage_cfg = get_cfg()
+
+    return DistributionSampler(
+        config,
+        device=sage_cfg.device,
+        dtype=sage_cfg.dtype,
+    )
 
 
 class NamedConstraint:
