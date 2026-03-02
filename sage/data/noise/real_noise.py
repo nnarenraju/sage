@@ -37,6 +37,9 @@ import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 
+# LOCAL
+from sage.core.config import get_cfg, get_data_cfg
+
 
 class HDF5SingleNoiseSampler:
     """
@@ -308,26 +311,21 @@ class MemmapNoiseSampler(torch.nn.Module):
 
     def __init__(
         self,
-        bin_files: List[Path],
-        seq_len: int,
-        device: str = "cuda",
-        batch_size: int = 64,
-        prefetch: int = 2,
         postprocess_fn=None,
-        **kwargs,
+        prefetch: int = 3,
     ):
         super().__init__()
 
-        # Get shared configs
-        self.cfg = kwargs["cfg"]
-        self.data_cfg = kwargs["data_cfg"]
+        # Setup configs
+        cfg = get_cfg()
+        data_cfg = get_data_cfg()
 
-        self.seq_len = seq_len
-        self.device = device
+        self.seq_len = data_cfg.padded_length_in_nsamples
+        self.device = cfg.device
         self.prefetch = prefetch
-        self.bin_files = [Path(f) for f in bin_files]
-        self.n_detectors = len(bin_files)
-        self._batch_size = batch_size
+        self.bin_files = [Path(f) for f in data_cfg.noise_files]
+        self.n_detectors = len(cfg.detectors)
+        self._batch_size = cfg.batch_size
         self.postprocess_fn = postprocess_fn
 
         self.mmaps = []
