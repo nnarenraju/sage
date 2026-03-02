@@ -44,6 +44,7 @@ class ProjectWave:
     def __init__(
         self,
         detector_names,
+        freqs,
         device="cuda",
         dtype=torch.float64,
     ):
@@ -53,6 +54,9 @@ class ProjectWave:
         self.dtype = dtype
         # Detector
         self.detnames = detector_names
+
+        # Frequencies
+        self.freqs = freqs
 
         # Detector tensor
         # self.response shape is (batch_size, num_dets, response)
@@ -250,8 +254,7 @@ class ProjectWave:
 
         return torch.einsum("bi,dj->bd", ehat, self.dx) / C
 
-    # @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
-    def constant_project(self, hp, hc, freqs, ra, dec, polarization):
+    def constant_project(self, hp, hc, ra, dec, polarization):
         """Return the strain of a waveform as measured by all detectors.
         Apply the time shift for all given detectors relative to the assumed
         geocentric frame and apply the antenna patterns to the plus and cross
@@ -284,8 +287,8 @@ class ProjectWave:
         # phase = torch.exp(-2j * PI * freqs[:, None, :] * dt[..., None])
         # Doing the same thing without torch exp
         phase = torch.polar(
-            torch.ones(1, 1, len(freqs), device=self.device, dtype=self.dtype),
-            -2 * PI * freqs[None, None, :] * dt[:, :, None],
+            torch.ones(1, 1, len(self.freqs), device=self.device, dtype=self.dtype),
+            -2 * PI * self.freqs[None, None, :] * dt[:, :, None],
         )
         # hf is (B, N_ifo, seq_len) and phase is (B, 1, seq_len)
         hf *= phase
