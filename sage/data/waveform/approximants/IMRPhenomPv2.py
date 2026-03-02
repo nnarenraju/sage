@@ -60,8 +60,36 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         self.param_sampler = param_sampler
         self.waveform_project = waveform_project
 
+        # param names needed for Pv2
+        self.param_names = [
+            "mass1",
+            "mass2",
+            "spin1x",
+            "spin1y",
+            "spin1z",
+            "spin2x",
+            "spin2y",
+            "spin2z",
+            "distance",
+            "tc",
+            "coa_phase",
+            "inclination",
+            "polarization",
+            "ra",
+            "dec",
+        ]
+
+        if self.param_sampler is not None:
+            get_idx = self.param_sampler.param_index
+            self.req_idx = torch.tensor(
+                [get_idx[key] for key in self.param_names],
+                device=f.device,
+                dtype=torch.int32,
+            )
+
     def forward(self):
-        theta = self.param_sampler.sample(self.B)
+        theta = self.param_sampler.sample(self.B)[:, self.req_idx]
+
         hp, hc = self.get_hphc(theta)
 
         hf = self.waveform_project(
