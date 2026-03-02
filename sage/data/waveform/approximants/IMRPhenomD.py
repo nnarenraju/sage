@@ -59,8 +59,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
-    @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
-    def __call__(self, theta, reproduce_lal=False):
+    def get_hphc(self, theta, reproduce_lal=False):
         # Compute derived quantities
         derived = self.compute_derived_parameters(theta)
 
