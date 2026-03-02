@@ -30,7 +30,7 @@ import numpy as np
 from functools import cached_property
 
 
-class DataConfig:
+class BaseDataConfig:
 
     def __init__(self, data_cfg):
         # Store original
@@ -47,7 +47,7 @@ class DataConfig:
 
     @cached_property
     def nsamples_in_fd(self):
-        return int(self.sample_rate * self.sample_length_in_s) / 2 + 1
+        return int((self.sample_rate * self.sample_length_in_s) / 2 + 1)
 
     @cached_property
     def padding_nsamples(self):
@@ -59,12 +59,13 @@ class DataConfig:
 
     @cached_property
     def padded_length_in_nsamples(self):
-        return (
-            self.sample_length_in_s + (2.0 * self.padding_length_in_s)
-        ) * self.sample_rate
+        return int(
+            (self.sample_length_in_s + (2.0 * self.padding_length_in_s))
+            * self.sample_rate
+        )
 
 
-class Config:
+class BaseConfig:
 
     def __init__(self, cfg):
         # Store original
