@@ -30,61 +30,11 @@ import numpy as np
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+# LOCAL
+from sage.core.config import get_cfg, get_data_cfg
 
 
-class FFTOnlyPostprocess:
-    """
-    GPU postprocessing: time-domain → frequency-domain only.
-
-    Inputs:
-        batch_td: (B, D, T) float32
-
-    Output:
-        batch_fd: (B, D, F) complex64
-    """
-
-    def __init__(
-        self,
-        *,
-        seq_len: int,
-        device: str = "cuda",
-    ):
-        self.seq_len = seq_len
-        self.device = device
-
-        # Optional sanity check
-        if seq_len <= 0:
-            raise ValueError("seq_len must be positive")
-
-    def __call__(
-        self,
-        batch_td: torch.Tensor,
-        segment_ids: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Convert batch of TD noise to FD.
-
-        Args:
-            batch_td: (B, D, T) float32 tensor on GPU
-
-        Returns:
-            batch_fd: (B, D, F) complex64 tensor on GPU
-        """
-        # Sanity checks (cheap, compile-safe)
-        if batch_td.ndim != 3:
-            raise ValueError("batch_td must have shape (B, D, T)")
-
-        if batch_td.shape[-1] != self.seq_len:
-            raise ValueError(f"Expected T={self.seq_len}, got {batch_td.shape[-1]}")
-
-        # Time domain to frequency domain
-        batch_fd = torch.fft.rfft(batch_td, dim=-1)
-
-        return batch_fd
-
-
-class RecolourPostprocess:
+class RecolourPostprocess(torch.nn.Module):
     """
     GPU postprocessing: conditional whitening + stochastic recolouring in FD.
 
@@ -99,27 +49,28 @@ class RecolourPostprocess:
     def __init__(
         self,
         *,
-        data_dir: Path,
-        detectors: list[str],
-        seq_len: int,
-        sample_rate: float,
         p_recolour: float,
-        device: str = "cuda",
         eps: float = 1e-60,
     ):
-        self.data_dir = Path(data_dir)
-        self.detectors = detectors
-        self.seq_len = seq_len
-        self.sample_rate = sample_rate
+        super().__init__()
+
+        # Setup configs
+        cfg = get_cfg()
+        data_cfg = get_data_cfg()
+
+        self.data_dir = Path(data_cfg.data_dir)
+        self.detectors = cfg.detectors
+        self.seq_len = data_cfg.padded_length_in_nsamples
+        self.sample_rate = data_cfg.sample_rate
         self.p_recolour = float(p_recolour)
-        self.device = device
+        self.device = cfg.device
         self.eps = eps
 
-        self.n_detectors = len(detectors)
+        self.n_detectors = len(self.detectors)
 
         # We expect this length from the PSDs
         # Interpolate them after production
-        self.n_freq = seq_len // 2 + 1
+        self.n_freq = self.seq_len // 2 + 1
 
         # Load PSDs to torch.float32 on GPU
         self._load_segment_psds()
@@ -196,7 +147,7 @@ class RecolourPostprocess:
         self.recolour_psds = torch.from_numpy(np.stack(psds_all, axis=0))
         self.n_recolour_psd = self.recolour_psds.shape[1]
 
-    def __call__(
+    def forward(
         self,
         batch_td: torch.Tensor,
         segment_ids: torch.Tensor,
