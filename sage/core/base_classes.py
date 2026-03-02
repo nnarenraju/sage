@@ -22,3 +22,54 @@ GitHub Repository: NULL
 Documentation: NULL
 
 """
+
+# Packages
+import torch
+import numpy as np
+
+from functools import cached_property
+
+
+class DataConfig:
+
+    def __init__(self, data_cfg):
+        # Store original
+        self.data_cfg = data_cfg
+
+    # Forward attribute access to original config
+    def __getattr__(self, name):
+        return getattr(self.data_cfg, name)
+
+    # Derived quantities (lazy) cached after one call
+    @cached_property
+    def nsamples_in_td(self):
+        return int(self.sample_rate * self.sample_length_in_s)
+
+    @cached_property
+    def nsamples_in_fd(self):
+        return int(self.sample_rate * self.sample_length_in_s) / 2 + 1
+
+    @cached_property
+    def padding_nsamples(self):
+        return int(self.sample_rate * self.padding_length_in_s)
+
+    @cached_property
+    def padded_length_in_s(self):
+        return self.sample_length_in_s + (2.0 * self.padding_length_in_s)
+
+    @cached_property
+    def padded_length_in_nsamples(self):
+        return (
+            self.sample_length_in_s + (2.0 * self.padding_length_in_s)
+        ) * self.sample_rate
+
+
+class Config:
+
+    def __init__(self, cfg):
+        # Store original
+        self.cfg = cfg
+
+    # Forward attribute access to original config
+    def __getattr__(self, name):
+        return getattr(self.cfg, name)
