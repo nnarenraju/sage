@@ -36,7 +36,7 @@ from sage.data.waveform import taper
 
 class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
 
-    def __init__(self, f, f_ref):
+    def __init__(self, f, f_ref, param_sampler=None, waveform_project=None):
         super().__init__(f, f_ref)
         # Fixed frequency grid
         self.f = f
@@ -56,8 +56,25 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
-    @torch.compile(mode="max-autotune", fullgraph=True, dynamic=False)
-    def __call__(self, theta, reproduce_lal=False):
+        # Parameter sampler
+        self.param_sampler = param_sampler
+        self.waveform_project = waveform_project
+
+    def forward(self):
+        theta = self.param_sampler.sample(self.B)
+        hp, hc = self.get_hphc(theta)
+
+        hf = self.waveform_project(
+            hp,
+            hc,
+            ra=theta[:, -2],
+            dec=theta[:, -1],
+            polarization=theta[:, -3],
+        )
+
+        return hf
+
+    def get_hphc(self, theta, reproduce_lal=False):
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
         # s2z=7, dist_mpc=8, tc=9, phiRef=10, incl=11
         # Pv2 requires m2 > m1; Swapping masses and spins done internally
