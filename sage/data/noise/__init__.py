@@ -29,8 +29,11 @@ from .real_noise import (
     MemmapNoiseSampler,
 )
 
+from .recolour import RecolourPostprocess
+
 __all__ = [
     "HDF5SingleNoiseSampler",
     "MemmapSingleNoiseSampler",
     "MemmapNoiseSampler",
+    "RecolourPostprocess",
 ]
