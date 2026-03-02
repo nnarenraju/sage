@@ -66,11 +66,11 @@ def spherical_to_cartesian(radial, polar, azimuthal):
     )
 
 
-def read_from_config(path, device="cuda"):
+def read_from_config(path, device="cuda", dtype=torch.float64):
     with open(path, "r") as f:
         config = yaml.safe_load(f)
 
-    return DistributionSampler(config, device=device)
+    return DistributionSampler(config, device=device, dtype=dtype)
 
 
 class NamedConstraint:
@@ -90,9 +90,10 @@ class ExpressionConstraint:
 
 class DistributionSampler:
 
-    def __init__(self, config: Dict[str, Any], device="cuda"):
-        self.device = device
+    def __init__(self, config: Dict[str, Any], device, dtype):
         self.cfg = config
+        self.device = device
+        self.dtype = dtype
 
         self.variable_params = config["variable_params"]
 
@@ -199,10 +200,19 @@ class DistributionSampler:
                 )
 
     def _sample_base(self, N):
-        params = torch.empty(N, self.num_params, device=self.device)
+        params = torch.empty(
+            N,
+            self.num_params,
+            device=self.device,
+            dtype=self.dtype,
+        )
 
         for name, dist in self.distributions.items():
-            sampled = dist.sample((N,), device=self.device)
+            sampled = dist.sample(
+                (N,),
+                device=self.device,
+                dtype=self.dtype,
+            )
 
             if isinstance(sampled, dict):
                 for sub_name, value in sampled.items():
