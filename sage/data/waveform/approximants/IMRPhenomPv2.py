@@ -32,20 +32,41 @@ from sage.data.waveform.approximants import IMRPhenomD
 from sage.core.torch import nudge_backward_, nudge_forward_
 
 from sage.data.waveform import taper
+from sage.data.waveform import waveform_utils
+from sage.core.config import get_cfg, get_data_cfg
 
 
-class IMRPhenomPv2(IMRPhenomD.IMRPhenomD):
+class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
-    def __init__(self, f, f_ref, param_sampler=None, waveform_project=None):
-        super().__init__(f, f_ref)
+    def __init__(self, param_sampler=None, waveform_project=None):
+
+        torch.nn.Module.__init__(self)
+
+        # Setup configs
+        cfg = get_cfg()
+        data_cfg = get_data_cfg()
+
         # Fixed frequency grid
+        f, f_ref = waveform_utils.get_freqs(
+            data_cfg.signal_low_frequency_cutoff,
+            data_cfg.sample_rate / 2.0,
+            data_cfg.padded_length_in_s,
+            cfg.batch_size,
+            cfg.device,
+            cfg.dtype,
+        )
         self.f = f
         self.df = f[0][1] - f[0][0]
         self.sample_length_in_s = 1.0 / self.df
         self.f_numel = self.f[0].numel()
         self.f_ref = f_ref
+
+        # Initialise PhenomD with freqs
+        IMRPhenomD.IMRPhenomD.__init__(self, f, f_ref)
+
         # Batch size
         self.B = f.shape[0]
+
         # Tensor of zeroes for hp and hc
         # Accounts for freqs from DC to f_upper
         self.n_pad = int(torch.round((self.f[0][0] - self.df) / self.df)) + 1
