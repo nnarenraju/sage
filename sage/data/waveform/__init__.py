@@ -23,8 +23,7 @@ Documentation: NULL
 
 """
 
-from sage.data.waveform.approximants import (
-    IMRPhenomD,
-    IMRPhenomPv2,
-    phenom,
-)
+from .approximants.IMRPhenomD import IMRPhenomD
+from .approximants.IMRPhenomPv2 import IMRPhenomPv2
+from .project import ConstantProjection
+from .sampler import read_from_config
