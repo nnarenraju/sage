@@ -45,6 +45,7 @@ from sage.data.waveform.distributions import (
     uniform,
 )
 
+from sage.core.math import Normalise
 from sage.core.config import get_cfg, get_data_cfg
 
 # Conversions
@@ -106,6 +107,7 @@ class DistributionSampler:
         self.variable_params = config["variable_params"]
 
         self.distributions = {}
+        self._norm_cache = {}
         self.transforms = []
         self.constraints = []
 
@@ -147,6 +149,8 @@ class DistributionSampler:
         self._build_distributions()
         self._build_transforms()
         self._build_constraints()
+        self.bounds = self.theoretical_bounds()
+        self.normalisers = self.build_normalisers()
 
     @staticmethod
     def get_named_constraints():
@@ -290,6 +294,257 @@ class DistributionSampler:
                 )
 
         return params
+
+    def theoretical_bounds(self):
+        """
+        Compute analytic lower/upper bounds for all parameters
+        based on YAML priors + constraints + deterministic transforms.
+        """
+
+        bounds = {}
+
+        priors = self.cfg["priors"]
+
+        ## BASE PRIORS
+
+        for pname, pcfg in priors.items():
+
+            name = pcfg["name"]
+
+            if name == "uniform":
+                bounds[pname] = (pcfg["min"], pcfg["max"])
+
+            elif name == "uniform_radius":
+                bounds[pname] = (pcfg["min"], pcfg["max"])
+
+            elif name == "uniform_angle":
+                bounds[pname] = (0.0, 2 * torch.pi)
+
+            elif name == "sin_angle":
+                bounds[pname] = (0.0, torch.pi)
+
+            elif name == "uniform_sky":
+                bounds[pcfg["ra"]] = (0.0, 2 * torch.pi)
+                bounds[pcfg["dec"]] = (-torch.pi / 2, torch.pi / 2)
+
+            elif name == "uniform_solidangle":
+                bounds[pcfg["polar-angle"]] = (0.0, torch.pi)
+                bounds[pcfg["azimuthal-angle"]] = (0.0, 2 * torch.pi)
+
+        ## MASS ORDER CONSTRAINT
+
+        if "mass1" in bounds and "mass2" in bounds:
+            m1_min, m1_max = bounds["mass1"]
+            m2_min, m2_max = bounds["mass2"]
+
+            # enforce m1 >= m2
+            bounds["mass1"] = (max(m1_min, m2_min), m1_max)
+            bounds["mass2"] = (m2_min, min(m2_max, m1_max))
+
+        ## DERIVED MASS PARAMETERS
+
+        if "mass1" in bounds and "mass2" in bounds:
+
+            m1_min, m1_max = bounds["mass1"]
+            m2_min, m2_max = bounds["mass2"]
+
+            # q = m1/m2, with m2 <= m1
+            q_min = 1.0
+            q_max = m1_max / m2_min
+            bounds["q"] = (q_min, q_max)
+
+            def mchirp(m1, m2):
+                return ((m1 * m2) ** (3.0 / 5.0)) / ((m1 + m2) ** (1.0 / 5.0))
+
+            # Extremes occur on boundary
+            candidates = [
+                mchirp(m1_min, m2_min),
+                mchirp(m1_min, m2_max),
+                mchirp(m1_max, m2_min),
+                mchirp(m1_max, m2_max),
+            ]
+
+            bounds["mchirp"] = (min(candidates), max(candidates))
+
+        ## DISTANCE
+
+        if "chirp_distance" in bounds and "mchirp" in bounds:
+
+            cd_min, cd_max = bounds["chirp_distance"]
+            mc_min, mc_max = bounds["mchirp"]
+
+            # distance from chirp distance
+            d_min = chirp_distance_to_distance(cd_min, mc_min)
+            d_max = chirp_distance_to_distance(cd_max, mc_max)
+
+            bounds["distance"] = (d_min, d_max)
+
+        ## SPIN CARTESIAN COMPONENTS
+
+        for spin in ["spin1", "spin2"]:
+
+            a_name = f"{spin}_a"
+            if a_name in bounds:
+
+                a_min, a_max = bounds[a_name]
+
+                # since spherical:
+                # x,y,z in [-a, a]
+                bounds[f"{spin}x"] = (-a_max, a_max)
+                bounds[f"{spin}y"] = (-a_max, a_max)
+                bounds[f"{spin}z"] = (-a_max, a_max)
+
+        ## Ensure ordering consistent with param_names
+
+        ordered_bounds = {
+            name: bounds[name] for name in self.param_names if name in bounds
+        }
+
+        return ordered_bounds
+
+    def build_normalisers(self):
+        """
+        Construct Normalise objects for all parameters
+        using theoretical bounds.
+
+        Returns
+        -------
+        dict[str, Normalise]
+            Mapping parameter name -> Normalise object
+        """
+
+        bounds = self.theoretical_bounds()
+        normalisers = {}
+
+        for name, (min_val, max_val) in bounds.items():
+
+            if max_val <= min_val:
+                raise ValueError(
+                    f"Invalid bounds for {name}: " f"({min_val}, {max_val})"
+                )
+
+            normalisers[name] = Normalise(
+                min_val=min_val,
+                max_val=max_val,
+            )
+
+        return normalisers
+
+    def make_selected_batch_normalisers(self, selected_names):
+        """
+        Precompute indices and Normalise objects for fast reuse.
+
+        Returns
+        -------
+        callable(batch) -> torch.Tensor
+            Normalised batch subset
+        """
+
+        indices = torch.tensor(
+            [self.param_index[name] for name in selected_names],
+            dtype=torch.long,
+        )
+
+        normalisers = [self.normalisers[name] for name in selected_names]
+
+        def normalise_fn(batch):
+            """
+            batch: (B, total_params)
+            returns: (B, len(selected_names))
+            """
+            selected = batch.index_select(1, indices.to(batch.device))
+
+            normed = torch.empty_like(selected)
+
+            for col, norm_obj in enumerate(normalisers):
+                normed[:, col] = norm_obj.norm(selected[:, col])
+
+            return normed
+
+        return normalise_fn
+
+    def norm_from_batch(self, batch, selected_names):
+        """
+        Extract and normalise selected parameters from a full batch.
+
+        Parameters
+        ----------
+        batch : torch.Tensor
+            Shape (B, total_params)
+        selected_names : list[str]
+
+        Returns
+        -------
+        torch.Tensor
+            Shape (B, len(selected_names))
+        """
+
+        if batch.ndim != 2:
+            raise ValueError("batch must be 2D (B, total_params)")
+
+        key = tuple(selected_names)
+
+        # Compile once
+        if key not in self._norm_cache:
+
+            indices = torch.tensor(
+                [self.param_index[name] for name in selected_names],
+                dtype=torch.long,
+            )
+
+            normalisers = [self.normalisers[name] for name in selected_names]
+
+            self._norm_cache[key] = (indices, normalisers)
+
+        indices, normalisers = self._norm_cache[key]
+
+        # Extract columns
+        selected = batch.index_select(1, indices.to(batch.device))
+
+        # Apply existing Normalise.norm()
+        normed = torch.empty_like(selected)
+
+        for col, norm_obj in enumerate(normalisers):
+            normed[:, col] = norm_obj.norm(selected[:, col])
+
+        return normed
+
+    def unnorm_from_batch(self, normed_batch, selected_names):
+        """
+        Unnormalise selected parameters back to physical scale.
+
+        Parameters
+        ----------
+        normed_batch : torch.Tensor
+            Shape (B, len(selected_names))
+        selected_names : list[str]
+
+        Returns
+        -------
+        torch.Tensor
+            Shape (B, len(selected_names))
+        """
+
+        if normed_batch.ndim != 2:
+            raise ValueError("normed_batch must be 2D")
+
+        key = tuple(selected_names)
+
+        if key not in self._norm_cache:
+            # Trigger compilation
+            self.norm_from_batch(
+                torch.zeros(1, self.num_params, device=normed_batch.device),
+                selected_names,
+            )
+
+        indices, normalisers = self._norm_cache[key]
+
+        unnormed = torch.empty_like(normed_batch)
+
+        for col, norm_obj in enumerate(normalisers):
+            unnormed[:, col] = norm_obj.unnorm(normed_batch[:, col])
+
+        return unnormed
 
     def sample(self, N: int):
 
