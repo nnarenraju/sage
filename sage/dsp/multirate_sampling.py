@@ -41,8 +41,11 @@ from pycbc.conversions import tau_from_final_mass_spin, get_final_from_initial
 from pycbc.detector import Detector
 from pycbc import pnutils
 
+# LOCAL
+from sage.core.config import get_data_cfg
 
-class TorchMultiRateSampler(torch.nn.Module):
+
+class MultirateSampler(torch.nn.Module):
     """
     Multi-rate decimator for batched GW time-domain data.
 
@@ -56,29 +59,34 @@ class TorchMultiRateSampler(torch.nn.Module):
 
     def __init__(
         self,
-        bins: Iterable[Tuple[int, int, int]],
-        original_fs: int,
-        min_fs: int,
+        binning_method,
         reflect_pad: int | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
-        if isinstance(bins, np.ndarray):
-            bins = bins.tolist()
+        # Setup configs
+        data_cfg = get_data_cfg()
+
+        # Get bins and fs from binning method
+        bins = binning_method.detailed_bins
 
         self.register_buffer(
             "bins_tensor",
-            torch.tensor(bins, dtype=torch.int64),
+            torch.tensor(bins.tolist(), dtype=torch.int64),
             persistent=False,
         )
 
-        self.original_fs = int(original_fs)
-        self.min_fs = int(min_fs)
+        self.original_fs = data_cfg.sample_rate
+        self.min_fs = np.min(bins[:, 2])
 
-        max_dec_factor = int(original_fs // min_fs)
+        max_dec_factor = int(self.original_fs // self.min_fs)
         max_power = max_dec_factor.bit_length() - 1
         self.max_power = max_power
+
+        # Sanity check
+        factors = [2**i for i in range(1, self.max_power + 1)]
+        assert all(factors > self.original_fs // self.min_fs)
 
         # Reflect Padding
         # Largest FIR kernel size if 2 * dec factor + 1
@@ -96,7 +104,6 @@ class TorchMultiRateSampler(torch.nn.Module):
         self._build_kernels()
 
     ## FIR kernel construction ##
-
     def _build_kernels(self):
         for i in range(1, self.max_power + 1):
             factor = 2**i
@@ -152,17 +159,20 @@ class TorchMultiRateSampler(torch.nn.Module):
         return pyramid
 
     ## Forward ##
-
-    def forward(self, signals: torch.Tensor) -> torch.Tensor:
+    def forward(self, noisy_signals: torch.Tensor) -> torch.Tensor:
         """
         signals: (B, D, L)
         """
 
-        B, D, L = signals.shape
+        B, D, L = noisy_signals.shape
 
-        signals = F.pad(signals, (self.pad, self.pad), mode="reflect")
+        noisy_signals = F.pad(
+            noisy_signals,
+            (self.pad, self.pad),
+            mode="reflect",
+        )
 
-        pyramid = self._build_pyramid(signals)
+        pyramid = self._build_pyramid(noisy_signals)
         chunks = []
 
         for start_idx, end_idx, new_fs in self.bins_tensor:
@@ -170,12 +180,12 @@ class TorchMultiRateSampler(torch.nn.Module):
             start_idx = start_idx + self.pad
             end_idx = end_idx + self.pad
 
-            dec_factor = self.original_fs // new_fs
+            dec_factor = int(self.original_fs // new_fs)
 
             if dec_factor == 1:
-                chunk = signals[:, :, start_idx:end_idx]
+                chunk = noisy_signals[:, :, start_idx:end_idx]
             else:
-                decimated = pyramid[int(dec_factor)]
+                decimated = pyramid[dec_factor]
 
                 sidx = start_idx // dec_factor
                 eidx = end_idx // dec_factor
@@ -189,33 +199,27 @@ class TorchMultiRateSampler(torch.nn.Module):
         return out
 
 
-class TDMultirateSampler:
+class DyadicPyramidBinning:
     MTSUN_SI = 4.92549102554e-06
     MSUN_SI = 1.989e30
 
     def __init__(
         self,
-        prior_low_mass,
-        prior_high_mass,
-        signal_low_freq_cutoff,
-        sample_rate,
-        signal_length,
-        lowest_allowed_fs,
-        tc_inject_lower,
-        tc_inject_upper,
-        safe_nyquist_gap=8.0,
+        param_bounds,
+        lowest_allowed_fs=64.0,
+        safe_nyquist_gap=20.0,
         min_bin_duration=0.05,
         verify_nyquist=False,
     ):
+        # Setup configs
+        data_cfg = get_data_cfg()
 
-        self.prior_low_mass = prior_low_mass
-        self.prior_high_mass = prior_high_mass
-        self.signal_low_freq_cutoff = signal_low_freq_cutoff
-        self.sample_rate = sample_rate
-        self.signal_length = signal_length
+        self.prior_low_mass, self.prior_high_mass = param_bounds["mass1"]
+        self.signal_low_freq_cutoff = data_cfg.signal_low_frequency_cutoff
+        self.sample_rate = data_cfg.sample_rate
+        self.signal_length = data_cfg.sample_length_in_s
         self.lowest_allowed_fs = lowest_allowed_fs
-        self.tc_inject_lower = tc_inject_lower
-        self.tc_inject_upper = tc_inject_upper
+        self.tc_inject_lower, self.tc_inject_upper = param_bounds["tc"]
         self.safe_nyquist_gap = safe_nyquist_gap
         self.min_bin_duration = min_bin_duration
 
@@ -227,6 +231,8 @@ class TDMultirateSampler:
         self.fs_anchor = self._next_pow2((2.0 * self.f_isco) + self.safe_nyquist_gap)
 
         # Pre/Post fudge
+        # We don't necessarily need to generalise this to used detector
+        # We can pick the two ifos farthest apart for a conservative estimate
         self.light_travel_time = (
             Detector("H1").light_travel_time_to_detector(Detector("V1")) * 1.1
         )
