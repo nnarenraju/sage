@@ -26,6 +26,10 @@ Documentation: NULL
 import torch
 import matplotlib.pyplot as plt
 
+# LOCAL
+from sage.data.psd import get_fiducial_psds
+from sage.core.config import get_cfg, get_data_cfg
+
 
 class FiducialWhitening(torch.nn.Module):
     """
@@ -38,31 +42,30 @@ class FiducialWhitening(torch.nn.Module):
         x_td_white: (B, D, T) float32
     """
 
-    def __init__(
-        self,
-        fiducial_psds: torch.Tensor,  # (D, F) float32
-        seq_len: int,
-        sample_rate: float,
-        corrupted_length: float = 2,
-        device="cuda",
-        **kwargs,
-    ):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.device = device
+        # Setup configs
+        cfg = get_cfg()
+        data_cfg = get_data_cfg()
 
-        self.seq_len = seq_len
-        self.sample_rate = sample_rate
-        self.corrupted_len = int(round(corrupted_length * self.sample_rate))
+        # Get fiducial psds
+        fiducial_psds = get_fiducial_psds()
+
+        self.device = cfg.device
+
+        self.seq_len = data_cfg.padded_length_in_nsamples
+        self.sample_rate = data_cfg.sample_rate
+        self.corrupted_len = data_cfg.padding_nsamples
 
         # Frequency resolution
-        delta_f = sample_rate / seq_len
-        self.delta_f = torch.tensor(delta_f).to(device=device)
+        delta_f = data_cfg.sample_rate / self.seq_len
+        self.delta_f = torch.tensor(delta_f).to(device=cfg.device)
 
         # Whitening
         whitening = 2 * self.delta_f / torch.sqrt(0.5 * fiducial_psds)
         # Final whitening moved to device
-        whitening = whitening.to(device=device)
+        whitening = whitening.to(device=cfg.device)
 
         # Register as buffer for compile friendliness
         self.register_buffer("whitening", whitening)  # (D, F)
@@ -74,7 +77,7 @@ class FiducialWhitening(torch.nn.Module):
         end = T - self.corrupted_len
         return x[..., start:end]
 
-    def whiten(self, X_fd: torch.Tensor) -> torch.Tensor:
+    def forward(self, X_fd: torch.Tensor) -> torch.Tensor:
         """
         X_fd: (B, D, F) complex64
         """
