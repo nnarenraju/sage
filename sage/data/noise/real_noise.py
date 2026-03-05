@@ -309,6 +309,8 @@ class MemmapNoiseSampler(torch.nn.Module):
     - Prefetch N batches to GPU asynchronously
     """
 
+    GRAPH_READY = False
+
     def __init__(
         self,
         postprocess_fn=None,

@@ -38,6 +38,8 @@ from sage.core.config import get_cfg, get_data_cfg
 
 class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
+    GRAPH_READY = True
+
     def __init__(self, param_sampler=None, waveform_project=None):
 
         torch.nn.Module.__init__(self)

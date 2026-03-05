@@ -42,6 +42,8 @@ class FiducialWhitening(torch.nn.Module):
         x_td_white: (B, D, T) float32
     """
 
+    GRAPH_READY = True
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
