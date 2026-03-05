@@ -46,13 +46,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
         # Setup configs
         cfg = get_cfg()
-        data_cfg = get_data_cfg()
+        self.data_cfg = get_data_cfg()
 
         # Fixed frequency grid
         f, f_ref = waveform_utils.get_freqs(
-            data_cfg.signal_low_frequency_cutoff,
-            data_cfg.sample_rate / 2.0,
-            data_cfg.padded_length_in_s,
+            self.data_cfg.signal_low_frequency_cutoff,
+            self.data_cfg.sample_rate / 2.0,
+            self.data_cfg.padded_length_in_s,
             cfg.batch_size,
             cfg.device,
             cfg.dtype,
@@ -252,7 +252,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
     def apply_tc(self, hp, hc, tc):
         # Apply time shift to account for tc
         # Converting from tc in duration space to actual shift
-        _tc = tc - self.sample_length_in_s
+        _tc = (tc + self.data_cfg.padding_length_in_s) - self.sample_length_in_s
         # We do this in polar as well without torch exp
         hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
         hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
