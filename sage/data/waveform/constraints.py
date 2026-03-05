@@ -30,23 +30,25 @@ import inspect
 
 
 def mass_order(params, param_index, extra_params=None):
+    """
+    Enforce mass1 >= mass2 in a torch.compile-safe way.
+
+    Reorders masses per sample using pure tensor ops.
+    """
+
     idx_m1 = param_index["mass1"]
     idx_m2 = param_index["mass2"]
 
     m1 = params[:, idx_m1]
     m2 = params[:, idx_m2]
 
-    swap_mask = m2 > m1
+    # Compute ordered masses (no branching)
+    m1_new = torch.maximum(m1, m2)
+    m2_new = torch.minimum(m1, m2)
 
-    if swap_mask.any():
-        m1_new = m1.clone()
-        m2_new = m2.clone()
-
-        m1_new[swap_mask] = m2[swap_mask]
-        m2_new[swap_mask] = m1[swap_mask]
-
-        params[:, idx_m1] = m1_new
-        params[:, idx_m2] = m2_new
+    # Write back
+    params[:, idx_m1] = m1_new
+    params[:, idx_m2] = m2_new
 
     return params
 
