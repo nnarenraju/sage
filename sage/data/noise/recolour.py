@@ -66,7 +66,8 @@ class RecolourPostprocess(torch.nn.Module):
         self.device = cfg.device
         self.eps = eps
 
-        self.n_detectors = len(self.detectors)
+        self.B = cfg.batch_size
+        self.D = len(self.detectors)
 
         # We expect this length from the PSDs
         # Interpolate them after production
@@ -155,16 +156,15 @@ class RecolourPostprocess(torch.nn.Module):
         """
         torch.compile-safe FD recolouring
         """
-        B, D, _ = batch_td.shape
 
         # TD to FD (B, D, F)
         X = torch.fft.rfft(batch_td, dim=-1, norm="forward")
 
-        # Bernoulli recolour mask
-        mask = torch.rand(B, D, 1, device=X.device) < self.p_recolour  # (B, D, 1)
+        # Bernoulli recolour mask (B, D, 1)
+        mask = torch.rand(self.B, self.D, 1, device=X.device) < self.p_recolour
 
         # Whitening PSD (only where mask == True, else ones)
-        det_idx = torch.arange(D).view(1, D).expand(B, D)
+        det_idx = torch.arange(self.D).view(1, self.D).expand(self.B, self.D)
         gathered_seg_psd = self.segment_psds[det_idx, segment_ids]
         gathered_seg_psd = gathered_seg_psd.to(X.device, non_blocking=True)
 
@@ -175,7 +175,7 @@ class RecolourPostprocess(torch.nn.Module):
         )
 
         # Recolour PSD (only where mask == True)
-        recol_idx = torch.randint(0, self.n_recolour_psd, (B, D))
+        recol_idx = torch.randint(0, self.n_recolour_psd, (self.B, self.D))
         gathered_recol_psd = self.recolour_psds[det_idx, recol_idx]
         gathered_recol_psd = gathered_recol_psd.to(X.device)
 
