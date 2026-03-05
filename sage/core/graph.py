@@ -35,22 +35,13 @@ from typing import List, Callable, Optional, Union
 
 
 class TorchSequential(nn.Module):
-    """
-    Sequentially applies a list of modules:
-        x -> module1(x) -> module2(x) -> ... -> moduleN(x)
-    If x is None, modules without inputs will be called without arguments.
-    """
-
-    def __init__(self, modules: List[nn.Module]):
+    def __init__(self, modules):
         super().__init__()
         self.modules_list = nn.ModuleList(modules)
 
-    def forward(self, x=None, *args, **kwargs):
-        for module in self.modules_list:
-            if x is None:
-                x = module(*args, **kwargs)
-            else:
-                x = module(x, *args, **kwargs)
+    def forward(self, x):
+        for m in self.modules_list:
+            x = m(x)
         return x
 
 
@@ -92,217 +83,84 @@ class TorchChoice(nn.Module):
 ## Base: Generic generator ##
 
 
-class Generator(nn.Module):
+class NoisySignalGenerator(nn.Module):
+
+    def __init__(self, signal_sampler: nn.Module, noise_sampler: nn.Module):
+        super().__init__()
+        self.signal_sampler = signal_sampler
+        self.noise_sampler = noise_sampler
+
+    def sample_signal(self):
+        return self.signal_sampler()
+
+    def sample_noise(self):
+        return self.noise_sampler()
+
+    @property
+    def signal_ready(self):
+        return getattr(self.signal_sampler, "GRAPH_READY", True)
+
+    @property
+    def noise_ready(self):
+        return getattr(self.noise_sampler, "GRAPH_READY", True)
+
+
+class _Add(nn.Module):
+    def forward(self, x, y):
+        return x + y
+
+
+class AddSources(nn.Module):
     """
-    Wraps one or more generator modules or callables.
-    Each generator produces output without input.
-    Can optionally combine outputs with a combiner module (e.g., Add).
+    Merges signal and noise sources.
+
+    Possible configurations:
+        - Both internal
+        - Only signal internal (noise injected)
+        - Only noise internal (signal injected)
+        - Neither internal (both injected)
+
+    Forward contract:
+        forward(external=None)
     """
 
     def __init__(
         self,
-        modules: List[Union[nn.Module, Callable]],
-        combiner: Optional[nn.Module] = None,
+        signal_sampler: nn.Module | None,
+        noise_sampler: nn.Module | None,
     ):
         super().__init__()
-        self.modules_list = nn.ModuleList(modules)
-        self.combiner = combiner
 
-    def forward(self, *args, **kwargs):
-        outputs = []
-        for module in self.modules_list:
-            if isinstance(module, nn.Module):
-                sig = inspect.signature(module.forward)
-                if len(sig.parameters) == 0:
-                    out = module()
-                else:
-                    out = module(*args, **kwargs)
-            else:
-                sig = inspect.signature(module)
-                if len(sig.parameters) == 0:
-                    out = module()
-                else:
-                    out = module(*args, **kwargs)
-            outputs.append(out)
+        self.signal_sampler = signal_sampler
+        self.noise_sampler = noise_sampler
 
-        if self.combiner is not None:
-            return self.combiner(*outputs)
-        elif len(outputs) == 1:
-            return outputs[0]
+        self.has_signal = signal_sampler is not None
+        self.has_noise = noise_sampler is not None
+
+    def forward(self, external=None):
+
+        # Internal sampling
+        if self.has_signal:
+            signal = self.signal_sampler()
         else:
-            return tuple(outputs)
+            signal = external
 
+        if self.has_noise:
+            noise = self.noise_sampler()
+        else:
+            noise = external
 
-## Base: Add combiner ##
-
-
-class Add(nn.Module):
-    """
-    Element-wise summation of multiple inputs.
-    """
-
-    def forward(self, *args):
-        total = args[0]
-        for t in args[1:]:
-            total = total + t
-        return total
+        return signal + noise
 
 
 ## Base: SageGraph pipeline builder ##
 
 
-class _FusedSequential(nn.Module):
-    def __init__(self, modules: List[nn.Module]):
-        super().__init__()
-
-        # Flatten nested _FusedSequential modules
-        flat_modules = []
-        for m in modules:
-            if isinstance(m, _FusedSequential):
-                flat_modules.extend(m.modules_list)
-            else:
-                flat_modules.append(m)
-
-        self.modules_list = nn.ModuleList(flat_modules)
-
-    def forward(self, x=None, *args, **kwargs):
-        # Fully vectorized through sequential calls
-        for module in self.modules_list:
-            if x is None:
-                x = module(*args, **kwargs)
-            else:
-                x = module(x, *args, **kwargs)
-        return x
-
-
-class _FusedChoice(nn.Module):
-    def __init__(self, modules: List[nn.Module], probs: torch.Tensor):
-        super().__init__()
-        self.modules_list = nn.ModuleList(modules)
-        self.register_buffer("probs", probs)
-
-    def forward(self, x, generator=None):
-        B = x.shape[0]
-        device = x.device
-        probs = self.probs.to(device)
-        dist = torch.distributions.Categorical(probs)
-        choices = dist.sample((B,), generator=generator)  # (B,)
-
-        # Allocate output
-        output = torch.empty_like(x)
-
-        # Compute all branch outputs
-        branch_outputs = []
-        for module in self.modules_list:
-            branch_outputs.append(module(x))  # shape: (B, ...)
-
-        # Stack along new dimension (B, num_branches, features)
-        stacked = torch.stack(branch_outputs, dim=1)
-
-        # Use choices to select the correct branch per sample
-        choices_expand = choices.view(B, 1, *([1] * (x.ndim - 1))).expand_as(stacked)
-        output = torch.gather(stacked, 1, choices_expand).squeeze(1)
-
-        return output
-
-
-class _FusedGenerator(nn.Module):
-    def __init__(self, modules: List[Union[nn.Module, Callable]], combiner=None):
-        super().__init__()
-        self.modules_list = nn.ModuleList(modules)
-        self.combiner = combiner
-
-    def forward(self, *args, **kwargs):
-        outputs = []
-        for m in self.modules_list:
-            if isinstance(m, nn.Module):
-                out = m(*args, **kwargs)
-            else:
-                out = m(*args, **kwargs)
-            outputs.append(out)
-
-        if self.combiner is not None:
-            return self.combiner(*outputs)
-        elif len(outputs) == 1:
-            return outputs[0]
-        else:
-            return tuple(outputs)
-
-
-def _compile_module(module: nn.Module) -> nn.Module:
-    """
-    Recursively converts module to a compiled version.
-    """
-
-    # TorchSequential -> fuse contained modules
-    if isinstance(module, TorchSequential):
-        compiled = [_compile_module(m) for m in module.modules_list]
-        return _FusedSequential(compiled)
-
-    # Generator -> fuse each branch and combiner
-    elif isinstance(module, Generator):
-        compiled = [
-            _compile_module(m) if isinstance(m, nn.Module) else m
-            for m in module.modules_list
-        ]
-        return _FusedGenerator(compiled, module.combiner)
-
-    # TorchChoice -> fuse each branch
-    elif isinstance(module, TorchChoice):
-        compiled_branches = [_compile_module(m) for m in module.modules_list]
-        return _FusedChoice(compiled_branches, module.probs)
-
-    # Base nn.Module -> return as-is
-    else:
-        return module
-
-
 class SageGraph(nn.Module):
-    """
-    High-performance DAG / pipeline wrapper.
-
-    This class supports two independent optimisation stages:
-
-    1. Structural fusion (fuse=True)
-       - Recursively flattens nested TorchSequential, Generator,
-         and TorchChoice modules into static fused modules.
-       - Removes dynamic nesting overhead.
-       - Makes the graph more compiler-friendly.
-
-    2. Backend compilation (compile=True)
-       - Applies torch.compile to the fused graph.
-       - Enables kernel fusion, graph capture, and Inductor lowering.
-
-    Parameters
-    ----------
-    modules : List[nn.Module]
-        Root modules applied sequentially.
-        The output of module[i] becomes input to module[i+1].
-
-    fuse : bool, default=True
-        If True, structurally flatten the module DAG into
-        a static fused representation.
-
-    compile : bool, default=False
-        If True, apply torch.compile to the fused graph.
-
-    compile_mode : str, default="default"
-        Mode passed to torch.compile.
-        Options include:
-            "default"
-            "reduce-overhead"
-            "max-autotune"
-
-    fullgraph : bool, default=True
-        If True, require full graph capture.
-        If your graph contains dynamic control flow,
-        set this to False.
-    """
 
     def __init__(
         self,
         modules: List[nn.Module],
-        fuse: bool = True,
         compile: bool = False,
         compile_mode: str = "default",
         fullgraph: bool = True,
@@ -310,44 +168,84 @@ class SageGraph(nn.Module):
     ):
         super().__init__()
 
-        # Store original modules for debugging / inspection
-        self.original_modules = nn.ModuleList(modules)
+        assert len(modules) == 2
+        generator, preprocess = modules
 
-        # Stage 1: Structural Fusion
-        if fuse:
-            # Recursively convert modules into fused equivalents
-            fused_modules = [_compile_module(m) for m in modules]
+        assert isinstance(generator, NoisySignalGenerator)
+        assert isinstance(preprocess, TorchSequential)
 
-            # Flatten into a single sequential pipeline
-            root = _FusedSequential(fused_modules)
-        else:
-            # Use original structure (useful for debugging)
-            root = TorchSequential(self.original_modules)
+        self.generator = generator
+        self.preprocess = preprocess
 
-        # Stage 2: torch.compile (PyTorch 2.x compiler)
-        if compile:
-            root = torch.compile(
-                root,
-                mode=compile_mode,
-                fullgraph=fullgraph,
-                dynamic=dynamic,
+        self.signal_ready = generator.signal_ready
+        self.noise_ready = generator.noise_ready
+        self.preprocess_ready = all(
+            getattr(m, "GRAPH_READY", True) for m in preprocess.modules_list
+        )
+
+        # If preprocess not ready → disable compile
+        self.do_compile = compile and self.preprocess_ready
+
+        if not self.do_compile:
+            self.compiled_block = None
+            return
+
+        # ===== CASE ANALYSIS =====
+
+        if self.signal_ready and self.noise_ready:
+            # Compile full graph
+            add_node = AddSources(
+                generator.signal_sampler,
+                generator.noise_sampler,
+            )
+            block = nn.Sequential(add_node, preprocess)
+
+        elif self.signal_ready and not self.noise_ready:
+            # Compile signal + preprocess
+            add_node = AddSources(
+                generator.signal_sampler,
+                None,
+            )
+            block = nn.Sequential(add_node, preprocess)
+
+        elif not self.signal_ready and self.noise_ready:
+            # Compile noise + preprocess
+            add_node = AddSources(
+                None,
+                generator.noise_sampler,
             )
 
-        # Final executable graph
-        self.root = root
+        else:
+            # Compile preprocess only
+            add_node = AddSources(None, None)
+            block = nn.Sequential(add_node, preprocess)
 
-    def forward(self, x=None, *args, **kwargs):
-        """
-        Forward pass through full pipeline.
+        self.compiled_block = torch.compile(
+            block,
+            mode=compile_mode,
+            fullgraph=fullgraph,
+            dynamic=dynamic,
+        )
 
-        The output of each module is fed into the next.
-        """
-        return self.root(x, *args, **kwargs)
+    def forward(self):
 
-    # Internal helper: structural fusion
-    def _fuse_modules(self, modules: List[nn.Module]) -> nn.Module:
-        """
-        Recursively fuse modules into a static sequential graph.
-        """
-        compiled_submodules = [_compile_module(m) for m in modules]
-        return _FusedSequential(compiled_submodules)
+        if not self.do_compile:
+            signal = self.generator.sample_signal()
+            noise = self.generator.sample_noise()
+            x = signal + noise
+            return self.preprocess(x)
+
+        if self.signal_ready and not self.noise_ready:
+            noise = self.generator.sample_noise()
+            return self.compiled_block(noise)
+
+        if not self.signal_ready and self.noise_ready:
+            signal = self.generator.sample_signal()
+            return self.compiled_block(signal)
+
+        if not self.signal_ready and not self.noise_ready:
+            signal = self.generator.sample_signal()
+            noise = self.generator.sample_noise()
+            return self.compiled_block(signal + noise)
+
+        return self.compiled_block()
