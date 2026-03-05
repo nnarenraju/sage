@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # Modules
+import math
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -42,7 +43,7 @@ from pycbc.detector import Detector
 from pycbc import pnutils
 
 # LOCAL
-from sage.core.config import get_data_cfg
+from sage.core.config import get_cfg, get_data_cfg
 
 
 class MultirateSampler(torch.nn.Module):
@@ -57,6 +58,8 @@ class MultirateSampler(torch.nn.Module):
     L = original sequence length
     """
 
+    GRAPH_READY = True
+
     def __init__(
         self,
         binning_method,
@@ -66,27 +69,30 @@ class MultirateSampler(torch.nn.Module):
         super().__init__(**kwargs)
 
         # Setup configs
+        self.cfg = get_cfg()
         data_cfg = get_data_cfg()
 
         # Get bins and fs from binning method
-        bins = binning_method.detailed_bins
+        self.bins = binning_method.detailed_bins
+        self.num_bins = len(self.bins)
 
         self.register_buffer(
             "bins_tensor",
-            torch.tensor(bins.tolist(), dtype=torch.int64),
+            torch.tensor(self.bins.tolist(), dtype=torch.int64),
             persistent=False,
         )
 
         self.original_fs = data_cfg.sample_rate
-        self.min_fs = np.min(bins[:, 2])
+        self.min_fs = np.min(self.bins[:, 2])
 
         max_dec_factor = int(self.original_fs // self.min_fs)
         max_power = max_dec_factor.bit_length() - 1
         self.max_power = max_power
 
-        # Sanity check
-        factors = [2**i for i in range(1, self.max_power + 1)]
-        assert all(factors > self.original_fs // self.min_fs)
+        # Precompute decimation power per bin
+        dec_factors = self.original_fs // self.bins_tensor[:, 2]
+        dec_powers = torch.log2(dec_factors.float()).long()
+        self.register_buffer("dec_powers", dec_powers, persistent=False)
 
         # Reflect Padding
         # Largest FIR kernel size if 2 * dec factor + 1
@@ -94,109 +100,106 @@ class MultirateSampler(torch.nn.Module):
         # So using 128 to 256 is very conservative
         # NOTE: Adjust if needed (and remove conservative assertion)
         if reflect_pad is not None:
-            assert self.pad >= 2 * max_dec_factor
             self.pad = reflect_pad
+            assert self.pad >= 2 * max_dec_factor
         else:
             self.pad = 2 * max_dec_factor
 
+        # Get sorted decimation factors and remember original order
+        self.power_to_bins = self.order_decimations(dec_powers)
+
+        # Sanity check
+        # TODO: This isn't compile friendly; we can include this outside
+        # factors = [2**i for i in range(1, self.max_power + 1)]
+        # assert all(factors > self.original_fs // self.min_fs)
+
         # Precompute FIR kernels for powers of 2
-        self.kernels = torch.nn.ModuleDict()
         self._build_kernels()
+
+    ## Decimation ordering ##
+    def order_decimations(self, dec_powers):
+        # Unique powers sorted (for sequential decimation reuse)
+        unique_powers = sorted(set(dec_powers.tolist()))
+        self.powers = unique_powers
+        self.max_required_power = max(unique_powers)
+
+        # Map power -> list of bins
+        power_to_bins = {p: [] for p in unique_powers}
+
+        for i in range(self.num_bins):
+
+            start = int(self.bins[i, 0] + self.pad)
+            end = int(self.bins[i, 1] + self.pad)
+            power = int(dec_powers[i].item())
+
+            div = 1 << power
+
+            sidx = start // div
+            eidx = end // div
+
+            power_to_bins[power].append((sidx, eidx, i))
+
+        return power_to_bins
 
     ## FIR kernel construction ##
     def _build_kernels(self):
-        for i in range(1, self.max_power + 1):
-            factor = 2**i
+        factor = 2
+        kernel_size = 2 * factor + 1
+        t = torch.arange(-factor, factor + 1, dtype=torch.float32)
 
-            kernel_size = 2 * factor + 1
-            t = torch.arange(-factor, factor + 1, dtype=torch.float32)
+        h = torch.sinc(t / factor)
+        h = h * torch.hamming_window(kernel_size, periodic=False)
+        h = h / h.sum()
 
-            h = torch.sinc(t / factor)
-            h = h * torch.hamming_window(kernel_size, periodic=False)
-            h = h / h.sum()
-
-            kernel = h.view(1, 1, -1)
-            self.register_buffer(f"kernel_{factor}", kernel, persistent=False)
+        self.register_buffer(
+            "kernel",
+            h.view(1, 1, -1).to(self.cfg.device, dtype=self.cfg.dtype),
+            persistent=False,
+        )
 
     ## Single stage decimation ##
-    def _decimate_once(self, x: torch.Tensor, factor: int) -> torch.Tensor:
+    def _decimate_once(self, x: torch.Tensor) -> torch.Tensor:
 
-        kernel = getattr(self, f"kernel_{factor}")
-        kernel = kernel.to(dtype=x.dtype, device=x.device)
-
-        pad = kernel.shape[-1] // 2
-
-        # reflect padding is better than zero padding
+        pad = self.kernel.shape[-1] // 2
         x = F.pad(x, (pad, pad), mode="reflect")
 
         B, D, L = x.shape
-        x = x.view(B * D, 1, L)
+        x = x.reshape(B * D, 1, L)
 
-        y = F.conv1d(x, kernel, stride=1)
-        y = y[:, :, ::factor]
+        y = F.conv1d(x, self.kernel, stride=2)
 
-        return y.view(B, D, y.shape[-1])
-
-    ## Build decimation pyramid ##
-    def _build_pyramid(self, x: torch.Tensor):
-
-        pyramid = {1: x}
-
-        current = x
-        current_factor = 1
-
-        for i in range(1, self.max_power + 1):
-            factor = 2**i
-
-            if factor > self.original_fs // self.min_fs:
-                break
-
-            current = self._decimate_once(current, 2)
-            current_factor *= 2
-
-            pyramid[current_factor] = current
-
-        return pyramid
+        return y.reshape(B, D, y.shape[-1])
 
     ## Forward ##
     def forward(self, noisy_signals: torch.Tensor) -> torch.Tensor:
-        """
-        signals: (B, D, L)
-        """
 
-        B, D, L = noisy_signals.shape
-
-        noisy_signals = F.pad(
+        x = F.pad(
             noisy_signals,
             (self.pad, self.pad),
             mode="reflect",
         )
 
-        pyramid = self._build_pyramid(noisy_signals)
-        chunks = []
+        outputs = [None] * self.num_bins
 
-        for start_idx, end_idx, new_fs in self.bins_tensor:
+        current = x
+        current_power = 0
 
-            start_idx = start_idx + self.pad
-            end_idx = end_idx + self.pad
+        for target_power in self.powers:
 
-            dec_factor = int(self.original_fs // new_fs)
+            # Incrementally decimate
+            steps = target_power - current_power
 
-            if dec_factor == 1:
-                chunk = noisy_signals[:, :, start_idx:end_idx]
-            else:
-                decimated = pyramid[dec_factor]
+            for _ in range(steps):
+                current = self._decimate_once(current)
 
-                sidx = start_idx // dec_factor
-                eidx = end_idx // dec_factor
+            current_power = target_power
 
-                chunk = decimated[:, :, sidx:eidx]
+            # Extract bins belonging to this power
+            for sidx, eidx, original_idx in self.power_to_bins[target_power]:
+                chunk = current[:, :, sidx:eidx]
+                outputs[original_idx] = chunk
 
-            chunks.append(chunk)
-
-        out = torch.cat(chunks, dim=-1)
-
-        return out
+        return torch.cat(outputs, dim=-1)
 
 
 class DyadicPyramidBinning:
