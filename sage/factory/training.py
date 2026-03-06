@@ -32,7 +32,7 @@ from contextlib import nullcontext
 from sage.core.config import get_cfg
 
 
-class SageVanillaTraining:
+class SageVanillaTraining(torch.nn.Module):
 
     def __init__(
         self,
