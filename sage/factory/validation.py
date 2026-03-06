@@ -32,15 +32,13 @@ from contextlib import nullcontext
 from sage.core.config import get_cfg
 
 
-class SageVanillaValidation:
+class SageVanillaValidation(torch.nn.Module):
 
     def __init__(
         self,
         data_generator,
         model,
         loss_function,
-        optimiser,
-        scheduler,
         num_iterations,
         num_epochs,
     ):
@@ -51,8 +49,6 @@ class SageVanillaValidation:
         self.data_generator = data_generator
         self.model = model
         self.loss_function = loss_function
-        self.optimiser = optimiser
-        self.scheduler = scheduler
 
         # Training params
         self.num_iterations = num_iterations
@@ -69,29 +65,27 @@ class SageVanillaValidation:
 
     def forward(self, nepoch):
 
-        # Set model to training mode
+        # Set model to evaluation mode
         self.model.eval()
 
-        for _ in range(self.num_iterations):
+        # Turning off Gradient evaluation
+        with torch.no_grad():
 
-            # Sample from data generator
-            x, targets = self.data_generator()
+            for _ in range(self.num_iterations):
 
-            # Reset the gradients of all optimised torch tensors
-            self.optimiser.zero_grad(set_to_none=True)
+                # Sample from data generator
+                x, targets = self.data_generator()
 
-            with (
-                torch.autocast(device_type=self.cfg.device.type)
-                if self.cfg.autocast
-                else nullcontext()
-            ):
-                # Turning off Gradient evaluation
-                with torch.no_grad():
+                with (
+                    torch.autocast(device_type=self.cfg.device.type)
+                    if self.cfg.autocast
+                    else nullcontext()
+                ):
                     out = self.model(x)
                     loss = self.loss_function(out, targets)
 
-            # Storing total loss this epoch
-            self.loss_components[nepoch] += loss.detach()
+                # Storing total loss this epoch
+                self.loss_components[nepoch] += loss.detach()
 
         # Average losses
         self.loss_components[nepoch] /= self.num_iterations
