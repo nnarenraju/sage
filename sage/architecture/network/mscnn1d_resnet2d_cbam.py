@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Filename        : mscnn1d_resnet_cbam.py
+Filename        : legacy.py
 Description     : Short description of the file
 
-Created on 2025-11-06 12:56:01
+Created on 2025-11-06 12:57:18
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2025, ProjectName
@@ -23,228 +23,121 @@ Documentation: NULL
 
 """
 
-# PACKAGES
-import timm
-import json
+# Packages
 import torch
 from torch import nn
-from datetime import date
 
-# Importing architecture snippets from zoo
-from sage.architecture.backend.resnet2d_cbam import (
-    resnet50_cbam,
-    resnet152_cbam,
+# LOCAL
+from ..backend.resnet2d_cbam import (
+    resnet18_cbam,
     resnet34_cbam,
+    resnet50_cbam,
+    resnet101_cbam,
+    resnet152_cbam,
 )
-from sage.architecture.backend.res2net_v1b import (
-    res2net101_v1b_26w_4s,
-    res2net50_v1b_26w_4s,
-    res2net152_v1b_26w_4s,
-)
-from sage.architecture.frontend.osnet1d import osnet_ain_custom as osnet1d
-from sage.architecture.frontend.kaggle import ConvBlock, _initialize_weights
-from sage.architecture.frontend.mscnn1d import MSFeatureExtractor, MultiScaleBlock
-from sage.architecture.frontend.resnet1d import resnet50, resnet101, resnet152
 
-# Code Review
-from sage.utils.decorators import unreviewed_model
-from sage.utils.review import set_review_date
-
-# Datatype for storage
-data_type = torch.float32
+from ..frontend.mscnn1d import ConvBlock, _initialize_frontend_weights
 
 
-class Rigatoni_MS_ResNetCBAM(torch.nn.Module):
+class MSCNN1D_2DResNetCBAM(nn.Module):
     """
-    Rigatoni-type model with multi-scale feature extractor && ResNet-CBAM
+    Multi-scale CNN backend + ResNet CBAM frontend for GW detection.
 
-    Description - Consists of a MSFeatureExtractor frontend for each detector and a
-                  ResNet-CBAM model backend. Capable of PE point estimate
-                  regularisation.
-
-    Parameters
-    ----------
-
-
+    Args:
+        backend_filters: base filter size for ConvBlock backend
+        backend_kernel: base kernel size for ConvBlock backend
+        resnet_size: 18, 34, 50, 101, 152
+        norm_type: 'batchnorm', 'layernorm', 'instancenorm'
+        num_point_estimates: number of continuous parameters to predict
     """
 
     def __init__(
         self,
-        model_name: str = "Rigatoni_MS_ResNetCBAM",
-        scales: list = [1, 2, 4, 0.5, 0.25],
-        blocks: list = [
-            [MultiScaleBlock, MultiScaleBlock],
-            [MultiScaleBlock, MultiScaleBlock],
-            [MultiScaleBlock, MultiScaleBlock],
-        ],
-        out_channels: list = [[32, 32], [64, 64], [128, 128]],
-        base_kernel_sizes: list = [
-            [64, 64 // 2 + 1],
-            [64 // 2 + 1, 64 // 4 + 1],
-            [64 // 4 + 1, 64 // 4 + 1],
-        ],
-        compression_factor: list = [8, 4, 0],
-        in_channels: int = 1,
-        resnet_size: int = 50,
-        parameter_estimation: tuple = (),
-        norm_layer: str = "instancenorm",
-        store_device: str = "cpu",
-        review: bool = False,
-        **kwargs,
+        num_detectors: int = 2,
+        frontend_filters: int = 32,
+        frontend_kernel: int = 64,
+        backend_resnet_size: int = 50,
+        norm_type: str = "instancenorm",
+        num_point_estimates: int = 2,
     ):
-
         super().__init__()
 
-        # Saving last review date
-        if review:
-            last_review_date = date.today()
-            model_name = self.__class__.__name__
-            parent_name = "models"
-            # set_review_date(parent_name, model_name, last_review_date)
+        self.num_detectors = num_detectors
 
-        self.model_name = model_name
-        self.norm_layer = norm_layer
-        self.parameter_estimation = parameter_estimation
-        self.store_device = store_device
-
-        """ Backend """
-        # Initialisation of weights and biases performed upon call
-        self._det1 = MSFeatureExtractor(
-            scales,
-            blocks,
-            out_channels,
-            base_kernel_sizes,
-            compression_factor,
-            in_channels,
-        )
-        self._det2 = MSFeatureExtractor(
-            scales,
-            blocks,
-            out_channels,
-            base_kernel_sizes,
-            compression_factor,
-            in_channels,
-        )
-
-        """ Frontend """
-        # Pretrained model is for 3-channels. We use 2 channels.
-        # When training  on HLV, we can use pretrained model.
-        if resnet_size == 50:
-            self.backend = resnet50_cbam(pretrained=False)
-        elif resnet_size == 152:
-            self.backend = resnet152_cbam(pretrained=False)
-
-        """ Mods """
-        # Normalisation layers
-        self.batchnorm = nn.BatchNorm1d(2)
-        self.instancenorm = nn.InstanceNorm1d(2, affine=True)
-        # Shape manipulation
-        self.flatten_d1 = nn.Flatten(start_dim=1)
-        self.flatten_d0 = nn.Flatten(start_dim=0)
-        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
-        # Value transformation
-        self.sigmoid = torch.nn.Sigmoid()
-        self.softmax = torch.nn.Softmax(dim=1)
-        self.ReLU = nn.ReLU()
-        self.Tanh = nn.Tanh()
-        # Regularisation layers
-        self.dropout = nn.Dropout(0.25)
-
-        ## Convert network into given dtype and store in proper device
-        # Primary outputs
-        self.signal_or_noise = nn.Linear(512, 1)
-        self.coalescence_time = nn.Linear(512, 1)
-        self.chirp_distance = nn.Linear(512, 1)
-        self.chirp_mass = nn.Linear(512, 1)
-        self.distance = nn.Linear(512, 1)
-        self.mass_ratio = nn.Linear(512, 1)
-        self.inv_mass_ratio = nn.Linear(512, 1)
-        self.snr = nn.Linear(512, 1)
-        # Mod layers
-        self.signal_or_noise.to(dtype=data_type, device=self.store_device)
-        self.coalescence_time.to(dtype=data_type, device=self.store_device)
-        self.chirp_distance.to(dtype=data_type, device=self.store_device)
-        self.chirp_mass.to(dtype=data_type, device=self.store_device)
-        self.distance.to(dtype=data_type, device=self.store_device)
-        self.mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.inv_mass_ratio.to(dtype=data_type, device=self.store_device)
-        self.snr.to(dtype=data_type, device=self.store_device)
-
-        # Manipulation layers
-        self.batchnorm.to(dtype=data_type, device=self.store_device)
-        self.instancenorm.to(dtype=data_type, device=self.store_device)
-        # Main layers
-        self._det1.to(dtype=data_type, device=self.store_device)
-        self._det2.to(dtype=data_type, device=self.store_device)
-        self.frontend = {"det1": self._det1, "det2": self._det2}
-        self.backend.to(dtype=data_type, device=self.store_device)
-
-    # x.shape: (batch size, wave channel, length of wave)
-    def forward(self, x):
-        # batch_size, channel, signal_length = s.shape
-        if self.norm_layer == "batchnorm":
-            normed = self.batchnorm(x)
-        elif self.norm_layer == "instancenorm":
-            normed = self.instancenorm(x)
-
-        # 1D CNN Frontend
-        cnn_output = torch.cat(
-            [
-                self.frontend["det1"](normed[:, 0:1]),
-                self.frontend["det2"](normed[:, 1:2]),
-            ],
-            dim=1,
-        )
-
-        # ResNet CBAM Backend
-        out = self.backend(cnn_output)  # (batch_size, embedding_size)
-        out = self.flatten_d1(self.avg_pool_1d(out))
-        ## Output necessary params
-        raw = self.flatten_d0(self.signal_or_noise(out))
-        pred_prob = self.sigmoid(raw)
-
-        ## Parameter Estimation
-        # Time of Coalescence
-        tc = self.flatten_d0(self.coalescence_time(out))
-        norm_tc = self.sigmoid(tc)
-        # Chirp Distance
-        dchirp = self.flatten_d0(self.chirp_distance(out))
-        norm_dchirp = self.sigmoid(dchirp)
-        # Chirp Mass
-        mchirp = self.flatten_d0(self.chirp_mass(out))
-        norm_mchirp = self.sigmoid(mchirp)
-        # Distance
-        dist = self.flatten_d0(self.distance(out))
-        norm_dist = self.sigmoid(dist)
-        # Mass Ratio
-        q = self.flatten_d0(self.mass_ratio(out))
-        norm_q = self.sigmoid(q)
-        # Inverse Mass Ratio
-        invq = self.flatten_d0(self.inv_mass_ratio(out))
-        norm_invq = self.sigmoid(invq)
-        # SNR
-        snr = self.flatten_d0(self.snr(out))
-        norm_snr = self.sigmoid(snr)
-
-        # Return ouptut params (pred_prob, raw, cnn_output, pe_params)
-        return {
-            "raw": raw,
-            "pred_prob": pred_prob,
-            "cnn_output": cnn_output,
-            "norm_tc": norm_tc,
-            "norm_dchirp": norm_dchirp,
-            "norm_mchirp": norm_mchirp,
-            "norm_dist": norm_dist,
-            "norm_q": norm_q,
-            "norm_invq": norm_invq,
-            "norm_snr": norm_snr,
-            "tc": tc,
-            "dchirp": dchirp,
-            "mchirp": mchirp,
-            "dist": dist,
-            "q": q,
-            "invq": invq,
-            "snr": snr,
-            "input": x,
-            "normed": normed,
+        # Normalization layer
+        norm_layers = {
+            "batchnorm": nn.BatchNorm1d(2),
+            "layernorm": nn.LayerNorm(2),
+            "instancenorm": nn.InstanceNorm1d(2, affine=True),
         }
+        self.norm = norm_layers[norm_type]
+
+        # CNN Frontend per detector
+        self.frontend = nn.ModuleList(
+            [ConvBlock(frontend_filters, frontend_kernel) for _ in range(num_detectors)]
+        )
+
+        # ResNet Backend
+        resnet_factories = {
+            18: resnet18_cbam,
+            34: resnet34_cbam,
+            50: resnet50_cbam,
+            101: resnet101_cbam,
+            152: resnet152_cbam,
+        }
+
+        if backend_resnet_size not in resnet_factories:
+            raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
+        self.backend = resnet_factories[backend_resnet_size](pretrained=False)
+
+        # Feature pooling
+        self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
+        self.flatten = nn.Flatten(start_dim=1)
+
+        # Output layers
+        self.get_ranking_statistic = nn.Linear(512, 1)
+
+        # Create a Linear layer for each point estimate
+        self.point_estimate_layers = nn.ModuleList(
+            [nn.Linear(512, 1) for _ in range(num_point_estimates)]
+        )
+
+        # Initialising weights
+        self._initialise_weights()
+
+    def _initialise_weights(self):
+        nn.init.normal_(self.signal_or_noise.weight, 0, 0.01)
+        nn.init.zeros_(self.signal_or_noise.bias)
+
+        for layer in self.point_estimate_layers:
+            nn.init.normal_(layer.weight, 0, 0.01)
+            nn.init.zeros_(layer.bias)
+
+        for det in self.frontend:
+            _initialize_frontend_weights(det)
+
+    def forward(self, x):
+        """
+        x: Tensor of shape (batch, 2, signal_length)
+        returns: raw, pred_prob, point_estimates (list of tensors)
+        """
+        # Normalize input
+        x = self.norm(x)
+
+        # CNN Frontend
+        cnn_outputs = [
+            detector(x[:, i : i + 1]) for i, detector in enumerate(self.frontend)
+        ]
+        cnn_output = torch.cat(cnn_outputs, dim=1)
+
+        # 2D ResNet CBAM Backend
+        features = self.backend(cnn_output)
+        features = self.flatten(self.avg_pool_1d(features))
+
+        # Outputs
+        ranking_statistic = self.get_ranking_statistic(features)
+
+        # Each point estimate has its own Linear layer
+        point_estimates = [layer(features) for layer in self.point_estimate_layers]
+
+        return ranking_statistic, point_estimates
