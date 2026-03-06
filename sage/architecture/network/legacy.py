@@ -31,7 +31,7 @@ from torch import nn
 from datetime import date
 
 # Importing architecture snippets from zoo
-from sage.architecture.backend.resnet_cbam import (
+from sage.architecture.backend.resnet2d_cbam import (
     resnet50_cbam,
     resnet152_cbam,
     resnet34_cbam,
@@ -96,7 +96,7 @@ class Rigatoni_MS_ResNetCBAM_legacy(torch.nn.Module):
         _input_length: int = 4254,  # 4254
         _decimated_bins=None,
         store_device: str = "cpu",
-        **kwargs
+        **kwargs,
     ):
 
         super().__init__()
