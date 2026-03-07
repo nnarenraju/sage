@@ -26,17 +26,18 @@ Documentation: NULL
 # Packages
 import torch
 
-from contextlib import nullcontext
-
 # LOCAL
 from sage.core.config import get_cfg
+from .manager import CompileManager
 
 
 class SageVanillaTraining(torch.nn.Module):
 
     def __init__(
         self,
-        data_generator,
+        signal_sampler,
+        noise_sampler,
+        processor,
         model,
         loss_function,
         optimiser,
@@ -48,7 +49,9 @@ class SageVanillaTraining(torch.nn.Module):
         self.cfg = get_cfg()
 
         # Arranged in order of processing
-        self.data_generator = data_generator
+        self.signal_sampler = signal_sampler
+        self.noise_sampler = noise_sampler
+        self.processor = processor
         self.model = model
         self.loss_function = loss_function
         self.optimiser = optimiser
@@ -74,6 +77,7 @@ class SageVanillaTraining(torch.nn.Module):
 
         for nbatch in range(self.num_iterations):
 
+            # NOTE: This part is what we wanted to compile!!
             # Sample from data generator
             x, targets = self.data_generator()
 
@@ -81,18 +85,18 @@ class SageVanillaTraining(torch.nn.Module):
             self.optimiser.zero_grad(set_to_none=True)
 
             with (
-                torch.autocast(device_type=self.cfg.device.type)
+                torch.autocast(device_type="cuda")
                 if self.cfg.autocast
                 else nullcontext()
             ):
                 out = self.model(x)
                 loss = self.loss_function(out, targets)
-                self.loss_function.backward()
+                loss.backward()
 
-                # Clip gradients to make convergence somewhat easier
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), max_norm=self.cfg.clip_norm
-                )
+            # Clip gradients to make convergence somewhat easier
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), max_norm=self.cfg.clip_norm
+            )
 
             self.optimiser.step()
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)

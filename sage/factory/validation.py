@@ -77,7 +77,7 @@ class SageVanillaValidation(torch.nn.Module):
                 x, targets = self.data_generator()
 
                 with (
-                    torch.autocast(device_type=self.cfg.device.type)
+                    torch.autocast(device_type="cuda")
                     if self.cfg.autocast
                     else nullcontext()
                 ):
