@@ -105,11 +105,6 @@ class NoisySignalGenerator(nn.Module):
         return getattr(self.noise_sampler, "GRAPH_READY", True)
 
 
-class _Add(nn.Module):
-    def forward(self, x, y):
-        return x + y
-
-
 class AddSources(nn.Module):
     """
     Merges signal and noise sources.
@@ -183,7 +178,7 @@ class SageGraph(nn.Module):
             getattr(m, "GRAPH_READY", True) for m in preprocess.modules_list
         )
 
-        # If preprocess not ready → disable compile
+        # If preprocess not ready -> disable compile
         self.do_compile = compile and self.preprocess_ready
 
         if not self.do_compile:
@@ -214,6 +209,7 @@ class SageGraph(nn.Module):
                 None,
                 generator.noise_sampler,
             )
+            block = nn.Sequential(add_node, preprocess)
 
         else:
             # Compile preprocess only
