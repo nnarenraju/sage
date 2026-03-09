@@ -260,7 +260,11 @@ class CompiledScatterBlock(nn.Module):
         x = self.processor(x)
 
         # Forward
-        with torch.autocast(device_type="cuda") if self.cfg.autocast else nullcontext():
+        with (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if self.cfg.autocast
+            else nullcontext()
+        ):
             out = self.model(x)
             loss = self.loss_function(out, targets)
 
