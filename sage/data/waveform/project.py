@@ -54,6 +54,7 @@ class ConstantProjection(torch.nn.Module):
         # CUDA device
         self.device = cfg.device
         self.dtype = cfg.dtype
+        self.batch_size = int(cfg.batch_size * cfg.class_balance)
         # Detector
         self.detnames = cfg.detectors
 
@@ -164,11 +165,11 @@ class ConstantProjection(torch.nn.Module):
 
         return torch.tensor(resps[0] - resps[1], device=self.device, dtype=self.dtype)
 
-    def random_gmst_estimate(self, batch_shape):
+    def random_gmst_estimate(self):
         # Random GMST in radians to compute the antenna patterns
         # Reference times to GMST requires table reads and is expensive
         # Instead we simply randomise GMST in [0, 2PI)
-        return 2 * PI * torch.rand(batch_shape, device=self.device)
+        return 2 * PI * torch.rand(self.batch_size, device=self.device)
 
     def antenna_pattern(
         self, right_ascension, declination, polarization, gmst_estimate
@@ -288,7 +289,7 @@ class ConstantProjection(torch.nn.Module):
         """
         # Get GMST estimates for entire batch
         # Batch shape should be (batch_size, num_dets, seq_len)
-        gmst_estimate = self.random_gmst_estimate(batch_shape=hp.size()[0])
+        gmst_estimate = self.random_gmst_estimate()
         # 'constant' assume fixed orientation relative to source over the
         # duration of the signal, accurate for short duration signals
         fp, fc = self.antenna_pattern(ra, dec, polarization, gmst_estimate)
