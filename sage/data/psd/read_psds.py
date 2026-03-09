@@ -47,7 +47,7 @@ def get_fiducial_psds():
         with open(meta_path, "r") as f:
             meta = json.load(f)
 
-        psds = np.fromfile(bin_path, dtype=np.float64)
+        psds = np.fromfile(bin_path, dtype=np.float32)
         psds_all.append(psds)
 
     return torch.from_numpy(np.stack(psds_all, axis=0)).to(device=cfg.device)

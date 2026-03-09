@@ -158,6 +158,7 @@ class TorchWelch:
             raise ValueError("Timeseries must be 1D")
 
         N = timeseries.shape[0]
+        timeseries = timeseries.to(dtype=torch.float64)
 
         # Number of segments
         num_segments = (N - self.seg_len) // self.seg_stride + 1

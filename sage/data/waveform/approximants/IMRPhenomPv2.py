@@ -76,7 +76,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.n_pad = int(torch.round((self.f[0][0] - self.df) / self.df)) + 1
         self.hp_buffer = torch.empty(
             (self.B, self.n_pad + self.f_numel),
-            dtype=torch.complex128,
+            dtype=torch.complex64,
             device=f.device,
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
@@ -240,7 +240,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         hp = c2z * hp + s2z * hc
         hc = c2z * hc - s2z * hp
 
-        if not reproduce_lal and False:
+        if not reproduce_lal:
             # Frequency domain tapering
             _taper = taper.fd_taper(
                 f=self.f,

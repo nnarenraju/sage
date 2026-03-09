@@ -28,6 +28,7 @@ import h5py
 import json
 import torch
 import numpy as np
+import torch.nn as nn
 
 from pathlib import Path
 from typing import Dict, List, Union, Optional
@@ -168,7 +169,7 @@ class MemmapSingleNoiseSampler:
     """
 
     def __init__(
-        self, source: Union[str, Path], return_tensor=False, tensor_dtype=torch.float64
+        self, source: Union[str, Path], return_tensor=False, tensor_dtype=torch.float32
     ):
         """
         Args:
@@ -277,7 +278,7 @@ class MemmapSingleNoiseSampler:
 
             noise = np.asarray(
                 self.mm[start : start + requested_nsamples],
-                dtype=np.float64,
+                dtype=np.float32,
                 copy=True,
             )
 
@@ -423,13 +424,13 @@ class MemmapNoiseSampler(torch.nn.Module):
 
         start_indices, segment_indices = self._sample_starts_batch(B)
         batch_tensor = torch.empty(
-            (B, D, seq_len), dtype=torch.float64, device=self.device
+            (B, D, seq_len), dtype=torch.float32, device=self.device
         )
 
         def read_detector(d):
             mm = self.mmaps[d]
             starts = start_indices[d]
-            arr = np.empty((B, seq_len), dtype=np.float64)
+            arr = np.empty((B, seq_len), dtype=np.float32)
 
             for i, s in enumerate(starts):
                 arr[i] = mm[s : s + seq_len]

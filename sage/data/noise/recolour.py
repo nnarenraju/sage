@@ -97,7 +97,7 @@ class RecolourPostprocess(torch.nn.Module):
             with open(meta_path, "r") as f:
                 meta = json.load(f)
 
-            raw = np.fromfile(bin_path, dtype=np.float64)
+            raw = np.fromfile(bin_path, dtype=np.float32)
 
             psds = []
             cursor = 0
@@ -142,7 +142,7 @@ class RecolourPostprocess(torch.nn.Module):
             n_psd = meta["num_psds"]
             n_freq = meta["num_freq_bins"]  # should == F
 
-            psds = np.fromfile(bin_path, dtype=np.float64).reshape(n_psd, n_freq)
+            psds = np.fromfile(bin_path, dtype=np.float32).reshape(n_psd, n_freq)
             psds_all.append(psds)
 
         self.recolour_psds = torch.from_numpy(np.stack(psds_all, axis=0))
@@ -170,7 +170,7 @@ class RecolourPostprocess(torch.nn.Module):
 
         X = torch.where(
             mask,
-            X / torch.sqrt(gathered_seg_psd + self.eps),
+            X / (gathered_seg_psd + self.eps),
             X,
         )
 
@@ -179,7 +179,7 @@ class RecolourPostprocess(torch.nn.Module):
         gathered_recol_psd = self.recolour_psds[det_idx, recol_idx]
         gathered_recol_psd = gathered_recol_psd.to(X.device)
 
-        recol_gain = torch.sqrt(gathered_recol_psd + self.eps)
+        recol_gain = gathered_recol_psd + self.eps
 
         X = torch.where(mask, X * recol_gain, X)
 
