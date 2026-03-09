@@ -81,6 +81,7 @@ class CompileManager:
         compiled_block = CompiledScatterBlock(
             self.signal_sampler,
             self.noise_sampler,
+            self.processor,
             self.cfg.batch_size,
             int(self.cfg.batch_size * self.cfg.class_balance),
             self.num_targets,
@@ -103,6 +104,7 @@ class CompiledBlock(nn.Module):
         self,
         signal_sampler,
         noise_sampler,
+        processor,
         B,
         S,
         T,
@@ -116,6 +118,7 @@ class CompiledBlock(nn.Module):
         # All components meant to be compiled
         self.signal_sampler = signal_sampler
         self.noise_sampler = noise_sampler
+        self.processor = processor
         self.B, self.S, self.T, self.P = (B, S, T, P)
         self.model = model
         self.loss_function = loss_function
@@ -165,7 +168,7 @@ class CompiledBlock(nn.Module):
         targets[idx] = signal_targets
 
         # Run preprocessing
-        x, targets = self.processor(x, targets)
+        x = self.processor(x)
 
         # Forward pass and loss under autocast
         with torch.autocast(device_type="cuda") if self.cfg.autocast else nullcontext():
@@ -181,6 +184,7 @@ class CompiledScatterBlock(nn.Module):
         self,
         signal_sampler,
         noise_sampler,
+        processor,
         B,
         S,
         T,
@@ -194,6 +198,7 @@ class CompiledScatterBlock(nn.Module):
 
         self.signal_sampler = signal_sampler
         self.noise_sampler = noise_sampler
+        self.processor = processor
         self.B, self.S, self.T, self.P = (B, S, T, P)
         self.model = model
         self.loss_function = loss_function
@@ -252,7 +257,7 @@ class CompiledScatterBlock(nn.Module):
         targets = noise_targets + signal_target_pad
 
         # Preprocess
-        x, targets = self.processor(x, targets)
+        x = self.processor(x)
 
         # Forward
         with torch.autocast(device_type="cuda") if self.cfg.autocast else nullcontext():
