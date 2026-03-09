@@ -34,15 +34,14 @@ from typing import List, Callable, Optional, Union
 ## Base: Generic sequential module ##
 
 
-class TorchSequential(nn.Module):
+class Preprocessor(nn.Module):
+
     def __init__(self, modules):
         super().__init__()
-        self.modules_list = nn.ModuleList(modules)
+        self.seq = nn.Sequential(*modules)
 
     def forward(self, x):
-        for m in self.modules_list:
-            x = m(x)
-        return x
+        return self.seq(x)
 
 
 ## Base: Probabilistic per-sample choice ##
