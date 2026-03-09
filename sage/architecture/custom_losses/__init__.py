@@ -22,3 +22,7 @@ Github Repository: NULL
 Documentation: NULL
 
 """
+
+from .loss_functions import BCEWithPEregLoss
+
+__all__ = ["BCEWithPEregLoss"]
