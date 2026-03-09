@@ -145,6 +145,9 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         ranking_statistic = self.get_ranking_statistic(features)
 
         # Each point estimate has its own Linear layer
-        point_estimates = [layer(features) for layer in self.point_estimate_layers]
+        point_estimates = torch.cat(
+            [layer(features) for layer in self.point_estimate_layers],
+            dim=1,
+        )
 
         return ranking_statistic, point_estimates
