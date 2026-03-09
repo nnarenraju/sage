@@ -65,6 +65,21 @@ class SageVanillaTraining(torch.nn.Module):
         # But it can be used to make static tracking variables
         self.num_epochs = num_epochs
 
+        # Gradient scaler if we use autocast
+        # Since we use fp16 and not bf16, this should keep us away from dead neurons
+        self.scaler = torch.amp.GradScaler("cuda") if self.cfg.autocast else None
+
+        # Compile manager
+        manager = CompileManager(
+            generator=(signal_sampler, noise_sampler),
+            processor=processor,
+            model=model,
+            loss_function=loss_function,
+        )
+
+        self.compiled_block = manager.compiled_block
+        self.uncompiled_generator = manager.uncompiled_block
+
         # Tracking
         self.loss_components = torch.zeros(
             (num_epochs, self.loss_function.num_components),
@@ -79,22 +94,21 @@ class SageVanillaTraining(torch.nn.Module):
 
         for nbatch in range(self.num_iterations):
 
-            # NOTE: This part is what we wanted to compile!!
-            # Sample from data generator
-            x, targets = self.data_generator()
+            # Generate non-graph-safe data
+            signal, noise = self.uncompiled_generator()
 
             # Reset the gradients of all optimised torch tensors
             self.optimiser.zero_grad(set_to_none=True)
 
-            with (
-                torch.autocast(device_type="cuda")
-                if self.cfg.autocast
-                else nullcontext()
-            ):
-                out = self.model(x)
-                loss = self.loss_function(out, targets)
+            # Run compiled pipeline
+            loss = self.compiled_block(signal, noise)
 
-            loss.backward()
+            # Backprop update using gradient scaler (if needed)
+            if self.scaler is not None:
+                self.scaler.scale(loss).backward()
+                self.scaler.unscale_(self.optimiser)
+            else:
+                loss.backward()
 
             # Clip gradients to make convergence somewhat easier
             torch.nn.utils.clip_grad_norm_(
@@ -102,7 +116,14 @@ class SageVanillaTraining(torch.nn.Module):
                 max_norm=self.cfg.clip_norm,
             )
 
-            self.optimiser.step()
+            # Optimiser update using gradient scaler (if needed)
+            if self.scaler is not None:
+                self.scaler.step(self.optimiser)
+                self.scaler.update()
+            else:
+                self.optimiser.step()
+
+            # Update scheduler
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
 
             # Storing total loss this epoch
