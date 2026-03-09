@@ -97,9 +97,15 @@ class ExpressionConstraint:
         return eval(self.expr, {}, params)
 
 
-class DistributionSampler:
+class DistributionSampler(torch.nn.Module):
 
     def __init__(self, config: Dict[str, Any], device, dtype):
+
+        super().__init__()
+
+        # Shared config
+        self.sage_cfg = get_cfg()
+
         self.cfg = config
         self.device = device
         self.dtype = dtype
@@ -145,6 +151,7 @@ class DistributionSampler:
         self.param_names = sorted(self.param_names)
         self.param_index = {name: i for i, name in enumerate(self.param_names)}
         self.num_params = len(self.param_names)
+        self.req_idx = None
 
         self._build_distributions()
         self._build_transforms()
@@ -430,123 +437,51 @@ class DistributionSampler:
 
         return normalisers
 
-    def make_selected_batch_normalisers(self, selected_names):
+    def _compile_batch_normaliser(self):
         """
-        Precompute indices and Normalise objects for fast reuse.
-
-        Returns
-        -------
-        callable(batch) -> torch.Tensor
-            Normalised batch subset
+        Precompute tensors used for fast batch normalisation,
+        adjusted for the sliced parameter subset (self.req_idx).
         """
 
-        indices = torch.tensor(
-            [self.param_index[name] for name in selected_names],
-            dtype=torch.long,
+        selected_names = self.sage_cfg.do_point_estimate
+
+        # Convert to tensor (register as buffer)
+        idxs = [self.param_index[key] for key in selected_names]
+        indices_tensor = torch.tensor(idxs, dtype=torch.long)
+
+        # Get min/max for selected names
+        mins = torch.tensor(
+            [self.normalisers[name].min_val for name in selected_names],
+            dtype=self.sage_cfg.dtype,
         )
+        maxs = torch.tensor(
+            [self.normalisers[name].max_val for name in selected_names],
+            dtype=self.sage_cfg.dtype,
+        )
+        scales = maxs - mins
 
-        normalisers = [self.normalisers[name] for name in selected_names]
+        # Register as buffers (safe and device-aware)
+        self.register_buffer("_norm_indices", indices_tensor)
+        self.register_buffer("_norm_mins", mins)
+        self.register_buffer("_norm_scales", scales)
 
-        def normalise_fn(batch):
-            """
-            batch: (B, total_params)
-            returns: (B, len(selected_names))
-            """
-            selected = batch.index_select(1, indices.to(batch.device))
-
-            normed = torch.empty_like(selected)
-
-            for col, norm_obj in enumerate(normalisers):
-                normed[:, col] = norm_obj.norm(selected[:, col])
-
-            return normed
-
-        return normalise_fn
-
-    def norm_from_batch(self, batch, selected_names):
-        """
-        Extract and normalise selected parameters from a full batch.
-
-        Parameters
-        ----------
-        batch : torch.Tensor
-            Shape (B, total_params)
-        selected_names : list[str]
-
-        Returns
-        -------
-        torch.Tensor
-            Shape (B, len(selected_names))
-        """
+    def norm_from_batch(self, batch):
 
         if batch.ndim != 2:
             raise ValueError("batch must be 2D (B, total_params)")
 
-        key = tuple(selected_names)
+        selected = batch.index_select(1, self._norm_indices)
 
-        # Compile once
-        if key not in self._norm_cache:
+        return (selected - self._norm_mins) / self._norm_scales
 
-            indices = torch.tensor(
-                [self.param_index[name] for name in selected_names],
-                dtype=torch.long,
-            )
-
-            normalisers = [self.normalisers[name] for name in selected_names]
-
-            self._norm_cache[key] = (indices, normalisers)
-
-        indices, normalisers = self._norm_cache[key]
-
-        # Extract columns
-        selected = batch.index_select(1, indices.to(batch.device))
-
-        # Apply existing Normalise.norm()
-        normed = torch.empty_like(selected)
-
-        for col, norm_obj in enumerate(normalisers):
-            normed[:, col] = norm_obj.norm(selected[:, col])
-
-        return normed
-
-    def unnorm_from_batch(self, normed_batch, selected_names):
-        """
-        Unnormalise selected parameters back to physical scale.
-
-        Parameters
-        ----------
-        normed_batch : torch.Tensor
-            Shape (B, len(selected_names))
-        selected_names : list[str]
-
-        Returns
-        -------
-        torch.Tensor
-            Shape (B, len(selected_names))
-        """
+    def unnorm_from_batch(self, normed_batch):
 
         if normed_batch.ndim != 2:
             raise ValueError("normed_batch must be 2D")
 
-        key = tuple(selected_names)
+        return normed_batch * self._norm_scales + self._norm_mins
 
-        if key not in self._norm_cache:
-            # Trigger compilation
-            self.norm_from_batch(
-                torch.zeros(1, self.num_params, device=normed_batch.device),
-                selected_names,
-            )
-
-        indices, normalisers = self._norm_cache[key]
-
-        unnormed = torch.empty_like(normed_batch)
-
-        for col, norm_obj in enumerate(normalisers):
-            unnormed[:, col] = norm_obj.unnorm(normed_batch[:, col])
-
-        return unnormed
-
-    def sample(self, N: int):
+    def forward(self, N: int):
 
         params = self._sample_base(N)
         params = self._enforce_constraints(params)
