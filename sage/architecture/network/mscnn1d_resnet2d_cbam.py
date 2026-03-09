@@ -38,6 +38,8 @@ from ..backend.resnet2d_cbam import (
 
 from ..frontend.mscnn1d import ConvBlock, _initialize_frontend_weights
 
+from sage.core.config import get_cfg, get_data_cfg
+
 
 class MSCNN1D_2DResNetCBAM(nn.Module):
     """
@@ -53,16 +55,17 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
 
     def __init__(
         self,
-        num_detectors: int = 2,
         frontend_filters: int = 32,
         frontend_kernel: int = 64,
         backend_resnet_size: int = 50,
         norm_type: str = "instancenorm",
-        num_point_estimates: int = 2,
     ):
         super().__init__()
 
-        self.num_detectors = num_detectors
+        # Shared configs
+        cfg = get_cfg()
+
+        self.num_detectors = len(cfg.detectors)
 
         # Normalization layer
         norm_layers = {
@@ -74,7 +77,10 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
 
         # CNN Frontend per detector
         self.frontend = nn.ModuleList(
-            [ConvBlock(frontend_filters, frontend_kernel) for _ in range(num_detectors)]
+            [
+                ConvBlock(frontend_filters, frontend_kernel)
+                for _ in range(self.num_detectors)
+            ]
         )
 
         # ResNet Backend
@@ -98,6 +104,7 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         self.get_ranking_statistic = nn.Linear(512, 1)
 
         # Create a Linear layer for each point estimate
+        num_point_estimates = len(cfg.do_point_estimate)
         self.point_estimate_layers = nn.ModuleList(
             [nn.Linear(512, 1) for _ in range(num_point_estimates)]
         )
@@ -106,8 +113,8 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         self._initialise_weights()
 
     def _initialise_weights(self):
-        nn.init.normal_(self.signal_or_noise.weight, 0, 0.01)
-        nn.init.zeros_(self.signal_or_noise.bias)
+        nn.init.normal_(self.get_ranking_statistic.weight, 0, 0.01)
+        nn.init.zeros_(self.get_ranking_statistic.bias)
 
         for layer in self.point_estimate_layers:
             nn.init.normal_(layer.weight, 0, 0.01)
