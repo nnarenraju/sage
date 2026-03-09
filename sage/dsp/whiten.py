@@ -23,6 +23,7 @@ Documentation: NULL
 """
 
 # Packages
+import math
 import torch
 import matplotlib.pyplot as plt
 
@@ -65,7 +66,7 @@ class FiducialWhitening(torch.nn.Module):
         self.delta_f = torch.tensor(delta_f).to(device=cfg.device)
 
         # Whitening
-        whitening = 2 * self.delta_f / torch.sqrt(0.5 * fiducial_psds)
+        whitening = 2 * self.delta_f / (math.sqrt(0.5) * fiducial_psds)
         # Final whitening moved to device
         whitening = whitening.to(device=cfg.device)
 
