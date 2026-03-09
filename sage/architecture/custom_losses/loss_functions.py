@@ -23,84 +23,56 @@ Documentation: NULL
 
 """
 
-# IN-BUILT
+# Packages
 import torch
-import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
+
+# LOCAL
+from sage.core.config import get_cfg
 
 
-class BCEWithPEregLoss:
+class BCEWithPEregLoss(nn.Module):
 
-    def __init__(self, gw_loss=None, mse_alpha=1.0):
-
+    def __init__(self, regression_weight: float = 1.0):
         super().__init__()
-        # MSE Loss is always ON with PE
-        assert mse_alpha >= 0.0, "mse_alpha must be greater than or equal to 0.0"
-        # Set generic params
-        self.mse_alpha = mse_alpha
-        self.gw_loss = gw_loss
 
-    def __str__(self):
-        # Display details of loss function
-        str = "Loss function = {}".format(self.gw_loss.__class__.__name__)
-        return str
+        # Weight between classification and regression
+        self.regression_weight = regression_weight
 
-    def forward(self, outputs, targets, source_params, cfg):
-        # BCE to check whether the signal contains GW or is pure noise
-        # MSE for calculation of correct 'tc'
-        custom_loss = {}
-        BCEgw = self.gw_loss(outputs["raw"], targets["gw"])
-        custom_loss["gw"] = BCEgw
+        # Required for training tracker
+        cfg = get_cfg()
+        self.num_components = len(cfg.do_point_estimate) + 1
 
-        """
-        MSE - Mean Squared Error Loss
-        For the handling of 'tc'
-        MSEloss = (alpha / N_batch) * SUMMATION (target_tc - pred_tc)^2 / variance_tc
-        """
-        MSEpe = 0
-        if "parameter_estimation" in cfg.model_params.keys():
-            if len(cfg.model_params["parameter_estimation"]) != 0:
-                for key in cfg.model_params["parameter_estimation"]:
-                    # Get a masked loss calculation for parameter estimation
-                    # Ignore all targets corresponding to pure noise samples
-                    if self.mse_alpha == 0.0:
-                        pe_loss = torch.tensor(0.0).to(
-                            device="cuda:{}".format(BCEgw.get_device())
-                        )
-                        custom_loss[key] = pe_loss
-                        MSEpe += pe_loss
-                        continue
+    def forward(self, outputs, targets):
 
-                    mask = torch.ge(targets[key], 0.0)
-                    masked_target = torch.masked_select(targets[key], mask)
-                    masked_output = torch.masked_select(outputs[key], mask)
-                    assert (
-                        -1 not in masked_target
-                    ), "Found invalid value (-1) in PE target. Noise sample may have leaked into signals!"
-                    if len(masked_target) == 0:
-                        pe_loss = torch.tensor(0.0)
-                    else:
-                        pe_loss = self.mse_alpha * torch.mean(
-                            (masked_target - masked_output) ** 2
-                        )
+        ranking_stat, point_estimates = outputs
 
-                    # Store losses
-                    if torch.is_tensor(pe_loss) and torch.isnan(pe_loss):
-                        raise ValueError(
-                            "PE Loss for {} is nan! val = {}".format(key, pe_loss)
-                        )
-                    if not torch.is_tensor(pe_loss):
-                        if np.isnan(pe_loss):
-                            raise ValueError(
-                                "PE Loss for {} is nan! val = {}".format(key, pe_loss)
-                            )
+        # Classification target
+        class_target = targets[:, -1].to(ranking_stat.dtype)
 
-                    custom_loss[key] = pe_loss
-                    MSEpe += pe_loss
+        # BCE expects same shape
+        ranking_stat = ranking_stat.reshape(-1)
 
-        """ 
-        CUSTOM LOSS FUNCTION
-        L = BCE(P_0) + alpha * MSE(P_1)
-        """
-        custom_loss["total_loss"] = BCEgw + MSEpe
+        bce_loss = F.binary_cross_entropy_with_logits(
+            ranking_stat,
+            class_target,
+        )
 
-        return custom_loss
+        # Regression targets
+        pe_targets = targets[:, :-1]
+        signal_mask = targets[:, -1].unsqueeze(1)
+
+        # MSE loss with mean performed only for signal batch
+        reg = F.smooth_l1_loss(point_estimates, pe_targets, reduction="none")
+        reg = reg * signal_mask
+
+        # This weights PE based on perceived signal probability
+        p_signal = torch.sigmoid(ranking_stat).detach()
+        reg = reg * p_signal.unsqueeze(1)
+        reg_loss = reg.sum() / signal_mask.sum().clamp_min(1)
+
+        # Final total loss BCE + weighted MSE regularisation
+        total_loss = bce_loss + self.regression_weight * reg_loss
+
+        return total_loss
