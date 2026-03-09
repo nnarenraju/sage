@@ -45,17 +45,19 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         torch.nn.Module.__init__(self)
 
         # Setup configs
-        cfg = get_cfg()
+        self.cfg = get_cfg()
         self.data_cfg = get_data_cfg()
+
+        self.signal_batch_size = int(self.cfg.batch_size * self.cfg.class_balance)
 
         # Fixed frequency grid
         f, f_ref = waveform_utils.get_freqs(
             self.data_cfg.signal_low_frequency_cutoff,
             self.data_cfg.sample_rate / 2.0,
             self.data_cfg.padded_length_in_s,
-            cfg.batch_size,
-            cfg.device,
-            cfg.dtype,
+            self.signal_batch_size,
+            self.cfg.device,
+            self.cfg.dtype,
         )
         self.f = f
         self.df = f[0][1] - f[0][0]
@@ -110,20 +112,35 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
                 dtype=torch.int32,
             )
 
-    def forward(self):
-        theta = self.param_sampler.sample(self.B)[:, self.req_idx]
+        # Target handling
+        self.param_sampler.req_idx = self.req_idx
+        self.param_sampler._compile_batch_normaliser()
 
-        hp, hc = self.get_hphc(theta)
+        # Move to correct device
+        self.param_sampler.to(self.cfg.device)
+        self.waveform_project.to(self.cfg.device)
+
+    def forward(self):
+        all_theta = self.param_sampler(self.B)
+        req_theta = all_theta[:, self.req_idx]
+
+        hp, hc = self.get_hphc(req_theta)
 
         hf = self.waveform_project(
             hp,
             hc,
-            ra=theta[:, -2],
-            dec=theta[:, -1],
-            polarization=theta[:, -3],
+            ra=req_theta[:, -2],
+            dec=req_theta[:, -1],
+            polarization=req_theta[:, -3],
         )
 
-        return hf
+        # Target handling
+        normed_targets = self.param_sampler.norm_from_batch(all_theta)
+        targets = torch.cat(
+            [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
+        )
+
+        return hf, targets
 
     def get_hphc(self, theta, reproduce_lal=False):
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
@@ -223,7 +240,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         hp = c2z * hp + s2z * hc
         hc = c2z * hc - s2z * hp
 
-        if not reproduce_lal:
+        if not reproduce_lal and False:
             # Frequency domain tapering
             _taper = taper.fd_taper(
                 f=self.f,
