@@ -45,6 +45,8 @@ class SageVanillaTraining(torch.nn.Module):
         num_iterations,
         num_epochs,
     ):
+        super().__init__()
+
         # Get shared configs
         self.cfg = get_cfg()
 
@@ -91,11 +93,13 @@ class SageVanillaTraining(torch.nn.Module):
             ):
                 out = self.model(x)
                 loss = self.loss_function(out, targets)
-                loss.backward()
+
+            loss.backward()
 
             # Clip gradients to make convergence somewhat easier
             torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(), max_norm=self.cfg.clip_norm
+                self.model.parameters(),
+                max_norm=self.cfg.clip_norm,
             )
 
             self.optimiser.step()
