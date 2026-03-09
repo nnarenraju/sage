@@ -38,7 +38,7 @@ class CompileManager:
 
     def __init__(
         self,
-        generator: Iterable[nn.Module, nn.Module],
+        generator,
         processor: Iterable,
         model: nn.Module,
         loss_function: nn.Module,
@@ -63,7 +63,7 @@ class CompileManager:
 
         self.compiled_block = self._make_compiled_block()
 
-    def uncompiled_generator(self):
+    def uncompiled_block(self):
         signal = None
         noise = None
 
@@ -82,7 +82,7 @@ class CompileManager:
             self.signal_sampler,
             self.noise_sampler,
             self.cfg.batch_size,
-            self.cfg.batch_size // 2,
+            int(self.cfg.batch_size * self.cfg.class_balance),
             self.num_targets,
             self.num_point_estimate,
             self.model,
