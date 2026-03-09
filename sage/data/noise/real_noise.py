@@ -335,6 +335,11 @@ class MemmapNoiseSampler(torch.nn.Module):
         self.segment_probs = []
         self.dtypes = []
 
+        # Targets for noise batch
+        self.noise_target = torch.zeros((self.batch_size, 1)).to(
+            dtype=cfg.dtype, device=cfg.device
+        )
+
         # Load metadata and memmaps
         for p in self.bin_files:
             meta_path = p.parent / f"{p.stem}_segments.json"
@@ -476,7 +481,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         return batch_tensor
 
     def forward(self):
-        return self.sample_batch(), torch.zeros((self.batch_size, 1))
+        return self.sample_batch(), self.noise_target
 
     def shutdown(self):
         """Stop prefetch thread"""
