@@ -327,7 +327,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         self.prefetch = prefetch
         self.bin_files = [Path(f) for f in data_cfg.noise_files]
         self.n_detectors = len(cfg.detectors)
-        self._batch_size = cfg.batch_size
+        self.batch_size = cfg.batch_size
         self.postprocess_fn = postprocess_fn
 
         self.mmaps = []
@@ -461,7 +461,7 @@ class MemmapNoiseSampler(torch.nn.Module):
     def _prefetch_loop(self):
         while not self._stop_event.is_set():
             if not self.queue.full():
-                batch_tensor = self._read_batch(self._batch_size)
+                batch_tensor = self._read_batch(self.batch_size)
                 self.queue.put(batch_tensor)
             else:
                 # sleep briefly to yield CPU
@@ -476,7 +476,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         return batch_tensor
 
     def forward(self):
-        return self.sample_batch()
+        return self.sample_batch(), torch.zeros((self.batch_size, 1))
 
     def shutdown(self):
         """Stop prefetch thread"""
