@@ -54,8 +54,8 @@ class SageVanillaTraining(torch.nn.Module):
         self.signal_sampler = signal_sampler
         self.noise_sampler = noise_sampler
         self.processor = processor
-        self.model = model
-        self.loss_function = loss_function
+        self.model = model.to(device=self.cfg.device)
+        self.loss_function = loss_function.to(device=self.cfg.device)
         self.optimiser = optimiser
         self.scheduler = scheduler
 
