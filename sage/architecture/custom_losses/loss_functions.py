@@ -75,4 +75,4 @@ class BCEWithPEregLoss(nn.Module):
         # Final total loss BCE + weighted MSE regularisation
         total_loss = bce_loss + self.regression_weight * reg_loss
 
-        return total_loss
+        return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
