@@ -27,3 +27,4 @@ from .approximants.IMRPhenomD import IMRPhenomD
 from .approximants.IMRPhenomPv2 import IMRPhenomPv2
 from .project import ConstantProjection
 from .sampler import read_from_config
+from .distributions.snr_rescaling import HalfNorm
