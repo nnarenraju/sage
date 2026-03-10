@@ -252,10 +252,10 @@ class SageUncompiledTraining(torch.nn.Module):
 
             # Backward
             if self.scaler is not None:
-                self.scaler.scale(loss).backward()
+                self.scaler.scale(loss[0]).backward()
                 self.scaler.unscale_(self.optimiser)
             else:
-                loss.backward()
+                loss[0].backward()
 
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(
