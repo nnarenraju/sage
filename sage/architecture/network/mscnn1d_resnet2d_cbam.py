@@ -36,7 +36,7 @@ from ..backend.resnet2d_cbam import (
     resnet152_cbam,
 )
 
-from ..frontend.mscnn1d import ConvBlock, _initialize_frontend_weights
+from ..frontend.mscnn1d_cbam import ConvBlock, _initialize_frontend_weights
 
 from sage.core.config import get_cfg, get_data_cfg
 
