@@ -36,8 +36,15 @@ Documentation:
 # Packages
 import torch
 
+from torch import Tensor
+from typing import Callable
 
-class OptimalSNREstimator:
+# LOCAL
+from sage.core.config import get_cfg, get_data_cfg
+from sage.data.psd import get_fiducial_psds
+
+
+class OptimalSNREstimator(torch.nn.Module):
     """
     Fast batched optimal SNR calculator (PyCBC sigmasq equivalent).
 
@@ -47,7 +54,7 @@ class OptimalSNREstimator:
     psd : (D, F)    real
     """
 
-    def __init__(self, psds, delta_f, f_low=None, f_high=None, device="cuda"):
+    def __init__(self):
         """
         Parameters
         ----------
@@ -58,17 +65,25 @@ class OptimalSNREstimator:
             Frequency cutoffs
         """
 
-        self.device = device
-        self.delta_f = float(delta_f)
+        super().__init__()
+
+        # Shared config
+        cfg = get_cfg()
+        data_cfg = get_data_cfg()
+
+        self.device = cfg.device
+        self.delta_f = data_cfg.delta_f
 
         # store PSD once (broadcast ready)
-        self.psds = psds.to(device)
+        self.psds = get_fiducial_psds()
         self.psds = self.psds.unsqueeze(0)  # (1, D, F)
 
         # precompute mask once (compile safe)
         self.mask = None
+        f_low = data_cfg.signal_low_frequency_cutoff
+        f_high = data_cfg.sample_rate // 2
         if f_low is not None and f_high is not None:
-            F = psds.shape[-1]
+            F = self.psds.shape[-1]
             self.mask = self._make_frequency_mask(F, f_low, f_high)
 
     def _make_frequency_mask(self, F, f_low, f_high):
@@ -77,11 +92,9 @@ class OptimalSNREstimator:
 
         mask = torch.zeros(F, dtype=self.psds.dtype, device=self.device)
         mask[k_low:k_high] = 1.0
-        print(mask.sum())
         return mask.view(1, 1, F)  # broadcastable
 
-    @torch.compile(fullgraph=True)
-    def __call__(self, h):
+    def forward(self, h):
         """
         Batched optimal SNR for multi-detector frequency-domain waveforms.
 
@@ -120,7 +133,46 @@ class OptimalSNREstimator:
         # network combine
         rho2_net = rho2_det.sum(dim=1, keepdim=True)  # (B,1)
 
-        rho_det = torch.sqrt(rho2_det).unsqueeze(-1)  # (B,D,1)
-        rho_net = torch.sqrt(rho2_net)  # (B,1)
+        rho_det = torch.sqrt(rho2_det)  # (B,D,1)
+        rho_net = torch.sqrt(rho2_net).squeeze(-1)  # (B,1)
 
         return rho_net, rho_det
+
+
+class OptimalSNRRescaler(torch.nn.Module):
+    """
+    Rescales a batch of signals to match target SNRs.
+
+    Args:
+        snr_estimator: instance of OptimalSNREstimator
+        target_snr_sampler: callable(batch_size) -> Tensor of target SNRs
+    """
+
+    def __init__(self, target_snr_sampler: Callable[[int], Tensor]):
+        super().__init__()
+        self.snr_estimator = OptimalSNREstimator()
+        self.target_snr_sampler = target_snr_sampler
+
+    @torch.no_grad()
+    def forward(self, signal_batch: Tensor) -> Tensor:
+        """
+        Rescale signals to target SNR.
+
+        Args:
+            signal_batch: shape [B, L] or [B, C, L]
+        Returns:
+            rescaled_signal_batch: same shape as input
+        """
+        B = signal_batch.size(0)
+        device = signal_batch.device
+
+        # Compute current network-optimal SNR
+        rho_net, _ = self.snr_estimator(signal_batch)  # [B]
+
+        # Sample target SNRs (already float tensor)
+        target_rho = self.target_snr_sampler(B).to(device)
+
+        # Compute scaling factors safely
+        scale = target_rho.div(rho_net + 1e-12)  # [B]
+
+        return signal_batch * scale[:, None, None]
