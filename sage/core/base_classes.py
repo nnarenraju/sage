@@ -64,6 +64,14 @@ class BaseDataConfig:
             * self.sample_rate
         )
 
+    @cached_property
+    def padded_delta_f(self):
+        return 1.0 / (self.sample_length_in_s + (2.0 * self.padding_length_in_s))
+
+    @cached_property
+    def delta_f(self):
+        return 1.0 / (self.sample_length_in_s)
+
 
 class BaseConfig:
 
