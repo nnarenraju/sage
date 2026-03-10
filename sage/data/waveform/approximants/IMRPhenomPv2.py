@@ -40,7 +40,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
     GRAPH_READY = True
 
-    def __init__(self, param_sampler=None, waveform_project=None):
+    def __init__(self, param_sampler=None, waveform_project=None, augment=None):
 
         torch.nn.Module.__init__(self)
 
@@ -84,6 +84,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # Parameter sampler
         self.param_sampler = param_sampler
         self.waveform_project = waveform_project
+        self.augment = augment
 
         # param names needed for Pv2
         self.param_names = [
@@ -133,6 +134,9 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             dec=req_theta[:, -1],
             polarization=req_theta[:, -3],
         )
+
+        # TODO: Handle distance rescaling after augment
+        hf = self.augment(hf)
 
         # Target handling
         normed_targets = self.param_sampler.norm_from_batch(all_theta)
