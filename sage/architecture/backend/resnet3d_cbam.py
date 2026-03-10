@@ -27,7 +27,6 @@ Documentation: NULL
 import math
 import torch
 import torch.nn as nn
-import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
 
 
@@ -335,8 +334,8 @@ class ResNet(nn.Module):
         )
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.detector_fusion = DetectorFusion(128)
-        self.coherence_attention = CoherenceAttention(128)
+        self.detector_fusion = DetectorFusion(128 * block.expansion)
+        self.coherence_attention = CoherenceAttention(128 * block.expansion)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilation=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilation=4)
         self.temporal_transformer = TemporalTransformer(512 * block.expansion)
@@ -367,7 +366,7 @@ class ResNet(nn.Module):
                     self.inplanes,
                     planes * block.expansion,
                     kernel_size=1,
-                    stride=(1, stride, 1),
+                    stride=(1, stride, stride),
                     bias=False,
                 ),
                 nn.BatchNorm3d(planes * block.expansion),
