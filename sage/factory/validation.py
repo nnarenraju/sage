@@ -26,35 +26,48 @@ Documentation: NULL
 # Packages
 import torch
 
+from tqdm import tqdm
 from contextlib import nullcontext
 
 # LOCAL
 from sage.core.config import get_cfg
 
 
-class SageVanillaValidation(torch.nn.Module):
+class SageUncompiledValidation(torch.nn.Module):
 
     def __init__(
         self,
-        data_generator,
+        signal_sampler,
+        noise_sampler,
+        processor,
         model,
         loss_function,
         num_iterations,
         num_epochs,
     ):
-        # Get shared configs
+        super().__init__()
+
+        # Shared config
         self.cfg = get_cfg()
 
-        # Arranged in order of processing
-        self.data_generator = data_generator
+        # Components
+        self.signal_sampler = signal_sampler
+        self.noise_sampler = noise_sampler
+        self.processor = processor
         self.model = model
         self.loss_function = loss_function
 
-        # Training params
+        # Validation params
         self.num_iterations = num_iterations
-        # NOTE: Wrapper does not care about num_epochs per se
-        # But it can be used to make static tracking variables
         self.num_epochs = num_epochs
+
+        # Target structure
+        self.num_point_estimate = len(self.cfg.do_point_estimate)
+        self.num_targets = self.num_point_estimate + 1
+
+        # Batch structure
+        self.B = self.cfg.batch_size
+        self.S = int(self.cfg.batch_size * self.cfg.class_balance)
 
         # Tracking
         self.loss_components = torch.zeros(
@@ -65,27 +78,62 @@ class SageVanillaValidation(torch.nn.Module):
 
     def forward(self, nepoch):
 
-        # Set model to evaluation mode
+        device = self.cfg.device
+
+        # Evaluation mode
         self.model.eval()
 
-        # Turning off Gradient evaluation
-        with torch.no_grad():
+        with torch.inference_mode():
 
-            for _ in range(self.num_iterations):
+            for _ in tqdm(range(self.num_iterations)):
 
-                # Sample from data generator
-                x, targets = self.data_generator()
+                # Generate batches
+                signal_data, signal_targets = self.signal_sampler()
+                noise_data, noise_targets = self.noise_sampler()
 
+                # Pad noise targets
+                pad = torch.zeros(
+                    noise_targets.shape[0],
+                    self.num_point_estimate,
+                    device=device,
+                    dtype=noise_targets.dtype,
+                )
+
+                noise_targets = torch.cat((pad, noise_targets), dim=1)
+
+                # Random signal placement
+                idx = torch.randperm(self.B, device=device)[: self.S]
+
+                signal_pad = torch.zeros_like(noise_data)
+
+                target_pad = torch.zeros(
+                    self.B,
+                    self.num_targets,
+                    device=device,
+                    dtype=signal_targets.dtype,
+                )
+
+                signal_pad[idx] = signal_data
+                target_pad[idx] = signal_targets
+
+                # Combine signal + noise
+                x = noise_data + signal_pad
+                targets = noise_targets + target_pad
+
+                # Preprocess
+                x = self.processor(x)
+
+                # Forward pass
                 with (
-                    torch.autocast(device_type="cuda")
+                    torch.autocast(device_type="cuda", dtype=torch.float16)
                     if self.cfg.autocast
                     else nullcontext()
                 ):
                     out = self.model(x)
                     loss = self.loss_function(out, targets)
 
-                # Storing total loss this epoch
+                # Track losses
                 self.loss_components[nepoch] += loss.detach()
 
-        # Average losses
+        # Average loss
         self.loss_components[nepoch] /= self.num_iterations
