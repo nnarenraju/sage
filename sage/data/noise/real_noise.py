@@ -316,6 +316,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         self,
         postprocess_fn=None,
         prefetch: int = 3,
+        seed=None,
     ):
         super().__init__()
 
@@ -384,7 +385,8 @@ class MemmapNoiseSampler(torch.nn.Module):
             probs = usable / total
             self.segment_probs.append(probs)
 
-        self.rng = np.random.default_rng()
+        # deterministic RNG for reproducible training
+        self.rng = np.random.default_rng(seed)
 
         # Prefetch queue
         self.queue = Queue(maxsize=self.prefetch)
