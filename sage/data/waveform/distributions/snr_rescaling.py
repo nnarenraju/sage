@@ -35,11 +35,12 @@ class HalfNorm(nn.Module):
 
     def __init__(self, scale=1.0, loc=0.0, seed=None):
         super().__init__()
-        self.register_buffer("scale", torch.tensor(scale))
-        self.register_buffer("loc", torch.tensor(loc))
 
         # Shared config
         cfg = get_cfg()
+
+        self.register_buffer("scale", torch.tensor(scale).to(device=cfg.device))
+        self.register_buffer("loc", torch.tensor(loc).to(device=cfg.device))
 
         # Create a generator with a specific seed
         self.gen = torch.Generator(device=cfg.device)
