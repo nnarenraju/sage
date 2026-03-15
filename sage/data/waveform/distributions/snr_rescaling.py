@@ -27,14 +27,28 @@ Documentation: NULL
 import torch
 import torch.nn as nn
 
+# LOCAL
+from sage.core.config import get_cfg
+
 
 class HalfNorm(nn.Module):
 
-    def __init__(self, scale=1.0, loc=0.0):
+    def __init__(self, scale=1.0, loc=0.0, seed=None):
         super().__init__()
         self.register_buffer("scale", torch.tensor(scale))
         self.register_buffer("loc", torch.tensor(loc))
 
+        # Shared config
+        cfg = get_cfg()
+
+        # Create a generator with a specific seed
+        self.gen = torch.Generator(device=cfg.device)
+        self.gen.manual_seed(seed)
+
     def forward(self, batch_size: int):
-        x = torch.randn(batch_size, device=self.scale.device).abs()
+        x = torch.randn(
+            batch_size,
+            device=self.scale.device,
+            generator=self.gen,
+        ).abs()
         return x * self.scale + self.loc

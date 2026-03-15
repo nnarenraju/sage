@@ -136,7 +136,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         )
 
         # TODO: Handle distance rescaling after augment
-        hf = self.augment(hf)
+        if self.augment:
+            hf = self.augment(hf)
 
         # Target handling
         normed_targets = self.param_sampler.norm_from_batch(all_theta)

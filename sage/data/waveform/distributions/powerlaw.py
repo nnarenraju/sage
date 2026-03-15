@@ -41,9 +41,9 @@ class UniformPowerLaw:
         self.high = high
         self.dim = dim
 
-    def sample(self, shape, device=None, dtype=torch.float32):
+    def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         """Sample a batch from the power-law distribution on GPU."""
-        u = torch.rand(shape, device=device, dtype=dtype)
+        u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
         n = self.dim - 1
         return (
             (self.high ** (n + 1) - self.low ** (n + 1)) * u + self.low ** (n + 1)

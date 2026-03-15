@@ -69,16 +69,21 @@ def spherical_to_cartesian(radial, polar, azimuthal):
     )
 
 
-def read_from_config(path):
+def read_from_config(path, seed):
     with open(path, "r") as f:
         config = yaml.safe_load(f)
 
     sage_cfg = get_cfg()
 
+    # Create a generator with a specific seed
+    gen = torch.Generator(device=sage_cfg.device)
+    gen.manual_seed(seed)
+
     return DistributionSampler(
         config,
         device=sage_cfg.device,
         dtype=sage_cfg.dtype,
+        generator=gen,
     )
 
 
@@ -99,12 +104,15 @@ class ExpressionConstraint:
 
 class DistributionSampler(torch.nn.Module):
 
-    def __init__(self, config: Dict[str, Any], device, dtype):
+    def __init__(self, config: Dict[str, Any], device, dtype, generator):
 
         super().__init__()
 
         # Shared config
         self.sage_cfg = get_cfg()
+
+        # Generator
+        self.generator = generator
 
         self.cfg = config
         self.device = device
@@ -231,6 +239,7 @@ class DistributionSampler(torch.nn.Module):
                 (N,),
                 device=self.device,
                 dtype=self.dtype,
+                generator=self.generator,
             )
 
             if isinstance(sampled, dict):

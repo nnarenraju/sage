@@ -45,8 +45,17 @@ class UniformAngle:
         self.cyclic = cyclic_domain
         self.range = upper - lower
 
-    def sample(self, shape, device=None, dtype=torch.float32):
-        x = torch.rand(shape, device=device, dtype=dtype) * self.range + self.lower
+    def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        x = (
+            torch.rand(
+                shape,
+                device=device,
+                dtype=dtype,
+                generator=generator,
+            )
+            * self.range
+            + self.lower
+        )
         if self.cyclic:
             x = self.wrap(x)
         return x
@@ -67,9 +76,9 @@ class SinAngle(UniformAngle):
         self.cos_low = torch.cos(torch.tensor(self.high))
         self.cos_high = torch.cos(torch.tensor(self.low))
 
-    def sample(self, shape, device=None, dtype=torch.float32):
+    def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         # uniform in cos(theta)
-        u = torch.rand(shape, device=device, dtype=dtype)
+        u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
         cos_theta = u * (self.cos_high - self.cos_low) + self.cos_low
 
         # inverse CDF
@@ -89,9 +98,9 @@ class CosAngle(SinAngle):
         self.sin_low = torch.sin(torch.tensor(self.low))
         self.sin_high = torch.sin(torch.tensor(self.high))
 
-    def sample(self, shape, device=None, dtype=torch.float32):
+    def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         # uniform in sin(theta)
-        u = torch.rand(shape, device=device, dtype=dtype)
+        u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
         sin_theta = u * (self.sin_high - self.sin_low) + self.sin_low
 
         # inverse CDF
@@ -116,9 +125,19 @@ class UniformSolidAngle:
         self.polar_sampler = SinAngle(*polar_bounds)
         self.azimuth_sampler = UniformAngle(*azimuthal_bounds)
 
-    def sample(self, shape, device=None, dtype=torch.float32):
-        theta = self.polar_sampler.sample(shape, device=device, dtype=dtype)
-        phi = self.azimuth_sampler.sample(shape, device=device, dtype=dtype)
+    def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        theta = self.polar_sampler.sample(
+            shape,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        phi = self.azimuth_sampler.sample(
+            shape,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
 
         return {
             self.polar_name: theta,

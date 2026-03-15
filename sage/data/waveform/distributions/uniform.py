@@ -32,9 +32,10 @@ class Uniform:
         self.low = torch.tensor(low)
         self.scale = torch.tensor(high - low)
 
-    def sample(self, shape, device=None, dtype=torch.float32):
+    def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         return self.low + self.scale * torch.rand(
             shape,
             device=device,
             dtype=dtype,
+            generator=generator,
         )

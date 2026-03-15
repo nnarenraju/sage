@@ -52,9 +52,19 @@ class UniformSky:
         self.polar_sampler = CosAngle(*polar_bounds)
         self.azimuth_sampler = UniformAngle(*azimuthal_bounds)
 
-    def sample(self, shape, device=None, dtype=torch.float32):
-        dec = self.polar_sampler.sample(shape, device=device, dtype=dtype)
-        ra = self.azimuth_sampler.sample(shape, device=device, dtype=dtype)
+    def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        dec = self.polar_sampler.sample(
+            shape,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+        ra = self.azimuth_sampler.sample(
+            shape,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
 
         return {
             self.polar_name: dec,
