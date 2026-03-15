@@ -317,6 +317,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         postprocess_fn=None,
         prefetch: int = 3,
         seed=None,
+        training=True,
     ):
         super().__init__()
 
@@ -327,10 +328,15 @@ class MemmapNoiseSampler(torch.nn.Module):
         self.seq_len = data_cfg.padded_length_in_nsamples
         self.device = cfg.device
         self.prefetch = prefetch
-        self.bin_files = [Path(f) for f in data_cfg.noise_files]
         self.n_detectors = len(cfg.detectors)
         self.batch_size = cfg.batch_size
         self.postprocess_fn = postprocess_fn
+
+        # Set noise files
+        if training:
+            self.bin_files = [Path(f) for f in data_cfg.training_noise_files]
+        else:
+            self.bin_files = [Path(f) for f in data_cfg.validation_noise_files]
 
         self.mmaps = []
         self.seg_index = []
