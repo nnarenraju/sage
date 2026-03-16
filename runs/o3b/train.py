@@ -56,7 +56,10 @@ from sage.factory.training import SageUncompiledTraining
 from sage.factory.validation import SageUncompiledValidation
 
 # Configs
-from .config import O3aCFG, O3aDataCFG
+from config import O3aCFG, O3aDataCFG
+
+# Datasets
+from dataset import get_timeline, download_dataset, make_psds
 
 
 def make_training_graph():
@@ -105,7 +108,7 @@ def make_processor(training_param_sampler):
     return processor
 
 
-def register_configs():
+def get_configs():
 
     # Read configs
     cfg = BaseConfig(O3aCFG())
@@ -120,7 +123,13 @@ def register_configs():
 def run():
 
     # Shared configs
-    cfg, data_cfg = register_configs()
+    cfg, data_cfg = get_configs()
+
+    # Make datasets
+    tq = get_timeline(data_cfg)
+    download_dataset(tq, data_cfg)
+    for det in ["H1", "L1", "V1"]:
+        make_psds(det, data_cfg)
 
     # Training, validation and processor
     training_signal_sampler, training_noise_sampler = make_training_graph()
@@ -147,8 +156,8 @@ def run():
         loss_function,
         optimiser,
         scheduler,
-        num_iterations=100,
-        num_epochs=5,
+        num_iterations=cfg.training_iterations,
+        num_epochs=cfg.num_epochs,
     )
 
     validate_sage = SageUncompiledValidation(
@@ -157,12 +166,13 @@ def run():
         processor,
         model,
         loss_function,
-        num_iterations=10,
-        num_epochs=5,
+        num_iterations=cfg.validation_iterations,
+        num_epochs=cfg.num_epochs,
     )
 
     ## TRAINING LOOP
 
-    for i in range(5):
-        train_sage(nepoch=i)
-        validate_sage(nepoch=i)
+    for nepoch in range(cfg.num_epochs):
+        train_sage(nepoch=nepoch)
+        if nepoch % 5 == 0:
+            validate_sage(nepoch=nepoch)
