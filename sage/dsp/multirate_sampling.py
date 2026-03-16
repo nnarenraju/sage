@@ -174,7 +174,7 @@ class MultirateSampler(torch.nn.Module):
         # 31 taps → ~70 dB
         # 47 taps → ~85 dB
         # 63 taps → ~95 dB
-        NTAPS = 47
+        NTAPS = 63
 
         M = NTAPS - 1
         n = torch.arange(NTAPS, dtype=torch.float32)
@@ -183,8 +183,8 @@ class MultirateSampler(torch.nn.Module):
         h = torch.sinc((n - M / 2) / 2)
 
         # window (Kaiser safer than Hamming)
-        beta = 8.6  # ~80–90 dB attenuation
-        h *= torch.kaiser_window(NTAPS, beta=beta)
+        beta = 9  # A ~ 8.7 + 9.08 * beta ~ 90.4 dB attenuation
+        h *= torch.kaiser_window(NTAPS, periodic=False, beta=beta)
 
         # normalize DC gain
         # h /= h.sum() --> This does not preserve L2 energy
