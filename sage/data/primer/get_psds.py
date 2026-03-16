@@ -38,7 +38,7 @@ from pycbc import DYN_RANGE_FAC
 from sage.data.primer import NoBlackout
 from sage.dsp.inverse_spectrum_truncation import inverse_spectrum_truncation_single
 
-import matplotlib.pyplot as plt
+from sage.core.config import get_cfg, get_data_cfg
 
 
 class EstimatePSD:
@@ -65,8 +65,8 @@ class EstimatePSD:
         **kwargs,
     ):
         # Pull required runtime context
-        self.cfg = kwargs["cfg"]
-        self.data_cfg = kwargs["data_cfg"]
+        self.cfg = get_cfg()
+        self.data_cfg = get_data_cfg()
 
         self.detector = detector
         self.num_samples = int(num_samples)
