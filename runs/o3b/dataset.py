@@ -23,6 +23,10 @@ Documentation: NULL
 
 """
 
+# Packages
+import math
+
+
 # LOCAL
 from sage.data.primer import DataReleaseDownloader
 from sage.data.primer import TimelineQuery, get_all_detnames, get_all_runnames
@@ -35,15 +39,11 @@ from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.psd import smoothing
 
 
-def get_timeline():
+def get_timeline(data_cfg):
 
     tq = TimelineQuery(
         detector=["H1", "L1", "V1"],
-        observing_run=[
-            "O3a",
-        ],
-        start=1238166018,
-        end=1238176018,
+        observing_run=["O3b"],
         auto_clean_empty_timelines=True,
     )
 
@@ -56,10 +56,7 @@ def get_timeline():
         rm_window_length=30,
     )
 
-    # We trim the edges after downsamping; so trim length must be accounted for
-    # However it can't be arbitrary since we won't get a proper integer removal of samples
-    # So we get the nearest trim length above a threshold that will give us an integer for a given sample rate
-    buffer = math.ceil(0.2 * data_cfg.sample_rate) / data_cfg.sample_rate
+    buffer = _get_buffer(data_cfg)
 
     tq.split_into_mini_segments(
         mini_segment_length=512.0 + (buffer * 2.0),
@@ -72,8 +69,20 @@ def get_timeline():
         verbose=True,
     )
 
+    return tq
 
-def download_dataset():
+
+def _get_buffer(data_cfg):
+
+    # We trim the edges after downsamping; so trim length must be accounted for
+    # However it can't be arbitrary since we won't get a proper integer removal of samples
+    # So we get the nearest trim length above a threshold that will give us an integer for a given sample rate
+    return math.ceil(0.2 * data_cfg.sample_rate) / data_cfg.sample_rate
+
+
+def download_dataset(tq, data_cfg):
+
+    buffer = _get_buffer(data_cfg)
 
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
@@ -83,7 +92,7 @@ def download_dataset():
         corrupt_trim_length=buffer,
         max_download_retries=15,
         retry_delay=0.5,
-        num_workers=4,
+        num_workers=16,
         make_monolithic_file=True,
         sample_rate=data_cfg.sample_rate,
         save_bin=True,
@@ -92,7 +101,7 @@ def download_dataset():
     drd.download()
 
 
-def make_psds():
+def make_psds(detector, data_cfg):
 
     torch_welch = TorchWelch(
         delta_t=1 / 2048,
@@ -116,7 +125,7 @@ def make_psds():
         trunc_method="hann",
         # PSD estimation method
         psd_method=torch_welch,
-        num_samples=20,
+        num_samples=250_000,
         store_psds_as_bin=True,
         # Fiducial PSD parameters
         blackout_policy=NoBlackout(),
@@ -129,14 +138,15 @@ def make_psds():
 
     # This is used for whitening with the exact segment PSD before recolouring
     epsd.estimate_segment_psds(
-        noise_segments_file=f"./data_release/data_{detector}_O3a.bin"
+        noise_segments_file=f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin"
     )
 
     # With this we make num_samples random PSDs from the given data
     # We use this for recolouring augmentation
     # We also do blackout and aggregate the PSDs to produce the fiducial PSD
     noise_sampler = MemmapSingleNoiseSampler(
-        f"./data_release/data_{detector}_O3a.bin", return_tensor=True
+        f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin",
+        return_tensor=True,
     )
     epsd.estimate_raw_psds(
         noise_sampler=noise_sampler, duration=int(round(2048.0 * 16))
