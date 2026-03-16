@@ -94,6 +94,10 @@ class MultirateSampler(torch.nn.Module):
         dec_powers = torch.log2(dec_factors.float()).long()
         self.register_buffer("dec_powers", dec_powers, persistent=False)
 
+        # Precompute FIR kernels for powers of 2
+        self._build_kernels()
+        kernel_len = self.kernel.shape[-1]
+
         # Reflect Padding
         # Largest FIR kernel size if 2 * dec factor + 1
         # if max factor = 64 -> kernel size = 129 -> half = 64
@@ -102,8 +106,17 @@ class MultirateSampler(torch.nn.Module):
         if reflect_pad is not None:
             self.pad = reflect_pad
             assert self.pad >= 2 * max_dec_factor
+            assert self.pad >= kernel_len
         else:
-            self.pad = 2 * max_dec_factor
+            kernel_len = self.kernel.shape[-1]
+
+            group_delay = (kernel_len - 1) // 2
+
+            self.pad = max(
+                4 * kernel_len,
+                2 * max_dec_factor,
+                2 * group_delay * max_dec_factor,
+            )
 
         # Get sorted decimation factors and remember original order
         self.power_to_bins = self.order_decimations(dec_powers)
@@ -112,9 +125,6 @@ class MultirateSampler(torch.nn.Module):
         # TODO: This isn't compile friendly; we can include this outside
         # factors = [2**i for i in range(1, self.max_power + 1)]
         # assert all(factors > self.original_fs // self.min_fs)
-
-        # Precompute FIR kernels for powers of 2
-        self._build_kernels()
 
     ## Decimation ordering ##
     def order_decimations(self, dec_powers):
@@ -142,7 +152,7 @@ class MultirateSampler(torch.nn.Module):
         return power_to_bins
 
     ## FIR kernel construction ##
-    def _build_kernels(self):
+    def _build_legacy_kernels(self):
         factor = 2
         kernel_size = 2 * factor + 1
         t = torch.arange(-factor, factor + 1, dtype=torch.float32)
@@ -150,6 +160,35 @@ class MultirateSampler(torch.nn.Module):
         h = torch.sinc(t / factor)
         h = h * torch.hamming_window(kernel_size, periodic=False)
         h = h / h.sum()
+
+        self.register_buffer(
+            "kernel",
+            h.view(1, 1, -1).to(self.cfg.device, dtype=self.cfg.dtype),
+            persistent=False,
+        )
+
+    def _build_kernels(self):
+
+        # choose taps based on safety target
+        # GOOD SAFE VALUES:
+        # 31 taps → ~70 dB
+        # 47 taps → ~85 dB
+        # 63 taps → ~95 dB
+        NTAPS = 47
+
+        M = NTAPS - 1
+        n = torch.arange(NTAPS, dtype=torch.float32)
+
+        # ideal halfband impulse response
+        h = torch.sinc((n - M / 2) / 2)
+
+        # window (Kaiser safer than Hamming)
+        beta = 8.6  # ~80–90 dB attenuation
+        h *= torch.kaiser_window(NTAPS, beta=beta)
+
+        # normalize DC gain
+        # h /= h.sum() --> This does not preserve L2 energy
+        h /= torch.sqrt((h**2).sum())
 
         self.register_buffer(
             "kernel",
