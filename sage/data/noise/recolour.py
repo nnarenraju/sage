@@ -50,7 +50,7 @@ class RecolourPostprocess(torch.nn.Module):
         self,
         *,
         p_recolour: float,
-        eps: float = 1e-60,
+        eps: float = 1e-38,
     ):
         super().__init__()
 
@@ -74,79 +74,79 @@ class RecolourPostprocess(torch.nn.Module):
         self.n_freq = self.seq_len // 2 + 1
 
         # Load PSDs to torch.float32 on GPU
-        self._load_segment_psds()
-        self._load_recolour_psds()
+        self._load_segment_asds()
+        self._load_recolour_asds()
 
-    def _load_segment_psds(self):
+    def _load_segment_asds(self):
         """
-        Loads pre-interpolated per-segment PSDs.
+        Loads pre-interpolated per-segment ASDs.
         We need to pad the bank to a rectangular format
         This supports tensor ops downstream
 
         Result:
-            self.segment_psds: (D, N_seg_max, F) float32
+            self.segment_asds: (D, N_seg_max, F) float32
         """
-        psds_per_det = []
+        asds_per_det = []
         max_nseg = 0
 
         for det in self.detectors:
-            psd_dir = self.data_dir / "segment_psds"
-            bin_path = psd_dir / f"data_{det}_O3a_psds.bin"
-            meta_path = psd_dir / f"data_{det}_O3a_psds_segments.json"
+            asd_dir = self.data_dir / "segment_psds"
+            bin_path = asd_dir / f"data_{det}_O3a_psds.bin"
+            meta_path = asd_dir / f"data_{det}_O3a_psds_segments.json"
 
             with open(meta_path, "r") as f:
                 meta = json.load(f)
 
             raw = np.fromfile(bin_path, dtype=np.float32)
 
-            psds = []
+            asds = []
             cursor = 0
             for m in meta:
                 n = m["psd_len"]  # should already be == F
-                psds.append(raw[cursor : cursor + n])
+                asds.append(raw[cursor : cursor + n])
                 cursor += n
 
-            psds = np.stack(psds, axis=0)  # (N_seg, F)
-            psds_per_det.append(psds)
-            max_nseg = max(max_nseg, psds.shape[0])
+            asds = np.stack(asds, axis=0)  # (N_seg, F)
+            asds_per_det.append(asds)
+            max_nseg = max(max_nseg, asds.shape[0])
 
         # Pad to rectangular (D, N_seg_max, F)
         padded = []
-        for psds in psds_per_det:
-            pad = max_nseg - psds.shape[0]
+        for asds in asds_per_det:
+            pad = max_nseg - asds.shape[0]
             if pad > 0:
-                psds = np.pad(psds, ((0, pad), (0, 0)), constant_values=1.0)
-            padded.append(psds)
+                asds = np.pad(asds, ((0, pad), (0, 0)), constant_values=1.0)
+            padded.append(asds)
 
-        self.segment_psds = torch.from_numpy(np.stack(padded, axis=0))
+        self.segment_asds = torch.from_numpy(np.stack(padded, axis=0))
 
-    def _load_recolour_psds(self):
+    def _load_recolour_asds(self):
         """
-        Loads recolour PSD bank (already interpolated).
+        Loads recolour ASD bank (already interpolated).
         Bank size should be the same for all dets;
         So we don't need to pad this to form a rectangular tensor
 
         Result:
-            self.recolour_psds: (D, N_psd, F) float32
+            self.recolour_asds: (D, N_asd, F) float32
         """
-        psds_all = []
+        asds_all = []
 
         for det in self.detectors:
-            psd_dir = self.data_dir / "recolour_psds"
-            bin_path = psd_dir / f"raw_{det}_psds.bin"
-            meta_path = psd_dir / f"raw_{det}_psds.json"
+            asd_dir = self.data_dir / "recolour_psds"
+            bin_path = asd_dir / f"raw_{det}_psds.bin"
+            meta_path = asd_dir / f"raw_{det}_psds.json"
 
             with open(meta_path, "r") as f:
                 meta = json.load(f)
 
-            n_psd = meta["num_psds"]
+            n_asd = meta["num_psds"]
             n_freq = meta["num_freq_bins"]  # should == F
 
-            psds = np.fromfile(bin_path, dtype=np.float32).reshape(n_psd, n_freq)
-            psds_all.append(psds)
+            asds = np.fromfile(bin_path, dtype=np.float32).reshape(n_asd, n_freq)
+            asds_all.append(asds)
 
-        self.recolour_psds = torch.from_numpy(np.stack(psds_all, axis=0))
-        self.n_recolour_psd = self.recolour_psds.shape[1]
+        self.recolour_asds = torch.from_numpy(np.stack(asds_all, axis=0))
+        self.n_recolour_asd = self.recolour_asds.shape[1]
 
     def forward(
         self,
@@ -165,21 +165,21 @@ class RecolourPostprocess(torch.nn.Module):
 
         # Whitening PSD (only where mask == True, else ones)
         det_idx = torch.arange(self.D).view(1, self.D).expand(self.B, self.D)
-        gathered_seg_psd = self.segment_psds[det_idx, segment_ids]
-        gathered_seg_psd = gathered_seg_psd.to(X.device, non_blocking=True)
+        gathered_seg_asd = self.segment_asds[det_idx, segment_ids]
+        gathered_seg_asd = gathered_seg_asd.to(X.device, non_blocking=True)
 
         X = torch.where(
             mask,
-            X / (gathered_seg_psd + self.eps),
+            X / (gathered_seg_asd + self.eps),
             X,
         )
 
         # Recolour PSD (only where mask == True)
-        recol_idx = torch.randint(0, self.n_recolour_psd, (self.B, self.D))
-        gathered_recol_psd = self.recolour_psds[det_idx, recol_idx]
-        gathered_recol_psd = gathered_recol_psd.to(X.device)
+        recol_idx = torch.randint(0, self.n_recolour_asd, (self.B, self.D))
+        gathered_recol_asd = self.recolour_asds[det_idx, recol_idx]
+        gathered_recol_asd = gathered_recol_asd.to(X.device)
 
-        recol_gain = gathered_recol_psd + self.eps
+        recol_gain = gathered_recol_asd + self.eps
 
         X = torch.where(mask, X * recol_gain, X)
 
