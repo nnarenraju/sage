@@ -54,10 +54,11 @@ from pycbc import DYN_RANGE_FAC
 
 # LOCAL
 from sage.dsp.filters import pycbc_downsample
-from sage.core.logger import get_logger, setup_logging
 
-setup_logging("logs")
-logger = get_logger(__name__)
+# from sage.core.logger import get_logger, setup_logging
+
+# setup_logging("logs")
+# logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -150,10 +151,10 @@ class DataReleaseDownloader:
         # Save params
         self.save_parent_dir = save_parent_dir
         self.monolithic = make_monolithic_file
-        if not self.monolithic:
-            logger.warning("N segment files not accepted for training Sage")
-            logger.warning("Please use make_monolithic_file=True if training")
-            logger.warning("Reason: Computational overhead")
+        # if not self.monolithic:
+        #    logger.warning("N segment files not accepted for training Sage")
+        #    logger.warning("Please use make_monolithic_file=True if training")
+        #    logger.warning("Reason: Computational overhead")
 
         # Segments structured array
         self.full_metadata = segments_metadata
@@ -185,17 +186,17 @@ class DataReleaseDownloader:
                 data = TimeSeries.fetch_open_data(det, b0, b1, cache=1)
                 return data, True
             except Exception as e:
-                logger.warning(
-                    f"Chunk {ntry} failed. Retrying ({ntry}/{cfg.max_retries})..."
-                )
+                # logger.warning(
+                #    f"Chunk {ntry} failed. Retrying ({ntry}/{cfg.max_retries})..."
+                # )
                 last_exception = e
                 time.sleep(cfg.delay)
 
         # If we get here, all retries failed
         if last_exception != None:
-            logger.info(f"Tried {ntry}/{cfg.max_retries} times. Aborting.")
+            # logger.info(f"Tried {ntry}/{cfg.max_retries} times. Aborting.")
             # bubble up the original error
-            logger.error(f"Failed to fetch {det} {b0}-{b1}: {last_exception}")
+            # logger.error(f"Failed to fetch {det} {b0}-{b1}: {last_exception}")
             return None, False
 
     @staticmethod
@@ -379,10 +380,10 @@ class DataReleaseDownloader:
 
         """
 
-        logger.info(
-            f"Fetching GWOSC data for detector {det} ({run}) "
-            f"using {self.num_workers} worker(s)"
-        )
+        # logger.info(
+        #    f"Fetching GWOSC data for detector {det} ({run}) "
+        #    f"using {self.num_workers} worker(s)"
+        # )
 
         # Setup monolithic file
         if self.monolithic and not self.save_bin:
@@ -525,10 +526,10 @@ class DataReleaseDownloader:
         segments = record["segments"]
 
         if segments.size == 0:
-            logger.warning(f"Segments empty for {det} in {run}. Skipping.")
+            # logger.warning(f"Segments empty for {det} in {run}. Skipping.")
             return None
 
-        logger.info(f"Downloading segments from {det} for {run}")
+        # logger.info(f"Downloading segments from {det} for {run}")
 
         # Validate if segments are okay to download
         final_mask = self._validate_segments(segments, det, run)
@@ -538,11 +539,11 @@ class DataReleaseDownloader:
         total_valid_duration = self.durations[final_mask].sum()
         available_valid_duration = self.durations.sum()
 
-        logger.info(
-            f"{det} {run}: Available = {available_valid_duration}, "
-            f"Valid = {total_valid_duration}."
-        )
-        logger.warning("Min duration & data availability might reduce valid duration.")
+        # logger.info(
+        #    f"{det} {run}: Available = {available_valid_duration}, "
+        #    f"Valid = {total_valid_duration}."
+        # )
+        # logger.warning("Min duration & data availability might reduce valid duration.")
         return record
 
     ## --- Main function for end user ---
@@ -553,7 +554,7 @@ class DataReleaseDownloader:
         for record in self.full_metadata:
 
             # Cleanup the record
-            record = self._clean_record(record)
+            # record = self._clean_record(record)
             # Ignore if empty record
             if record == None:
                 continue
