@@ -29,7 +29,7 @@ import torch
 
 class O3aCFG:
 
-    export_dir = "./export_dir"
+    export_dir = "./run_export"
     batch_size = 1024
     device = "cuda:0"
     dtype = torch.float32
@@ -38,20 +38,21 @@ class O3aCFG:
     autocast = True
     class_balance = 0.5
     clip_norm = 1.0
-    num_epochs = 400
-    num_iterations = 200_000
+    num_epochs = 5  # 400
+    training_iterations = 200_000
+    validation_iterations = 200_000
 
 
 class O3aDataCFG:
 
-    data_dir = "./data_dir"
+    data_dir = "/local/scratch/igr/nnarenraju/data_dir"
     training_noise_files = [
-        "./data_release/data_H1_O3a.bin",
-        "./data_release/data_L1_O3a.bin",
+        "/local/scratch/igr/nnarenraju/data_release/data_H1_O3a.bin",
+        "/local/scratch/igr/nnarenraju/data_release/data_L1_O3a.bin",
     ]
     validation_noise_files = [
-        "./data_release/data_H1_O3a.bin",
-        "./data_release/data_L1_O3a.bin",
+        "/local/scratch/igr/nnarenraju/data_release/data_H1_O3a.bin",
+        "/local/scratch/igr/nnarenraju/data_release/data_L1_O3a.bin",
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz
