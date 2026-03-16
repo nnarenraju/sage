@@ -75,22 +75,23 @@ class OptimalSNREstimator(torch.nn.Module):
         self.delta_f = data_cfg.delta_f
 
         # store PSD once (broadcast ready)
-        self.psds = get_fiducial_psds()
-        self.psds = self.psds.unsqueeze(0)  # (1, D, F)
+        self.asds = get_fiducial_psds()
+        self.asds = self.asds.unsqueeze(0)  # (1, D, F)
 
         # precompute mask once (compile safe)
         self.mask = None
         f_low = data_cfg.signal_low_frequency_cutoff
         f_high = data_cfg.sample_rate // 2
         if f_low is not None and f_high is not None:
-            F = self.psds.shape[-1]
+            F = self.asds.shape[-1]
             self.mask = self._make_frequency_mask(F, f_low, f_high)
 
     def _make_frequency_mask(self, F, f_low, f_high):
         k_low = int(torch.ceil(torch.tensor(f_low / self.delta_f)).item())
         k_high = int(torch.floor(torch.tensor(f_high / self.delta_f)).item())
 
-        mask = torch.zeros(F, dtype=self.psds.dtype, device=self.device)
+        # mask = torch.zeros(F, dtype=self.psds.dtype, device=self.device)
+        mask = torch.zeros(F, dtype=torch.float64, device=self.device)
         mask[k_low:k_high] = 1.0
         return mask.view(1, 1, F)  # broadcastable
 
@@ -117,24 +118,25 @@ class OptimalSNREstimator(torch.nn.Module):
             Per-detector optimal SNR
         """
 
-        # |h|^2
-        power = h.real * h.real + h.imag * h.imag  # (B,D,F)
+        # whiten waveform instead of squaring ASD (B,D,F)
+        h_white = (h / self.delta_f) / self.asds
 
-        # PSD weighting
-        weighted = power / self.psds
+        # |h|^2
+        power = h_white.real * h_white.real + h_white.imag * h_white.imag
 
         # apply mask if exists
         if self.mask is not None:
-            weighted *= self.mask
+            power *= self.mask
 
-        # integrate frequency
-        rho2_det = 4.0 * self.delta_f * weighted.sum(dim=-1)  # (B,D)
+        # integrate frequency (B,D)
+        rho2_det = 4.0 * self.delta_f * power.sum(dim=-1)
+        # network combine (B,1)
+        rho2_net = rho2_det.sum(dim=1, keepdim=True)
 
-        # network combine
-        rho2_net = rho2_det.sum(dim=1, keepdim=True)  # (B,1)
-
-        rho_det = torch.sqrt(rho2_det)  # (B,D,1)
-        rho_net = torch.sqrt(rho2_net).squeeze(-1)  # (B,1)
+        # Shape (B,D,1)
+        rho_det = torch.sqrt(rho2_det)
+        # Shape (B,1)
+        rho_net = torch.sqrt(rho2_net).squeeze(-1)
 
         return rho_net, rho_det
 
