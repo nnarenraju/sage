@@ -185,7 +185,7 @@ class EstimatePSD:
 
         for _ in tqdm(
             range(self.num_samples),
-            desc=f"Estimating PSDs for {self.detector}",
+            desc=f"Estimating recolour PSDs for {self.detector}",
         ):
             # Sample noise sample given duration
             noise = noise_sampler(duration)
