@@ -43,7 +43,7 @@ def get_timeline(data_cfg):
 
     tq = TimelineQuery(
         detector=["H1", "L1", "V1"],
-        observing_run=["O3b"],
+        observing_run=["O3a"],
         auto_clean_empty_timelines=True,
     )
 
@@ -86,13 +86,13 @@ def download_dataset(tq, data_cfg):
 
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
-        save_parent_dir="./",
+        save_parent_dir="/local/scratch/igr/nnarenraju/o3a",
         noise_low_freq_cutoff=15.0,
         minimum_segment_duration=22.0,
         corrupt_trim_length=buffer,
         max_download_retries=15,
         retry_delay=0.5,
-        num_workers=16,
+        num_workers=64,
         make_monolithic_file=True,
         sample_rate=data_cfg.sample_rate,
         save_bin=True,
@@ -137,16 +137,15 @@ def make_psds(detector, data_cfg):
     )
 
     # This is used for whitening with the exact segment PSD before recolouring
-    if detector != "H1":
-        epsd.estimate_segment_psds(
-            noise_segments_file=f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin"
-        )
+    epsd.estimate_segment_psds(
+        noise_segments_file=f"/local/scratch/igr/nnarenraju/o3a/data_release/data_{detector}_O3a.bin"
+    )
 
     # With this we make num_samples random PSDs from the given data
     # We use this for recolouring augmentation
     # We also do blackout and aggregate the PSDs to produce the fiducial PSD
     noise_sampler = MemmapSingleNoiseSampler(
-        f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin",
+        f"/local/scratch/igr/nnarenraju/o3a/data_release/data_{detector}_O3a.bin",
         return_tensor=True,
     )
     epsd.estimate_raw_psds(

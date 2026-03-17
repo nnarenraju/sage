@@ -31,7 +31,7 @@ class O3aCFG:
 
     export_dir = "./run_export"
     batch_size = 1024
-    device = "cuda:0"
+    device = "cuda:1"
     dtype = torch.float32
     detectors = ["H1", "L1"]
     do_point_estimate = ["tc", "mchirp"]
@@ -45,14 +45,14 @@ class O3aCFG:
 
 class O3aDataCFG:
 
-    data_dir = "/local/scratch/igr/nnarenraju/data_dir"
+    data_dir = "/local/scratch/igr/nnarenraju/o3a/data_dir"
     training_noise_files = [
-        "/local/scratch/igr/nnarenraju/data_release/data_H1_O3b.bin",
-        "/local/scratch/igr/nnarenraju/data_release/data_L1_O3b.bin",
+        "/local/scratch/igr/nnarenraju/o3a/data_release/data_H1_O3a.bin",
+        "/local/scratch/igr/nnarenraju/o3a/data_release/data_L1_O3a.bin",
     ]
     validation_noise_files = [
-        "/local/scratch/igr/nnarenraju/data_release/data_H1_O3a.bin",
-        "/local/scratch/igr/nnarenraju/data_release/data_L1_O3a.bin",
+        "/local/scratch/igr/nnarenraju/o3a/data_release/data_H1_O3b.bin",
+        "/local/scratch/igr/nnarenraju/o3a/data_release/data_L1_O3b.bin",
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz

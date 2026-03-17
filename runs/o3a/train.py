@@ -125,14 +125,13 @@ def run():
     # Shared configs
     cfg, data_cfg = get_configs()
 
-    """
     # Make datasets
     tq = get_timeline(data_cfg)
     download_dataset(tq, data_cfg)
-    """
-
     for det in ["H1", "L1", "V1"]:
         make_psds(det, data_cfg)
+
+    raise
 
     # Training, validation and processor
     training_signal_sampler, training_noise_sampler = make_training_graph()
