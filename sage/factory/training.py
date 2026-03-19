@@ -29,9 +29,6 @@ import torch
 from tqdm import tqdm
 from contextlib import nullcontext
 
-# Handling DDP
-import torch.distributed as dist
-
 # LOCAL
 from sage.core.config import get_cfg
 
@@ -202,12 +199,7 @@ class SageUncompiledTraining(torch.nn.Module):
 
         self.model.train()
 
-        is_main = not dist.is_initialized() or dist.get_rank() == 0
-        iterator = (
-            tqdm(range(self.num_iterations)) if is_main else range(self.num_iterations)
-        )
-
-        for nbatch in iterator:
+        for nbatch in tqdm(range(self.num_iterations)):
 
             # Generate batches
             signal_data, signal_targets = self.signal_sampler()
@@ -284,7 +276,5 @@ class SageUncompiledTraining(torch.nn.Module):
             # Loss tracking
             self.loss_components[nepoch] += loss.detach()
 
-        # Average loss (DDP)
-        # non-DDP: self.loss_components[nepoch] /= self.num_iterations
-        dist.all_reduce(self.loss_components[nepoch], op=dist.ReduceOp.SUM)
-        self.loss_components[nepoch] /= dist.get_world_size()
+        # Average loss
+        self.loss_components[nepoch] /= self.num_iterations
