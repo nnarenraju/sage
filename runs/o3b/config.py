@@ -27,7 +27,6 @@ Documentation: NULL
 import torch
 
 # Configs
-from config import O3aCFG, O3aDataCFG
 from sage.core.config import register_configs
 from sage.core.base_classes import BaseConfig, BaseDataConfig
 
@@ -44,7 +43,7 @@ class O3aCFG:
     class_balance = 0.5
     clip_norm = 1.0
     num_epochs = 5
-    training_iterations = int(200_000 / 1024)
+    training_iterations = int(2_000_000 / 1024)
     validation_iterations = int(200_000 / 1024)
 
 
@@ -74,6 +73,7 @@ def _register():
 
     # Register configurations for the Sage run
     register_configs(cfg, data_cfg)
+    print("Registered cfg and data_cfg!")
 
 
 def set_configs():
