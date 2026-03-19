@@ -42,6 +42,7 @@ class CompileManager:
         processor: Iterable,
         model: nn.Module,
         loss_function: nn.Module,
+        training: bool = True,
     ):
         # Shared config
         self.cfg = get_cfg()
@@ -61,7 +62,7 @@ class CompileManager:
         self.num_point_estimate = len(self.cfg.do_point_estimate)
         self.num_targets = self.num_point_estimate + 1
 
-        self.compiled_block = self._make_compiled_block()
+        self.compiled_block = self._make_compiled_block(training)
 
     def uncompiled_block(self):
         signal = None
@@ -75,10 +76,12 @@ class CompileManager:
 
         return signal, noise
 
-    def _make_compiled_block(self):
+    def _make_compiled_block(self, training):
+
+        block_cls = CompiledTrainingBlock if training else CompiledValidationBlock
 
         # Compile the block
-        compiled_block = CompiledScatterBlock(
+        compiled_block = block_cls(
             self.signal_sampler,
             self.noise_sampler,
             self.processor,
@@ -98,7 +101,7 @@ class CompileManager:
         )
 
 
-class CompiledBlock(nn.Module):
+class LegacyCompiledBlock(nn.Module):
 
     def __init__(
         self,
@@ -178,7 +181,7 @@ class CompiledBlock(nn.Module):
         return loss
 
 
-class CompiledScatterBlock(nn.Module):
+class CompiledTrainingBlock(nn.Module):
 
     def __init__(
         self,
@@ -205,6 +208,8 @@ class CompiledScatterBlock(nn.Module):
 
     def forward(self, signal, noise):
 
+        # TODO: Conditionals inside compiled graph is bad
+        # Move this outside the graph somehow
         if signal is None:
             signal = self.signal_sampler()
         if noise is None:
@@ -226,6 +231,10 @@ class CompiledScatterBlock(nn.Module):
         noise_targets = torch.cat((pad, noise_targets), dim=1)
 
         # Select indices
+        # TODO: Move this outside compiled graph
+        # This will likely cause graph breaks
+        # DO NOT naively replace with randint; randperm ensures no replacement
+        # Latter code requires no replacement to be true
         idx = torch.randperm(self.B, device=device)[: self.S]
 
         # Scatter signal data
@@ -233,6 +242,7 @@ class CompiledScatterBlock(nn.Module):
 
         scatter_idx = idx.view(-1, 1, 1).expand_as(signal_data)
 
+        # TODO: Check scatter_add for efficiency issues
         signal_pad = signal_pad.scatter_add(
             0,
             scatter_idx,
@@ -267,5 +277,100 @@ class CompiledScatterBlock(nn.Module):
         ):
             out = self.model(x)
             loss = self.loss_function(out, targets)
+
+        return loss
+
+
+class CompiledValidationBlock(nn.Module):
+
+    def __init__(
+        self,
+        signal_sampler,
+        noise_sampler,
+        processor,
+        B,
+        S,
+        T,
+        P,
+        model,
+        loss_function,
+    ):
+        super().__init__()
+
+        self.cfg = get_cfg()
+
+        self.signal_sampler = signal_sampler
+        self.noise_sampler = noise_sampler
+        self.processor = processor
+        self.B, self.S, self.T, self.P = (B, S, T, P)
+        self.model = model
+        self.loss_function = loss_function
+
+    def forward(self, signal, noise):
+
+        # Keep identical behavior (including graph-unsafe parts)
+        if signal is None:
+            signal = self.signal_sampler()
+        if noise is None:
+            noise = self.noise_sampler()
+
+        signal_data, signal_targets = signal
+        noise_data, noise_targets = noise
+
+        device = self.cfg.device
+
+        # Pad noise targets
+        pad = torch.zeros(
+            noise_targets.shape[0],
+            self.P,
+            device=device,
+            dtype=noise_targets.dtype,
+        )
+        noise_targets = torch.cat((pad, noise_targets), dim=1)
+
+        # Random placement (unchanged)
+        idx = torch.randperm(self.B, device=device)[: self.S]
+
+        # Scatter signal data
+        signal_pad = torch.zeros_like(noise_data)
+        scatter_idx = idx.view(-1, 1, 1).expand_as(signal_data)
+
+        signal_pad = signal_pad.scatter_add(
+            0,
+            scatter_idx,
+            signal_data,
+        )
+
+        # Combine signal + noise
+        x = noise_data + signal_pad
+
+        # Scatter signal targets
+        target_idx = idx.view(-1, 1).expand_as(signal_targets)
+
+        signal_target_pad = torch.zeros_like(noise_targets)
+        signal_target_pad = signal_target_pad.scatter_add(
+            0,
+            target_idx,
+            signal_targets,
+        )
+
+        # Combine targets
+        targets = noise_targets + signal_target_pad
+
+        # Preprocess
+        x = self.processor(x)
+
+        # ONLY MEANINGFUL CHANGE compared to training version
+        # TODO: Remove redundancy between this code and training counterpart
+        # Disable autograd inside compiled graph
+        with torch.inference_mode():
+
+            with (
+                torch.autocast(device_type="cuda", dtype=torch.float16)
+                if self.cfg.autocast
+                else nullcontext()
+            ):
+                out = self.model(x)
+                loss = self.loss_function(out, targets)
 
         return loss
