@@ -113,10 +113,10 @@ class SageVanillaTraining(torch.nn.Module):
 
             # Backprop update using gradient scaler (if needed)
             if self.scaler is not None:
-                self.scaler.scale(loss).backward()
+                self.scaler.scale(loss[0]).backward()
                 self.scaler.unscale_(self.optimiser)
             else:
-                loss.backward()
+                loss[0].backward()
 
             # Clip gradients to make convergence somewhat easier
             torch.nn.utils.clip_grad_norm_(
