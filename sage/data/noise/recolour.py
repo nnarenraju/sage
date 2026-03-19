@@ -91,8 +91,8 @@ class RecolourPostprocess(torch.nn.Module):
 
         for det in self.detectors:
             asd_dir = self.data_dir / "segment_psds"
-            bin_path = asd_dir / f"data_{det}_O3a_psds.bin"
-            meta_path = asd_dir / f"data_{det}_O3a_psds_segments.json"
+            bin_path = asd_dir / f"data_{det}_O3b_psds.bin"
+            meta_path = asd_dir / f"data_{det}_O3b_psds_segments.json"
 
             with open(meta_path, "r") as f:
                 meta = json.load(f)
