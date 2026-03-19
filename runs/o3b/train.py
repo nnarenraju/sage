@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # Packages
+import os
 import torch
 
 # LOCAL
@@ -45,6 +46,7 @@ from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 # Model and loss
 from sage.architecture.network import MSCNN1D_2DResNetCBAM
 from sage.architecture.custom_losses import BCEWithPEregLoss
+from sage.core.logger import HDF5LossLogger
 
 # Optimiser and scheduler
 import torch.optim as optim
@@ -52,8 +54,10 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 # SageGraph
 from sage.core.graph import Preprocessor
-from sage.factory.training import SageUncompiledTraining
-from sage.factory.validation import SageUncompiledValidation
+from sage.factory.training import SageUncompiledTraining, SageVanillaTraining
+from sage.factory.validation import SageUncompiledValidation, SageVanillaValidation
+
+from config import set_configs
 
 
 def make_training_graph():
@@ -108,6 +112,7 @@ def make_processor(bounds):
 
 def run_sage():
 
+    set_configs()
     cfg, data_cfg = get_cfg(), get_data_cfg()
 
     # Training, validation and processor
@@ -151,7 +156,21 @@ def run_sage():
 
     ## TRAINING LOOP
 
+    logger = HDF5LossLogger(
+        path=os.path.join(cfg.export_dir, "losses.h5"),
+        num_epochs=cfg.num_epochs,
+        num_components=train_sage.loss_function.num_components,
+    )
+
     for nepoch in range(cfg.num_epochs):
+
+        # TRAINING
+        print(f"Epoch {nepoch}: Training Sage")
         train_sage(nepoch=nepoch)
-        if nepoch % 5 == 0:
+        logger.log(train_sage.loss_components, nepoch, split="training")
+
+        # VALIDATION
+        if (nepoch + 1) % 5 == 0 or nepoch == 0:
+            print(f"Epoch {nepoch}: Validating Sage")
             validate_sage(nepoch=nepoch)
+            logger.log(validate_sage.loss_components, nepoch, split="validation")
