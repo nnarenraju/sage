@@ -27,8 +27,8 @@ Documentation: NULL
 import torch
 
 # LOCAL
-from sage.core.config import register_configs
-from sage.core.base_classes import BaseConfig, BaseDataConfig
+
+from sage.core.config import get_cfg, get_data_cfg
 
 # Signal Sampler
 from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
@@ -55,12 +55,6 @@ from sage.core.graph import Preprocessor
 from sage.factory.training import SageUncompiledTraining
 from sage.factory.validation import SageUncompiledValidation
 
-# Configs
-from config import O3aCFG, O3aDataCFG
-
-# Datasets
-from dataset import get_timeline, download_dataset, make_psds
-
 
 def make_training_graph():
 
@@ -79,7 +73,11 @@ def make_training_graph():
         postprocess_fn=recolour, prefetch=4, seed=150914
     )
 
-    return training_signal_sampler, training_noise_sampler
+    return (
+        training_signal_sampler,
+        training_noise_sampler,
+        training_param_sampler.bounds,
+    )
 
 
 def make_validation_graph():
@@ -97,47 +95,25 @@ def make_validation_graph():
     return validation_signal_sampler, validation_noise_sampler
 
 
-def make_processor(training_param_sampler):
+def make_processor(bounds):
 
     # Preprocessing
     whitener = FiducialWhitening()
-    dyadic_binning = DyadicPyramidBinning(training_param_sampler.bounds)
+    dyadic_binning = DyadicPyramidBinning(bounds)
     mrsampler = MultirateSampler(binning_method=dyadic_binning)
     processor = Preprocessor([whitener, mrsampler])
 
     return processor
 
 
-def get_configs():
+def run_sage():
 
-    # Read configs
-    cfg = BaseConfig(O3aCFG())
-    data_cfg = BaseDataConfig(O3aDataCFG())
-
-    # Register configurations for the Sage run
-    register_configs(cfg, data_cfg)
-
-    return cfg, data_cfg
-
-
-def run():
-
-    # Shared configs
-    cfg, data_cfg = get_configs()
-
-    """
-    # Make datasets
-    tq = get_timeline(data_cfg)
-    download_dataset(tq, data_cfg)
-    """
-
-    for det in ["H1", "L1", "V1"]:
-        make_psds(det, data_cfg)
+    cfg, data_cfg = get_cfg(), get_data_cfg()
 
     # Training, validation and processor
-    training_signal_sampler, training_noise_sampler = make_training_graph()
+    training_signal_sampler, training_noise_sampler, bounds = make_training_graph()
     validation_signal_sampler, validation_noise_sampler = make_validation_graph()
-    processor = make_processor()
+    processor = make_processor(bounds)
 
     # Model and optimisation
     model = MSCNN1D_2DResNetCBAM(

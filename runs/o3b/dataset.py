@@ -29,17 +29,19 @@ import math
 
 # LOCAL
 from sage.data.primer import DataReleaseDownloader
-from sage.data.primer import TimelineQuery, get_all_detnames, get_all_runnames
+from sage.data.primer import TimelineQuery
 
 from sage.data.primer import EstimatePSD
 from sage.dsp.welch import TorchWelch
 
-from sage.data.primer import NoBlackout, HardRatioBlackout
+from sage.data.primer import NoBlackout
 from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.psd import smoothing
 
+from sage.core.config import get_cfg, get_data_cfg
 
-def get_timeline(data_cfg):
+
+def _get_timeline(data_cfg):
 
     tq = TimelineQuery(
         detector=["H1", "L1", "V1"],
@@ -80,7 +82,7 @@ def _get_buffer(data_cfg):
     return math.ceil(0.2 * data_cfg.sample_rate) / data_cfg.sample_rate
 
 
-def download_dataset(tq, data_cfg):
+def _download_data_release(tq, data_cfg):
 
     buffer = _get_buffer(data_cfg)
 
@@ -101,7 +103,7 @@ def download_dataset(tq, data_cfg):
     drd.download()
 
 
-def make_psds(detector, data_cfg):
+def _make_psds(detector, data_cfg):
 
     torch_welch = TorchWelch(
         delta_t=1 / 2048,
@@ -137,10 +139,9 @@ def make_psds(detector, data_cfg):
     )
 
     # This is used for whitening with the exact segment PSD before recolouring
-    if detector != "H1":
-        epsd.estimate_segment_psds(
-            noise_segments_file=f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin"
-        )
+    epsd.estimate_segment_psds(
+        noise_segments_file=f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin"
+    )
 
     # With this we make num_samples random PSDs from the given data
     # We use this for recolouring augmentation
@@ -152,3 +153,15 @@ def make_psds(detector, data_cfg):
     epsd.estimate_raw_psds(
         noise_sampler=noise_sampler, duration=int(round(2048.0 * 16))
     )
+
+
+def make_dataset():
+
+    # Shared configs
+    cfg, data_cfg = get_cfg(), get_data_cfg()
+
+    # Make datasets
+    tq = _get_timeline(data_cfg)
+    _download_data_release(tq, data_cfg)
+    for det in ["H1", "L1", "V1"]:
+        _make_psds(det, data_cfg)
