@@ -121,7 +121,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.param_sampler.to(self.cfg.device)
         self.waveform_project.to(self.cfg.device)
 
-    def forward(self):
+    def forward(self, return_theta=False):
         all_theta = self.param_sampler(self.B)
         req_theta = all_theta[:, self.req_idx]
 
@@ -145,7 +145,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )
 
-        return hf, targets
+        if return_theta:
+            return hf, targets, all_theta
+        else:
+            return hf, targets
 
     def get_hphc(self, theta, reproduce_lal=False):
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
