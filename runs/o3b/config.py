@@ -34,7 +34,7 @@ from sage.core.base_classes import BaseConfig, BaseDataConfig
 class O3aCFG:
 
     export_dir = "./run_export"
-    batch_size = 1024
+    batch_size = 128
     device = "cuda:0"
     dtype = torch.float32
     detectors = ["H1", "L1"]
@@ -43,8 +43,8 @@ class O3aCFG:
     class_balance = 0.5
     clip_norm = 1.0
     num_epochs = 5
-    training_iterations = int(2_000_000 / 1024)
-    validation_iterations = int(200_000 / 1024)
+    training_iterations = int(2_000_000 / batch_size)
+    validation_iterations = int(200_000 / batch_size)
 
 
 class O3aDataCFG:
