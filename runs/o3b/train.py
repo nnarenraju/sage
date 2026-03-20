@@ -44,7 +44,7 @@ from sage.dsp.whiten import FiducialWhitening
 from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 
 # Model and loss
-from sage.architecture.network import MSCNN1D_2DResNetCBAM
+from sage.architecture.network import MSCNN1D_2DResNetCBAM, MSCNN1D_catt_2DResNetCBAM
 from sage.architecture.custom_losses import BCEWithPEregLoss
 from sage.core.logger import HDF5LossLogger
 
@@ -68,7 +68,9 @@ def make_training_graph():
     target_snr_sampler = HalfNorm(scale=4.0, loc=5.0, seed=150914)
     snrscaler = OptimalSNRRescaler(target_snr_sampler)
     training_signal_sampler = IMRPhenomPv2(
-        training_param_sampler, waveform_project, augment=snrscaler
+        training_param_sampler,
+        waveform_project,
+        augment=snrscaler,
     )
 
     # Make the noise sampler
@@ -87,9 +89,15 @@ def make_training_graph():
 def make_validation_graph():
 
     # Make the signal sampler
-    waveform_project = ConstantProjection()
     validation_param_sampler = read_from_config("./gwconfig.yaml", seed=170817)
-    validation_signal_sampler = IMRPhenomPv2(validation_param_sampler, waveform_project)
+    waveform_project = ConstantProjection()
+    target_snr_sampler = HalfNorm(scale=4.0, loc=5.0, seed=170817)
+    snrscaler = OptimalSNRRescaler(target_snr_sampler)
+    validation_signal_sampler = IMRPhenomPv2(
+        validation_param_sampler,
+        waveform_project,
+        augment=snrscaler,
+    )
 
     # Make the noise sampler
     validation_noise_sampler = MemmapNoiseSampler(
@@ -121,12 +129,18 @@ def run_sage():
     processor = make_processor(bounds)
 
     # Model and optimisation
-    model = MSCNN1D_2DResNetCBAM(
+    model = MSCNN1D_catt_2DResNetCBAM(
         frontend_filters=32,
         frontend_kernel=64,
         backend_resnet_size=50,
         norm_type="instancenorm",
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
 
     loss_function = BCEWithPEregLoss(regression_weight=0.3)
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
