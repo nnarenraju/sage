@@ -23,7 +23,10 @@ Documentation: NULL
 
 """
 
-from .mscnn1d_att_resnet2d_cbam import MSCNN1D_2DResNetCBAM
+from .mscnn1d_att_resnet2d_cbam import (
+    MSCNN1D_2DResNetCBAM,
+    MSCNN1D_2DResNetCBAM_Heteroscedastic,
+)
 from .mscnn1d_att_resnet3d_cbam import MSCNN1Datt_3DResNetCBAM
 from .mscnn1d_catt_resnet2d_cbam import MSCNN1D_catt_2DResNetCBAM
 
@@ -31,4 +34,5 @@ __all__ = [
     "MSCNN1D_2DResNetCBAM",
     "MSCNN1Datt_3DResNetCBAM",
     "MSCNN1D_catt_2DResNetCBAM",
+    "MSCNN1D_2DResNetCBAM_Heteroscedastic",
 ]

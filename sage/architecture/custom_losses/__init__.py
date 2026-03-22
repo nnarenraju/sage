@@ -23,6 +23,9 @@ Documentation: NULL
 
 """
 
-from .loss_functions import BCEWithPEregLoss
+from .loss_functions import BCEWithPEregLoss, BCEWithPEsigmaLoss
 
-__all__ = ["BCEWithPEregLoss"]
+__all__ = [
+    "BCEWithPEregLoss",
+    "BCEWithPEsigmaLoss",
+]
