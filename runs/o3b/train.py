@@ -58,6 +58,7 @@ from sage.factory.training import SageUncompiledTraining, SageVanillaTraining
 from sage.factory.validation import SageUncompiledValidation, SageVanillaValidation
 
 from config import set_configs
+from sage.utils.checkpoint import CheckpointManager
 
 
 def make_training_graph():
@@ -145,6 +146,7 @@ def run_sage():
     loss_function = BCEWithPEregLoss(regression_weight=0.3)
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
     scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=1, eta_min=1e-6)
+    scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
     train_sage = SageUncompiledTraining(
         training_signal_sampler,
@@ -154,6 +156,7 @@ def run_sage():
         loss_function,
         optimiser,
         scheduler,
+        scaler,
         num_iterations=cfg.training_iterations,
         num_epochs=cfg.num_epochs,
     )
@@ -166,6 +169,15 @@ def run_sage():
         loss_function,
         num_iterations=cfg.validation_iterations,
         num_epochs=cfg.num_epochs,
+    )
+
+    ckpt_mgr = CheckpointManager(
+        cfg=cfg,
+        data_cfg=data_cfg,
+        model=model,
+        optimizer=optimiser,
+        scheduler=scheduler,
+        scaler=None,
     )
 
     ## TRAINING LOOP
@@ -188,3 +200,8 @@ def run_sage():
             print(f"Epoch {nepoch}: Validating Sage")
             validate_sage(nepoch=nepoch)
             logger.log(validate_sage.loss_components, nepoch, split="validation")
+
+            # Saving total loss
+            val_loss = validate_sage.loss_components[nepoch][0].item()
+
+        ckpt_mgr.save(epoch=nepoch, val_loss=val_loss)
