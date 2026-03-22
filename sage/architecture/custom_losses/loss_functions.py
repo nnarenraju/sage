@@ -88,11 +88,17 @@ class BCEWithPEsigmaLoss(nn.Module):
     - Weighted per-sample by network's predicted signal probability.
     """
 
-    def __init__(self, regression_weight: float = 1.0, eps: float = 1e-6):
+    def __init__(
+        self,
+        regression_weight: float = 1.0,
+        coupling_weight: float = 1.0,
+        eps: float = 1e-6,
+    ):
         super().__init__()
         cfg = get_cfg()  # grab config
         self.regression_weight = regression_weight
-        self.num_components = len(cfg.do_point_estimate) + 1
+        self.coupling_weight = coupling_weight
+        self.num_components = len(cfg.do_point_estimate) + 2
         self.eps = eps  # stability for variance
 
     def forward(self, outputs, targets):
@@ -119,35 +125,61 @@ class BCEWithPEsigmaLoss(nn.Module):
         )
 
         # ----------------------
-        # Regression loss (heteroscedastic)
+        # Regression loss (heteroscedastic + variance regularisation)
         # ----------------------
-        pe_targets = targets[:, :-1]  # (B, num_pe)
-        signal_mask = targets[:, -1].unsqueeze(1)  # (B, 1)
+        pe_targets = targets[:, :-1]
+        signal_mask = targets[:, -1].unsqueeze(1)
 
         num_pe = pe_targets.shape[1]
-        mu = point_estimates[:, :num_pe]  # predicted mean
-        log_var = point_estimates[:, num_pe:]  # predicted log-variance
-        var = torch.exp(log_var) + self.eps  # variance > 0
 
-        # Mask for signal samples only
-        mu_sig = mu * signal_mask
-        var_sig = var * signal_mask
-        pe_targets_sig = pe_targets * signal_mask
+        mu = point_estimates[:, :num_pe]
+        log_var = point_estimates[:, num_pe:]
 
-        # Negative log-likelihood per parameter
-        reg = 0.5 * (torch.log(var_sig) + (pe_targets_sig - mu_sig) ** 2 / var_sig)
+        # Bound uncertainty head
+        log_var = torch.clamp(log_var, -10.0, 6.0)
 
-        # Weight regression by network's predicted signal probability
-        p_signal = torch.sigmoid(ranking_stat).unsqueeze(1).detach()
-        reg = reg * p_signal
+        var = torch.exp(log_var) + self.eps
 
-        # Average over signal samples
-        reg_loss = reg.sum() / signal_mask.sum().clamp_min(1)
+        # Gaussian NLL
+        nll = 0.5 * (log_var + (pe_targets - mu) ** 2 / var)
+
+        # Confidence curriculum
+        p_signal = torch.sigmoid(ranking_stat).detach().unsqueeze(1)
+        p_signal = p_signal**2
+
+        # Apply masks
+        nll = nll * signal_mask * p_signal
+
+        # Variance regularisation (prevents sigma explosion)
+        variance_reg = var * signal_mask * p_signal
+
+        num_signal = signal_mask.sum().clamp_min(1.0)
+
+        nll_loss = nll.sum() / num_signal
+        variance_reg_loss = variance_reg.sum() / num_signal
+
+        # Strength of variance regulariser
+        lambda_var = 1e-3
+
+        reg_loss = nll_loss + lambda_var * variance_reg_loss
+
+        # ----------------------
+        # Coupling loss
+        # ----------------------
+        mean_sigma = torch.sqrt(var.mean(dim=1))
+
+        sigmoid_rank = torch.sigmoid(ranking_stat)
+
+        coupling_loss = mean_sigma * sigmoid_rank
+        coupling_loss = coupling_loss.mean()
 
         # ----------------------
         # Total loss
         # ----------------------
-        total_loss = bce_loss + self.regression_weight * reg_loss
+        total_loss = (
+            bce_loss
+            + (self.regression_weight * reg_loss)
+            + (self.coupling_weight * coupling_loss)
+        )
 
-        # Return stacked for compatibility with logger/tracker
-        return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
+        return torch.stack([total_loss, bce_loss, reg_loss, coupling_loss], dim=0)
