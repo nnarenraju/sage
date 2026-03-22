@@ -35,8 +35,6 @@ def plot_loss_curves(
     export_dir=None,
     save=True,
     best_epoch=None,
-    pe_training_losses=None,
-    pe_validation_losses=None,
 ):
 
     epochs = np.arange(1, len(training_loss) + 1)
@@ -46,13 +44,13 @@ def plot_loss_curves(
     # --------------------------------------------
     plt.figure(figsize=(7, 6))
 
-    plt.plot(epochs, training_loss, label="Training Loss")
-    plt.plot(epochs, validation_loss, ls="dashed", label="Validation Loss")
+    plt.plot(epochs, training_loss[:, 0], label="Training Loss")
+    plt.plot(epochs, validation_loss[:, 0], ls="dashed", label="Validation Loss")
 
     if best_epoch is not None:
         idx = int(best_epoch)
-        plt.scatter(epochs[idx], training_loss[idx], marker="*", s=150)
-        plt.scatter(epochs[idx], validation_loss[idx], marker="*", s=150)
+        plt.scatter(epochs[idx], training_loss[:, 0][idx], marker="*", s=150)
+        plt.scatter(epochs[idx], validation_loss[:, 0][idx], marker="*", s=150)
 
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
@@ -74,30 +72,30 @@ def plot_loss_curves(
     # --------------------------------------------
     # PARAMETER ESTIMATION LOSS CURVES (optional)
     # --------------------------------------------
-    if pe_training_losses is None or pe_validation_losses is None:
+    if training_loss.shape[1] == 1:
         return
 
     plt.figure(figsize=(7, 6))
 
-    for key in pe_training_losses.keys():
+    for lidx in range(1, training_loss.shape[1]):
 
         plt.plot(
             epochs,
-            pe_training_losses[key],
-            label=f"{key} train",
+            training_loss[:, lidx],
+            label=f"PE Loss {lidx}",
         )
 
         plt.plot(
             epochs,
-            pe_validation_losses[key],
+            validation_loss[:, lidx],
             ls="dashed",
-            label=f"{key} valid",
+            label=f"PE Loss {lidx}",
         )
 
         if best_epoch is not None:
             idx = int(best_epoch)
-            plt.scatter(epochs[idx], pe_training_losses[key][idx], marker="*", s=150)
-            plt.scatter(epochs[idx], pe_validation_losses[key][idx], marker="*", s=150)
+            plt.scatter(epochs[idx], training_loss[:, lidx][idx], marker="*", s=150)
+            plt.scatter(epochs[idx], validation_loss[:, lidx][idx], marker="*", s=150)
 
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
