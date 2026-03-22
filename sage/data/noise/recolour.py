@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # Packages
+import os
 import json
 import torch
 import numpy as np
@@ -50,6 +51,7 @@ class RecolourPostprocess(torch.nn.Module):
         self,
         *,
         p_recolour: float,
+        recolour_dataset_dir: str,
         eps: float = 1e-38,
     ):
         super().__init__()
@@ -59,6 +61,7 @@ class RecolourPostprocess(torch.nn.Module):
         data_cfg = get_data_cfg()
 
         self.data_dir = Path(data_cfg.data_dir)
+        self.recolour_dataset_dir = Path(recolour_dataset_dir)
         self.detectors = cfg.detectors
         self.seq_len = data_cfg.padded_length_in_nsamples
         self.sample_rate = data_cfg.sample_rate
@@ -90,9 +93,10 @@ class RecolourPostprocess(torch.nn.Module):
         max_nseg = 0
 
         for det in self.detectors:
+            # Segment ASDs should be from the noise used for training
             asd_dir = self.data_dir / "segment_psds"
-            bin_path = asd_dir / f"data_{det}_O3b_psds.bin"
-            meta_path = asd_dir / f"data_{det}_O3b_psds_segments.json"
+            bin_path = asd_dir / f"data_{det}_psds.bin"
+            meta_path = asd_dir / f"data_{det}_psds_segments.json"
 
             with open(meta_path, "r") as f:
                 meta = json.load(f)
@@ -132,7 +136,9 @@ class RecolourPostprocess(torch.nn.Module):
         asds_all = []
 
         for det in self.detectors:
-            asd_dir = self.data_dir / "recolour_psds"
+            # Recolour ASDs can be different from that for training
+            data_dir = os.path.join(self.recolour_dataset_dir, "data_dir")
+            asd_dir = data_dir / "recolour_psds"
             bin_path = asd_dir / f"raw_{det}_psds.bin"
             meta_path = asd_dir / f"raw_{det}_psds.json"
 
