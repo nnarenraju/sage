@@ -78,8 +78,14 @@ def plot_calibration_curve(
         label="Perfect Calibration",
     )
     sc = plt.scatter(
-        bin_centers, frac_observed, s=bin_counts * 5, c=bin_counts, cmap="viridis"
+        bin_centers,
+        frac_observed,
+        s=bin_counts / 100.0,
+        c=bin_counts,
+        cmap="viridis",
     )
+    plt.xlim(np.min(ranking_stat), np.max(ranking_stat))
+    plt.ylim(0, 1)
     plt.colorbar(sc, label="Number of Samples in Bin")
     plt.xlabel("Predicted Ranking Statistic")
     plt.ylabel("Observed Fraction of Signals")
@@ -87,7 +93,7 @@ def plot_calibration_curve(
     plt.grid(True, ls=":")
 
     if save and export_dir is not None:
-        outdir = os.path.join(export_dir, "CALIBRATION")
+        outdir = os.path.join(export_dir, "calibration")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
             os.path.join(outdir, f"calibration_epoch_{epoch}.png"),
