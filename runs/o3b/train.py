@@ -27,8 +27,16 @@ Documentation: NULL
 import os
 import torch
 
-# LOCAL
+# Optional extra silence
+torch._dynamo.config.verbose = False
+torch._inductor.config.debug = False
+torch.backends.cudnn.benchmark = True
+torch.autograd.set_detect_anomaly(False)
+torch.autograd.profiler.profile(False)
+torch.autograd.profiler.emit_nvtx(False)
+torch.cuda.empty_cache()
 
+# LOCAL
 from sage.core.config import get_cfg, get_data_cfg
 
 # Signal Sampler
@@ -75,7 +83,10 @@ def make_training_graph():
     )
 
     # Make the noise sampler
-    recolour = RecolourPostprocess(p_recolour=0.37)
+    recolour = RecolourPostprocess(
+        p_recolour=0.37,
+        recolour_dataset_dir="/local/scratch/igr/nnarenraju/search/o3a",
+    )
     training_noise_sampler = MemmapNoiseSampler(
         postprocess_fn=recolour, prefetch=4, seed=150914
     )
@@ -143,9 +154,12 @@ def run_sage():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
+    model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=False)
+    print("Model compiled with torch.compile!")
+
     loss_function = BCEWithPEregLoss(regression_weight=0.3)
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
-    scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=1, eta_min=1e-6)
+    scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
     train_sage = SageUncompiledTraining(
@@ -201,7 +215,6 @@ def run_sage():
             validate_sage(nepoch=nepoch)
             logger.log(validate_sage.loss_components, nepoch, split="validation")
 
-            # Saving total loss
+            # Saving total loss and checkpointing
             val_loss = validate_sage.loss_components[nepoch][0].item()
-
-        ckpt_mgr.save(epoch=nepoch, val_loss=val_loss)
+            ckpt_mgr.save(epoch=nepoch, val_loss=val_loss)
