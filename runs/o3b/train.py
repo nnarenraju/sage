@@ -160,7 +160,7 @@ def run_sage():
     model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=True)
     print("Model compiled with torch.compile!")
 
-    loss_function = BCEWithPEsigmaLoss(regression_weight=0.01, coupling_weight=0.01)
+    loss_function = BCEWithPEsigmaLoss(regression_weight=0.005, coupling_weight=0.005)
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
     scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
