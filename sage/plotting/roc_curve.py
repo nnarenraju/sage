@@ -43,6 +43,8 @@ def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
     plt.yscale("log")
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
+    plt.xlim(right=1)
+    plt.ylim(top=1)
     plt.title(f"ROC Curve at {epoch}")
     plt.legend()
     plt.grid(True, which="both", ls=":")
