@@ -490,6 +490,77 @@ class DistributionSampler(torch.nn.Module):
 
         return normed_batch * self._norm_scales + self._norm_mins
 
+    def _compile_batch_standardiser(self, N: int = 1_000_000):
+        """
+        Compute mean and std for standardisation from a large sample of parameters
+        and register them as buffers for fast batch standardisation.
+
+        Parameters
+        ----------
+        N : int
+            Number of samples to use to estimate mean and stddev
+            Default is set to 1_000_000
+        """
+
+        # Sample directly
+        all_samples = self._sample_base(N)  # shape (N, total_params)
+
+        selected_names = self.sage_cfg.do_point_estimate
+        idxs = [self.param_index[key] for key in selected_names]
+        indices_tensor = torch.tensor(idxs, dtype=torch.long)
+
+        # Select only the parameters we care about
+        selected_samples = all_samples[:, idxs]
+
+        # Compute mean and stddev across samples (dim=0)
+        means = selected_samples.mean(dim=0)
+        stds = selected_samples.std(dim=0)
+
+        # Avoid division by zero
+        stds[stds == 0.0] = 1.0
+
+        # Register as buffers (device-aware)
+        self.register_buffer("_std_indices", indices_tensor)
+        self.register_buffer("_std_means", means)
+        self.register_buffer("_std_stds", stds)
+
+    def standardise_from_batch(self, batch: torch.Tensor):
+        """
+        Standardise batch using precomputed mean/std buffers.
+
+        Parameters
+        ----------
+        batch : torch.Tensor
+            Shape (B, total_params)
+        Returns
+        -------
+        torch.Tensor
+            Standardised batch (B, selected_params)
+        """
+        if batch.ndim != 2:
+            raise ValueError("batch must be 2D (B, total_params)")
+
+        selected = batch.index_select(1, self._std_indices)
+        return (selected - self._std_means) / self._std_stds
+
+    def unstandardise_from_batch(self, standardised_batch: torch.Tensor):
+        """
+        Convert standardised batch back to original parameter scale.
+
+        Parameters
+        ----------
+        standardised_batch : torch.Tensor
+            Shape (B, selected_params)
+        Returns
+        -------
+        torch.Tensor
+            Unstandardised batch
+        """
+        if standardised_batch.ndim != 2:
+            raise ValueError("standardised_batch must be 2D")
+
+        return standardised_batch * self._std_stds + self._std_means
+
     def forward(self, N: int):
 
         params = self._sample_base(N)
