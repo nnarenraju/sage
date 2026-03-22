@@ -52,8 +52,11 @@ from sage.dsp.whiten import FiducialWhitening
 from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 
 # Model and loss
-from sage.architecture.network import MSCNN1D_2DResNetCBAM
-from sage.architecture.custom_losses import BCEWithPEregLoss
+from sage.architecture.network import (
+    MSCNN1D_2DResNetCBAM,
+    MSCNN1D_2DResNetCBAM_Heteroscedastic,
+)
+from sage.architecture.custom_losses import BCEWithPEregLoss, BCEWithPEsigmaLoss
 from sage.core.logger import HDF5LossLogger
 
 # Optimiser and scheduler
@@ -141,7 +144,7 @@ def run_sage():
     processor = make_processor(bounds)
 
     # Model and optimisation
-    model = MSCNN1D_2DResNetCBAM(
+    model = MSCNN1D_2DResNetCBAM_Heteroscedastic(
         frontend_filters=32,
         frontend_kernel=64,
         backend_resnet_size=50,
@@ -154,10 +157,10 @@ def run_sage():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
-    model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=False)
+    model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=True)
     print("Model compiled with torch.compile!")
 
-    loss_function = BCEWithPEregLoss(regression_weight=0.3)
+    loss_function = BCEWithPEsigmaLoss(regression_weight=0.3)
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
     scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)

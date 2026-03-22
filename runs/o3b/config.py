@@ -43,13 +43,13 @@ class O3aCFG:
     class_balance = 0.5
     clip_norm = 1.0
     num_epochs = 5
-    training_iterations = int(2_000_000 / batch_size)
-    validation_iterations = int(200_000 / batch_size)
+    training_iterations = int(20_000 / batch_size)
+    validation_iterations = int(2_000 / batch_size)
 
 
 class O3aDataCFG:
 
-    data_dir = "/local/scratch/igr/nnarenraju/data_dir"
+    data_dir = "/local/scratch/igr/nnarenraju/search/o3b/data_dir"
     training_noise_files = [
         "/local/scratch/igr/nnarenraju/search/o3b/data_release/data_H1_O3b.bin",
         "/local/scratch/igr/nnarenraju/search/o3b/data_release/data_L1_O3b.bin",
