@@ -52,7 +52,7 @@ from sage.dsp.whiten import FiducialWhitening
 from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 
 # Model and loss
-from sage.architecture.network import MSCNN1D_2DResNetCBAM, MSCNN1D_catt_2DResNetCBAM
+from sage.architecture.network import MSCNN1D_2DResNetCBAM
 from sage.architecture.custom_losses import BCEWithPEregLoss
 from sage.core.logger import HDF5LossLogger
 
@@ -62,8 +62,8 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 # SageGraph
 from sage.core.graph import Preprocessor
-from sage.factory.training import SageUncompiledTraining, SageVanillaTraining
-from sage.factory.validation import SageUncompiledValidation, SageVanillaValidation
+from sage.factory.training import SageUncompiledTraining
+from sage.factory.validation import SageUncompiledValidation
 
 from config import set_configs
 from sage.utils.checkpoint import CheckpointManager
