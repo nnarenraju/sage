@@ -51,12 +51,12 @@ class O3aDataCFG:
 
     data_dir = "/local/scratch/igr/nnarenraju/data_dir"
     training_noise_files = [
-        "/local/scratch/igr/nnarenraju/data_release/data_H1_O3b.bin",
-        "/local/scratch/igr/nnarenraju/data_release/data_L1_O3b.bin",
+        "/local/scratch/igr/nnarenraju/search/o3b/data_release/data_H1_O3b.bin",
+        "/local/scratch/igr/nnarenraju/search/o3b/data_release/data_L1_O3b.bin",
     ]
     validation_noise_files = [
-        "/local/scratch/igr/nnarenraju/data_release/data_H1_O3b.bin",
-        "/local/scratch/igr/nnarenraju/data_release/data_L1_O3b.bin",
+        "/local/scratch/igr/nnarenraju/search/o3a/data_release/data_H1_O3a.bin",
+        "/local/scratch/igr/nnarenraju/search/o3a/data_release/data_L1_O3a.bin",
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz
