@@ -152,6 +152,7 @@ class SageUncompiledTraining(torch.nn.Module):
         loss_function,
         optimiser,
         scheduler,
+        scaler,
         num_iterations,
         num_epochs,
         scheduler_mode="batch",
@@ -178,7 +179,7 @@ class SageUncompiledTraining(torch.nn.Module):
         self.num_epochs = num_epochs
 
         # Gradient scaler
-        self.scaler = torch.amp.GradScaler("cuda") if self.cfg.autocast else None
+        self.scaler = scaler
 
         # Target structure
         self.num_point_estimate = len(self.cfg.do_point_estimate)
