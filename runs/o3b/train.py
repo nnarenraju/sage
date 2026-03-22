@@ -130,7 +130,7 @@ def run_sage():
     processor = make_processor(bounds)
 
     # Model and optimisation
-    model = MSCNN1D_catt_2DResNetCBAM(
+    model = MSCNN1D_2DResNetCBAM(
         frontend_filters=32,
         frontend_kernel=64,
         backend_resnet_size=50,
