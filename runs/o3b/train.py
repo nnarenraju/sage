@@ -194,7 +194,7 @@ def run_sage():
         model=model,
         optimizer=optimiser,
         scheduler=scheduler,
-        scaler=None,
+        scaler=scaler,
     )
 
     ## TRAINING LOOP
