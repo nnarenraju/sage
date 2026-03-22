@@ -489,6 +489,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         batch_tensor = self.queue.get()
         return batch_tensor
 
+    @torch.no_grad()
     def forward(self):
         return self.sample_batch(), self.noise_target
 

@@ -116,11 +116,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # Target handling
         self.param_sampler.req_idx = self.req_idx
         self.param_sampler._compile_batch_normaliser()
+        self.param_sampler._compile_batch_standardiser()
 
         # Move to correct device
         self.param_sampler.to(self.cfg.device)
         self.waveform_project.to(self.cfg.device)
 
+    @torch.no_grad()
     def forward(self, return_theta=False):
         all_theta = self.param_sampler(self.B)
         req_theta = all_theta[:, self.req_idx]
@@ -140,7 +142,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             hf = self.augment(hf)
 
         # Target handling
-        normed_targets = self.param_sampler.norm_from_batch(all_theta)
+        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )

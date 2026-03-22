@@ -144,6 +144,7 @@ class TorchWelch:
                 raise ValueError("Window length does not match seg_len")
             self.window = window
 
+    @torch.no_grad()
     def __call__(self, timeseries: torch.Tensor) -> torch.Tensor:
         """
         Compute PSD for a single 1D timeseries.

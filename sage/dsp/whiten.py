@@ -80,6 +80,7 @@ class FiducialWhitening(torch.nn.Module):
         end = T - self.corrupted_len
         return x[..., start:end]
 
+    @torch.no_grad()
     def forward(self, X_fd: torch.Tensor) -> torch.Tensor:
         """
         X_fd: (B, D, F) complex64

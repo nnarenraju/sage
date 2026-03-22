@@ -209,7 +209,7 @@ class MultirateSampler(torch.nn.Module):
 
         return y.reshape(B, D, y.shape[-1])
 
-    ## Forward ##
+    @torch.no_grad()
     def forward(self, noisy_signals: torch.Tensor) -> torch.Tensor:
 
         x = F.pad(

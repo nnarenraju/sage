@@ -137,7 +137,7 @@ class RecolourPostprocess(torch.nn.Module):
 
         for det in self.detectors:
             # Recolour ASDs can be different from that for training
-            data_dir = os.path.join(self.recolour_dataset_dir, "data_dir")
+            data_dir = Path(os.path.join(self.recolour_dataset_dir, "data_dir"))
             asd_dir = data_dir / "recolour_psds"
             bin_path = asd_dir / f"raw_{det}_psds.bin"
             meta_path = asd_dir / f"raw_{det}_psds.json"
@@ -154,6 +154,7 @@ class RecolourPostprocess(torch.nn.Module):
         self.recolour_asds = torch.from_numpy(np.stack(asds_all, axis=0))
         self.n_recolour_asd = self.recolour_asds.shape[1]
 
+    @torch.no_grad()
     def forward(
         self,
         batch_td: torch.Tensor,
