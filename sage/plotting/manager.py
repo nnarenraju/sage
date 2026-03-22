@@ -28,8 +28,35 @@ import os
 import h5py
 import numpy as np
 
+from scipy.special import expit
+
 # LOCAL
-from sage.plotting import plot_roc_curve
+from sage.plotting import (
+    plot_2d_efficiency,
+    plot_2d_param_density,
+    plot_calibration_curve,
+    plot_confidence_vs_snr,
+    plot_correlation_matrix,
+    plot_cumulative_volume,
+    plot_diagonal_compare,
+    plot_efficiency_curves,
+    plot_joint_cdfs,
+    plot_learning_parameter_prior,
+    plot_loss_curves,
+    plot_output_gradient,
+    plot_output_trajectory_over_epochs,
+    plot_output_vs_param_heatmap,
+    plot_output_vs_uncertainty,
+    plot_outputbin_param_distribution,
+    plot_param_recovery_heatmap,
+    plot_paramfrac_detected_above_thresh,
+    plot_perturbation_sensitivity,
+    plot_prediction_probability,
+    plot_prediction_raw,
+    plot_roc_curve,
+    plot_separation_over_epochs,
+    plot_uncertainty_vs_gradient,
+)
 
 
 class ValidationPlotManager:
@@ -68,10 +95,19 @@ class ValidationPlotManager:
 
                 self.validation_data[epoch_key] = {
                     "ranking_stat": ranking_stat,
+                    "pred_prob": expit(ranking_stat),
                     "labels": labels,
                     "network_output": network_output,
                     "network_target": network_target,
                 }
+
+                """
+                signal_params_group = fp[epoch_key]["signal_params"]
+                source_params = {
+                    key: signal_params_group[key][:].flatten()
+                    for key in signal_params_group.keys()
+                }
+                """
 
     # -------------------------------------------------------
     # MASTER DRIVER
@@ -105,10 +141,28 @@ class ValidationPlotManager:
                 save=save,
             )
 
+            plot_loss_curves(
+                training_loss=self.training_loss,
+                validation_loss=self.validation_loss,
+                export_dir=self.export_dir,
+                save=save,
+                best_epoch=np.argmin(self.validation_loss[:, 0]),
+            )
+
+            plot_calibration_curve(
+                epoch=epoch_key,
+                ranking_stat=data["ranking_stat"],
+                labels=data["labels"],
+                export_dir=self.export_dir,
+                save=save,
+                nbins=20,
+            )
+
+            """
             plot_efficiency_curves(
                 epoch=epoch_key,
                 source_params=data["source_params"],
-                pred_stat=data["ranking_stat"],  # or pred_prob depending what you want
+                pred_stat=data["ranking_stat"],
                 labels=data["labels"],
                 export_dir=self.export_dir,
                 save=save,
@@ -118,7 +172,7 @@ class ValidationPlotManager:
             plot_learning_parameter_prior(
                 epoch=epoch_key,
                 source_params=data["source_params"],
-                pred_stat=data["ranking_stat"],  # or pred_prob
+                pred_stat=data["ranking_stat"],
                 labels=data["labels"],
                 export_dir=self.export_dir,
                 save=save,
@@ -143,23 +197,6 @@ class ValidationPlotManager:
                 save=save,
             )
 
-            plot_loss_curves(
-                training_loss=self.training_loss,
-                validation_loss=self.validation_loss,
-                export_dir=self.export_dir,
-                save=save,
-                best_epoch=None,  # or compute
-            )
-
-            plot_calibration_curve(
-                epoch=epoch_key,
-                ranking_stat=data["ranking_stat"],
-                labels=data["labels"],
-                export_dir=self.export_dir,
-                save=save,
-                nbins=20,
-            )
-
             plot_output_vs_param_heatmap(
                 epoch=epoch_key,
                 ranking_stat=data["ranking_stat"],
@@ -169,3 +206,4 @@ class ValidationPlotManager:
                 export_dir=self.export_dir,
                 save=save,
             )
+            """
