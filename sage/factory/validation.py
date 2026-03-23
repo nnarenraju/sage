@@ -225,6 +225,20 @@ class SageUncompiledValidation(torch.nn.Module):
 
                 # Save results
                 network_output = torch.cat([*out], dim=1)
+
+                # Unstandardise PE
+                ranking = network_output[:, 0:1]
+                mu_std = network_output[:, 1 : 1 + self.num_point_estimate]
+                log_var = network_output[
+                    :, 1 + self.num_point_estimate : 1 + 2 * self.num_point_estimate
+                ]
+
+                mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
+                    mu_std
+                )
+                sigma_phys = torch.exp(0.5 * log_var)
+                network_output = torch.cat([ranking, mu_phys, sigma_phys], dim=1)
+
                 save["network_output"].append(network_output.cpu())
                 save["network_target"].append(targets.cpu())
                 save["signal_params"].append(theta.cpu())
@@ -236,9 +250,9 @@ class SageUncompiledValidation(torch.nn.Module):
         self.loss_components[nepoch] /= self.num_iterations
 
         # Stack and save
-        network_output = torch.stack(save["network_output"])
-        network_target = torch.stack(save["network_target"])
-        signal_params = torch.stack(save["signal_params"])
+        network_output = torch.vstack(save["network_output"])
+        network_target = torch.vstack(save["network_target"])
+        signal_params = torch.vstack(save["signal_params"])
 
         savepath = os.path.join(self.cfg.export_dir, "validation_data.h5")
         save_validation(nepoch, network_output, network_target, signal_params, savepath)
