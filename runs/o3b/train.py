@@ -36,6 +36,9 @@ torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
 torch.cuda.empty_cache()
 
+torch._dynamo.reset()
+
+
 # LOCAL
 from sage.core.config import get_cfg, get_data_cfg
 
@@ -91,7 +94,7 @@ def make_training_graph():
         recolour_dataset_dir="/local/scratch/igr/nnarenraju/search/o3a",
     )
     training_noise_sampler = MemmapNoiseSampler(
-        postprocess_fn=recolour, prefetch=4, seed=150914
+        postprocess_fn=recolour, prefetch=8, seed=150914
     )
 
     return (
@@ -116,7 +119,7 @@ def make_validation_graph():
 
     # Make the noise sampler
     validation_noise_sampler = MemmapNoiseSampler(
-        postprocess_fn=None, prefetch=4, seed=170817
+        postprocess_fn=None, prefetch=8, seed=170817
     )
 
     return validation_signal_sampler, validation_noise_sampler
