@@ -504,6 +504,8 @@ class DistributionSampler(torch.nn.Module):
 
         # Sample directly
         all_samples = self._sample_base(N)  # shape (N, total_params)
+        all_samples = self._enforce_constraints(all_samples)
+        self._apply_transforms(all_samples)
 
         selected_names = self.sage_cfg.do_point_estimate
         idxs = [self.param_index[key] for key in selected_names]
@@ -565,6 +567,9 @@ class DistributionSampler(torch.nn.Module):
 
         params = self._sample_base(N)
         params = self._enforce_constraints(params)
+        # NOTE: Just so I remove panic for future me
+        # Tensors are mutable and passed by reference
+        # So we don't need to return params from appply_transforms
         self._apply_transforms(params)
 
         return params
