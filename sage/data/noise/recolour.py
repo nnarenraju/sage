@@ -168,7 +168,11 @@ class RecolourPostprocess(torch.nn.Module):
         X = torch.fft.rfft(batch_td, dim=-1, norm="forward")
 
         # Bernoulli recolour mask (B, D, 1)
-        mask = torch.rand(self.B, self.D, 1, device=X.device) < self.p_recolour
+        # RuntimeError: Offset increment outside graph capture encountered unexpectedly.
+        # mask = torch.rand(self.B, self.D, 1, device=X.device) < self.p_recolour
+
+        mask_cpu = torch.rand(self.B, self.D, 1) < self.p_recolour
+        mask = mask_cpu.to(X.device, non_blocking=True)
 
         # Whitening PSD (only where mask == True, else ones)
         det_idx = torch.arange(self.D).view(1, self.D).expand(self.B, self.D)
