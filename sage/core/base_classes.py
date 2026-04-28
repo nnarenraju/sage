@@ -38,6 +38,8 @@ class BaseDataConfig:
 
     # Forward attribute access to original config
     def __getattr__(self, name):
+        if name == "data_cfg":
+            raise AttributeError(name)
         return getattr(self.data_cfg, name)
 
     # Derived quantities (lazy) cached after one call
@@ -81,4 +83,6 @@ class BaseConfig:
 
     # Forward attribute access to original config
     def __getattr__(self, name):
+        if name == "cfg":
+            raise AttributeError(name)
         return getattr(self.cfg, name)
