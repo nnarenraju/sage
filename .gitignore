@@ -160,4 +160,5 @@ source/baseline/data/psds/
 !requirements.txt
 
 # Automatically added files
-architectures/zoo/mamba.py
+sage/architectures/zoo/mamba.py
+sage/benchmark/evomcts
