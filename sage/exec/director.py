@@ -39,7 +39,7 @@ warnings.filterwarnings("ignore")
 
 # LOCAL
 from sage.factory.testing import run_test
-from sage.benchmark.evaluator import main as evaluator
+from sage.benchmark.mlgwsc1.evaluator import main as evaluator
 from sage.factory.legacy import train as manual_train
 from sage.exec.data_handler import DataModule as dat
 

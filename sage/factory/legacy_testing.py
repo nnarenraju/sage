@@ -38,7 +38,7 @@ import pycbc
 from pycbc.types import FrequencySeries
 
 # LOCAL
-from sage.benchmark.evaluator import main as evaluator
+from sage.benchmark.mlgwsc1.evaluator import main as evaluator
 from sage.exec.data_handler import DataModule as dat
 from sage.data.transform.multirate_sampling import (
     get_sampling_rate_bins_type1,

@@ -72,7 +72,7 @@ plt.rcParams.update({"font.size": 18})
 
 # LOCAL
 from sage.factory.testing import run_test
-from sage.benchmark.evaluator import main as evaluator
+from sage.benchmark.mlgwsc1.evaluator import main as evaluator
 
 
 def figure(title=""):
