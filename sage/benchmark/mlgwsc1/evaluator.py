@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 
 # LOCAL
-from sage.blueprints.data_configs import Default as data_cfg
+from sage.presets.data_configs import Default as data_cfg
 from sage.utils.get_testdata_snr import get_snrs
 
 # Plotting
