@@ -30,10 +30,13 @@ from .real_noise import (
 )
 
 from .recolour import RecolourPostprocess
+from .hard_mining import HardSampleBuffer, HardSampleMiner
 
 __all__ = [
     "HDF5SingleNoiseSampler",
     "MemmapSingleNoiseSampler",
     "MemmapNoiseSampler",
     "RecolourPostprocess",
+    "HardSampleBuffer",
+    "HardSampleMiner",
 ]
