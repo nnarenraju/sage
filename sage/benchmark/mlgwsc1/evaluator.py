@@ -8,9 +8,7 @@ import itertools
 import numpy as np
 from pathlib import Path
 
-# LOCAL
-from sage.presets.data_configs import Default as data_cfg
-from sage.utils.get_testdata_snr import get_snrs
+# LOCAL  (lazy-imported inside main() to avoid broken import chains)
 
 # Plotting
 from matplotlib import colors
@@ -513,7 +511,8 @@ def read_data(args, idxs):
 
     team_1 = {"name": args.team1}
     team_2 = {"name": args.team2}
-    other_results = "/home/nnarenraju/Research/ORChiD/results"
+    other_results = getattr(args, "orchid_results",
+                            "/local/scratch/igr/nnarenraju/orchid_data/results")
     other_teams = os.listdir(other_results)
 
     print(
@@ -1272,6 +1271,12 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         help=("Team 2 to be compared using evalution plots"),
     )
 
+    parser.add_argument(
+        "--orchid-results",
+        type=str,
+        default="/local/scratch/igr/nnarenraju/orchid_data/results",
+        help="Path to the directory containing MLGWSC-1 comparison team results.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print update messages.")
     parser.add_argument(
         "--force", action="store_true", help="Overwrite existing files."
@@ -1316,6 +1321,8 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         with h5py.File(snrs_path, "r") as fp:
             snrs = fp["snr"][()]
     else:
+        from sage.presets.data_configs import Default as data_cfg
+        from sage.utils.get_testdata_snr import get_snrs
         snrs = get_snrs(args.injection_file, data_cfg, dataset_dir)
 
     # Find indices contained in foreground
@@ -1374,7 +1381,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     plt.plot(far * (month / dur), sens, color="m", linewidth=3.0, label="nnarenraju")
 
     with h5py.File(
-        "/home/nnarenraju/Research/ORChiD/results/PyCBC/ds{}/eval.hdf".format(dataset)
+        os.path.join(args.orchid_results, "PyCBC/ds{}/eval.hdf".format(dataset))
     ) as fp:
         sens_pycbc = np.array(fp["sensitive-distance"])
         far_pycbc = np.array(fp["far"])
@@ -1388,9 +1395,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     )
 
     with h5py.File(
-        "/home/nnarenraju/Research/ORChiD/results/TPI_FSU_Jena/ds{}/eval.hdf".format(
-            dataset
-        )
+        os.path.join(args.orchid_results, "TPI_FSU_Jena/ds{}/eval.hdf".format(dataset))
     ) as fp:
         sens_fsu = np.array(fp["sensitive-distance"])
         far_fsu = np.array(fp["far"])
@@ -1404,9 +1409,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     )
 
     with h5py.File(
-        "/home/nnarenraju/Research/ORChiD/results/Virgo-AUTh/ds{}/eval.hdf".format(
-            dataset
-        )
+        os.path.join(args.orchid_results, "Virgo-AUTh/ds{}/eval.hdf".format(dataset))
     ) as fp:
         sens_virgo = np.array(fp["sensitive-distance"])
         far_virgo = np.array(fp["far"])
@@ -1420,9 +1423,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     )
 
     with h5py.File(
-        "/home/nnarenraju/Research/ORChiD/results/CNN-Coinc/ds{}/eval.hdf".format(
-            dataset
-        )
+        os.path.join(args.orchid_results, "CNN-Coinc/ds{}/eval.hdf".format(dataset))
     ) as fp:
         sens_cnn = np.array(fp["sensitive-distance"])
         far_cnn = np.array(fp["far"])
@@ -1436,7 +1437,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     )
 
     with h5py.File(
-        "/home/nnarenraju/Research/ORChiD/results/MFCNN/ds{}/eval.hdf".format(dataset)
+        os.path.join(args.orchid_results, "MFCNN/ds{}/eval.hdf".format(dataset))
     ) as fp:
         sens_mfcnn = np.array(fp["sensitive-distance"])
         far_mfcnn = np.array(fp["far"])
@@ -1464,9 +1465,7 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     plt.plot(far * (month / dur), sens, color="m", linewidth=3.0, label="nnarenraju")
 
     with h5py.File(
-        "/home/nnarenraju/Research/ORChiD/results/{}/ds{}/eval.hdf".format(
-            args.team2, dataset
-        )
+        os.path.join(args.orchid_results, "{}/ds{}/eval.hdf".format(args.team2, dataset))
     ) as fp:
         sens_team2 = np.array(fp["sensitive-distance"])
         far_team2 = np.array(fp["far"])
