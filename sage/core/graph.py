@@ -120,8 +120,8 @@ class AddSources(nn.Module):
 
     def __init__(
         self,
-        signal_sampler: nn.Module | None,
-        noise_sampler: nn.Module | None,
+        signal_sampler,
+        noise_sampler,
     ):
         super().__init__()
 

@@ -253,7 +253,7 @@ class MemmapSingleNoiseSampler:
     def sample(
         self,
         requested_nsamples: int,
-        rng: np.random.Generator | None = None,
+        rng = None,
     ) -> np.ndarray:
         """
         Draw a random noise slice.

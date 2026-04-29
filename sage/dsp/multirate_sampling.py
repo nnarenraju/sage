@@ -63,7 +63,7 @@ class MultirateSampler(torch.nn.Module):
     def __init__(
         self,
         binning_method,
-        reflect_pad: int | None = None,
+        reflect_pad = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
