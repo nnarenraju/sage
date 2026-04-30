@@ -37,7 +37,7 @@ from sage.core.config import get_cfg
 from .manager import CompileManager
 
 
-def save_validation(nepoch, output, target, params, savepath):
+def save_validation(nepoch, output, target, params, signal_idx, savepath):
 
     with h5py.File(savepath, "a") as f:
 
@@ -46,6 +46,7 @@ def save_validation(nepoch, output, target, params, savepath):
         grp.create_dataset("network_output", data=output.numpy(), compression="gzip")
         grp.create_dataset("network_target", data=target.numpy(), compression="gzip")
         grp.create_dataset("signal_params", data=params.numpy(), compression="gzip")
+        grp.create_dataset("signal_idx", data=signal_idx.numpy(), compression="gzip")
 
 
 class SageVanillaValidation(torch.nn.Module):
@@ -169,6 +170,7 @@ class SageUncompiledValidation(torch.nn.Module):
         # Diagnostics
         save = {}
         save["signal_params"] = []
+        save["signal_idx"] = []
         save["network_output"] = []
         save["network_target"] = []
 
@@ -194,6 +196,7 @@ class SageUncompiledValidation(torch.nn.Module):
 
                 # Random signal placement
                 idx = torch.randperm(self.B, device=device)[: self.S]
+                save["signal_idx"].append(idx.cpu())
 
                 signal_pad = torch.zeros_like(noise_data)
 
@@ -253,6 +256,7 @@ class SageUncompiledValidation(torch.nn.Module):
         network_output = torch.vstack(save["network_output"])
         network_target = torch.vstack(save["network_target"])
         signal_params = torch.vstack(save["signal_params"])
+        signal_idx = torch.stack(save["signal_idx"])  # (num_iter, S)
 
         savepath = os.path.join(self.cfg.export_dir, "validation_data.h5")
-        save_validation(nepoch, network_output, network_target, signal_params, savepath)
+        save_validation(nepoch, network_output, network_target, signal_params, signal_idx, savepath)
