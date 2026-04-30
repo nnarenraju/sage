@@ -48,7 +48,7 @@ data_cfg.signal_length = data_cfg.sample_length_in_s  # 12.0 s
 TESTING_DIR = "/local/scratch/igr/nnarenraju/testing_month_D4_seeded"
 EXPORT_DIR = os.path.join(RUN_DIR, "run_export")
 BENCHMARK_DIR = os.path.join(EXPORT_DIR, "benchmark-mlgwsc1")
-CHECKPOINT = os.path.join(EXPORT_DIR, "CHECKPOINTS", "epoch_79.pt")
+CHECKPOINT = os.path.join(EXPORT_DIR, "CHECKPOINTS", "epoch_19.pt")
 
 os.makedirs(BENCHMARK_DIR, exist_ok=True)
 
