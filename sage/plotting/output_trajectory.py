@@ -24,6 +24,9 @@ Documentation: NULL
 """
 
 # Packages
+import os
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 def plot_output_trajectory_over_epochs(

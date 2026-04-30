@@ -24,25 +24,36 @@ Documentation: NULL
 """
 
 # Packages
+import os
+import matplotlib.pyplot as plt
 
 
 def plot_correlation_matrix(
     ranking_stat, source_params, labels, export_dir=None, save=True, epoch=None
 ):
-    import seaborn as sns
-    import pandas as pd
+    import numpy as np
 
-    # Only signals
+    # Only signals (drop NaN rows from unaligned noise entries)
     signal_mask = labels == 1.0
-    data = {k: v[signal_mask] for k, v in source_params.items()}
-    data["ranking_stat"] = ranking_stat[signal_mask]
+    keys = list(source_params.keys()) + ["ranking_stat"]
+    cols = [source_params[k][signal_mask] for k in source_params] + [ranking_stat[signal_mask]]
 
-    df = pd.DataFrame(data)
-    corr = df.corr()
+    # Stack and drop rows with NaN
+    mat = np.column_stack(cols)
+    valid = np.all(np.isfinite(mat), axis=1)
+    mat = mat[valid]
 
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(corr, annot=True, cmap="coolwarm", vmin=-1, vmax=1)
-    plt.title(f"Correlation Matrix - Epoch {epoch}")
+    corr = np.corrcoef(mat.T)
+
+    fig, ax = plt.subplots(figsize=(max(6, len(keys)), max(5, len(keys) - 1)))
+    im = ax.imshow(corr, vmin=-1, vmax=1, cmap="coolwarm", aspect="auto")
+    plt.colorbar(im, ax=ax)
+    ax.set_xticks(range(len(keys))); ax.set_xticklabels(keys, rotation=45, ha="right", fontsize=7)
+    ax.set_yticks(range(len(keys))); ax.set_yticklabels(keys, fontsize=7)
+    for i in range(len(keys)):
+        for j in range(len(keys)):
+            ax.text(j, i, f"{corr[i, j]:.2f}", ha="center", va="center", fontsize=6)
+    ax.set_title(f"Correlation Matrix - Epoch {epoch}")
 
     if save and export_dir is not None:
         outdir = os.path.join(export_dir, "CORRELATION_MATRIX")

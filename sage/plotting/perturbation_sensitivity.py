@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # Packages
+import os
 
 
 def plot_perturbation_sensitivity(

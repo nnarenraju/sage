@@ -25,6 +25,10 @@ Documentation: NULL
 
 
 # Packages
+import os
+import matplotlib.pyplot as plt
+
+
 def plot_2d_param_density(
     epoch,
     ranking_stat,
@@ -44,7 +48,7 @@ def plot_2d_param_density(
     z = ranking_stat[labels == 1.0]
 
     plt.figure(figsize=(7, 6))
-    h = plt.hist2d(x, y, bins=bins, weights=z, cmap="plasma", normed=False)
+    h = plt.hist2d(x, y, bins=bins, weights=z, cmap="plasma")
     plt.colorbar(label="Sum of ranking statistic")
     plt.xlabel(param_x)
     plt.ylabel(param_y)

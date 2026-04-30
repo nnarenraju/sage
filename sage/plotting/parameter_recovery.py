@@ -24,6 +24,9 @@ Documentation: NULL
 """
 
 # Packages
+import os
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 def plot_param_recovery_heatmap(
@@ -38,8 +41,6 @@ def plot_param_recovery_heatmap(
     """
     Heatmap of median residual for a parameter across epochs
     """
-    import matplotlib.pyplot as plt
-
     # Collect true values
     true_vals = np.concatenate([all_labels[epoch][param_name] for epoch in epochs])
     min_val, max_val = np.min(true_vals), np.max(true_vals)

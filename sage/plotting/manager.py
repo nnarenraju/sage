@@ -58,6 +58,15 @@ from sage.plotting import (
     plot_uncertainty_vs_gradient,
 )
 
+# Ordered list matching signal_params column layout (from gwconfig param_names)
+_PARAM_NAMES = [
+    "chirp_distance", "coa_phase", "dec", "distance", "inclination",
+    "injection_time", "mass1", "mass2", "mchirp", "polarization", "q", "ra",
+    "spin1_a", "spin1_azimuthal", "spin1_polar", "spin1x", "spin1y", "spin1z",
+    "spin2_a", "spin2_azimuthal", "spin2_polar", "spin2x", "spin2y", "spin2z",
+    "tc",
+]
+
 
 class ValidationPlotManager:
 
@@ -87,11 +96,44 @@ class ValidationPlotManager:
 
             for epoch_key in fp.keys():
 
-                network_output = np.vstack(fp[epoch_key]["network_output"][:])
-                network_target = np.vstack(fp[epoch_key]["network_target"][:])
+                network_output = fp[epoch_key]["network_output"][:]   # (N, 5)
+                network_target = fp[epoch_key]["network_target"][:]   # (N, 3)
+                signal_params_raw = fp[epoch_key]["signal_params"][:] # (S_total, 25)
 
                 ranking_stat = network_output[:, 0]
                 labels = network_target[:, -1]
+                signal_mask = labels == 1.0
+
+                # --------------------------------------------------
+                # Align signal_params with signal rows in network_output
+                # using saved signal_idx (batch placement indices).
+                #
+                # Within each iteration, theta[i] was placed at batch
+                # position idx[i].  When we later filter network_output
+                # for label==1 we get signals in ascending batch-position
+                # order.  argsort(idx) maps generation order → sorted
+                # batch-position order, giving the correct alignment.
+                # --------------------------------------------------
+                source_params = {}
+                if "signal_idx" in fp[epoch_key]:
+                    signal_idx = fp[epoch_key]["signal_idx"][:]  # (num_iter, S)
+                    num_iter, S = signal_idx.shape
+
+                    aligned = []
+                    for k in range(num_iter):
+                        batch_params = signal_params_raw[k * S : (k + 1) * S]
+                        batch_idx = signal_idx[k]
+                        aligned.append(batch_params[np.argsort(batch_idx)])
+                    aligned_params = np.concatenate(aligned, axis=0)  # (S_total, 25)
+
+                    # Embed into full-length array (NaN for noise rows)
+                    full_params = np.full((len(network_output), len(_PARAM_NAMES)), np.nan)
+                    full_params[signal_mask] = aligned_params
+
+                    source_params = {
+                        name: full_params[:, i]
+                        for i, name in enumerate(_PARAM_NAMES)
+                    }
 
                 self.validation_data[epoch_key] = {
                     "ranking_stat": ranking_stat,
@@ -99,15 +141,8 @@ class ValidationPlotManager:
                     "labels": labels,
                     "network_output": network_output,
                     "network_target": network_target,
+                    "source_params": source_params,
                 }
-
-                """
-                signal_params_group = fp[epoch_key]["signal_params"]
-                source_params = {
-                    key: signal_params_group[key][:].flatten()
-                    for key in signal_params_group.keys()
-                }
-                """
 
     # -------------------------------------------------------
     # MASTER DRIVER
@@ -115,7 +150,15 @@ class ValidationPlotManager:
 
     def make_all_plots(self, save=True):
 
-        for epoch_key, data in self.validation_data.items():
+        epochs = sorted(self.validation_data.keys())
+        best_epoch = np.argmin(self.validation_loss[:, 0])
+
+        # -------------------------------------------------------
+        # Per-epoch plots
+        # -------------------------------------------------------
+        for epoch_key in epochs:
+            data = self.validation_data[epoch_key]
+            sp = data["source_params"]  # {} if signal_idx not saved
 
             plot_roc_curve(
                 epoch=epoch_key,
@@ -146,7 +189,7 @@ class ValidationPlotManager:
                 validation_loss=self.validation_loss,
                 export_dir=self.export_dir,
                 save=save,
-                best_epoch=np.argmin(self.validation_loss[:, 0]),
+                best_epoch=best_epoch,
             )
 
             plot_calibration_curve(
@@ -158,52 +201,109 @@ class ValidationPlotManager:
                 nbins=20,
             )
 
-            """
-            plot_efficiency_curves(
-                epoch=epoch_key,
-                source_params=data["source_params"],
-                pred_stat=data["ranking_stat"],
-                labels=data["labels"],
-                export_dir=self.export_dir,
-                save=save,
-                save_name="ranking_stat",
-            )
-
-            plot_learning_parameter_prior(
-                epoch=epoch_key,
-                source_params=data["source_params"],
-                pred_stat=data["ranking_stat"],
-                labels=data["labels"],
-                export_dir=self.export_dir,
-                save=save,
-                save_name="ranking_stat",
-            )
-
-            plot_outputbin_param_distribution(
+            plot_joint_cdfs(
                 epoch=epoch_key,
                 ranking_stat=data["ranking_stat"],
                 labels=data["labels"],
-                sample_params=data["source_params"],
                 export_dir=self.export_dir,
                 save=save,
             )
 
-            plot_paramfrac_detected_above_thresh(
-                epoch=epoch_key,
-                ranking_stat=data["ranking_stat"],
-                labels=data["labels"],
-                sample_params=data["source_params"],
-                export_dir=self.export_dir,
-                save=save,
-            )
+            # Source-params-dependent plots (require signal_idx saved during training)
+            if sp:
+                plot_efficiency_curves(
+                    epoch=epoch_key,
+                    source_params=sp,
+                    pred_stat=data["ranking_stat"],
+                    labels=data["labels"],
+                    export_dir=self.export_dir,
+                    save=save,
+                    save_name="ranking_stat",
+                )
 
-            plot_output_vs_param_heatmap(
-                epoch=epoch_key,
-                ranking_stat=data["ranking_stat"],
-                labels=data["labels"],
-                source_params=data["source_params"],
-                param_name="distance",  # or "mchirp", "tc", etc.
-                export_dir=self.export_dir,
-                save=save,
-            )
-            """
+                plot_learning_parameter_prior(
+                    epoch=epoch_key,
+                    source_params=sp,
+                    pred_stat=data["ranking_stat"],
+                    labels=data["labels"],
+                    export_dir=self.export_dir,
+                    save=save,
+                    save_name="ranking_stat",
+                )
+
+                plot_outputbin_param_distribution(
+                    epoch=epoch_key,
+                    ranking_stat=data["ranking_stat"],
+                    labels=data["labels"],
+                    sample_params=sp,
+                    export_dir=self.export_dir,
+                    save=save,
+                )
+
+                plot_paramfrac_detected_above_thresh(
+                    epoch=epoch_key,
+                    ranking_stat=data["ranking_stat"],
+                    labels=data["labels"],
+                    sample_params=sp,
+                    export_dir=self.export_dir,
+                    save=save,
+                )
+
+                for param_name in ("distance", "mchirp", "tc"):
+                    if param_name in sp:
+                        plot_output_vs_param_heatmap(
+                            epoch=epoch_key,
+                            ranking_stat=data["ranking_stat"],
+                            labels=data["labels"],
+                            source_params=sp,
+                            param_name=param_name,
+                            export_dir=self.export_dir,
+                            save=save,
+                        )
+
+                plot_correlation_matrix(
+                    ranking_stat=data["ranking_stat"],
+                    source_params={
+                        k: sp[k] for k in ("distance", "mchirp", "tc", "inclination", "q")
+                        if k in sp
+                    },
+                    labels=data["labels"],
+                    export_dir=self.export_dir,
+                    save=save,
+                    epoch=epoch_key,
+                )
+
+                plot_cumulative_volume(
+                    epoch=epoch_key,
+                    ranking_stat=data["ranking_stat"],
+                    labels=data["labels"],
+                    source_params=sp,
+                    distance_param="distance",
+                    export_dir=self.export_dir,
+                    save=save,
+                )
+
+        # -------------------------------------------------------
+        # Cross-epoch plots (run once using all epochs)
+        # -------------------------------------------------------
+        all_stats = {ek: self.validation_data[ek]["ranking_stat"] for ek in epochs}
+        all_labels = {ek: self.validation_data[ek]["labels"] for ek in epochs}
+
+        plot_separation_over_epochs(
+            all_network_outputs=all_stats,
+            all_labels=all_labels,
+            epochs=epochs,
+            export_dir=self.export_dir,
+            save=save,
+        )
+
+        # Trajectory: track a fixed set of samples over all epochs
+        # Use the last epoch's labels as the shared mask
+        last_labels = self.validation_data[epochs[-1]]["labels"]
+        plot_output_trajectory_over_epochs(
+            all_ranking_stats=[self.validation_data[ek]["ranking_stat"] for ek in epochs],
+            labels=last_labels,
+            epoch_list=list(range(len(epochs))),
+            export_dir=self.export_dir,
+            save=save,
+        )

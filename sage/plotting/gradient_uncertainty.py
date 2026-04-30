@@ -24,6 +24,8 @@ Documentation: NULL
 """
 
 # Packages
+import os
+import matplotlib.pyplot as plt
 
 
 def plot_uncertainty_vs_gradient(

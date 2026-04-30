@@ -24,6 +24,8 @@ Documentation: NULL
 """
 
 # Packages
+import os
+import matplotlib.pyplot as plt
 
 
 def plot_output_vs_uncertainty(

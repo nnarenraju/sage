@@ -24,6 +24,8 @@ Documentation: NULL
 """
 
 # Packages
+import os
+import matplotlib.pyplot as plt
 
 
 def plot_separation_over_epochs(
@@ -36,23 +38,25 @@ def plot_separation_over_epochs(
     """
     Track separation of signals vs noise across epochs.
     """
-    import seaborn as sns
+    import numpy as np
+    from scipy.stats import gaussian_kde
 
     plt.figure(figsize=(8, 6))
-    colors = sns.color_palette("viridis", len(epochs))
+    colors = plt.cm.viridis(np.linspace(0, 1, len(epochs)))
 
     for i, epoch in enumerate(epochs):
         output = all_network_outputs[epoch]
         labels = all_labels[epoch]
 
-        sig = output[labels == 1.0]
+        sig   = output[labels == 1.0]
         noise = output[labels == 0.0]
 
-        # KDEs
-        sns.kdeplot(sig, label=f"Signals Epoch {epoch}", color=colors[i], linestyle="-")
-        sns.kdeplot(
-            noise, label=f"Noise Epoch {epoch}", color=colors[i], linestyle="--"
-        )
+        # KDEs via scipy
+        xs = np.linspace(output.min(), output.max(), 400)
+        kde_sig   = gaussian_kde(sig,   bw_method="scott")
+        kde_noise = gaussian_kde(noise, bw_method="scott")
+        plt.plot(xs, kde_sig(xs),   color=colors[i], ls="-",  label=f"Signals Epoch {epoch}")
+        plt.plot(xs, kde_noise(xs), color=colors[i], ls="--", label=f"Noise Epoch {epoch}")
 
     plt.xlabel("Network Ranking Statistic")
     plt.ylabel("Density")
