@@ -34,6 +34,28 @@ from sage.data.waveform import taper
 
 
 class IMRPhenomD(phenom.PhenomConstants):
+    """
+    GPU-native batched IMRPhenomD frequency-domain waveform model.
+
+    Implements the IMRPhenomD aligned-spin binary black hole waveform
+    approximant entirely in PyTorch, allowing batch generation of ``(hp, hc)``
+    polarisations on GPU without any Python-level loops.  Inherits all
+    pre-allocated constants and QNM interpolation tables from
+    :class:`~sage.data.waveform.approximants.phenom.PhenomConstants`.
+
+    The waveform is computed on the frequency grid ``f`` supplied at
+    construction time.  Low-frequency bins below ``f[0]`` are zero-padded
+    so that the output arrays span ``[0, f_max]`` inclusive.
+
+    Parameters
+    ----------
+    f : torch.Tensor, shape ``(B, F)``
+        Frequency grid in Hz for the batch.
+    f_ref : torch.Tensor, shape ``(B, 1)``
+        Reference frequency for the phase calculation.
+    **kwargs
+        Forwarded to :class:`~sage.data.waveform.approximants.phenom.PhenomConstants`.
+    """
 
     def __init__(self, f, f_ref, **kwargs):
         super().__init__(
@@ -60,6 +82,23 @@ class IMRPhenomD(phenom.PhenomConstants):
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
     def get_hphc(self, theta, reproduce_lal=False):
+        """
+        Compute the FD plus and cross polarisations for a parameter batch.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape ``(B, P)``
+            Batch of waveform parameters: ``[m1, m2, chi1, chi2, distance,
+            tc, inclination, ...]``.
+        reproduce_lal : bool
+            If ``True``, skip FD tapering and ``tc`` application to
+            reproduce raw LALSuite output (default ``False``).
+
+        Returns
+        -------
+        hp, hc : torch.Tensor, shape ``(B, F)`` complex
+            Plus and cross polarisations in the frequency domain.
+        """
         # Compute derived quantities
         derived = self.compute_derived_parameters(theta)
 
@@ -109,6 +148,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         return hp, hc
 
     def apply_tc(self, hp, hc, tc):
+        """Apply a frequency-domain phase shift equivalent to a time-domain shift by *tc*."""
         # Apply time shift to account for tc
         # Converting from tc in duration space to actual shift
         _tc = tc - self.sample_length_in_s
@@ -118,6 +158,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         return hp, hc
 
     def pad_missing_frequencies(self, hp, hc):
+        """Zero-pad *hp* and *hc* below ``f_min`` (DC to the starting frequency)."""
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
@@ -131,6 +172,12 @@ class IMRPhenomD(phenom.PhenomConstants):
         return hp_pad, hc_pad
 
     def compute_derived_parameters(self, theta):
+        """
+        Compute mass-related derived quantities from the parameter batch.
+
+        Returns ``[m1_s, m2_s, M_s, eta_s]`` where each column uses SI-scaled
+        masses (``m * G / c³``).
+        """
         # Derived parameters are reused a lot; compute once
         # Putting this in self (now) is unfortunately detrimental
         # torch.compile thinks class object is mutating dynamically
@@ -145,6 +192,13 @@ class IMRPhenomD(phenom.PhenomConstants):
         return torch.cat([m1_s, m2_s, M_s, eta_s], dim=1)
 
     def get_coeffs(self, chi1, chi2, eta):
+        """
+        Compute the IMRPhenomD phenomenological coefficient matrix.
+
+        Builds monomials in ``(chiPN - 1)`` and ``eta`` up to third order,
+        then multiplies by the pre-loaded coefficient table to produce a
+        ``(B, N_coeffs)`` tensor of phenomenological fitting coefficients.
+        """
         # Definition of chiPN from lalsuite
         chi_s = (chi1 + chi2) / 2.0
         chi_a = (chi1 - chi2) / 2.0
@@ -185,6 +239,13 @@ class IMRPhenomD(phenom.PhenomConstants):
         return coeff
 
     def get_components(self, theta, coeffs, derived):
+        """
+        Compute the amplitude *A*, phase *Psi*, and frequency cutoff *fcut_true*.
+
+        Evaluates the full IMRPhenomD frequency-domain waveform components from
+        the parameter batch, phenomenological coefficients, and derived mass
+        quantities.  Returns tensors ready for combining into h+ and hx.
+        """
         ## Shift phase so that peak amplitude matches t = 0
         # Get required derived quantities
         M_s = derived[:, 2:3]
@@ -291,6 +352,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         return (term1 + term2 + term3 + term4) * (1.0 / eta)
 
     def get_transition_frequencies(self, theta, derived, gamma2, gamma3):
+        """
+        Return the six IMRPhenomD transition frequencies
+        ``[f1, f2, f3, f4, f_RD, f_damp]`` in Hz for a parameter batch.
+        """
         chi1 = theta[:, 2:3]
         chi2 = theta[:, 3:4]
         m1_s = derived[:, 0:1]
@@ -320,6 +385,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         return torch.cat([f1, f2, f3, f4, f_RD, f_damp], dim=1)
 
     def get_fRD_fdamp(self, chi1, chi2, m1_s, m2_s, M_s, eta_s):
+        """
+        Return the ringdown frequency and damping frequency by interpolating
+        the pre-loaded QNM table with the final-spin estimate.
+        """
         # Compute Kerr-like total angular momentum
         S = (chi1 * m1_s * m1_s + chi2 * m2_s * m2_s) / (M_s * M_s)
         # Get phenomenological effective spin
@@ -350,6 +419,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def final_spin_0815_s(eta, S):
+        """Phenomological final-spin fit (Eq. 3.6, arXiv:1508.07250)."""
         eta2 = eta * eta
         eta3 = eta2 * eta
         S2 = S * S
@@ -370,6 +440,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def erad_rational_0815(eta, chi1, chi2):
+        """Rational-function fit for the dimensionless radiated mass (arXiv:1508.07250)."""
         # Compute the dimensionless mass fractions
         Seta = torch.sqrt(1.0 - 4.0 * eta)
         m1f = 0.5 * (1.0 + Seta)
@@ -414,10 +485,12 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_phi_IIa(f_Ms, eta, coeffs, beta1corr):
+        """IMRPhenomD intermediate-region IIa phase including the ``beta1`` continuity correction."""
         return IMRPhenomD.get_IIa_raw_phase(f_Ms, eta, coeffs) + beta1corr * f_Ms
 
     @staticmethod
     def get_IIa_raw_phase(f_Ms, eta, coeffs):
+        """Raw intermediate region IIa phase ansatz (without continuity correction)."""
         phi_IIa_raw = (
             coeffs[:, 11:12] * f_Ms
             + coeffs[:, 12:13] * torch.log(f_Ms)
@@ -428,6 +501,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_IIb_raw_phase(f_Ms, eta, coeffs, fx_Ms):
+        """Raw merger-ringdown region IIb phase ansatz."""
         phi_IIb_raw = (
             coeffs[:, 14:15] * f_Ms
             - coeffs[:, 15:16] * (f_Ms**-1.0)
@@ -439,6 +513,12 @@ class IMRPhenomD(phenom.PhenomConstants):
         return phi_IIb_raw
 
     def phase(self, theta, coeffs, derived, f_Ms, fx_Ms):
+        """
+        Compute the full IMRPhenomD gravitational-wave phase across all frequency regions.
+
+        Stitches together inspiral, intermediate (IIa), and merger-ringdown
+        (IIb) phase contributions with C¹-continuity corrections.
+        """
         # Compute inspiral phase
         # Only intrinsic theta has been passed
         phi6corr = self.spin_spin_3pn_correction(theta, derived[:, 3:4])
@@ -657,6 +737,10 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
 
     def spin_spin_3pn_correction(self, theta, eta_s):
+        """
+        Compute the 3PN spin-spin TaylorF2 correction term subtracted from
+        the PhenomD inspiral phase (LALSimInspiralPNCoefficients.c, v[6]).
+        """
         ## 3PN Spin-Spin Correction from TaylorF2
         # Comments from LALSimIMRPhenomP.c in lalsuite lines 828 - 831
         # // Subtract 3PN spin-spin term below as this is in LAL's TaylorF2 implementation
@@ -883,6 +967,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         return phi_Ins, TF2_coeffs, TF2_log_coeffs
 
     def get_fcut_true(self, M_s):
+        """Return the physical frequency cutoff in Hz from the dimensionless ``fM_CUT``."""
         # mask = self.f[None, :] <= fcut[:, None]
         # f_grid = self.f[None, :].expand_as(mask)
         # return torch.max(torch.where(mask, f_grid, -torch.inf), dim=1).values

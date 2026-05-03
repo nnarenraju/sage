@@ -37,14 +37,49 @@ from sage.core.config import get_cfg, get_data_cfg
 
 class RecolourPostprocess(torch.nn.Module):
     """
-    GPU postprocessing: conditional whitening + stochastic recolouring in FD.
+    GPU postprocessing step: stochastic PSD recolouring from one noise epoch
+    to another, operating entirely in the frequency domain.
 
-    Inputs:
-        batch_td:   (B, D, T) float32
-        segment_ids:(B, D) int32
+    Motivation
+    ----------
+    Sage trains on O3b noise but evaluates on O3a noise (different GPS epoch,
+    different spectral shape).  Simply whitening with O3b PSDs and testing on
+    O3a produces a distribution shift.  With ``p_recolour`` probability, each
+    training sample is:
 
-    Output:
-        batch_fd:   (B, D, F) complex64
+    1. **Whitened** using the segment's own O3b ASD (removing O3b colour).
+    2. **Recoloured** by multiplying with a randomly chosen O3a ASD (adding
+       O3a colour).
+
+    The remaining ``1 - p_recolour`` fraction of the batch passes through
+    unchanged (plain FD conversion only).
+
+    This bridges the spectral gap between training and evaluation epochs
+    without using any actual O3a time-domain data during training.  Note
+    that glitch *morphology* is not altered — only the spectral amplitude
+    envelope changes.
+
+    Parameters
+    ----------
+    p_recolour : float in [0, 1]
+        Per-sample probability of applying the whiten + recolour transform.
+        Typical value: 0.37.
+    recolour_dataset_dir : str
+        Root directory of the *target* noise epoch dataset (e.g. the O3a
+        data release directory).  Must contain a ``data_dir/recolour_psds/``
+        sub-directory with pre-computed per-detector ASD banks.
+    eps : float
+        Small value added to ASDs before division/multiplication to prevent
+        division by zero in very quiet frequency bins.
+
+    Inputs / Outputs
+    ----------------
+    forward(batch_td, segment_ids) :
+        ``batch_td``  : ``(B, D, T)`` float32 — time-domain noise windows.
+        ``segment_ids``: ``(B, D)`` int64 — index into the segment ASD bank
+        (used to select the correct per-segment whitening ASD).
+
+    Returns ``(B, D, F)`` complex64 — frequency-domain (recoloured) strain.
     """
 
     def __init__(

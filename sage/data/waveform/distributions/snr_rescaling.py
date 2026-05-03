@@ -32,6 +32,25 @@ from sage.core.config import get_cfg
 
 
 class HalfNorm(nn.Module):
+    """
+    Half-normal SNR sampler.
+
+    Draws target network SNR values from a half-normal distribution
+    ``|N(loc, scale²)|``.  Used as the ``target_snr_sampler`` argument to
+    :class:`~sage.data.waveform.snr.OptimalSNRRescaler`.
+
+    The generator is seeded once at construction so SNR draws are
+    reproducible across runs with the same seed.
+
+    Parameters
+    ----------
+    scale : float
+        Scale parameter of the half-normal (default ``1.0``).
+    loc : float
+        Location shift added after folding (default ``0.0``).
+    seed : int or None
+        Seed for the internal :class:`torch.Generator`.
+    """
 
     def __init__(self, scale=1.0, loc=0.0, seed=None):
         super().__init__()

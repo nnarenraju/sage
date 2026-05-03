@@ -53,6 +53,14 @@ class UniformSky:
         self.azimuth_sampler = UniformAngle(*azimuthal_bounds)
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        """
+        Draw *shape* sky-position pairs and return them as a dict.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            ``{polar_name: dec, azimuthal_name: ra}`` each of shape *shape*.
+        """
         dec = self.polar_sampler.sample(
             shape,
             device=device,

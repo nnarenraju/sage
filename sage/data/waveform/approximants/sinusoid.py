@@ -24,9 +24,44 @@ Documentation: NULL
 
 
 class SinusoidGenerator:
-    ## Used to create sinusoid with different parameters to test biases
-    ## Bias due to waveform frequency comes under spectral bias
-    ## Bias due to signal duration comes under lack of proper inductive bias
+    """
+    Synthetic sinusoidal waveform generator for bias probing.
+
+    Generates simple sine waves to test for spectral bias (varying frequency,
+    fixed duration) and duration bias (varying duration, fixed frequency).
+    Used to diagnose whether the network learns spurious correlations between
+    signal properties and the detection score.
+
+    Parameters
+    ----------
+    A : float
+        Amplitude of the sinusoid.
+    phi : float
+        Initial phase (radians).
+    inject_lower : float
+        Lower bound for the random injection time within the segment (s).
+    inject_upper : float
+        Upper bound for the random injection time within the segment (s).
+    spectral_bias : bool
+        If ``True``, generate samples with varying frequency but fixed duration.
+    fixed_duration : float
+        Duration used when ``spectral_bias=True`` (s).
+    lower_freq : float
+        Lower frequency bound for spectral-bias sampling (Hz).
+    upper_freq : float
+        Upper frequency bound for spectral-bias sampling (Hz).
+    duration_bias : bool
+        If ``True``, generate samples with varying duration but fixed frequency.
+    fixed_frequency : float
+        Frequency used when ``duration_bias=True`` (Hz).
+    lower_tau : float
+        Lower duration bound for duration-bias sampling (s).
+    upper_tau : float
+        Upper duration bound for duration-bias sampling (s).
+    no_whitening : bool
+        Skip whitening-edge padding if ``True`` (default ``False``).
+    """
+
     def __init__(
         self,
         A,
@@ -62,15 +97,19 @@ class SinusoidGenerator:
         self.no_whitening = no_whitening
 
     def generate(self, f, t):
+        """Return a pure sinusoid ``A * sin(2π f t + φ)`` sampled at times *t*."""
         return self.A * np.sin(2.0 * np.pi * f * t + self.phi)
 
     def get_time_shift(self, detectors):
+        """Return the light-travel-time offset (seconds) between the two detectors."""
         # time shift signals based of detector choice
         ifo1, ifo2 = detectors
         dt = ifo1.light_travel_time_to_detector(ifo2)
         return dt
 
     def add_zero_padding(self, signal, start_time, sample_length, sample_rate):
+        """Zero-pad *signal* to *sample_length* × *sample_rate* samples, placing
+        the signal at *start_time*."""
         # if random duration less than sample_length, add zero padding
         left_pad = int(start_time * sample_rate)
         right_pad = int((sample_length * sample_rate - (left_pad + len(signal))))
@@ -81,6 +120,7 @@ class SinusoidGenerator:
         return padded_signal
 
     def add_whiten_padding(self, signal, special):
+        """Append symmetric whitening-corruption padding to *signal*."""
         # whiten padding added separately for ease of understanding
         padding = special["data_cfg"].whiten_padding
         left_pad = right_pad = int((padding / 2.0) * special["data_cfg"].sample_rate)
@@ -90,6 +130,17 @@ class SinusoidGenerator:
         return padded_signal
 
     def testing_spectral_bias(self, special):
+        """
+        Generate two-detector sinusoid injections at random frequencies (fixed duration).
+
+        Used to probe whether the model exhibits a spectral bias — i.e. favours
+        certain frequency ranges.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(2, N)``
+            Per-detector time-series.
+        """
         ## Generating sin waves with different frequencies but same duration
         # Params
         detectors = special["dets"]
@@ -118,6 +169,17 @@ class SinusoidGenerator:
         return np.stack((signal_det1, signal_det2), axis=0)
 
     def testing_duration_bias(self, special):
+        """
+        Generate two-detector sinusoid injections at random durations (fixed frequency).
+
+        Used to probe whether the model exhibits a duration bias — i.e. favours
+        signals of certain in-band durations.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(2, N)``
+            Per-detector time-series.
+        """
         ## Generating sin waves with different duration but same frequency
         # Params
         detectors = special["dets"]
@@ -143,6 +205,24 @@ class SinusoidGenerator:
         return np.stack((signal_det1, signal_det2), axis=0)
 
     def apply(self, params: dict, special: dict):
+        """
+        Generate sinusoidal test signals for bias probing.
+
+        Dispatches to :meth:`testing_spectral_bias` or
+        :meth:`testing_duration_bias` depending on the instance flags.
+
+        Parameters
+        ----------
+        params : dict
+            Unused; present for API compatibility with other waveform generators.
+        special : dict
+            Context dict containing ``'dets'`` (detector pair) and ``'data_cfg'``.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(2, N)``
+            Stacked per-detector time-series.
+        """
         ## Generate sin waves for testing biased learning
         # Generate data based on required bias
         if self.spectral_bias:

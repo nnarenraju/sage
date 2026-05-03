@@ -30,6 +30,36 @@ from scipy.interpolate import UnivariateSpline
 
 
 class LogSplineSmoothing:
+    """
+    PSD smoother based on a univariate spline fit in log-log space.
+
+    Transforms both frequency and PSD to log scale before fitting a
+    :class:`scipy.interpolate.UnivariateSpline`, then exponentiates the
+    result back.  Log-log fitting is well-suited to PSDs because their
+    broad-band structure follows approximate power laws, so the spline needs
+    fewer knots and produces a more physically plausible smooth curve than a
+    linear-domain fit would.
+
+    Frequencies below ``noise_low_frequency_cutoff`` are excluded from the
+    spline fit (the seismic wall makes PSD estimates unreliable there); the
+    original values are returned unchanged for those bins.
+
+    Parameters
+    ----------
+    smooth_factor : float or None
+        Smoothing parameter passed to :class:`~scipy.interpolate.UnivariateSpline`
+        as ``s``.  Larger values produce smoother output.  If ``None``, a
+        heuristic ``0.2 * n_points`` is used on the first call.
+    upweight_regions : list[tuple[float, float]] or None
+        Optional list of ``(f_low, f_high)`` frequency bands to upweight
+        (weight 2 vs. default 1) so the spline tracks those regions more
+        closely (e.g. the detector's most sensitive band).
+    return_coeffs : bool
+        Unused placeholder for future coefficient export (default ``False``).
+    noise_low_frequency_cutoff : float
+        Frequency (Hz) below which PSD values are not used for fitting
+        (default ``15.0``).
+    """
 
     def __init__(
         self,

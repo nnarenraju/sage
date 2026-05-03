@@ -35,6 +35,23 @@ from sage.core.config import get_cfg
 
 
 def get_fiducial_psds():
+    """
+    Load the pre-computed fiducial per-detector PSDs from disk.
+
+    Reads binary float32 files written during the data-preparation stage
+    from ``{export_dir}/fiducial_psds/`` and returns them as a single
+    stacked tensor on the configured device.
+
+    The fiducial PSDs are used by
+    :class:`~sage.data.waveform.snr.OptimalSNREstimator` to compute
+    matched-filter SNR for SNR rescaling during signal injection.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(D, F)``
+        Per-detector one-sided PSDs on ``cfg.device``, where ``D`` is the
+        number of detectors and ``F`` is the number of frequency bins.
+    """
     # Configs
     cfg = get_cfg()
 

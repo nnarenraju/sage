@@ -38,7 +38,26 @@ def plot_calibration_curve(
     nbins=20,
 ):
     """
-    Calibration plot: predicted output vs actual fraction of signals.
+    Plot model calibration: predicted ranking-statistic bins vs signal fraction.
+
+    Bins the ranking statistic and plots the mean predicted score against the
+    actual fraction of signals in each bin.  A well-calibrated model should
+    follow the diagonal.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Predicted ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels (1 = signal, 0 = noise).
+    export_dir : str or None
+        Output directory (saves under root as ``calibration_curve_{epoch}.png``).
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    nbins : int
+        Number of bins for the calibration curve (default ``20``).
     """
 
     # --------------------------------------------

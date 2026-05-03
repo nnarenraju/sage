@@ -48,14 +48,50 @@ from sage.core.config import get_cfg, get_data_cfg
 
 class MultirateSampler(torch.nn.Module):
     """
-    Multi-rate decimator for batched GW time-domain data.
+    Physics-informed multi-rate decimator for batched GW time-domain data.
 
-    Input shape: (B, D, L)
-    Output shape: (B, D, L_compressed)
+    Different parts of a gravitational-wave chirp sweep through different
+    frequency bands at different times.  This module partitions each
+    time-domain segment into frequency-appropriate bins (as specified by a
+    :class:`DyadicPyramidBinning` object) and decimates each bin to the
+    minimum sample rate that satisfies the Nyquist condition for the GW
+    signal content in that time interval.  The decimated chunks are
+    concatenated back into a single (shorter) time series that contains
+    the same signal information at a fraction of the original sample count.
 
-    B = batch
-    D = detectors
-    L = original sequence length
+    Decimation is performed by cascaded half-band FIR lowpass filters
+    (Kaiser-windowed sinc, 63 taps, ~90 dB stopband attenuation).  Each
+    call to :meth:`_decimate_once` halves the sample rate; bins requiring
+    a factor-of-4 reduction get two passes, factor-of-8 get three, etc.
+    Intermediate decimated signals are reused across bins that share the
+    same decimation factor, avoiding redundant computation.
+
+    Reflect padding is applied before each filter pass to suppress edge
+    effects; the pad width is conservatively chosen to fully cover the
+    filter group delay at the highest decimation factor used.
+
+    Parameters
+    ----------
+    binning_method : DyadicPyramidBinning
+        Pre-computed bin layout (sample index ranges + target sample rate
+        per bin).
+    reflect_pad : int or None
+        Override the automatically computed reflect-padding width.
+        Must be ≥ ``max(2 * max_dec_factor, kernel_len)`` if set manually.
+    **kwargs
+        Forwarded to ``nn.Module.__init__``.
+
+    Attributes
+    ----------
+    bins : np.ndarray, shape ``(N_bins, 3)``
+        Columns: ``[start_sample, end_sample, target_fs]``.
+    kernel : torch.Tensor, shape ``(1, 1, 63)``
+        Kaiser-windowed half-band FIR filter registered as a buffer.
+
+    Input / Output
+    --------------
+    forward(noisy_signals) : (B, D, L) float32 → (B, D, L_compressed) float32
+        where ``L_compressed ≪ L`` with all signal information preserved.
     """
 
     GRAPH_READY = True
@@ -128,6 +164,25 @@ class MultirateSampler(torch.nn.Module):
 
     ## Decimation ordering ##
     def order_decimations(self, dec_powers):
+        """
+        Group bins by their required decimation power and compute the
+        slice indices into the decimated signal for each bin.
+
+        Bins that require the same decimation factor are processed together
+        in a single pass, reusing the already-decimated intermediate signal.
+
+        Parameters
+        ----------
+        dec_powers : torch.Tensor, shape ``(N_bins,)`` int64
+            ``log2(original_fs / target_fs)`` for each bin.
+
+        Returns
+        -------
+        dict[int, list[tuple[int, int, int]]]
+            Maps each unique decimation power to a list of
+            ``(start_idx, end_idx, original_bin_index)`` tuples giving the
+            slice positions in the decimated signal array.
+        """
         # Unique powers sorted (for sequential decimation reuse)
         unique_powers = sorted(set(dec_powers.tolist()))
         self.powers = unique_powers
@@ -198,6 +253,21 @@ class MultirateSampler(torch.nn.Module):
 
     ## Single stage decimation ##
     def _decimate_once(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply one half-band FIR lowpass filter and downsample by 2.
+
+        Reflect padding is added symmetrically before convolution to
+        prevent edge artefacts; the padding is stripped implicitly by the
+        strided convolution output length.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, D, L)``
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, D, ⌈L/2⌉)`` approximately.
+        """
 
         pad = self.kernel.shape[-1] // 2
         x = F.pad(x, (pad, pad), mode="reflect")
@@ -211,6 +281,23 @@ class MultirateSampler(torch.nn.Module):
 
     @torch.no_grad()
     def forward(self, noisy_signals: torch.Tensor) -> torch.Tensor:
+        """
+        Decimate the input signal according to the pre-computed bin layout.
+
+        Pads the input, then iteratively decimates to each required power
+        level, extracts the corresponding bin slices, and concatenates them
+        into the compressed output tensor.
+
+        Parameters
+        ----------
+        noisy_signals : torch.Tensor, shape ``(B, D, L)`` float32
+            Whitened time-domain strain at the full detector sample rate.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, D, L_compressed)`` float32
+            Multi-rate compressed time series ready for the neural network.
+        """
 
         x = F.pad(
             noisy_signals,
@@ -242,6 +329,62 @@ class MultirateSampler(torch.nn.Module):
 
 
 class DyadicPyramidBinning:
+    """
+    Physics-driven multi-rate bin layout for GW inspiral signals.
+
+    Constructs a set of time-frequency bins such that each bin is sampled
+    at the *minimum* power-of-2 sample rate that satisfies the Nyquist
+    criterion for the GW signal content in that time interval, given the
+    prior mass range.
+
+    Algorithm overview
+    ------------------
+    1. Compute the time-frequency (t, f) evolution of the longest possible
+       inspiral in the mass prior using ``pnutils.get_inspiral_tf``.
+    2. Walk backward in frequency from f_ISCO to the signal low-frequency
+       cutoff, halving the frequency at each step to define a dyadic ladder
+       of boundary frequencies.
+    3. For each ladder step, compute the sample index at which the GW
+       signal first enters that frequency band, using the t(f) relationship
+       from step 1.
+    4. Assign each time interval between consecutive boundaries the minimum
+       power-of-2 sample rate sufficient to cover it (plus a safe Nyquist
+       gap).
+    5. The merger / ringdown region (``tc ± fudge``) is always kept at the
+       full detector sample rate.
+    6. Merge contiguous bins with identical sample rates and eliminate tiny
+       bins by raising their sample rate to that of the neighbouring bin.
+
+    The resulting ``detailed_bins`` array is passed to
+    :class:`MultirateSampler`, which uses it to set up the FIR decimation
+    cascade.
+
+    Parameters
+    ----------
+    param_bounds : dict
+        Prior parameter bounds dict with keys ``"mass1"`` and ``"tc"``.
+        ``mass1`` sets the lowest / highest mass for the frequency-ladder
+        computation; ``tc`` sets the injection window for the unchanged region.
+    lowest_allowed_fs : float
+        Minimum sample rate (Hz) for any bin.  Must be a power of 2 or
+        will be rounded up to the next power of 2 internally.
+    safe_nyquist_gap : float
+        Extra margin (Hz) added to the required Nyquist frequency when
+        choosing a bin's sample rate.  Guards against PN approximation error
+        near bin boundaries.
+    min_bin_duration : float
+        Bins shorter than this (seconds) are merged with their higher-fs
+        neighbour to avoid extremely short decimated arrays.
+    verify_nyquist : bool
+        If ``True``, call :meth:`verify_nyquist_condition` immediately after
+        construction and raise if any bin violates the Nyquist limit.
+
+    Attributes
+    ----------
+    detailed_bins : np.ndarray, shape ``(N_bins, 3)``
+        Columns: ``[start_sample, end_sample, sample_rate]``.
+        Both indices are relative to the start of the full-rate segment.
+    """
     MTSUN_SI = 4.92549102554e-06
     MSUN_SI = 1.989e30
 
@@ -362,11 +505,13 @@ class DyadicPyramidBinning:
         return 1 << int(np.ceil(np.log2(x)))
 
     def get_imr_chirp_time(self, m1, m2, s1z, s2z, fl):
+        """Return 1.1× the IMRPhenomD chirp time (seconds) for the given parameters."""
         return 1.1 * lalsim.SimIMRPhenomDChirpTime(
             m1 * 1.989e30, m2 * 1.989e30, s1z, s2z, fl
         )
 
     def plot_multirate_tf(self):
+        """Plot the multi-rate time-frequency assignment manifold for the configured prior."""
 
         import matplotlib.pyplot as plt
         import matplotlib as mpl

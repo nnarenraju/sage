@@ -35,6 +35,13 @@ from torch.nn import MaxPool1d, BatchNorm1d
 
 
 class Conv1dSame(nn.Conv1d):
+    """
+    1D convolution with ``padding='same'`` semantics.
+
+    Thin wrapper around :class:`torch.nn.Conv1d` that always requests
+    ``padding='same'``, ensuring the output length matches the input length
+    regardless of kernel size or dilation.
+    """
 
     def __init__(
         self,
@@ -60,6 +67,31 @@ class Conv1dSame(nn.Conv1d):
 
 
 class ConcatBlockConv5(nn.Module):
+    """
+    Multi-scale inception-style block with five parallel convolutions.
+
+    Applies five 1D convolutions in parallel at scales ``k``, ``2k``, ``k//2``,
+    ``k//4``, and ``4k``, concatenates their outputs together with the
+    identity skip connection, then fuses with a 1×1 pointwise convolution.
+    This allows each block to capture temporal features across a wide range
+    of time scales simultaneously — critical for gravitational-wave signals
+    whose frequency sweeps from low to high over hundreds of milliseconds.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of input channels.
+    out_channels : int
+        Number of output channels per parallel branch (and the final output).
+    kernel_size : int
+        Base kernel size (``k``).  The five branches use ``k``, ``2k``,
+        ``k//2``, ``k//4``, and ``4k``.
+    stride : int
+        Stride for all parallel convolutions (default 1).
+    act : callable
+        Activation class to instantiate (default :class:`nn.SiLU`).
+    """
+
     def __init__(
         self,
         in_channels,
@@ -177,6 +209,31 @@ class ConcatBlockConv5(nn.Module):
 
 
 class ConvBlock(nn.Module):
+    """
+    Three-stage multi-scale 1D CNN frontend for a single detector channel.
+
+    Processes one detector's time-domain waveform through three successive
+    :class:`ConcatBlockConv5` pairs with decreasing kernel scales and
+    interleaved downsampling:
+
+    * Stage 1: kernels ``k``, ``k//2+1`` → MaxPool1d(8)   (8× downsample)
+    * Stage 2: kernels ``k//2+1``, ``k//4+1`` → MaxPool1d(4)   (4× downsample)
+    * Stage 3: kernels ``k//4+1``, ``k//4+1``   (no spatial downsample)
+
+    Output is unsqueezed to add a height dimension, converting the 1D
+    time-series into a 2D feature map ``(B, 1, C, T_down)`` suitable for
+    the 2D ResNet backend.
+
+    Parameters
+    ----------
+    filters_start : int
+        Base number of output filters (default 32).
+    kernel_start : int
+        Base kernel size ``k`` (default 64).
+    in_channels : int
+        Number of input channels (1 for single-detector input, default 1).
+    """
+
     def __init__(self, filters_start=32, kernel_start=64, in_channels=1):
         super().__init__()
 
@@ -210,6 +267,19 @@ class ConvBlock(nn.Module):
 
 
 def _initialize_frontend_weights(self):
+    """
+    Apply Kaiming-normal initialisation to all 1D CNN and linear layers.
+
+    Intended to be called on a :class:`ConvBlock` (or any module that
+    contains ``nn.Conv1d``, ``nn.BatchNorm1d``, and ``nn.Linear`` layers)
+    immediately after construction.  Batch norm scales are set to 1 and
+    biases to 0; linear biases are zeroed.
+
+    Parameters
+    ----------
+    self : nn.Module
+        The module whose parameters are initialised in-place.
+    """
 
     for m in self.modules():
 

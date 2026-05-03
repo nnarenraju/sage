@@ -63,7 +63,26 @@ from sage.dsp.filters import pycbc_downsample
 
 @dataclass(frozen=True)
 class DownloadConfig:
-    # Immutable MP-safe pickleable download config
+    """
+    Immutable, multiprocessing-safe download configuration.
+
+    Frozen dataclass passed to worker processes via :mod:`multiprocessing`
+    ``Pool.starmap``; must be pickleable (no open file handles, no locks).
+
+    Attributes
+    ----------
+    sample_rate : float
+        Target sample rate (Hz) after downsampling.
+    trim : float
+        Seconds of corrupt data to trim from each edge after download.
+    noise_low_freq_cutoff : float
+        Low-frequency cutoff (Hz) used during downsampling.
+    max_retries : int
+        Maximum number of download attempts before giving up on a segment.
+    delay : float
+        Seconds to wait between retry attempts.
+    """
+
     sample_rate: float
     trim: float
     noise_low_freq_cutoff: float
@@ -77,6 +96,25 @@ def validate_segment(
     *,
     strict=True,
 ):
+    """
+    Verify the checksum of a single binary segment.
+
+    Parameters
+    ----------
+    bin_path : str or Path
+        Path to the ``.bin`` file.
+    seg_meta : dict
+        Segment metadata dict from the sidecar JSON (must contain
+        ``"checksum_algo"``, ``"byte_offset"``, ``"byte_length"``,
+        ``"checksum"``, and ``"segment_index"``).
+    strict : bool
+        If ``True`` (default), raise :exc:`IOError` on mismatch.
+
+    Returns
+    -------
+    bool
+        ``True`` if the checksum matches, ``False`` otherwise.
+    """
     algo = seg_meta["checksum_algo"]
 
     with open(bin_path, "rb") as f:
@@ -96,6 +134,22 @@ def validate_segment(
 
 
 def validate_all_segments(bin_path, metadata):
+    """
+    Verify checksums for all segments in *metadata*.
+
+    Parameters
+    ----------
+    bin_path : str or Path
+        Path to the ``.bin`` file.
+    metadata : list[dict]
+        List of segment metadata dicts as produced by the sidecar JSON.
+
+    Returns
+    -------
+    list[int]
+        Segment indices that failed the checksum.  An empty list means all
+        segments are intact.
+    """
     failures = []
 
     with open(bin_path, "rb") as f:
@@ -113,6 +167,23 @@ def validate_all_segments(bin_path, metadata):
 
 
 def file_checksum(path, algo="sha256", block=1 << 20):
+    """
+    Compute the checksum of an entire file using streaming reads.
+
+    Parameters
+    ----------
+    path : str or Path
+        File to hash.
+    algo : str
+        Hash algorithm name (default ``"sha256"``).
+    block : int
+        Read block size in bytes (default 1 MiB).
+
+    Returns
+    -------
+    str
+        Hex-encoded digest string.
+    """
     h = hashlib.new(algo)
     with open(path, "rb") as f:
         while chunk := f.read(block):
@@ -121,6 +192,43 @@ def file_checksum(path, algo="sha256", block=1 << 20):
 
 
 class DataReleaseDownloader:
+    """
+    Parallel GWOSC data downloader that stores validated strain segments to HDF5.
+
+    Downloads LIGO/Virgo/KAGRA open-data strain segments from GWOSC for a
+    structured-array of (detector, observing-run, segment-list) records.
+    Supports both a monolithic HDF5 file and a raw binary output format,
+    with optional checksum validation per segment.
+
+    Parameters
+    ----------
+    segments_metadata : np.ndarray (SEGMENT_DTYPE)
+        Structured array produced by :class:`~sage.data.primer.get_segments.TimelineQuery`.
+    save_parent_dir : str
+        Root directory under which the ``data_release/`` sub-folder is created.
+    noise_low_freq_cutoff : float
+        High-pass cutoff applied during downsampling (default ``15.0`` Hz).
+    minimum_segment_duration : float
+        Segments shorter than this (seconds, post-trim) are discarded
+        (default ``22.0``).
+    corrupt_trim_length : float
+        Seconds trimmed from each edge to discard corrupted data (default
+        ``0.2``).
+    max_download_retries : int
+        Maximum number of GWOSC fetch retries per segment (default ``10``).
+    retry_delay : float
+        Seconds between retries (default ``0.5``).
+    num_workers : int
+        Number of parallel worker processes (default ``4``).
+    make_monolithic_file : bool
+        If ``True`` (default), all segments for a (detector, run) pair are
+        concatenated into a single HDF5; otherwise one file per chunk.
+    save_bin : bool
+        If ``True``, write raw binary (``float32 LE``) instead of HDF5, with
+        a companion JSON segment index (default ``False``).
+    sample_rate : float
+        Target sample rate after downsampling (default ``2048.0`` Hz).
+    """
 
     def __init__(
         self,
@@ -549,7 +657,14 @@ class DataReleaseDownloader:
     ## --- Main function for end user ---
 
     def download(self):
+        """
+        Download all segments from GWOSC and save to disk.
 
+        Iterates over every (detector, observing-run, segments) record in
+        :attr:`full_metadata`, calling :meth:`_fetcher` for each.  Records
+        with ``None`` value are skipped silently.  Output is written to the
+        ``data_release/`` sub-directory under :attr:`save_parent_dir`.
+        """
         # Iterate and download records
         for record in self.full_metadata:
 

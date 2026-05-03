@@ -40,7 +40,35 @@ def plot_perturbation_sensitivity(
     epoch=None,
 ):
     """
-    Plot network output sensitivity to small perturbations in a source parameter.
+    Plot network output change when a source parameter is perturbed.
+
+    For each signal event, increases and decreases ``param_name`` by
+    ``perturb_frac × value``, runs inference, and bins the output change by
+    the original parameter value.  Reveals how sensitively the network
+    responds to small changes in each physical parameter.
+
+    Parameters
+    ----------
+    model : object with ``predict`` method
+        Trained model.
+    ranking_stat : array-like, shape ``(N,)``
+        Baseline network ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    source_params : dict[str, array-like]
+        Per-event parameter arrays.
+    param_name : str
+        Key of the parameter to perturb.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    perturb_frac : float
+        Fractional perturbation size (default ``0.05``).
+    nbins : int
+        Number of parameter bins for the sensitivity curve (default ``20``).
+    epoch : int or str or None
+        Epoch identifier for the filename.
     """
     import numpy as np
     import matplotlib.pyplot as plt

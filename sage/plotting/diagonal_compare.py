@@ -39,6 +39,30 @@ def plot_diagonal_compare(
     export_dir=None,
     save=True,
 ):
+    """
+    True-vs-predicted scatter plots for each estimated parameter, coloured by SNR.
+
+    Produces two scatter plots per parameter: the full signal set and a
+    high-SNR (> 8) subset.  Points are coloured by network optimal SNR.
+    A dashed diagonal reference line marks perfect recovery.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier used in the output subdirectory name.
+    pred_params : dict[str, array-like]
+        Network point estimates per parameter.
+    true_params : dict[str, array-like]
+        Ground-truth parameter values in the same layout.
+    network_snrs : array-like, shape ``(N,)``
+        Optimal network SNR for all validation events.
+    labels : array-like, shape ``(N,)``
+        Binary labels; signals selected with ``label == 1``.
+    export_dir : str or None
+        Parent directory; plots saved under ``DIAGONAL/epoch_{epoch}/``.
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    """
 
     if save and export_dir is not None:
         base_dir = os.path.join(export_dir, f"DIAGONAL/epoch_{epoch}")

@@ -30,6 +30,26 @@ import matplotlib.pyplot as plt
 
 
 def plot_prediction_probability(epoch, pred_prob, labels, export_dir=None, save=True):
+    """
+    Plot overlapping histograms of predicted ranking statistic for signal and noise.
+
+    Visualises how well the network separates the two classes by plotting
+    the distribution of ``pred_prob`` for label=1 (signal) and label=0 (noise)
+    on the same axes.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    pred_prob : array-like, shape ``(N,)``
+        Predicted ranking statistics (raw logits or probabilities).
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels (1 = signal, 0 = noise).
+    export_dir : str or None
+        Directory to save the figure (under ``PRED_PROB/``).
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    """
 
     save_dir = None
     if save and export_dir is not None:

@@ -38,6 +38,29 @@ from .manager import CompileManager
 
 
 def save_validation(nepoch, output, target, params, signal_idx, savepath):
+    """
+    Append one epoch's validation results to an HDF5 file.
+
+    Creates a group ``epoch_{nepoch:04d}`` inside ``savepath`` containing
+    four gzip-compressed datasets.
+
+    Parameters
+    ----------
+    nepoch : int
+        Epoch index (used as the HDF5 group name).
+    output : torch.Tensor, shape ``(N, 1 + 2*num_pe)``
+        Network outputs: ranking statistic, predicted means, predicted sigmas
+        (after physical unit conversion).
+    target : torch.Tensor, shape ``(N, num_pe + 1)``
+        Ground-truth targets (regression values + class label).
+    params : torch.Tensor, shape ``(N, num_params)``
+        Raw waveform parameters (``theta``) returned by the signal sampler.
+    signal_idx : torch.Tensor, shape ``(num_iter, S)``
+        Batch positions where signals were injected for each iteration.
+    savepath : str
+        Path to the HDF5 output file (must already exist or ``h5py`` will
+        create it in append mode).
+    """
 
     with h5py.File(savepath, "a") as f:
 
@@ -50,6 +73,23 @@ def save_validation(nepoch, output, target, params, signal_idx, savepath):
 
 
 class SageVanillaValidation(torch.nn.Module):
+    """
+    Compiled validation loop matching :class:`SageVanillaTraining`.
+
+    Runs the model in ``eval`` / ``inference_mode`` for ``num_iterations``
+    batches, accumulates loss components, and averages them over the epoch.
+    Uses the same :class:`CompileManager` pattern as the training loop to
+    ensure the compiled graph is shared.
+
+    Parameters
+    ----------
+    signal_sampler, noise_sampler, processor, model, loss_function
+        Same objects passed to the corresponding training class.
+    num_iterations : int
+        Number of batches per validation epoch.
+    num_epochs : int
+        Total epochs (pre-allocates the ``loss_components`` tracking tensor).
+    """
 
     def __init__(
         self,
@@ -118,6 +158,32 @@ class SageVanillaValidation(torch.nn.Module):
 
 
 class SageUncompiledValidation(torch.nn.Module):
+    """
+    Uncompiled validation loop with full diagnostic output saving.
+
+    Mirrors the :class:`SageHardMiningTraining` batch-construction logic:
+    signals are injected into random positions of a noise batch, the full
+    pipeline runs without ``torch.compile``, and all outputs are saved to
+    an HDF5 file for offline analysis (ROC curves, parameter recovery, etc.).
+
+    Compared to :class:`SageVanillaValidation`, this class additionally:
+
+    * Calls ``signal_sampler(return_theta=True)`` to obtain raw waveform
+      parameters for parameter-recovery diagnostics.
+    * Unstandardises predicted means back to physical units using
+      ``param_sampler.unstandardise_from_batch``.
+    * Converts log-variance to sigma (``σ = exp(0.5 * log_var)``).
+    * Writes per-epoch results to ``{export_dir}/validation_data.h5``.
+
+    Parameters
+    ----------
+    signal_sampler, noise_sampler, processor, model, loss_function
+        Same objects passed to the corresponding training class.
+    num_iterations : int
+        Number of batches per validation epoch.
+    num_epochs : int
+        Total epochs (pre-allocates the ``loss_components`` tracking tensor).
+    """
 
     def __init__(
         self,

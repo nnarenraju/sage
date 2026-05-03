@@ -93,6 +93,38 @@ def parse_args():
 
 
 class SageDirector:
+    """
+    Top-level orchestrator for the Sage pipeline (legacy DataLoader mode).
+
+    Provides a step-by-step API to configure, build, train, and evaluate a
+    Sage detection network.  Each major concern is handled by a dedicated
+    ``prepare_*`` method that can be called individually or via :meth:`run`
+    for a full end-to-end execution.
+
+    This class wraps the legacy :mod:`sage.factory.legacy` training loop
+    that uses PyTorch ``DataLoader`` objects.  For the modern on-the-fly
+    (OTF) training loop, see :mod:`sage.factory.training`.
+
+    Parameters
+    ----------
+    opts : argparse.Namespace
+        Parsed command-line options from :func:`parse_args`.
+
+    Attributes
+    ----------
+    cfg : BaseConfig
+        Pipeline (model + training) configuration.
+    data_cfg : BaseDataConfig
+        Dataset configuration.
+    Network : nn.Module
+        Instantiated neural network.
+    optimiser, scheduler, loss_function
+        Configured PyTorch training objects.
+    train_loader, val_loader, aux_loader : DataLoader
+        Data loaders for training, validation, and auxiliary data.
+    checkpoint : dict or None
+        Loaded checkpoint state for resuming, or ``None`` for a fresh run.
+    """
 
     def __init__(self, opts):
         self.opts = opts
@@ -108,12 +140,26 @@ class SageDirector:
         self.checkpoint = None
 
     def prepare_configs(self):
+        """Load and register the dataset and pipeline configurations."""
         # Get data creation/usage configuration
         self.data_cfg = dat.configure_dataset(self.opts)
         # Get model configuration
         self.cfg = dat.configure_pipeline(self.opts)
 
     def prepare_data(self, train_fold=None, val_fold=None, balance_params=None):
+        """
+        Prepare dataset objects and DataLoader instances.
+
+        Creates the export directory, optionally generates the dataset,
+        and builds training / validation / auxiliary DataLoader objects.
+
+        Parameters
+        ----------
+        train_fold, val_fold : int or None
+            Fold indices for cross-validation splits.
+        balance_params : dict or None
+            Optional parameters for class-balancing the DataLoader.
+        """
         # Get input data length
         # Used in torch summary and to initialise norm layers
         dat.input_sample_length(self.data_cfg)
@@ -156,6 +202,19 @@ class SageDirector:
                 param.requires_grad = True
 
     def initialise_model(self):
+        """
+        Instantiate the neural network and optionally load pretrained weights.
+
+        If ``cfg.pretrained`` is ``True`` and ``cfg.weights_path`` is set,
+        loads a weights snapshot and optionally freezes layers for transfer
+        learning.
+
+        Raises
+        ------
+        ValueError
+            If ``cfg.pretrained`` is ``True`` but no valid ``weights_path``
+            is configured, or if the checkpoint file does not exist.
+        """
         # Initialise chosen model architecture (Backend + Frontend)
         self.cfg.model_params.update(
             dict(
@@ -184,6 +243,14 @@ class SageDirector:
             raise ValueError("CFG: pretrained==True, but no weights path provided!")
 
     def prepare_model_summary(self):
+        """
+        Optionally print a model summary and write a TensorBoard graph.
+
+        Triggered only when ``opts.summary`` is ``True``.  Uses
+        :func:`torchsummary.summary` for a parameter-count table and
+        :class:`~torch.utils.tensorboard.SummaryWriter` to emit a
+        computation graph viewable in TensorBoard.
+        """
         # Model Summary (frontend + backend)
         if self.opts.summary:
             # Using TorchSummary to get # trainable params and general overview
@@ -200,6 +267,11 @@ class SageDirector:
             tb.close()
 
     def prepare_optimiser(self):
+        """
+        Instantiate the optimiser from ``cfg.optimiser`` and ``cfg.optimiser_params``.
+
+        Sets :attr:`optimiser` to ``None`` when no optimiser is configured.
+        """
         # Optimiser and Scheduler (Set to None if unused)
         if self.cfg.optimiser is not None:
             self.optimiser = self.cfg.optimiser(
@@ -209,6 +281,15 @@ class SageDirector:
             self.optimiser = None
 
     def prepare_scheduler(self):
+        """
+        Instantiate the learning-rate scheduler from ``cfg.scheduler`` and
+        ``cfg.scheduler_params``.
+
+        Returns
+        -------
+        scheduler or None
+            The configured scheduler, or ``None`` if not used.
+        """
         if self.cfg.scheduler is not None:
             self.scheduler = self.cfg.scheduler(
                 self.optimiser, **self.cfg.scheduler_params
@@ -218,10 +299,18 @@ class SageDirector:
         return self.scheduler
 
     def prepare_loss_function(self):
+        """Assign ``cfg.loss_function`` to :attr:`loss_function`."""
         # Loss function used
         self.loss_function = self.cfg.loss_function
 
     def prepare_checkpoint(self):
+        """
+        Load a checkpoint to resume training.
+
+        When ``cfg.resume_from_checkpoint`` is ``True``, loads the model and
+        optimiser state dictionaries from ``cfg.checkpoint_path`` so that
+        training resumes from the saved epoch.
+        """
         # Resume training by loading a checkpoint file or prepare checkpoint
         if self.cfg.resume_from_checkpoint:
             self.checkpoint = torch.load(
@@ -231,6 +320,13 @@ class SageDirector:
             self.optimiser.load_state_dict(self.checkpoint["optimiser_state_dict"])
 
     def train_model(self):
+        """
+        Launch the legacy DataLoader-based training loop.
+
+        Delegates to :func:`sage.factory.legacy.train` with all prepared
+        components (model, optimiser, scheduler, loss, loaders, checkpoint).
+        Updates :attr:`Network` with the best weights returned after training.
+        """
         # Initialise the trainer
         self.Network = manual_train(
             self.cfg,
@@ -252,6 +348,13 @@ class SageDirector:
         )
 
     def test_model(self):
+        """
+        Run inference over foreground and background test datasets.
+
+        Produces trigger files for both jobs (foreground / background) under
+        ``<export_dir>/TESTING/``.  Activated only when ``opts.inference`` is
+        ``True``.
+        """
         if opts.inference:
             # Running the testing phase for foreground data
             transforms = self.cfg.transforms["test"]
@@ -295,6 +398,14 @@ class SageDirector:
                 )
 
     def evaluate_model(self):
+        """
+        Run the MLGWSC-1 evaluator on the trigger files produced by :meth:`test_model`.
+
+        Builds the raw-argument list expected by
+        :func:`sage.benchmark.mlgwsc1.evaluator.main` and invokes it to produce
+        clustered triggers and efficiency statistics written to the TESTING
+        sub-directory.
+        """
         # Run the evaluator for the testing phase and add required files to TESTING dir in export_dir
         raw_args = [
             "--injection-file",
@@ -325,9 +436,16 @@ class SageDirector:
         )
 
     def save_results(self):
+        """Persist final results and artefacts (stub — not yet implemented)."""
         pass
 
     def run(self):
+        """
+        Execute the full training pipeline end-to-end.
+
+        Calls all ``prepare_*`` methods in order: configs → data → model →
+        summary → optimiser → scheduler → loss → checkpoint → train.
+        """
         self.prepare_configs()
         self.prepare_data()
         self.initialise_model()

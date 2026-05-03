@@ -36,6 +36,36 @@ def get_freqs(
     device="cpu",
     dtype=torch.float64,
 ):
+    """
+    Build a uniform frequency grid from ``f_l`` to ``f_u`` inclusive.
+
+    The bin spacing is ``df = 1 / sample_length_in_s``, matching the DFT
+    convention used throughout Sage.  Optionally broadcasts the grid to a
+    batch dimension for vectorised waveform generation.
+
+    Parameters
+    ----------
+    f_l : float
+        Lower frequency bound in Hz (default ``20.0``).
+    f_u : float
+        Upper frequency bound in Hz (default ``1024.0``).
+    sample_length_in_s : float
+        Segment duration in seconds; determines ``df = 1/T`` (default ``16.0``).
+    batch_size : int or None
+        If given, expand the output to shape ``(batch_size, F)``; otherwise
+        returns shape ``(F,)`` (default ``None``).
+    device : str or torch.device
+        Target device (default ``"cpu"``).
+    dtype : torch.dtype
+        Output dtype (default :attr:`torch.float64`).
+
+    Returns
+    -------
+    f : torch.Tensor
+        Frequency array, shape ``(F,)`` or ``(batch_size, F)``.
+    f_ref : torch.Tensor
+        Reference frequency (``f_l``), shape ``()`` or ``(batch_size, 1)``.
+    """
     # Generate the frequency grid
     del_f = 1.0 / sample_length_in_s
     n = int(np.round((f_u - f_l) / del_f)) + 1

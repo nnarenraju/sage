@@ -15,11 +15,27 @@ import lal
 
 
 def q_from_mass1_mass2(mass1, mass2):
+    """Return the mass ratio *q = m1/m2* (≥ 1 when m1 ≥ m2)."""
     # Calculate mass ratio (mass1/mass2) on bounds [1, +inf]
     return mass1 / mass2
 
 
 def chirp_mass_from_signal_duration(tau, signal_low_freq_cutoff):
+    """
+    Convert Newtonian chirp duration to chirp mass.
+
+    Parameters
+    ----------
+    tau : float
+        Chirp duration in seconds.
+    signal_low_freq_cutoff : float
+        Lower frequency cutoff (Hz).
+
+    Returns
+    -------
+    float
+        Chirp mass in solar masses.
+    """
     # Calculate chirp mass from signal duration
     lf = signal_low_freq_cutoff  # Hz
     G = 6.67e-11  # Nm^2/Kg^2
@@ -31,6 +47,21 @@ def chirp_mass_from_signal_duration(tau, signal_low_freq_cutoff):
 
 
 def signal_duration_from_chirp_mass(mchirp, signal_low_freq_cutoff):
+    """
+    Convert chirp mass to Newtonian in-band signal duration.
+
+    Parameters
+    ----------
+    mchirp : float
+        Chirp mass in solar masses.
+    signal_low_freq_cutoff : float
+        Lower frequency cutoff (Hz).
+
+    Returns
+    -------
+    float
+        Expected signal duration in seconds.
+    """
     lf = signal_low_freq_cutoff  # Hz
     G = 6.67e-11  # Nm^2/Kg^2
     c = 3.0e8  # ms^-1
@@ -43,18 +74,21 @@ def signal_duration_from_chirp_mass(mchirp, signal_low_freq_cutoff):
 
 
 def mass1_from_mchirp_q(mchirp, q):
+    """Return the primary mass given chirp mass *mchirp* and mass ratio *q = m1/m2*."""
     # Returns the primary mass from the given chirp mass and mass ratio.
     mass1 = q ** (2.0 / 5.0) * (1.0 + q) ** (1.0 / 5.0) * mchirp
     return mass1
 
 
 def mass2_from_mchirp_q(mchirp, q):
+    """Return the secondary mass given chirp mass *mchirp* and mass ratio *q = m1/m2*."""
     # Returns the secondary mass from the given chirp mass and mass ratio.
     mass2 = q ** (-3.0 / 5.0) * (1.0 + q) ** (1.0 / 5.0) * mchirp
     return mass2
 
 
 def mass1_mass2_from_mchirp_q(mchirp, q):
+    """Return ``(mass1, mass2)`` from chirp mass and mass ratio *q = m1/m2*."""
     # Get mass1 and mass2 from mchirp and q
     mass1 = mass1_from_mchirp_q(mchirp, q)
     mass2 = mass2_from_mchirp_q(mchirp, q)
@@ -65,6 +99,10 @@ def mass1_mass2_from_mchirp_q(mchirp, q):
 
 
 def get_mchirp_priors(ml, mu):
+    """
+    Return ``(min_mchirp, max_mchirp)`` for equal-mass binaries at the given
+    component-mass limits *ml* (lower) and *mu* (upper).
+    """
     # Range for mchirp
     min_mchirp = (ml * ml / (ml + ml) ** 2.0) ** (3.0 / 5) * (ml + ml)
     max_mchirp = (mu * mu / (mu + mu) ** 2.0) ** (3.0 / 5) * (mu + mu)
@@ -72,6 +110,10 @@ def get_mchirp_priors(ml, mu):
 
 
 def get_tau_priors(ml, mu, lf):
+    """
+    Return Newtonian chirp-time bounds ``(tau_lower, tau_upper)`` for the
+    given mass range ``[ml, mu]`` and frequency cutoff *lf*.
+    """
     # Range for mchirp
     min_mchirp, max_mchirp = get_mchirp_priors(ml, mu)
     # Tau priors
@@ -91,6 +133,15 @@ def get_tau_priors(ml, mu, lf):
 
 
 def get_uniform_masses_with_mass1_gt_mass2(mass_lower, mass_upper, num_samples):
+    """
+    Draw ``num_samples`` pairs of component masses uniformly in
+    ``[mass_lower, mass_upper]`` with the mass ordering constraint m1 ≥ m2.
+
+    Returns
+    -------
+    mass1, mass2 : np.ndarray
+        Arrays of shape ``(num_samples,)`` satisfying ``mass1 >= mass2``.
+    """
     # Get uniform mass distribution
     x_mass = [np.random.uniform(mass_lower, mass_upper, num_samples) for _ in range(2)]
     # Apply the mass constraint (mass2 <= mass1)
@@ -105,6 +156,21 @@ def get_uniform_masses_with_mass1_gt_mass2(mass_lower, mass_upper, num_samples):
 
 
 class BoundedPriors:
+    """
+    Geometrically bounded prior generator in the (tau0, tau3) chirp-time space.
+
+    Provides boundary helpers and mass-draw methods for the PyCBC
+    template-placement metric used by the legacy dataset generation pipeline.
+
+    Parameters
+    ----------
+    mu : float
+        Upper component-mass limit (solar masses).
+    ml : float
+        Lower component-mass limit (solar masses).
+    lf : float
+        Signal low-frequency cutoff (Hz).
+    """
 
     def __init__(self, mu, ml, lf):
         # Common

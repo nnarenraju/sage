@@ -28,15 +28,40 @@ import torch
 
 
 class BatchToFrequencyDomain:
+    """
+    Callable that converts a batch of real time-domain strain to the
+    frequency domain via a real-to-complex FFT (``torch.fft.rfft``).
+
+    Parameters
+    ----------
+    delta_t : float
+        Sampling interval in seconds (= 1 / sample_rate).  Stored for
+        reference; not currently used in the computation but available for
+        downstream normalisation.
+    """
+
     def __init__(self, *, delta_t: float):
         self.delta_t = delta_t
 
     def __call__(self, batch_td: torch.Tensor) -> torch.Tensor:
         """
-        Args:
-            batch_td: (B, D, T) real
-        Returns:
-            batch_fd: (B, D, F) complex
+        Transform a batch of time-domain signals to frequency domain.
+
+        Parameters
+        ----------
+        batch_td : torch.Tensor, shape ``(B, D, T)``
+            Batch of real-valued time-domain strain windows; ``D`` detectors,
+            ``T`` samples.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, D, T//2 + 1)``
+            Complex frequency-domain strain.
+
+        Raises
+        ------
+        ValueError
+            If ``batch_td`` is not 3-dimensional.
         """
         if batch_td.ndim != 3:
             raise ValueError("Expected (B, D, T)")

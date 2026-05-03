@@ -40,6 +40,35 @@ def plot_efficiency_curves(
     bin_width=500,
     step=10,
 ):
+    """
+    Plot detection efficiency as a function of each source parameter.
+
+    For each continuous source parameter (chirp mass, distance, SNR, etc.)
+    bins the detected fraction (``pred_stat > threshold``) as a function of
+    the parameter value and overlays curves for a sweep of thresholds.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier used in the output directory name.
+    source_params : dict[str, array-like]
+        Dictionary mapping parameter name to per-signal values.
+    pred_stat : array-like, shape ``(N_signal,)``
+        Predicted ranking statistic for signal events only.
+    labels : array-like, shape ``(N,)``
+        Binary labels (1 = signal) for the full validation set.
+    export_dir : str or None
+        Parent directory; plots are saved under
+        ``EFFICIENCY/epoch_{epoch}/``.
+    save : bool
+        If ``True``, save figures to disk; otherwise display interactively.
+    save_name : str
+        Prefix for saved filenames (default ``"stat"``).
+    bin_width : int
+        Number of samples per parameter bin (default ``500``).
+    step : float
+        Step size for threshold sweep (default ``10``).
+    """
 
     if save and export_dir is not None:
         base_dir = os.path.join(export_dir, f"EFFICIENCY/epoch_{epoch}")

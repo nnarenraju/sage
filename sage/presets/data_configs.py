@@ -66,6 +66,23 @@ def get_post_fudge_factor(prior_high_mass):
 
 
 def get_imr_chirp_time(m1, m2, s1z, s2z, fl):
+    """
+    Return 1.1× the IMRPhenomD chirp time for the given binary parameters.
+
+    Parameters
+    ----------
+    m1, m2 : float
+        Component masses in solar masses.
+    s1z, s2z : float
+        Dimensionless aligned spin magnitudes.
+    fl : float
+        Starting frequency (Hz).
+
+    Returns
+    -------
+    float
+        Chirp time (seconds) with a 10 % safety margin.
+    """
     return 1.1 * lalsim.SimIMRPhenomDChirpTime(
         m1 * 1.989e30, m2 * 1.989e30, s1z, s2z, fl
     )

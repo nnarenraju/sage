@@ -62,6 +62,38 @@ def get_all_events():
 
 
 class TimelineQuery:
+    """
+    GWOSC segment query engine with multi-case dispatch.
+
+    Accepts any combination of detector names, observing-run labels, GPS
+    start/end, and data-quality (DQ) flags and routes to the appropriate GWOSC
+    API call via a ``match`` statement (14 supported input combinations).
+
+    Results are stored in :attr:`timeline` as a NumPy structured array with
+    dtype :data:`~sage.core.typing.SEGMENT_DTYPE`.  Use :meth:`download_segments`
+    to populate the timeline, then optionally :meth:`prune_segments` to remove
+    known events or short segments.
+
+    Parameters
+    ----------
+    detector : str or list[str] or None
+        Detector prefix(es) to query (e.g. ``"H1"``, ``["H1", "L1"]``).
+    observing_run : str or list[str] or None
+        LIGO observing-run label(s) (e.g. ``"O3a"``, ``"O3b"``).
+    start, end : float or list[float] or None
+        GPS start and end times bounding the query.
+    dq_flag : str or list[str] or None
+        Data-quality flag(s) to query (e.g. ``"H1_DATA"``).
+    auto_clean_empty_timelines : bool
+        If ``True``, automatically remove records with empty segment lists
+        after :meth:`download_segments` (default ``False``).
+
+    Attributes
+    ----------
+    timeline : list or np.ndarray (SEGMENT_DTYPE)
+        Populated after :meth:`download_segments`; structured array of
+        (detector, flag, start_time, end_time, observing_run, segments) rows.
+    """
 
     ## Static methods from sage.core
     # Make input variables iterable (if not already)

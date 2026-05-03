@@ -37,6 +37,29 @@ from sage.core.config import get_cfg, get_data_cfg
 
 
 class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
+    """
+    GPU-native batched IMRPhenomPv2 precessing-spin waveform generator.
+
+    Extends :class:`~sage.data.waveform.approximants.IMRPhenomD.IMRPhenomD`
+    with precessing-spin corrections to the polarisations (``hp``, ``hc``),
+    then projects through :class:`~sage.data.waveform.project.ConstantProjection`
+    to produce detector-frame strain.  Optional SNR rescaling and data
+    augmentation are applied before the final output.
+
+    ``GRAPH_READY = True`` indicates that the entire ``forward`` pass is
+    compatible with ``torch.compile(fullgraph=True)``.
+
+    Parameters
+    ----------
+    param_sampler : callable or None
+        Waveform parameter sampler; if ``None``, a default
+        :class:`~sage.data.waveform.sampler.DistributionSampler` is used.
+    waveform_project : callable or None
+        Detector projection module; if ``None``, defaults to
+        :class:`~sage.data.waveform.project.ConstantProjection`.
+    augment : callable or None
+        Optional augmentation callable applied to the projected strain.
+    """
 
     GRAPH_READY = True
 
@@ -153,6 +176,30 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             return hf, targets
 
     def get_hphc(self, theta, reproduce_lal=False):
+        """
+        Compute frequency-domain plus and cross polarisations with precessing-spin corrections.
+
+        Calls :meth:`compute_derived_parameters`, :meth:`convert_spins`, and
+        :meth:`PhenomPCoreTwistUp` to apply IMRPhenomPv2 precessing corrections on
+        top of the aligned-spin IMRPhenomD backbone.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 15)
+            Waveform parameters: mass1, mass2, spin1x, spin1y, spin1z,
+            spin2x, spin2y, spin2z, distance, tc, coa_phase, inclination,
+            polarization, ra, dec.
+        reproduce_lal : bool, optional
+            If ``True``, skip tapering, time-shifting, and df normalisation so
+            output matches the raw LAL convention.  Default is ``False``.
+
+        Returns
+        -------
+        hp : torch.Tensor, shape (B, n_freq)
+            Plus polarisation (complex64).
+        hc : torch.Tensor, shape (B, n_freq)
+            Cross polarisation (complex64).
+        """
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
         # s2z=7, dist_mpc=8, tc=9, phiRef=10, incl=11
         # Pv2 requires m2 > m1; Swapping masses and spins done internally
@@ -277,6 +324,28 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return hp, hc
 
     def apply_tc(self, hp, hc, tc):
+        """
+        Apply a time-of-coalescence phase shift to hp and hc.
+
+        Converts ``tc`` from duration-space into a frequency-domain phase ramp
+        and applies it to the plus and cross polarisations in polar form.
+
+        Parameters
+        ----------
+        hp : torch.Tensor, shape (B, n_freq)
+            Plus polarisation.
+        hc : torch.Tensor, shape (B, n_freq)
+            Cross polarisation.
+        tc : torch.Tensor, shape (B, 1)
+            Time of coalescence in seconds relative to the segment end.
+
+        Returns
+        -------
+        hp : torch.Tensor, shape (B, n_freq)
+            Phase-shifted plus polarisation.
+        hc : torch.Tensor, shape (B, n_freq)
+            Phase-shifted cross polarisation.
+        """
         # Apply time shift to account for tc
         # Converting from tc in duration space to actual shift
         _tc = (tc + self.data_cfg.padding_length_in_s) - self.sample_length_in_s
@@ -286,6 +355,27 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return hp, hc
 
     def pad_missing_frequencies(self, hp, hc):
+        """
+        Zero-pad hp and hc from DC to the low-frequency cutoff.
+
+        The waveform is only computed above f_min; this method prefixes the
+        required number of zero bins so the output spans [0, f_max] with
+        uniform df spacing.
+
+        Parameters
+        ----------
+        hp : torch.Tensor, shape (B, n_active)
+            Plus polarisation on the active frequency grid.
+        hc : torch.Tensor, shape (B, n_active)
+            Cross polarisation on the active frequency grid.
+
+        Returns
+        -------
+        hp_pad : torch.Tensor, shape (B, n_pad + n_active)
+            Zero-padded plus polarisation.
+        hc_pad : torch.Tensor, shape (B, n_pad + n_active)
+            Zero-padded cross polarisation.
+        """
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
@@ -299,6 +389,24 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return hp_pad, hc_pad
 
     def compute_derived_parameters(self, theta):
+        """
+        Compute PhenomPv2-specific derived parameters from raw masses.
+
+        Overrides the IMRPhenomD base method.  Internally, mass ordering
+        is m1 ≤ m2 (Pv2 convention), whereas PhenomD expects m1 ≥ m2 and
+        the swap is applied before calling any PhenomD helper.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 2+)
+            Columns 0 and 1 are mass1 and mass2 in solar masses.
+
+        Returns
+        -------
+        derived : torch.Tensor, shape (B, 4)
+            Columns: M (total mass, M☉), eta (symmetric mass ratio),
+            q = m1/m2 ≥ 1 (Pv2 convention), M_s (M in seconds).
+        """
         # Overriding inherited method
         # Derived params different from PhenomD
         M = theta[:, 1:2] + theta[:, 0:1]
@@ -312,6 +420,32 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return torch.cat([M, eta, q, M_s], dim=1)
 
     def compute_pv2_coeffs(self, theta, derived, converted_spins):
+        """
+        Compute NNLO precession-angle coefficients and reference-frequency offsets.
+
+        Evaluates the five alpha (precession) and five epsilon (rotation) PN
+        coefficients via :meth:`ComputeNNLOanglecoeffs` and integrates them at
+        ``f_ref`` to obtain the reference-frame offsets used in
+        :meth:`PhenomPCoreTwistUp`.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 2+)
+            Raw waveform parameters; masses are in columns 0–1.
+        derived : torch.Tensor, shape (B, 4)
+            Output of :meth:`compute_derived_parameters`.
+        converted_spins : torch.Tensor, shape (B, 7)
+            Output of :meth:`convert_spins`.
+
+        Returns
+        -------
+        angcoeffs : torch.Tensor, shape (B, 10)
+            Stacked alpha (cols 0–4) and epsilon (cols 5–9) PN coefficients.
+        alphaNNLOoffset : torch.Tensor, shape (B, 1)
+            Precession angle at ``f_ref`` for reference-frame subtraction.
+        epsilonNNLOoffset : torch.Tensor, shape (B, 1)
+            Rotation angle at ``f_ref`` for reference-frame subtraction.
+        """
         # Other one-off derived quantities
         chi_eff = (
             theta[:, 1:2] * converted_spins[:, 0:1]
@@ -355,6 +489,19 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return angcoeffs, alphaNNLOoffset, epsilonNNLOoffset
 
     def compute_spin_weighted_Y(self, converted_spins):
+        """
+        Evaluate the five l=2 spin-weight-(-2) spherical harmonics at thetaJN.
+
+        Parameters
+        ----------
+        converted_spins : torch.Tensor, shape (B, 7)
+            Output of :meth:`convert_spins`; column 3 is ``thetaJN``.
+
+        Returns
+        -------
+        Y2 : torch.Tensor, shape (B, 5)
+            Columns: Y₂₋₂, Y₂₋₁, Y₂₀, Y₂₁, Y₂₂ (complex, s=-2).
+        """
         Y2m2 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -2)
         Y2m1 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -1)
         Y20 = self.SpinWeightedY(converted_spins[:, 3:4], 0, -2, 2, -0)
@@ -370,6 +517,36 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         coeffs,
         converted_spins,
     ):
+        """
+        Compute all dimensionful frequency quantities needed for PhenomPv2.
+
+        Calls :meth:`phP_get_transition_frequencies` with the mass-swapped
+        parameters and collects the full set of f × M_s scale products.
+
+        Parameters
+        ----------
+        theta_swapped : torch.Tensor, shape (B, 6)
+            Mass-swapped reduced parameter vector passed to PhenomD helpers.
+        derived : torch.Tensor, shape (B, 4)
+            PhenomPv2 derived parameters from :meth:`compute_derived_parameters`.
+        phd_derived : torch.Tensor, shape (B, 4+)
+            PhenomD derived parameters from the parent ``compute_derived_parameters``.
+        coeffs : torch.Tensor, shape (B, 7+)
+            PhenomD amplitude/phase coefficients from :meth:`get_coeffs`.
+        converted_spins : torch.Tensor, shape (B, 7)
+            Output of :meth:`convert_spins`; column 2 is chip.
+
+        Returns
+        -------
+        f_Ms : torch.Tensor, shape (B, n_freq)
+            Frequency grid scaled by M_s.
+        fx_Ms : torch.Tensor, shape (B, 8)
+            Special frequency scale products: fref, f1, f2, f3, f4, fRD, fdamp, fmid.
+        fcut_true : torch.Tensor, shape (B, 1)
+            Physical frequency cutoff in Hz.
+        trans_fs : torch.Tensor, shape (B, 6)
+            Transition frequencies: f1, f2, f3, f4, fRD, fdamp.
+        """
         # {f1, f2, f3, f4, f_RD, f_damp}
         trans_fs = self.phP_get_transition_frequencies(
             theta_swapped,
@@ -411,6 +588,41 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         coeffs,
         fcut_true,
     ):
+        """
+        Apply time-shift and phase corrections so the PhenomPv2 waveform coalesces at t=0.
+
+        Evaluates the PhenomD phase on a fixed frequency grid near the ringdown
+        frequency, estimates d(phase)/df via central difference, and calls
+        :meth:`apply_time_shift_phase_correction`.
+
+        Parameters
+        ----------
+        hp : torch.Tensor, shape (B, n_freq)
+            Plus polarisation before correction.
+        hc : torch.Tensor, shape (B, n_freq)
+            Cross polarisation before correction.
+        theta_swapped : torch.Tensor, shape (B, 6)
+            Mass-swapped reduced parameters.
+        derived : torch.Tensor, shape (B, 4)
+            PhenomPv2 derived parameters.
+        phd_derived : torch.Tensor, shape (B, 4+)
+            PhenomD derived parameters.
+        trans_fs : torch.Tensor, shape (B, 6)
+            Transition frequencies (f1, f2, f3, f4, fRD, fdamp).
+        fx_Ms : torch.Tensor, shape (B, 8)
+            Special frequency scale products.
+        coeffs : torch.Tensor, shape (B, 7+)
+            PhenomD coefficients.
+        fcut_true : torch.Tensor, shape (B, 1)
+            Physical frequency cutoff in Hz.
+
+        Returns
+        -------
+        hp : torch.Tensor, shape (B, n_freq)
+            Corrected plus polarisation.
+        hc : torch.Tensor, shape (B, n_freq)
+            Corrected cross polarisation.
+        """
         ## ** This is where we do the corrections to phase and time shift **
         # Fixed frequency grid around ringdown frequency for Pv2
         # 10 points should be enough for cubic interpolation
@@ -462,6 +674,30 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return hp, hc
 
     def convert_spins(self, theta, derived):
+        """
+        Convert Cartesian spin components to the PhenomPv2 spin parameterisation.
+
+        Maps (spin1x/y/z, spin2x/y/z) plus masses and inclination into the
+        seven quantities used throughout PhenomPv2: aligned spins (chi1_l,
+        chi2_l), precessing-plane spin magnitude (chip), tilt of J w.r.t.
+        line-of-sight (thetaJN), precession reference angle (alpha0),
+        aligned-frame orbital phase offset (phi_aligned), and polarisation
+        rotation (zeta_polariz).
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 12+)
+            Columns: mass1[0], mass2[1], spin2x[2], spin2y[3], spin2z[4],
+            spin1x[5], spin1y[6], spin1z[7], distance[8], tc[9],
+            coa_phase[10], inclination[11].
+        derived : torch.Tensor, shape (B, 4)
+            Output of :meth:`compute_derived_parameters`.
+
+        Returns
+        -------
+        converted : torch.Tensor, shape (B, 7)
+            Columns: chi1_l, chi2_l, chip, thetaJN, alpha0, phi_aligned, zeta_polariz.
+        """
         m1_2 = theta[:, 1:2] * theta[:, 1:2]
         m2_2 = theta[:, 0:1] * theta[:, 0:1]
 
@@ -590,6 +826,21 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         )
 
     def L2PNR(self, v, eta):
+        """
+        Compute the 2PN orbital angular momentum magnitude L (reduced units).
+
+        Parameters
+        ----------
+        v : torch.Tensor, shape (B, 1) or (B, n_freq)
+            Orbital velocity (πM f_ref)^(1/3).
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+
+        Returns
+        -------
+        L : torch.Tensor
+            2PN orbital angular momentum in units of M² (G=c=1).
+        """
         eta2 = eta * eta
         x = v * v
         x2 = x * x
@@ -604,17 +855,40 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
     @staticmethod
     def ROTATEZ(angle, x, y, z):
+        """Rotate vector (x, y, z) about the z-axis by ``angle`` radians."""
         ca = torch.cos(angle)
         sa = torch.sin(angle)
         return x * ca - y * sa, x * sa + y * ca, z
 
     @staticmethod
     def ROTATEY(angle, x, y, z):
+        """Rotate vector (x, y, z) about the y-axis by ``angle`` radians."""
         ca = torch.cos(angle)
         sa = torch.sin(angle)
         return x * ca + z * sa, y, -x * sa + z * ca
 
     def ComputeNNLOanglecoeffs(self, q, chil, chip):
+        """
+        Compute the ten NNLO PN precession-angle coefficients.
+
+        Returns the five alpha (precession angle) and five epsilon (rotation
+        angle) post-Newtonian coefficients as stacked columns.  See Appendix A
+        of arXiv:1408.1810 (Hannam et al.) for the analytic expressions.
+
+        Parameters
+        ----------
+        q : torch.Tensor, shape (B, 1)
+            Mass ratio q = m1/m2 ≥ 1.
+        chil : torch.Tensor, shape (B, 1)
+            Effective aligned spin χ_eff weighted by (1+q)/q.
+        chip : torch.Tensor, shape (B, 1)
+            In-plane spin magnitude parameter.
+
+        Returns
+        -------
+        angcoeffs : torch.Tensor, shape (B, 10)
+            Columns 0–4: alphacoeff1…5; columns 5–9: epsiloncoeff1…5.
+        """
         # Precompute
         m2 = q / (1.0 + q)
         m1 = self.ONE / (1.0 + q)
@@ -754,6 +1028,30 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return angcoeffs
 
     def SpinWeightedY(self, theta, phi, s, l, m):
+        """
+        Evaluate a spin-weighted spherical harmonic Y^s_{lm}(theta, phi).
+
+        Currently supports only s=-2, l=2, m in {-2,-1,0,1,2} (dominant GW
+        modes).  Ported from ``SphericalHarmonics.c`` in LALSuite.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 1)
+            Polar angle in radians.
+        phi : float or torch.Tensor
+            Azimuthal angle in radians; typically 0 in the J-frame.
+        s : int
+            Spin weight; must be -2.
+        l : int
+            Degree; must be 2.
+        m : int
+            Order; must satisfy |m| ≤ l.
+
+        Returns
+        -------
+        Y : torch.Tensor, shape (B, 1)
+            Complex spin-weighted spherical harmonic value.
+        """
         # Copied from SphericalHarmonics.c in LAL
         if s == -2:
             if l == 2:
@@ -804,6 +1102,33 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         derived,
         phd_derived,
     ):
+        """
+        Compute PhenomPv2 phase and amplitude transition frequencies.
+
+        Differs from the parent PhenomD method by using
+        :meth:`phP_get_fRD_fdamp` (which incorporates the in-plane spin chip)
+        rather than the aligned-spin ringdown frequency.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 6)
+            Mass-swapped reduced parameters.
+        gamma2 : torch.Tensor, shape (B, 1)
+            PhenomD amplitude Lorentzian width coefficient.
+        gamma3 : torch.Tensor, shape (B, 1)
+            PhenomD amplitude Lorentzian damping coefficient.
+        chip : torch.Tensor, shape (B, 1)
+            In-plane spin magnitude.
+        derived : torch.Tensor, shape (B, 4)
+            PhenomPv2 derived parameters.
+        phd_derived : torch.Tensor, shape (B, 4+)
+            PhenomD derived parameters.
+
+        Returns
+        -------
+        trans_fs : torch.Tensor, shape (B, 6)
+            Transition frequencies: f1, f2, f3, f4, fRD, fdamp in Hz.
+        """
         # m1 > m2 should hold here (masses swapped before calling)
         # get_fRD_fdamp is different; so we had to rewrite this function again
         f_RD, f_damp = self.phP_get_fRD_fdamp(
@@ -832,6 +1157,31 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return torch.cat([f1, f2, f3, f4, f_RD, f_damp], dim=1)
 
     def phP_get_fRD_fdamp(self, theta, derived, phd_derived, chip):
+        """
+        Compute ringdown and damping frequencies for PhenomPv2.
+
+        Uses the precessing final spin from :meth:`FinalSpin_inplane` (which
+        includes the in-plane chip contribution) and the radiated energy from
+        :meth:`EradRational0815` to look up fRD and fdamp from QNM tables.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 6)
+            Mass-swapped reduced parameters; columns 2–3 are chi1, chi2.
+        derived : torch.Tensor, shape (B, 4)
+            PhenomPv2 derived parameters.
+        phd_derived : torch.Tensor, shape (B, 4+)
+            PhenomD derived parameters; column 3 is eta.
+        chip : torch.Tensor, shape (B, 1)
+            In-plane spin magnitude.
+
+        Returns
+        -------
+        fRD : torch.Tensor, shape (B, 1)
+            Ringdown frequency in Hz.
+        fdamp : torch.Tensor, shape (B, 1)
+            Damping frequency in Hz.
+        """
         # m1 > m2 should hold here
         finspin = self.FinalSpin_inplane(theta, derived, chip)
         Erad = self.EradRational0815(
@@ -862,6 +1212,27 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return fRD / derived[:, 3:4], fdamp / derived[:, 3:4]
 
     def FinalSpin_inplane(self, theta, derived, chip):
+        """
+        Compute the final dimensionless spin including in-plane spin contribution.
+
+        Combines the aligned final spin from :meth:`FinalSpin0815` with the
+        perpendicular component S_perp = chip × (m2/M)² to produce the total
+        final spin magnitude, preserving the sign from the aligned component.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 6)
+            Mass-swapped reduced parameters; column 0 is m1 (larger mass).
+        derived : torch.Tensor, shape (B, 4)
+            PhenomPv2 derived parameters; column 0 is M.
+        chip : torch.Tensor, shape (B, 1)
+            In-plane spin magnitude.
+
+        Returns
+        -------
+        af : torch.Tensor, shape (B, 1)
+            Final dimensionless spin.
+        """
         # This is without GM and swapped (equivalent to original M, eta)
         # Swapping does not change M or eta value
         # Here we assume m1 > m2, the convention used in phenomD
@@ -879,6 +1250,26 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return af
 
     def FinalSpin0815(self, eta, chi1, chi2):
+        """
+        Compute the aligned final spin using the Barkett et al. (0815) fit.
+
+        Delegates to :meth:`FinalSpin0815_s` after forming the mass-weighted
+        effective spin S = m1²·chi1 + m2²·chi2.
+
+        Parameters
+        ----------
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+        chi1 : torch.Tensor, shape (B, 1)
+            Dimensionless aligned spin of the larger BH.
+        chi2 : torch.Tensor, shape (B, 1)
+            Dimensionless aligned spin of the smaller BH.
+
+        Returns
+        -------
+        af_parallel : torch.Tensor, shape (B, 1)
+            Aligned-spin final dimensionless spin.
+        """
         Seta = torch.sqrt(self.ONE - 4.0 * eta)
         m1 = self.HALF * (self.ONE + Seta)
         m2 = self.HALF * (self.ONE - Seta)
@@ -886,6 +1277,21 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return self.FinalSpin0815_s(eta, s)
 
     def FinalSpin0815_s(self, eta, S):
+        """
+        Evaluate the Barkett et al. (arXiv:0815) final-spin rational fit given S.
+
+        Parameters
+        ----------
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+        S : torch.Tensor, shape (B, 1)
+            Mass-weighted effective spin S = (m1²·chi1 + m2²·chi2) / M².
+
+        Returns
+        -------
+        af : torch.Tensor, shape (B, 1)
+            Final dimensionless spin from the rational fit.
+        """
         eta2 = eta * eta
         eta3 = eta2 * eta
         S2 = S * S
@@ -905,6 +1311,26 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         )
 
     def EradRational0815(self, eta, chi1, chi2):
+        """
+        Compute radiated energy fraction using the Barkett et al. (0815) rational fit.
+
+        Delegates to :meth:`EradRational0815_s` after forming the mass-weighted
+        effective spin.
+
+        Parameters
+        ----------
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+        chi1 : torch.Tensor, shape (B, 1)
+            Dimensionless aligned spin of the larger BH.
+        chi2 : torch.Tensor, shape (B, 1)
+            Dimensionless aligned spin of the smaller BH.
+
+        Returns
+        -------
+        Erad : torch.Tensor, shape (B, 1)
+            Fraction of total mass radiated as gravitational waves.
+        """
         Seta = torch.sqrt(self.ONE - 4.0 * eta)
         m1 = self.HALF * (self.ONE + Seta)
         m2 = self.HALF * (self.ONE - Seta)
@@ -915,6 +1341,21 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return self.EradRational0815_s(eta, s)
 
     def EradRational0815_s(self, eta, s):
+        """
+        Evaluate the Barkett et al. (arXiv:0815) radiated-energy rational fit.
+
+        Parameters
+        ----------
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+        s : torch.Tensor, shape (B, 1)
+            Mass-weighted effective spin.
+
+        Returns
+        -------
+        Erad : torch.Tensor, shape (B, 1)
+            Radiated energy fraction E_rad / M_total.
+        """
         eta2 = eta * eta
         eta3 = eta2 * eta
         eta4 = eta3 * eta
@@ -958,6 +1399,44 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         alphaoffset,
         epsilonoffset,
     ):
+        """
+        Apply the PhenomPv2 "twist-up" to convert aligned-spin PhenomD into
+        precessing hp and hc polarisations.
+
+        Evaluates the Wigner d-matrix coefficients, computes the precessing-frame
+        alpha and epsilon angles, and assembles the l=2 mode sum following
+        arXiv:1408.1810 (Hannam et al.), eqs. (A1)–(A4).
+
+        Parameters
+        ----------
+        f_Ms : torch.Tensor, shape (B, n_freq)
+            Frequency grid scaled by M_s.
+        hPhenom : torch.Tensor, shape (B, n_freq)
+            Complex aligned-spin PhenomD waveform (amplitude × phase).
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+        chi1_l : torch.Tensor, shape (B, 1)
+            Aligned spin of the larger BH.
+        chi2_l : torch.Tensor, shape (B, 1)
+            Aligned spin of the smaller BH.
+        chip : torch.Tensor, shape (B, 1)
+            In-plane spin parameter.
+        angcoeffs : torch.Tensor, shape (B, 10)
+            NNLO precession coefficients from :meth:`ComputeNNLOanglecoeffs`.
+        Y2m : torch.Tensor, shape (B, 5)
+            Spin-weighted spherical harmonics from :meth:`compute_spin_weighted_Y`.
+        alphaoffset : torch.Tensor, shape (B, 1)
+            Reference-frame alpha offset.
+        epsilonoffset : torch.Tensor, shape (B, 1)
+            Reference-frame epsilon offset.
+
+        Returns
+        -------
+        hp : torch.Tensor, shape (B, n_freq)
+            Plus polarisation (complex).
+        hc : torch.Tensor, shape (B, n_freq)
+            Cross polarisation (complex).
+        """
         q = (self.ONE + torch.sqrt(self.ONE - 4.0 * eta) - 2.0 * eta) / (2.0 * eta)
         # Mass of the smaller BH for unit total mass M=1
         m1 = 1.0 / (1.0 + q)
@@ -1038,6 +1517,31 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         return hp, hc
 
     def WignerdCoefficients(self, v, SL, eta, Sp):
+        """
+        Compute the half-angle Wigner d-matrix coefficients cos(β/2) and sin(β/2).
+
+        Estimates the precession opening angle β from the ratio of the total
+        in-plane spin to the total angular momentum, using the 2PN orbital
+        angular momentum from :meth:`L2PNR`.
+
+        Parameters
+        ----------
+        v : torch.Tensor, shape (B, n_freq)
+            Orbital velocity (πMf)^(1/3).
+        SL : torch.Tensor, shape (B, 1)
+            Aligned dimensionful spin S_L = chi1_l·m1² + chi2_l·m2².
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+        Sp : torch.Tensor, shape (B, 1)
+            In-plane spin S_perp = chip · m2².
+
+        Returns
+        -------
+        cos_beta_half : torch.Tensor
+            cos(β/2) for the Wigner d-matrix.
+        sin_beta_half : torch.Tensor
+            sin(β/2) for the Wigner d-matrix.
+        """
         # CL: jnp to torch; x**0.5 to sqrt; powers expanded
         # We define the shorthand s := Sp / (L + SL)
         L = self.L2PNR(

@@ -46,12 +46,30 @@ from sage.data.psd import get_fiducial_psds
 
 class OptimalSNREstimator(torch.nn.Module):
     """
-    Fast batched optimal SNR calculator (PyCBC sigmasq equivalent).
+    Fast batched optimal matched-filter SNR estimator (equivalent to PyCBC ``sigmasq``).
 
-    Expected shapes
-    ---------------
-    h   : (B, D, F) complex64/complex128
-    psd : (D, F)    real
+    Computes the optimal (whitened) SNR for a batch of frequency-domain
+    detector-projected waveforms using fiducial PSDs loaded from disk.  The
+    integration is performed as:
+
+    .. math::
+
+        \\rho^2 = 4 \\Delta f \\sum_f \\frac{|h(f)|^2}{S_n(f)}
+
+    for each detector, summed over detectors for the network SNR.
+
+    Attributes
+    ----------
+    asds : torch.Tensor, shape ``(1, D, F)``
+        Amplitude spectral densities (sqrt of PSDs) per detector.
+    mask : torch.Tensor or None, shape ``(1, 1, F)``
+        Pre-computed frequency mask for ``[f_low, f_high]`` integration band.
+    delta_f : float
+        Frequency bin spacing in Hz.
+
+    Expected input shapes
+    ---------------------
+    h   : ``(B, D, F)`` complex tensor — detector-projected FD waveforms.
     """
 
     def __init__(self):

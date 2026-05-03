@@ -39,7 +39,32 @@ def plot_uncertainty_vs_gradient(
     epoch=None,
 ):
     """
-    Plot network predicted uncertainty vs output gradient for a source parameter
+    Scatter plot of model uncertainty vs finite-difference output gradient.
+
+    Perturbs ``param_name`` by ``delta_frac × value`` and computes the
+    numerical gradient of the ranking statistic.  Plots this against the
+    heteroscedastic uncertainty predicted by the model for signal events.
+    Ideally, high gradient should co-occur with high uncertainty.
+
+    Parameters
+    ----------
+    model : object with ``predict`` method
+        Model that returns ``(ranking_stat, uncertainty)`` when called with
+        ``return_uncertainty=True``.
+    source_params : dict[str, array-like]
+        Per-event parameter arrays.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    param_name : str
+        Key of the parameter to perturb.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    delta_frac : float
+        Fractional perturbation size for the gradient estimate (default ``0.01``).
+    epoch : int or str or None
+        Epoch identifier for the filename.
     """
     import numpy as np
 

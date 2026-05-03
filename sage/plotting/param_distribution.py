@@ -38,6 +38,28 @@ def plot_outputbin_param_distribution(
     export_dir=None,
     save=True,
 ):
+    """
+    Distribution of source parameters within ranking-statistic output bins.
+
+    Bins all events by their ranking statistic and plots the parameter
+    distribution (histogram) within each bin.  Highlights whether certain
+    parameter values cluster at low or high confidence scores.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier used in the output subdirectory.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    sample_params : dict[str, array-like]
+        Per-event source parameter arrays.
+    export_dir : str or None
+        Parent directory; plots saved under ``OUTBIN_PARAM_DISTR/epoch_{epoch}/``.
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    """
 
     if save and export_dir is not None:
         parent_dir = os.path.join(export_dir, "OUTBIN_PARAM_DISTR")

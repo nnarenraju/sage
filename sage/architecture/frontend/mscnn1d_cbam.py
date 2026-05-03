@@ -34,6 +34,13 @@ from torch.nn import MaxPool1d, BatchNorm1d
 
 
 class Conv1dSame(nn.Conv1d):
+    """
+    1D convolution with ``padding="same"`` semantics (output length == input length).
+
+    Thin subclass of :class:`torch.nn.Conv1d` that hard-codes
+    ``padding="same"`` so callers do not need to compute padding manually.
+    Accepts all standard ``nn.Conv1d`` arguments except ``padding``.
+    """
 
     def __init__(
         self,
@@ -59,6 +66,38 @@ class Conv1dSame(nn.Conv1d):
 
 
 class ConcatBlockConv5(nn.Module):
+    """
+    Inception-style multi-scale 1D convolution block with five parallel paths.
+
+    Runs five Conv1dSame branches at kernel sizes ``k``, ``2k``, ``k/2``,
+    ``k/4``, and ``4k`` in parallel, concatenates all outputs with the
+    identity skip, then fuses with a pointwise (1×1) convolution.  The wide
+    range of receptive fields lets a single block capture both fine-grained
+    features and long-range chirp structure simultaneously.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of input channels.
+    out_channels : int
+        Number of output channels produced by each branch and the fused output.
+    kernel_size : int
+        Base kernel size ``k``; the five branches use ``k, 2k, k//2, k//4,
+        4k``.
+    stride : int
+        Convolution stride (default ``1``).
+    padding : int
+        Ignored — ``Conv1dSame`` handles padding automatically.
+    dilation : int
+        Dilation factor for all branches (default ``1``).
+    groups : int
+        Grouped convolution groups (default ``1``).
+    bias : bool
+        Whether to add a bias term (default ``True``).
+    act : nn.Module
+        Activation class applied after each BN (default :class:`~torch.nn.SiLU`).
+    """
+
     def __init__(
         self,
         in_channels,
@@ -176,6 +215,21 @@ class ConcatBlockConv5(nn.Module):
 
 
 class ChannelAttention1D(nn.Module):
+    """
+    1D CBAM channel-attention gate.
+
+    Applies both average and max global temporal pooling, passes each through
+    a shared two-layer FC (with bottleneck ratio ``reduction``), sums, applies
+    sigmoid, and rescales the input channel-wise.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of input channels.
+    reduction : int
+        Bottleneck reduction ratio for the FC layers (default ``16``).
+    """
+
     def __init__(self, in_channels, reduction=16):
         super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
@@ -198,6 +252,23 @@ class ChannelAttention1D(nn.Module):
 
 
 class TemporalAttention1D(nn.Module):
+    """
+    1D CBAM temporal (spatial) attention gate.
+
+    Concatenates channel-wise average and max features along the time axis,
+    applies a single 1D convolution + sigmoid to produce a time-step attention
+    map, and rescales the input point-wise.  This highlights signal-rich time
+    regions (e.g. the merger) and suppresses flat noise segments.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of input channels (used for context; the conv operates on 2
+        channels after the channel-wise reduction).
+    kernel_size : int
+        Temporal kernel size for the attention convolution (default ``7``).
+    """
+
     def __init__(self, in_channels, kernel_size=7):
         super().__init__()
         padding = kernel_size // 2
@@ -216,6 +287,28 @@ class TemporalAttention1D(nn.Module):
 
 
 class ConvBlock(nn.Module):
+    """
+    Three-stage multi-scale 1D CNN frontend with per-stage CBAM attention.
+
+    Processes a single detector strain time-series through three cascaded
+    stages, each containing two :class:`ConcatBlockConv5` blocks followed by
+    a :class:`ChannelAttention1D` and :class:`TemporalAttention1D` gate.
+    Max-pooling between stages achieves dyadic downsampling (÷8, ÷4) before
+    the final stage.  The output is unsqueezed to add a channel dimension for
+    downstream 2D or 3D processing.
+
+    Parameters
+    ----------
+    filters_start : int
+        Base number of feature maps in stage 1 (doubled per stage, default
+        ``32``).
+    kernel_start : int
+        Base kernel size for the first :class:`ConcatBlockConv5` block (halved
+        per stage, default ``64``).
+    in_channels : int
+        Number of input channels (default ``1`` for a single detector).
+    """
+
     def __init__(self, filters_start=32, kernel_start=64, in_channels=1):
         super().__init__()
 

@@ -61,6 +61,23 @@ _NAMED_CONSTRAINTS = ["mass_order"]
 
 
 def spherical_to_cartesian(radial, polar, azimuthal):
+    """
+    Convert spherical spin components to Cartesian coordinates.
+
+    Parameters
+    ----------
+    radial : torch.Tensor
+        Spin magnitude.
+    polar : torch.Tensor
+        Polar angle (inclination) in radians.
+    azimuthal : torch.Tensor
+        Azimuthal angle in radians.
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(x, y, z)`` Cartesian spin components.
+    """
     sin_theta = torch.sin(polar)
     return (
         radial * sin_theta * torch.cos(azimuthal),
@@ -70,6 +87,22 @@ def spherical_to_cartesian(radial, polar, azimuthal):
 
 
 def read_from_config(path, seed):
+    """
+    Construct a :class:`DistributionSampler` from a YAML prior configuration.
+
+    Parameters
+    ----------
+    path : str
+        Path to the YAML file describing the prior distributions, transforms,
+        and constraints.
+    seed : int
+        Seed for the internal :class:`torch.Generator`.
+
+    Returns
+    -------
+    DistributionSampler
+        Configured sampler ready to draw waveform parameters.
+    """
     with open(path, "r") as f:
         config = yaml.safe_load(f)
 
@@ -88,21 +121,92 @@ def read_from_config(path, seed):
 
 
 class NamedConstraint:
+    """
+    Reference to a named constraint function defined in
+    :mod:`sage.data.waveform.constraints`.
+
+    Parameters
+    ----------
+    name : str
+        Name of the constraint function (must appear in
+        ``constraints._NAMED_CONSTRAINTS``).
+    params : list or None
+        Additional parameter names passed to the constraint function.
+    """
+
     def __init__(self, name, params=None):
         self.name = name
         self.params = params or []
 
 
 class ExpressionConstraint:
+    """
+    Constraint defined as an inline Python expression string.
+
+    The expression is evaluated with ``eval`` against the current parameter
+    dictionary, so any parameter name can be referenced directly.
+
+    Parameters
+    ----------
+    expr : str
+        A Python expression that evaluates to ``True`` (accept) or ``False``
+        (reject) given the current parameter dict.  Example:
+        ``"mass1 >= mass2"``.
+    """
+
     def __init__(self, expr: str):
         self.name = "custom"
         self.expr = expr
 
     def check(self, params):
+        """Return ``True`` if the parameter dict satisfies the stored expression."""
         return eval(self.expr, {}, params)
 
 
 class DistributionSampler(torch.nn.Module):
+    """
+    Batched waveform-parameter sampler driven by a YAML prior configuration.
+
+    Reads a dictionary that describes:
+
+    * **priors** — per-parameter distributions (uniform, sin-angle,
+      solid-angle, sky, uniform-radius, …).
+    * **waveform_transforms** — deterministic reparametrisations applied
+      after sampling (spherical → Cartesian spins, m1/m2 → mchirp/q,
+      chirp-distance → luminosity distance).
+    * **constraints** — named or custom Boolean filters applied via
+      rejection sampling (e.g. ``mass_order`` to enforce m1 ≥ m2).
+
+    After construction, :meth:`_compile_batch_standardiser` must be called
+    once to pre-compute mean and standard deviation buffers used by
+    :meth:`standardise_from_batch` / :meth:`unstandardise_from_batch`.
+
+    Parameters
+    ----------
+    config : dict
+        Parsed YAML dictionary with keys ``"priors"``,
+        ``"waveform_transforms"`` (optional), and ``"constraints"`` (optional).
+    device : str
+        Torch device for all sampled tensors.
+    dtype : torch.dtype
+        Floating-point dtype for all sampled tensors.
+    generator : torch.Generator
+        Seeded generator used for all random draws.
+
+    Attributes
+    ----------
+    param_names : list[str]
+        Sorted list of all parameter names produced by this sampler
+        (includes derived quantities from transforms).
+    param_index : dict[str, int]
+        Mapping from parameter name to column index in the output tensor.
+    num_params : int
+        Total number of parameters in the output batch.
+    bounds : dict[str, tuple]
+        Theoretical ``(min, max)`` bounds for every parameter.
+    normalisers : dict[str, Normalise]
+        Pre-built :class:`~sage.core.math.Normalise` objects for each param.
+    """
 
     def __init__(self, config: Dict[str, Any], device, dtype, generator):
 
@@ -169,6 +273,7 @@ class DistributionSampler(torch.nn.Module):
 
     @staticmethod
     def get_named_constraints():
+        """Return the list of built-in named constraint identifiers."""
         return _NAMED_CONSTRAINTS
 
     def _make_dist(self, name, args):
@@ -227,6 +332,19 @@ class DistributionSampler(torch.nn.Module):
                 )
 
     def _sample_base(self, N):
+        """
+        Draw ``N`` raw parameter samples from all priors.
+
+        Parameters
+        ----------
+        N : int
+            Number of samples to draw.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(N, num_params)``
+            Raw samples before transforms and constraints.
+        """
         params = torch.empty(
             N,
             self.num_params,
@@ -370,6 +488,7 @@ class DistributionSampler(torch.nn.Module):
             bounds["q"] = (q_min, q_max)
 
             def mchirp(m1, m2):
+                """Compute chirp mass from component masses."""
                 return ((m1 * m2) ** (3.0 / 5.0)) / ((m1 + m2) ** (1.0 / 5.0))
 
             # Extremes occur on boundary
@@ -475,7 +594,19 @@ class DistributionSampler(torch.nn.Module):
         self.register_buffer("_norm_scales", scales)
 
     def norm_from_batch(self, batch):
+        """
+        Min-max normalise selected parameters in a full parameter batch.
 
+        Parameters
+        ----------
+        batch : torch.Tensor, shape ``(B, total_params)``
+            Full parameter batch produced by :meth:`forward`.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, selected_params)``
+            Selected columns normalised to ``[0, 1]`` using theoretical bounds.
+        """
         if batch.ndim != 2:
             raise ValueError("batch must be 2D (B, total_params)")
 
@@ -484,7 +615,19 @@ class DistributionSampler(torch.nn.Module):
         return (selected - self._norm_mins) / self._norm_scales
 
     def unnorm_from_batch(self, normed_batch):
+        """
+        Invert min-max normalisation to recover physical parameter values.
 
+        Parameters
+        ----------
+        normed_batch : torch.Tensor, shape ``(B, selected_params)``
+            Normalised batch from :meth:`norm_from_batch`.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, selected_params)``
+            Parameters in their original physical units/range.
+        """
         if normed_batch.ndim != 2:
             raise ValueError("normed_batch must be 2D")
 
@@ -564,7 +707,22 @@ class DistributionSampler(torch.nn.Module):
         return standardised_batch * self._std_stds + self._std_means
 
     def forward(self, N: int):
+        """
+        Sample a batch of ``N`` waveform parameters from the configured prior.
 
+        Applies constraints (rejection sampling) and deterministic transforms
+        (e.g. mchirp/q, Cartesian spins, luminosity distance) in order.
+
+        Parameters
+        ----------
+        N : int
+            Number of samples to draw.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(N, num_params)``
+            Complete parameter batch with all transforms applied.
+        """
         params = self._sample_base(N)
         params = self._enforce_constraints(params)
         # NOTE: Just so I remove panic for future me

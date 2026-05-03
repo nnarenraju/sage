@@ -38,6 +38,38 @@ from .schedulers import ManageScheduler
 
 
 class SageVanillaTraining(torch.nn.Module):
+    """
+    Compiled training loop using the :class:`~sage.factory.manager.CompileManager`
+    pattern.
+
+    The signal and noise generators are compiled together with the
+    preprocessing and forward pass where possible (controlled by each
+    sampler's ``GRAPH_READY`` flag).  The optimizer step and loss
+    backpropagation always run in eager mode.
+
+    Parameters
+    ----------
+    signal_sampler : nn.Module
+        Waveform signal sampler (e.g. :class:`IMRPhenomPv2`).
+    noise_sampler : nn.Module
+        Noise sampler (e.g. :class:`MemmapNoiseSampler`).
+    processor : nn.Module
+        Preprocessing pipeline (e.g. :class:`Preprocessor` wrapping
+        :class:`FiducialWhitening` + :class:`MultirateSampler`).
+    model : nn.Module
+        The neural network to train.
+    loss_function : nn.Module
+        Loss function that returns a stacked component tensor.
+    optimiser : torch.optim.Optimizer
+    scheduler : torch.optim.lr_scheduler._LRScheduler
+    num_iterations : int
+        Gradient steps per epoch (typically ``n_samples // batch_size``).
+    num_epochs : int
+        Total epochs (pre-allocates the loss tracking tensor).
+    scheduler_mode : str
+        ``"batch"`` to step the scheduler every batch, ``"epoch"`` to step
+        once per epoch.
+    """
 
     def __init__(
         self,
@@ -143,6 +175,44 @@ class SageVanillaTraining(torch.nn.Module):
 
 
 class SageUncompiledTraining(torch.nn.Module):
+    """
+    Uncompiled training loop with explicit signal-injection batch construction.
+
+    Builds each training batch manually:
+
+    1. Draw a signal batch (S samples) and a noise batch (B samples).
+    2. Inject the S signals into random positions of the noise batch.
+    3. Preprocess the combined batch.
+    4. Run the forward pass and compute the loss.
+    5. Backpropagate, clip gradients, and step the optimiser.
+
+    This is the reference implementation used before ``torch.compile`` was
+    introduced, and serves as the base class pattern for
+    :class:`SageHardMiningTraining`.
+
+    Parameters
+    ----------
+    signal_sampler : nn.Module
+        Waveform signal sampler (e.g. :class:`IMRPhenomPv2`).
+    noise_sampler : nn.Module
+        Noise sampler (e.g. :class:`MemmapNoiseSampler`).
+    processor : nn.Module
+        Preprocessing pipeline.
+    model : nn.Module
+        The neural network to train.
+    loss_function : nn.Module
+        Loss function that returns a stacked component tensor.
+    optimiser : torch.optim.Optimizer
+    scheduler : torch.optim.lr_scheduler._LRScheduler
+    scaler : torch.amp.GradScaler
+        AMP gradient scaler.  Pass ``None`` to disable AMP.
+    num_iterations : int
+        Gradient steps per epoch.
+    num_epochs : int
+        Total epochs (pre-allocates the loss tracking tensor).
+    scheduler_mode : str
+        ``"batch"`` or ``"epoch"``.
+    """
 
     def __init__(
         self,
@@ -393,12 +463,18 @@ class SageHardMiningTraining(torch.nn.Module):
     # ------------------------------------------------------------------
 
     @torch._dynamo.disable
-    def _adversarial_noise(self, noise_fd: torch.Tensor) -> torch.Tensor:
+    def _adversarial_noise(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Apply a single PSD-normalised FGSM step to noise_fd (FD complex tensor).
+        Apply a single FGSM step in the preprocessed (whitened) space.
 
-        gradient = ∂(sum(ranking_stat)) / ∂(noise_fd)
-        delta     = adv_eps * (gradient / |gradient|) * |noise_fd|
+        FiducialWhitening.forward is decorated @torch.no_grad(), so
+        differentiating through the preprocessor is not possible.  Instead
+        we perturb the already-whitened tensor x that the model receives,
+        which is both differentiable and more directly relevant — the model
+        classifies on these features, not on raw FD data.
+
+        gradient = ∂(sum(ranking_stat)) / ∂(x)
+        delta     = adv_eps * (gradient / |gradient|) * |x|
 
         Using torch.autograd.grad() avoids accumulating gradients into model
         parameters. The uncompiled model (_orig_mod) is used for reliability
@@ -407,24 +483,22 @@ class SageHardMiningTraining(torch.nn.Module):
         base_model = getattr(self.model, "_orig_mod", self.model)
         base_model.eval()
 
-        n_fd = noise_fd.detach().clone().requires_grad_(True)
-        x    = self.processor(n_fd)
-        out  = base_model(x)
+        x_leaf = x.detach().clone().requires_grad_(True)
+        with torch.enable_grad():
+            out = base_model(x_leaf)
 
         (grad,) = torch.autograd.grad(
             outputs=out[0].float().sum(),
-            inputs=n_fd,
+            inputs=x_leaf,
         )
 
         base_model.train()
 
-        # PSD-normalised direction: scale by local noise amplitude so the
-        # perturbation stays within the spectral noise floor.
-        g_dir    = grad / grad.abs().clamp_min(1e-8)
-        noise_amp = noise_fd.detach().abs().clamp_min(1e-10)
-        delta    = self.adv_eps * g_dir * noise_amp
+        g_dir  = grad / grad.abs().clamp_min(1e-8)
+        x_amp  = x.detach().abs().clamp_min(1e-10)
+        delta  = self.adv_eps * g_dir * x_amp
 
-        return (noise_fd + delta).detach()
+        return (x_leaf + delta).detach()
 
     # ------------------------------------------------------------------
     # Main training loop
@@ -465,11 +539,7 @@ class SageHardMiningTraining(torch.nn.Module):
             )
             noise_targets = torch.cat((pad, noise_targets), dim=1)
 
-            # ── 2. Adversarial noise (FD, before preprocessing) ───────
-            if torch.rand(1).item() < self.adv_prob:
-                noise_data = self._adversarial_noise(noise_data)
-
-            # ── 3. Build batch (signal injection) ─────────────────────
+            # ── 2. Build batch (signal injection) ─────────────────────
             idx        = torch.randperm(self.B, device=device)[: self.S]
             signal_pad = torch.zeros_like(noise_data)
             target_pad = torch.zeros(
@@ -481,8 +551,20 @@ class SageHardMiningTraining(torch.nn.Module):
             x       = noise_data + signal_pad
             targets = noise_targets + target_pad  # (B, num_pe+1)
 
-            # ── 4. Preprocess ─────────────────────────────────────────
+            # ── 3. Preprocess ─────────────────────────────────────────
             x = self.processor(x)   # (B, D, L_compressed)
+
+            # ── 4. Adversarial perturbation (post-preprocessing) ──────
+            # FiducialWhitening runs under @torch.no_grad(), so we perturb
+            # in the already-whitened space where the model operates.
+            # Only background positions are perturbed — signal windows are
+            # left intact to preserve regression targets.
+            if torch.rand(1).item() < self.adv_prob:
+                bg_pos = torch.where(targets[:, -1] < 0.5)[0]
+                if len(bg_pos) > 0:
+                    x_bg_adv = self._adversarial_noise(x[bg_pos])
+                    x = x.clone()
+                    x[bg_pos] = x_bg_adv
 
             # ── 5. Hard noise injection (post-preprocessing) ──────────
             if self.hard_noise_buffer.is_ready:

@@ -35,7 +35,33 @@ from pycbc.types import TimeSeries
 BLOCK_SAMPLES = 1638400
 
 class NoiseGenerator(object):
-    
+    """
+    Legacy MLGWSC-1 noise generator using PyCBC-coloured Gaussian noise.
+
+    Generates noise coloured by amplitude spectral densities (ASDs) for a
+    given dataset type (D1–D4 of MLGWSC-1), reproducing the exact noise model
+    used in the challenge.  Noise is generated per-detector with seeded
+    reproducibility via NumPy's ``RandomState``.
+
+    Parameters
+    ----------
+    dataset : str
+        Dataset identifier (e.g. ``"D1"``, ``"D2"``, ``"D3"``, ``"D4"``).
+    seed : int
+        Master random seed (default ``42``).
+    delta_f : float
+        PSD frequency resolution in Hz (default ``0.04``).
+    sample_rate : float
+        Sample rate in Hz (default ``2048.0``).
+    low_frequency_cutoff : float
+        High-pass cutoff; PSD bins below this are zeroed (default ``15``).
+    detectors : list[str]
+        Detector names (default ``['H1', 'L1']``).
+    asds : dict or None
+        Pre-loaded ASD objects; if ``None`` they are computed from the
+        dataset type.
+    """
+
     def __init__(self, dataset, seed=42, delta_f=0.04,
                  sample_rate=2048.0, low_frequency_cutoff=15,
                  detectors=['H1', 'L1'], asds=None):
@@ -57,6 +83,21 @@ class NoiseGenerator(object):
     
     
     def get(self, start, end, generate_duration=None):
+        """
+        Generate coloured noise for all detectors for the requested GPS interval.
+
+        Parameters
+        ----------
+        start, end : float
+            GPS start and end times (seconds).
+        generate_duration : float or None
+            Unused override for duration (kept for interface compatibility).
+
+        Returns
+        -------
+        dict[str, pycbc.TimeSeries]
+            Per-detector coloured-noise time-series.
+        """
         # Get noise PSD data for a given dataset type
         keys = {}
         

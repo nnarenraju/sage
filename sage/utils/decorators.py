@@ -25,7 +25,24 @@ Documentation: NULL
 """
 
 def unreviewed_model(cls):
-    # Decorator to mark unreviewed models
+    """
+    Class decorator that prints a warning when an unreviewed model is instantiated.
+
+    Wraps the class constructor so that a prominent notice is printed any
+    time the decorated model is created.  Used to flag experimental
+    architectures that have not yet been validated on real data.
+
+    Parameters
+    ----------
+    cls : type
+        The model class to wrap.
+
+    Returns
+    -------
+    callable
+        A replacement constructor that prints the warning before delegating
+        to the original class.
+    """
     def mark_as_unreviewed(*args, **kwargs):
         print('UNREVIEWED: {} model has not be examined for issues'.format(cls.__name__))
         print('Use at your own discretion!')

@@ -40,6 +40,34 @@ def plot_2d_param_density(
     save=True,
     bins=50,
 ):
+    """
+    Scatter/hexbin of two source parameters coloured by ranking statistic.
+
+    Visualises how the network's confidence is distributed across the 2D
+    parameter space spanned by ``param_x`` and ``param_y`` for signal events.
+    Reveals parameter degeneracies or sensitivity gradients.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    source_params : dict[str, array-like]
+        Per-event parameter arrays.
+    param_x : str
+        Key for the x-axis parameter.
+    param_y : str
+        Key for the y-axis parameter.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    bins : int
+        Number of hexbin bins (default ``50``).
+    """
     if param_x not in source_params or param_y not in source_params:
         return
 

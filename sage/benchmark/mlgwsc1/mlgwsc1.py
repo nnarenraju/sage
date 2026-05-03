@@ -104,6 +104,13 @@ class Slicer(object):
         self.determine_nslices()
 
     def determine_nslices(self):
+        """
+        Pre-compute the number of overlapping slices per HDF5 segment key.
+
+        Populates :attr:`n_slices` with ``{key: {start, stop, len}}`` dicts so
+        that :meth:`__getitem__` can map flat integer indices to the correct
+        segment and within-segment offset without re-reading file metadata.
+        """
         self.n_slices = {}
         start = 0
         # Iterating over the detector keys
@@ -147,6 +154,24 @@ class Slicer(object):
         return ret
 
     def generate_data(self, key, index):
+        """
+        Read and repackage raw detector data for the slice range *index* within
+        segment *key*.
+
+        Parameters
+        ----------
+        key : str
+            HDF5 segment key (e.g. ``"0"``).
+        index : slice
+            Slice range into the pre-computed index table for this segment.
+
+        Returns
+        -------
+        data : numpy.ndarray, shape ``(n, D, L)``
+            Raw time-domain strain for *n* windows, *D* detectors, *L* samples.
+        times : numpy.ndarray, shape ``(n,)``
+            GPS coalescence-time estimate for each window.
+        """
         # Ideally set dt = self.detectors[0][key].attrs['delta_t']
         # Due to numerical limitations this may be off by a single sample
         dt = 1.0 / 2048.0  # This definition limits the scope of this object
@@ -219,6 +244,27 @@ class Slicer(object):
 
 
 class TorchSlicer(Slicer, torch.utils.data.Dataset):
+    """
+    PyTorch Dataset wrapper around :class:`Slicer` for MLGWSC-1 inference.
+
+    Applies the full Sage preprocessing pipeline (whitening, multi-rate
+    down-sampling, …) to each raw HDF5 window before returning it as a
+    ``torch.Tensor``.
+
+    Extra keyword arguments (beyond ``Slicer`` parameters):
+
+    Parameters
+    ----------
+    transforms : callable
+        Two-stage callable ``transforms(data, special, key="stage1"|"stage2")``
+        that applies the configured DSP transforms to raw detector data.
+    psds_data : dict
+        Pre-loaded PSD arrays keyed by detector name, passed through the
+        ``special`` dict to the transform pipeline.
+    data_cfg : BaseDataConfig
+        Dataset configuration; provides ``sample_length_in_num`` for
+        length validation.
+    """
 
     def __init__(self, *args, **kwargs):
         torch.utils.data.Dataset.__init__(self)

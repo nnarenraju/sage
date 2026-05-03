@@ -33,6 +33,36 @@ from sage.core.config import get_cfg
 
 
 class BCEWithPEregLoss(nn.Module):
+    """
+    Binary cross-entropy classification loss with MSE-based parameter
+    estimation regularisation.
+
+    The total loss is::
+
+        L = BCE(ranking_stat, class_target)
+          + regression_weight * MSE_signal(point_estimates, pe_targets)
+
+    where the MSE term is:
+
+    * computed only on signal samples (``class_target == 1``),
+    * weighted per-sample by the network's current predicted signal
+      probability ``p = sigmoid(ranking_stat)`` to focus regression
+      updates on confident detections.
+
+    This is the simplest multi-task loss in Sage and does not model
+    prediction uncertainty.
+
+    Parameters
+    ----------
+    regression_weight : float
+        Relative weight of the regression term vs. BCE.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(num_pe + 1,)``
+        Stacked ``[total_loss, bce_loss, reg_loss, ...]`` (one entry per
+        point-estimate parameter plus the total).
+    """
 
     def __init__(self, regression_weight: float = 1.0):
         super().__init__()
@@ -45,6 +75,24 @@ class BCEWithPEregLoss(nn.Module):
         self.num_components = len(cfg.do_point_estimate) + 1
 
     def forward(self, outputs, targets):
+        """
+        Compute BCE + MSE regression loss.
+
+        Parameters
+        ----------
+        outputs : tuple
+            ``(ranking_stat, point_estimates)``
+            ``ranking_stat``: shape ``(B,)`` or ``(B, 1)`` — raw logits.
+            ``point_estimates``: shape ``(B, num_pe)`` — predicted parameters.
+        targets : torch.Tensor, shape ``(B, num_pe + 1)``
+            Last column is the binary class label (0 = noise, 1 = signal).
+            Preceding columns are the regression targets.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(num_pe + 1,)``
+            ``[total_loss, bce_loss, reg_loss]``.
+        """
 
         ranking_stat, point_estimates = outputs
 
@@ -103,13 +151,24 @@ class BCEWithPEsigmaLoss(nn.Module):
 
     def forward(self, outputs, targets):
         """
+        Compute heteroscedastic BCE + NLL regression + coupling loss.
+
         Parameters
         ----------
         outputs : tuple
-            (ranking_stat, point_estimates)
-            point_estimates.shape = (B, 2*num_pe) -> mean, log_var concatenated
-        targets : torch.Tensor
-            Shape (B, num_pe + 1) -> last column is class (0 or 1)
+            ``(ranking_stat, point_estimates)``
+            ``ranking_stat``: shape ``(B,)`` — raw classification logits.
+            ``point_estimates``: shape ``(B, 2 * num_pe)`` — concatenation
+            of predicted means ``μ`` (first ``num_pe`` columns) and
+            predicted log-variances ``log σ²`` (last ``num_pe`` columns).
+        targets : torch.Tensor, shape ``(B, num_pe + 1)``
+            Last column is the binary class label; preceding columns are
+            the physical regression targets.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(num_pe + 2,)``
+            ``[total_loss, bce_loss, reg_loss, coupling_loss]``.
         """
 
         ranking_stat, point_estimates = outputs
@@ -295,6 +354,33 @@ class BCEWithFARLoss(nn.Module):
     # ------------------------------------------------------------------
 
     def forward(self, outputs, targets):
+        """
+        Compute the full 5-component FAR-targeted loss.
+
+        Parameters
+        ----------
+        outputs : tuple
+            ``(ranking_stat, point_estimates)``
+            ``ranking_stat``: shape ``(B,)`` — raw classification logits.
+            ``point_estimates``: shape ``(B, 2 * num_pe)`` — predicted
+            means and log-variances (same layout as
+            :class:`BCEWithPEsigmaLoss`).
+        targets : torch.Tensor, shape ``(B, num_pe + 1)``
+            Last column is the binary class label; preceding columns are
+            the physical regression targets.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(6,)``
+            ``[total_loss, bce_loss, reg_loss, coupling_loss,
+            pauc_loss, focal_loss]``.
+
+        Notes
+        -----
+        The pAUC term activates only after ``pauc_warmup`` background
+        logits have been accumulated in the internal circular buffer.
+        Before that point it contributes zero to the total loss.
+        """
         ranking_stat, point_estimates = outputs
 
         class_target  = targets[:, -1].to(ranking_stat.dtype)

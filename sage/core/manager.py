@@ -35,6 +35,16 @@ class ProbabilityManager:
         self.probs = {}  # name -> probability
 
     def register(self, cls: Type, prob: float):
+        """
+        Assign a sampling probability to a class.
+
+        Parameters
+        ----------
+        cls : type
+            Class whose name is used as the registry key.
+        prob : float
+            Desired sampling probability in ``[0, 1]``.
+        """
         name = cls.__name__
         self.probs[name] = prob
 
@@ -65,6 +75,21 @@ class ProbabilityManager:
         return probs
 
     def sample(self, classes: List[Type]) -> Type:
+        """
+        Draw one class from ``classes`` weighted by registered probabilities.
+
+        Unregistered classes share the remaining probability mass equally.
+
+        Parameters
+        ----------
+        classes : list[type]
+            Candidate classes to sample from.
+
+        Returns
+        -------
+        type
+            The sampled class.
+        """
         probs = self.get_normalized_probs(classes)
         idx = np.random.choice(len(classes), p=probs)
         return classes[idx]

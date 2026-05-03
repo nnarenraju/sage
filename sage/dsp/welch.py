@@ -34,10 +34,27 @@ from sage.core.conversions import seconds_to_samples
 
 class ScipyWelch:
     """
-    Welch PSD estimator.
+    Welch PSD estimator wrapping :func:`scipy.signal.welch`.
 
-    Thin wrapper around scipy.signal.welch with
-    consistent defaults and a stable API.
+    Provides a consistent interface for estimating the one-sided power
+    spectral density of a 1D time series using Welch's overlapping-segment
+    method.  Suitable for offline PSD computation during the data-preparation
+    stage (not used inside the training loop).
+
+    Parameters
+    ----------
+    sample_rate : float
+        Sampling rate in Hz.
+    nperseg_in_seconds : float
+        Welch segment length in seconds (default 4.0 s).
+    average : str
+        Segment averaging method — ``"mean"`` or ``"median"`` (default).
+    detrend : str or None
+        Detrending applied to each segment (default ``"constant"``).
+    window : str
+        Window function name (default ``"hann"``).
+    scaling : str
+        ``"density"`` (V²/Hz, default) or ``"spectrum"`` (V²).
     """
 
     def __init__(

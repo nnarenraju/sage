@@ -55,14 +55,31 @@ def pycbc_downsample(
     trim=0.2,
     noise_low_freq_cutoff=15.0,
 ):
-    """Downsampling and filtering for computational reasons
+    """
+    Resample and high-pass filter a strain time series via PyCBC.
 
-    Args:
-        strain (_type_): _description_
-        sample_rate (float, optional): _description_. Defaults to 2048.0.
+    Downsamples ``strain`` from ``old_sample_rate`` to ``new_sample_rate``
+    using PyCBC's polyphase resampler, applies a high-pass filter at
+    ``noise_low_freq_cutoff``, converts to float32, and trims edge corruption
+    introduced by the resampler.
 
-    Returns:
-        _type_: _description_
+    Parameters
+    ----------
+    strain : array-like, shape ``(N,)``
+        Input time series at ``old_sample_rate``.
+    old_sample_rate : float
+        Original sample rate in Hz.
+    new_sample_rate : float
+        Target sample rate in Hz (default ``2048.0``).
+    trim : float
+        Edge corruption to remove from each side in seconds (default ``0.2``).
+    noise_low_freq_cutoff : float
+        High-pass cutoff frequency in Hz (default ``15.0``).
+
+    Returns
+    -------
+    numpy.ndarray, dtype float32
+        Resampled and filtered strain with edges trimmed.
     """
 
     # Resample and apply a highpass filter

@@ -38,17 +38,39 @@ def inverse_spectrum_truncation_batch(
     trunc_method: str = "hann",
 ) -> torch.Tensor:
     """
-    Perform inverse spectrum truncation in torch for a batch of PSDs.
+    GPU-native batched inverse spectrum truncation (IST) for PSD smoothing.
 
-    Args:
-        psd: torch.Tensor, shape (B, D, F), real-valued PSDs
-        max_filter_len: int, maximum filter length in time domain (samples)
-        low_frequency_cutoff: float or None, frequencies below this are ignored
-        delta_f: float, frequency bin spacing of PSDs
-        trunc_method: str or None, truncation window ("hann" or None)
+    Reproduces the PyCBC ``inverse_spectrum_truncation`` routine in PyTorch
+    for batched, device-resident PSDs.  IST time-limits the inverse-ASD
+    filter so that it cannot introduce correlations beyond ``max_filter_len``
+    samples, preventing the whitening filter from growing unboundedly long.
 
-    Returns:
-        torch.Tensor, shape (B, D, F), truncated PSDs
+    Algorithm:
+
+    1. Compute ``1 / sqrt(PSD)`` in the frequency domain (inverse ASD).
+    2. IFFT to the time domain and zero out samples beyond ``max_filter_len/2``
+       from each edge (optionally with a Hann window at the truncation point).
+    3. FFT back and square to recover the truncated PSD.
+
+    Parameters
+    ----------
+    psd : torch.Tensor, shape ``(B, D, F)``
+        Real-valued one-sided PSDs.
+    max_filter_len : int
+        Maximum whitening filter length in samples.  Bins beyond this radius
+        are zeroed in the time-domain inverse ASD.
+    low_frequency_cutoff : float or None
+        Frequency (Hz) below which the inverse ASD is set to zero.
+    delta_f : float
+        Frequency bin spacing in Hz (default ``1.0``).
+    trunc_method : str or None
+        Window applied at the truncation boundary: ``"hann"`` applies a
+        half-Hann taper; ``None`` uses a hard rectangular truncation.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(B, D, F)``
+        Truncated PSDs ready for use in whitening.
     """
     B, D, F = psd.shape
     device = psd.device

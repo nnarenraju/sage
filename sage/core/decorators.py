@@ -80,11 +80,30 @@ def reference(*urls, category=None):
 
 @dataclass(frozen=True)
 class CorruptionBudget:
+    """
+    Immutable specification of edge-corruption lengths for a time segment.
+
+    Digital filters, resampling, and Welch windowing introduce artefacts at
+    the left and right edges of a processed segment.  A ``CorruptionBudget``
+    records how many seconds are corrupted on each side so that the
+    ``@corruption`` decorator can trim them automatically.
+
+    Attributes
+    ----------
+    left : float
+        Corrupted duration at the start of the segment (seconds).
+    right : float
+        Corrupted duration at the end of the segment (seconds).
+    total : float
+        Sum of left and right corruption budgets (property).
+    """
+
     left: float  # seconds
     right: float  # seconds
 
     @property
     def total(self):
+        """Total corruption budget in seconds (left + right)."""
         return self.left + self.right
 
 

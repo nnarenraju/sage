@@ -30,6 +30,23 @@ from sklearn import metrics
 
 
 def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
+    """
+    Plot and optionally save a log-log ROC curve for one validation epoch.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier used in the plot title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistic (higher = more signal-like).
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels (1 = signal, 0 = noise).
+    export_dir : str or None
+        Directory to save the figure.  A ``ROC/`` subdirectory is created
+        automatically.  Required when ``save=True``.
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    """
 
     fpr, tpr, _ = metrics.roc_curve(labels, ranking_stat)
     roc_auc = metrics.auc(fpr, tpr)

@@ -107,37 +107,47 @@ def get_logger(module_name: str, log_dir: str = "logs") -> logging.Logger:
 
 
 class TensorRingBuffer:
-    def __init__(self, capacity, schema, device="cpu"):
-        """
-        schema: dict of {name: shape}
-        Example:
+    """
+    Fixed-capacity ring buffer that stores named tensor fields.
+
+    Pre-allocates a contiguous tensor for each named field and overwrites
+    the oldest entries once the buffer is full.  All data is kept on
+    ``device`` (use ``"cpu"`` to avoid GPU memory pressure).
+
+    Parameters
+    ----------
+    capacity : int
+        Maximum number of entries the buffer holds before wrapping.
+    schema : dict[str, tuple]
+        Mapping from field name to per-entry shape.  Example::
+
             {
-                "loss": (1,),
+                "loss":   (1,),
                 "params": (P,),
                 "output": (C,),
-                "target": (C,)
+                "target": (C,),
             }
+    device : str
+        Torch device string for the pre-allocated tensors.
+
+    Example
+    -------
+    .. code-block:: python
 
         buffer = TensorRingBuffer(
             capacity=10000,
-            schema={
-                "loss": (1,),
-                "params": (P,),
-                "output": (C,),
-                "target": (C,)
-            },
-            device="cpu"  # important: avoid GPU memory pressure
+            schema={"loss": (1,), "params": (P,), "output": (C,), "target": (C,)},
+            device="cpu",
         )
-
-        # inside loop
+        # inside training loop
         buffer.push(
             loss=loss.detach().cpu(),
             params=signal_targets.detach().cpu(),
             output=out.detach().cpu(),
-            target=targets.detach().cpu()
+            target=targets.detach().cpu(),
         )
-
-        """
+    """
+    def __init__(self, capacity, schema, device="cpu"):
         self.capacity = capacity
         self.device = device
         self.ptr = 0
@@ -149,6 +159,15 @@ class TensorRingBuffer:
         }
 
     def push(self, **kwargs):
+        """
+        Write one entry to the buffer, advancing the write pointer.
+
+        Parameters
+        ----------
+        **kwargs : torch.Tensor
+            One keyword per field defined in ``schema``.  Each tensor is
+            detached before copying so no gradient is accidentally stored.
+        """
         for k, v in kwargs.items():
             self.buffers[k][self.ptr].copy_(v.detach())
 
@@ -158,6 +177,16 @@ class TensorRingBuffer:
             self.full = True
 
     def get(self):
+        """
+        Return all valid entries.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            If the buffer has not yet wrapped, returns only the filled
+            prefix ``[0 : ptr]``.  Once full, returns all ``capacity``
+            entries (oldest-first order is not guaranteed after wrapping).
+        """
         if not self.full:
             return {k: v[: self.ptr] for k, v in self.buffers.items()}
         return self.buffers
@@ -165,16 +194,32 @@ class TensorRingBuffer:
 
 class AsyncLogger:
     """
-    Usage:
-        logger = AsyncLogger()
+    Non-blocking logger that offloads disk I/O to a background thread.
 
+    Incoming data dicts are placed on an in-memory queue; a daemon thread
+    drains the queue in batches of 100 and serialises them to ``filepath``
+    with ``torch.save``.  Excess entries are silently dropped when the
+    queue is full, so the training loop is never blocked.
+
+    Parameters
+    ----------
+    maxsize : int
+        Maximum number of pending log entries before drops occur.
+    filepath : str
+        Path where batched entries are saved (overwritten each flush).
+
+    Example
+    -------
+    .. code-block:: python
+
+        logger = AsyncLogger()
         logger.log({
-            "loss": loss.detach().cpu(),
+            "loss":   loss.detach().cpu(),
             "params": signal_targets.detach().cpu(),
             "output": out.detach().cpu(),
-            "target": targets.detach().cpu()
+            "target": targets.detach().cpu(),
         })
-
+        logger.close()  # flush remaining entries and join the thread
     """
 
     def __init__(self, maxsize=1000, filepath="log.pt"):
@@ -186,6 +231,17 @@ class AsyncLogger:
         self.thread.start()
 
     def log(self, data):
+        """
+        Submit a data dict to the logging queue (non-blocking).
+
+        If the queue is full, the entry is silently discarded rather than
+        blocking the caller.
+
+        Parameters
+        ----------
+        data : dict
+            Arbitrary dictionary of tensors or scalars to log.
+        """
         try:
             self.q.put_nowait(data)
         except queue.Full:
@@ -207,11 +263,27 @@ class AsyncLogger:
                 continue
 
     def close(self):
+        """Flush remaining entries and join the background thread."""
         self.running = False
         self.thread.join()
 
 
 class ChunkedTensorLogger:
+    """
+    Accumulate tensors in memory and flush to disk in fixed-size chunks.
+
+    Each flush writes a Python list of tensors to ``{path}_{idx}.pt``
+    (via :func:`torch.save`) and increments the chunk index.
+
+    Parameters
+    ----------
+    chunk_size : int
+        Number of items to accumulate before automatically flushing.
+    path : str
+        File-path prefix for the output files (suffix ``_<idx>.pt`` is
+        appended automatically).
+    """
+
     def __init__(self, chunk_size, path):
         self.chunk_size = chunk_size
         self.path = path
@@ -219,18 +291,53 @@ class ChunkedTensorLogger:
         self.idx = 0
 
     def log(self, data):
+        """
+        Append *data* to the buffer and flush if the chunk is full.
+
+        Parameters
+        ----------
+        data : any
+            Tensor or other pickleable object to accumulate.
+        """
         self.buffer.append(data)
 
         if len(self.buffer) >= self.chunk_size:
             self.flush()
 
     def flush(self):
+        """Write the current buffer to disk and reset state for the next chunk."""
         torch.save(self.buffer, f"{self.path}_{self.idx}.pt")
         self.buffer = []
         self.idx += 1
 
 
 class HDF5LossLogger:
+    """
+    Persistent, epoch-indexed loss logger backed by an HDF5 file.
+
+    Pre-allocates datasets of shape ``(num_epochs, num_components)`` for
+    both the ``"training"`` and ``"validation"`` splits at construction
+    time, then writes one row per epoch via :meth:`log`.
+
+    The resulting file can be read directly with ``h5py``::
+
+        with h5py.File("losses.h5", "r") as f:
+            train_loss = f["training"]["loss"][:]   # (E, C) float32
+            val_loss   = f["validation"]["loss"][:]
+
+    Parameters
+    ----------
+    path : str
+        File path for the HDF5 output (created fresh at init; any
+        existing file at that path is overwritten).
+    num_epochs : int
+        Total number of training epochs (pre-allocates the dataset).
+    num_components : int
+        Number of scalar loss components logged per epoch (e.g. 6 for
+        :class:`BCEWithFARLoss`: total, BCE, reg, coupling, pAUC, focal).
+    dtype : str
+        NumPy dtype string for the stored values (default ``"float32"``).
+    """
 
     def __init__(self, path, num_epochs, num_components, dtype="float32"):
         self.path = path
@@ -258,7 +365,18 @@ class HDF5LossLogger:
 
     def log(self, loss_tensor, epoch, split):
         """
-        split: "training" or "validation"
+        Write one epoch's loss vector to the HDF5 file.
+
+        Parameters
+        ----------
+        loss_tensor : torch.Tensor
+            Shape ``(num_epochs, num_components)``.  Only row ``epoch`` is
+            written; the rest are ignored.  This matches the
+            ``loss_components`` tensor stored on training/validation objects.
+        epoch : int
+            Zero-based epoch index selecting the row to write.
+        split : str
+            Either ``"training"`` or ``"validation"``.
         """
         loss = loss_tensor[epoch].detach().cpu().numpy()
 

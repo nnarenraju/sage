@@ -40,6 +40,31 @@ from .phenom_data import _QNMData_a, _QNMData_fdamp, _QNMData_fRD, PhenomD_coeff
 
 
 class PhenomConstants:
+    """
+    Device-resident pre-allocated constants for IMRPhenom waveform generation.
+
+    Stores all scalar constants, fractions, QNM interpolation tables, and
+    PhenomD coefficient tables as ``torch.Tensor`` objects on the target
+    device.  This avoids creating tensors inside the hot-path iteration loop,
+    which would break ``torch.compile`` graph capture.
+
+    QNM (quasi-normal mode) ringdown frequency and damping time tables are
+    pre-interpolated onto a fine 500 000-point grid via
+    :func:`~sage.core.interpolation.torch_scipylike_cubic_interp` so that
+    ringdown frequency lookups can be done with a simple linear-slope
+    computation at runtime.
+
+    Parameters
+    ----------
+    device : str or torch.device
+        Target device for all tensors (default ``"cuda"``).
+    batch_size : int or None
+        Batch size used to pre-allocate ``ONES`` and ``ZEROS`` tensors.
+    dtype : torch.dtype or None
+        Floating-point precision for all tensors.
+    **kwargs
+        Ignored; accepted for forward-compatibility.
+    """
 
     def __init__(self, device="cuda", batch_size=None, dtype=None, **kwargs):
 

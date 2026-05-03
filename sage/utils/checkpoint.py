@@ -34,6 +34,40 @@ from datetime import datetime
 
 
 class CheckpointManager:
+    """
+    Manages saving and loading of training checkpoints.
+
+    On construction, creates the checkpoint directory and writes one-time
+    JSON snapshots of ``cfg`` and ``data_cfg`` so that the hyperparameters
+    that produced each checkpoint are always recoverable.
+
+    Three checkpoint types are maintained:
+
+    * ``latest.pt`` — overwritten every call to :meth:`save`; safe resume
+      point after a crash or pre-emption.
+    * ``epoch_{N}.pt`` — per-epoch copy (optional; controlled by
+      ``save_epoch_ckpt``).  Allows rolling back to any specific epoch.
+    * ``best.pt`` — copy of ``latest.pt`` whenever ``val_loss`` improves;
+      the recommended checkpoint for inference.
+
+    Each checkpoint file contains the full training state:
+    model weights, optimiser and scheduler states, AMP scaler state,
+    configurations, and all four RNG states (Python, NumPy, CPU torch,
+    CUDA torch) for bit-exact reproducibility.
+
+    Parameters
+    ----------
+    cfg : BaseConfig
+        Training configuration (provides ``export_dir``, ``autocast``,
+        ``dtype``).
+    data_cfg : BaseDataConfig
+        Data configuration (saved to JSON snapshot only).
+    model : nn.Module
+        The model being trained (may be a ``torch.compile`` wrapper).
+    optimizer : torch.optim.Optimizer
+    scheduler : torch.optim.lr_scheduler._LRScheduler
+    scaler : torch.amp.GradScaler
+    """
 
     def __init__(
         self,
@@ -72,6 +106,24 @@ class CheckpointManager:
     # ============================================================
 
     def _gather_state(self, epoch, val_loss=None):
+        """
+        Collect all serialisable training state into a flat dictionary.
+
+        Parameters
+        ----------
+        epoch : int
+            Current epoch index (0-based).
+        val_loss : float or None
+            Validation loss at this epoch (stored for reference; ``None``
+            if validation was not run this epoch).
+
+        Returns
+        -------
+        dict
+            All state needed to fully resume training, including model
+            weights, optimiser/scheduler/scaler states, configs, parameter
+            counts, and all four RNG states.
+        """
 
         state = {
             # ---- bookkeeping ----
@@ -110,6 +162,21 @@ class CheckpointManager:
     # ============================================================
 
     def save(self, epoch, val_loss=None, save_epoch_ckpt=True):
+        """
+        Save the current training state to disk.
+
+        Always writes ``latest.pt``.  If ``val_loss`` is better than the
+        current best, also copies to ``best.pt``.
+
+        Parameters
+        ----------
+        epoch : int
+            Current epoch (0-based).
+        val_loss : float or None
+            Validation loss; used to decide whether to update ``best.pt``.
+        save_epoch_ckpt : bool
+            If ``True`` (default), also write ``epoch_{epoch}.pt``.
+        """
 
         state = self._gather_state(epoch, val_loss)
 
@@ -168,6 +235,21 @@ class CheckpointManager:
         return ckpt
 
     def load_epoch(self, epoch, map_location="cpu"):
+        """
+        Load a specific per-epoch checkpoint.
+
+        Parameters
+        ----------
+        epoch : int
+            Epoch index of the checkpoint to load.
+        map_location : str
+            Device mapping for ``torch.load``.
+
+        Returns
+        -------
+        int
+            ``epoch + 1`` — the next epoch to run.
+        """
         path = os.path.join(self.ckpt_dir, f"epoch_{epoch}.pt")
         print(f"Loading checkpoint epoch {epoch}")
         ckpt = torch.load(path, map_location=map_location)
@@ -179,6 +261,17 @@ class CheckpointManager:
     # ============================================================
 
     def _restore(self, ckpt):
+        """
+        Apply a loaded checkpoint dict to the current training objects.
+
+        Restores model weights, optimiser/scheduler/scaler states, and all
+        four RNG states (Python, NumPy, CPU torch, CUDA torch).
+
+        Parameters
+        ----------
+        ckpt : dict
+            Dictionary as produced by :meth:`_gather_state`.
+        """
 
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])

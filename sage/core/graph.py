@@ -35,12 +35,53 @@ from typing import List, Callable, Optional, Union
 
 
 class Preprocessor(nn.Module):
+    """
+    Sequential preprocessing pipeline for gravitational-wave data.
+
+    Chains an ordered list of ``nn.Module`` transforms into a single
+    :class:`torch.nn.Sequential` block.  Each module receives the output
+    of the previous one.  The typical Sage pipeline is::
+
+        Preprocessor([FiducialWhitening(), MultirateSampler(...)])
+
+    This is the object passed as ``processor`` to all training and mining
+    classes.  Its :meth:`forward` is called on the concatenated
+    signal-plus-noise frequency-domain batch produced by the noise sampler.
+
+    Parameters
+    ----------
+    modules : list of nn.Module
+        Ordered preprocessing steps.  All must accept and return a
+        ``torch.Tensor`` so they can be composed with ``nn.Sequential``.
+
+    Input / Output
+    --------------
+    Accepts whatever tensor shape the first module in ``modules`` expects
+    (typically ``(B, D, F)`` complex64 for FD strain data) and returns
+    whatever the last module produces (typically ``(B, D, L_compressed)``
+    float32 after whitening and multirate decimation).
+    """
 
     def __init__(self, modules):
         super().__init__()
         self.seq = nn.Sequential(*modules)
 
     def forward(self, x):
+        """
+        Run the full preprocessing pipeline.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor (shape depends on the first module; usually
+            ``(B, D, F)`` complex64 FD strain).
+
+        Returns
+        -------
+        torch.Tensor
+            Preprocessed tensor (shape depends on the last module; usually
+            ``(B, D, L_compressed)`` float32 whitened, multi-rate sampled).
+        """
         return self.seq(x)
 
 
@@ -83,6 +124,26 @@ class TorchChoice(nn.Module):
 
 
 class NoisySignalGenerator(nn.Module):
+    """
+    Paired signal + noise data source for training.
+
+    Wraps a signal sampler and a noise sampler into a single module.
+    Both samplers are queried independently; the caller is responsible for
+    combining their outputs (typically ``signal + noise``).
+
+    The ``GRAPH_READY`` attribute on each sampler is read to decide whether
+    that sampler can be included inside a ``torch.compile`` graph.  Samplers
+    backed by async prefetch queues (e.g. :class:`MemmapNoiseSampler`) set
+    ``GRAPH_READY = False`` because their Python-side queue pop cannot be
+    traced by the compiler.
+
+    Parameters
+    ----------
+    signal_sampler : nn.Module
+        Callable that returns ``(signal_fd, signal_targets)``.
+    noise_sampler : nn.Module
+        Callable that returns ``(noise_fd, noise_targets)``.
+    """
 
     def __init__(self, signal_sampler: nn.Module, noise_sampler: nn.Module):
         super().__init__()
@@ -90,17 +151,21 @@ class NoisySignalGenerator(nn.Module):
         self.noise_sampler = noise_sampler
 
     def sample_signal(self):
+        """Draw one signal batch from the signal sampler."""
         return self.signal_sampler()
 
     def sample_noise(self):
+        """Draw one noise batch from the noise sampler."""
         return self.noise_sampler()
 
     @property
     def signal_ready(self):
+        """True if the signal sampler is safe to include in a compiled graph."""
         return getattr(self.signal_sampler, "GRAPH_READY", True)
 
     @property
     def noise_ready(self):
+        """True if the noise sampler is safe to include in a compiled graph."""
         return getattr(self.noise_sampler, "GRAPH_READY", True)
 
 
@@ -151,6 +216,35 @@ class AddSources(nn.Module):
 
 
 class SageGraph(nn.Module):
+    """
+    Adaptive pipeline builder that compiles as much of the data graph as
+    possible given each sampler's ``GRAPH_READY`` capability flag.
+
+    Four compilation cases are handled automatically:
+
+    * Both signal and noise graph-ready → compile signal + noise + preprocess.
+    * Signal only graph-ready → compile signal + preprocess; noise injected.
+    * Noise only graph-ready → compile noise + preprocess; signal injected.
+    * Neither graph-ready → compile preprocess only; both injected externally.
+
+    If ``compile=False`` or the preprocessing pipeline is not graph-ready,
+    all modules run eagerly without compilation.
+
+    Parameters
+    ----------
+    modules : list of nn.Module, length 2
+        ``[NoisySignalGenerator, TorchSequential]`` — generator then preprocessor.
+    compile : bool
+        Whether to attempt ``torch.compile``.
+    compile_mode : str
+        Mode string forwarded to ``torch.compile`` (e.g. ``"default"``,
+        ``"max-autotune"``).
+    fullgraph : bool
+        Forwarded to ``torch.compile``.  ``True`` raises an error on graph
+        breaks rather than falling back to eager.
+    dynamic : bool
+        Forwarded to ``torch.compile``.  ``True`` enables dynamic shapes.
+    """
 
     def __init__(
         self,

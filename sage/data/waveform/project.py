@@ -39,8 +39,39 @@ from sage.core.config import get_cfg, get_data_cfg
 
 class ConstantProjection(torch.nn.Module):
     """
-    Minimal detector container for FD projection.
-    All tensors should live on the same device as waveforms.
+    GPU-native frequency-domain detector projection for batched GW waveforms.
+
+    Projects a batch of plus/cross polarisation waveforms ``(hp, hc)`` onto
+    each detector's antenna pattern and applies the sky-position-dependent
+    time-delay phase shift to produce detector-frame strain ``h(f)``.
+
+    The module pre-computes and caches:
+
+    - **Detector response tensors** ``(D, 3, 3)`` built from LAL-derived arm
+      azimuths and altitudes via Euler rotation matrices.
+    - **Detector ECEF position vectors** ``(D, 3)`` for time-delay calculation.
+    - **Frequency array** ``(F,)`` on the target device.
+
+    The Greenwich Mean Sidereal Time (GMST) is randomised per batch rather
+    than looked up from GPS time — this is an approximation suitable for
+    training where the source position is already drawn isotropically.
+
+    Parameters
+    ----------
+    None — all configuration is read from :func:`~sage.core.config.get_cfg`
+    and :func:`~sage.core.config.get_data_cfg` at construction time.
+
+    Inputs to :meth:`forward`
+    -------------------------
+    hp, hc : torch.Tensor, shape ``(B, F)``, complex
+        Plus and cross polarisations in the frequency domain.
+    ra, dec, polarization : torch.Tensor, shape ``(B,)``
+        Right ascension (rad), declination (rad), and polarisation angle (rad).
+
+    Returns
+    -------
+    hf : torch.Tensor, shape ``(B, D, F)``, complex
+        Detector-frame frequency-domain strain for each detector.
     """
 
     def __init__(self):
@@ -103,6 +134,19 @@ class ConstantProjection(torch.nn.Module):
             self.dx[ndet] = earth_center - loc
 
     def get_relative_position(self, detname):
+        """
+        Return the ECEF position vector of *detname* as a ``torch.Tensor``.
+
+        Parameters
+        ----------
+        detname : str
+            Detector name (e.g. ``"H1"``, ``"L1"``).
+
+        Returns
+        -------
+        torch.Tensor, shape ``(3,)``
+            Earth-centred, Earth-fixed ``[x, y, z]`` coordinates in metres.
+        """
         # Get relative position of DET from Earth center
         # Detector position (ECEF)
         # TODO: Convert to PyTorch too at some point
@@ -166,6 +210,19 @@ class ConstantProjection(torch.nn.Module):
         return torch.tensor(resps[0] - resps[1], device=self.device, dtype=self.dtype)
 
     def random_gmst_estimate(self):
+        """
+        Return a batch of uniformly random GMST values in ``[0, 2π)``.
+
+        Exact GPS-to-GMST conversion requires expensive table look-ups.
+        Randomising GMST instead effectively marginalises over Earth's
+        rotation, which is equivalent to drawing uniformly from all
+        possible observation times.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(batch_size,)``
+            GMST values in radians.
+        """
         # Random GMST in radians to compute the antenna patterns
         # Reference times to GMST requires table reads and is expensive
         # Instead we simply randomise GMST in [0, 2PI)

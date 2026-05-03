@@ -30,6 +30,27 @@ import matplotlib.pyplot as plt
 
 
 def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True):
+    """
+    Plot raw ranking-statistic distributions and a FAR-efficiency sweep.
+
+    Produces two panels: (1) overlapping histograms of the raw ranking
+    statistic for signal and noise events, and (2) a detection-efficiency-
+    vs-threshold curve that shows the signal fraction recovered as a function
+    of the noise false-alarm rate.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics for all validation events.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels (1 = signal, 0 = noise).
+    export_dir : str or None
+        Output directory (saved under ``PRED_RAW/``).
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    """
 
     save_dir = None
     if save and export_dir is not None:

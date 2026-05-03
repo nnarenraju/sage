@@ -155,6 +155,27 @@ class EstimatePSD:
         return out, delta_f_new, f_new
 
     def taper(self, freqs, psd, psd_floor=3.16e-23):
+        """
+        Apply a cosine roll-off below the low-frequency cutoff.
+
+        Smoothly transitions the PSD from ``psd_floor`` at DC to the measured
+        value at ``low_frequency_cutoff``, imposing C¹ continuity and reducing
+        time-domain ringing.
+
+        Parameters
+        ----------
+        freqs : numpy.ndarray
+            Frequency array (Hz).
+        psd : numpy.ndarray
+            PSD array to be tapered (modified in-place).
+        psd_floor : float
+            Noise floor value applied at DC (default ``3.16e-23``).
+
+        Returns
+        -------
+        numpy.ndarray
+            Tapered PSD (same object as *psd*).
+        """
         # Tapering down to a noise floor
         # This imposes C1 continuity and reduces ringing effects in TD
         # Make a tapering function below low freq cutoff

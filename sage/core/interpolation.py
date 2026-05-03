@@ -29,10 +29,21 @@ import torch
 
 def torch_linear_interp(x, xp, fp):
     """
-    1D linear interpolation like jnp.interp.
-    x:  Tensor (...,)
-    xp: Tensor (N,) increasing
-    fp: Tensor (N,)
+    1D linear interpolation, compatible with ``jnp.interp`` / ``np.interp``.
+
+    Parameters
+    ----------
+    x : torch.Tensor, shape ``(...,)``
+        Query points.
+    xp : torch.Tensor, shape ``(N,)``
+        Monotonically increasing node x-coordinates.
+    fp : torch.Tensor, shape ``(N,)``
+        Function values at ``xp``.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(...,)``
+        Linearly interpolated values at ``x``.
     """
     # indices where elements should be inserted
     idx = torch.searchsorted(xp, x, right=True)
@@ -50,10 +61,22 @@ def torch_linear_interp(x, xp, fp):
 
 def torch_scipylike_cubic_interp(x, xp, fp):
     """
-    1D Cubic interpolation like scipy.interpolate.CubicSpline
-    x:  Tensor (...,)
-    xp: Tensor (N,) increasing
-    fp: Tensor (N,)
+    1D piecewise cubic (Hermite) interpolation, similar to
+    :class:`scipy.interpolate.CubicSpline` with finite-difference slopes.
+
+    Parameters
+    ----------
+    x : torch.Tensor, shape ``(...,)``
+        Query points.
+    xp : torch.Tensor, shape ``(N,)``
+        Monotonically increasing node x-coordinates.
+    fp : torch.Tensor, shape ``(N,)``
+        Function values at ``xp``.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(...,)``
+        Cubic-interpolated values at ``x``.
     """
     idx = torch.searchsorted(xp, x, right=True)
     idx = idx.clamp(1, xp.numel() - 2)

@@ -29,6 +29,26 @@ import torch.nn as nn
 
 
 class CrossAttention2D(nn.Module):
+    """
+    Full cross-attention between two 2D feature maps.
+
+    Projects each detector's 2D feature map ``(B, 1, H, W)`` to
+    ``embed_dim`` channels, flattens the spatial grid into a sequence, and
+    lets each detector attend to the other using
+    :class:`torch.nn.MultiheadAttention`.  Both detectors receive mutually
+    informed representations: H1 attends to L1 and vice versa.
+
+    Memory scales as O(H²W²) — use :class:`AxialCrossAttention2D` for
+    large feature maps.
+
+    Parameters
+    ----------
+    embed_dim : int
+        Projection and attention dimension (default 128).
+    num_heads : int
+        Number of parallel attention heads (default 4).
+    """
+
     def __init__(self, embed_dim=128, num_heads=4):
         super().__init__()
         self.embed_dim = embed_dim
@@ -45,6 +65,21 @@ class CrossAttention2D(nn.Module):
         )
 
     def forward(self, f1, f2):
+        """
+        Apply cross-attention between two detector feature maps.
+
+        Parameters
+        ----------
+        f1 : torch.Tensor, shape ``(B, 1, H, W)``
+            Feature map for detector 1 (e.g. H1).
+        f2 : torch.Tensor, shape ``(B, 1, H, W)``
+            Feature map for detector 2 (e.g. L1).
+
+        Returns
+        -------
+        f1_attn : torch.Tensor, shape ``(B, embed_dim, H, W)``
+        f2_attn : torch.Tensor, shape ``(B, embed_dim, H, W)``
+        """
         # f1, f2: (B, C=1, H, W)
         B, C, H, W = f1.shape
 

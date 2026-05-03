@@ -36,6 +36,29 @@ def plot_loss_curves(
     save=True,
     best_epoch=None,
 ):
+    """
+    Plot training and validation loss curves with optional best-epoch markers.
+
+    Generates two figures when ``training_loss`` has more than one column:
+
+    1. **Total loss** — column 0 of both arrays.
+    2. **Per-parameter PE losses** — remaining columns.
+
+    Parameters
+    ----------
+    training_loss : numpy.ndarray, shape ``(E, L)``
+        Training losses per epoch; column 0 is the total loss, subsequent
+        columns are individual PE component losses.
+    validation_loss : numpy.ndarray, shape ``(E, L)``
+        Validation losses in the same layout.
+    export_dir : str or None
+        Directory to save figures (``loss_curves.png``,
+        ``pe_loss_curves.png``).
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    best_epoch : int or None
+        Zero-based epoch index to mark with a star on all curves.
+    """
 
     epochs = np.arange(1, len(training_loss) + 1)
 

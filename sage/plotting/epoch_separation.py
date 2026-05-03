@@ -36,7 +36,24 @@ def plot_separation_over_epochs(
     save=True,
 ):
     """
-    Track separation of signals vs noise across epochs.
+    Track signal/noise ranking-statistic separation across training epochs.
+
+    Plots KDE curves of the ranking statistic for signal and noise samples
+    for each epoch, coloured by epoch so convergence trends are visible over
+    training.
+
+    Parameters
+    ----------
+    all_network_outputs : dict[epoch, array-like]
+        Mapping from epoch to network output arrays.
+    all_labels : dict[epoch, array-like]
+        Mapping from epoch to binary label arrays.
+    epochs : list
+        Ordered list of epoch keys to include in the plot.
+    export_dir : str or None
+        Output directory for the saved figure.
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
     """
     import numpy as np
     from scipy.stats import gaussian_kde

@@ -41,7 +41,31 @@ def plot_output_gradient(
     window=5,
 ):
     """
-    Plot network output gradient w.r.t. a source parameter
+    Plot the empirical gradient of network output with respect to a source parameter.
+
+    Sorts signal events by ``param_name`` and estimates the finite-difference
+    gradient of the ranking statistic with a rolling window.  A rising
+    gradient indicates the network exploits this parameter; a flat curve
+    indicates insensitivity.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary labels.
+    source_params : dict[str, array-like]
+        Per-event parameter arrays.
+    param_name : str
+        Key of the parameter to differentiate against.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    window : int
+        Rolling-window width for smoothing the gradient estimate (default ``5``).
     """
 
     signal_mask = labels == 1.0

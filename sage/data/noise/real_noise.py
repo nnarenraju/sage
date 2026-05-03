@@ -149,6 +149,7 @@ class HDF5SingleNoiseSampler:
                 return noise
 
     def close(self):
+        """Close all open HDF5 file handles."""
         for f in self.files:
             f.close()
 
@@ -301,13 +302,48 @@ class MemmapSingleNoiseSampler:
 
 class MemmapNoiseSampler(torch.nn.Module):
     """
-    GPU batch sampler for monolithic .bin files with async prefetch.
+    GPU-resident batch sampler for monolithic ``.bin`` noise files with
+    asynchronous prefetching.
 
-    Features:
-    - Multiple detectors/files
-    - Weighted random sampling by segment duration
-    - Precompute random starts per batch
-    - Prefetch N batches to GPU asynchronously
+    Each detector's noise data is stored as a flat binary file (``float32``
+    or ``float64``) accompanied by a sidecar ``*_segments.json`` file that
+    records the GPS start/end times, sample indices, and per-segment metadata
+    for every contiguous data segment.
+
+    Sampling is duration-weighted: longer segments are proportionally more
+    likely to be drawn so that no useful data is wasted.  Within each chosen
+    segment, a uniformly random start offset is selected.
+
+    An async daemon thread continuously fills a bounded
+    :class:`queue.Queue` with pre-processed FD batches so that the GPU is
+    never starved waiting for disk I/O.  Callers consume batches through
+    :meth:`sample_batch`, which performs a thread-safe ``queue.get()``.
+
+    .. warning::
+        :meth:`_read_batch` and :meth:`_sample_starts_batch` access a
+        non-thread-safe NumPy RNG and must **not** be called from the main
+        thread while the prefetch daemon is running.  Always use
+        :meth:`sample_batch` (queue pop) to consume batches safely.
+
+    Parameters
+    ----------
+    postprocess_fn : callable or None
+        Applied to ``(batch_td, segment_ids)`` to convert from TD to FD.
+        If ``None``, a plain ``torch.fft.rfft`` is used.  The typical
+        choice is :class:`RecolourPostprocess`.
+    prefetch : int
+        Maximum number of batches held in the prefetch queue.
+    seed : int or None
+        Seed for the internal NumPy RNG (for reproducibility).
+    training : bool
+        If ``True``, reads from ``data_cfg.training_noise_files``;
+        otherwise from ``data_cfg.validation_noise_files``.
+
+    Attributes
+    ----------
+    GRAPH_READY : bool
+        ``False`` — the prefetch queue pop cannot be traced by
+        ``torch.compile``.
     """
 
     GRAPH_READY = False
@@ -403,6 +439,31 @@ class MemmapNoiseSampler(torch.nn.Module):
         self._prefetch_thread.start()
 
     def _sample_starts_batch(self, batch_size: int):
+        """
+        Draw random start indices for one batch.
+
+        For each detector, selects ``batch_size`` segments (with replacement,
+        weighted by usable duration) and uniformly samples a start offset
+        within each chosen segment.
+
+        .. warning::
+            Uses ``self.rng`` (non-thread-safe).  Must only be called from
+            the prefetch daemon thread, never from the main thread.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of windows to sample.
+
+        Returns
+        -------
+        start_indices : list of np.ndarray
+            Per-detector array of absolute memmap start indices, shape
+            ``(batch_size,)``.
+        segment_indices : list of np.ndarray
+            Per-detector array of segment IDs (for PSD look-up), shape
+            ``(batch_size,)``.
+        """
         start_indices = []
         segment_indices = []
 
@@ -426,6 +487,27 @@ class MemmapNoiseSampler(torch.nn.Module):
         return start_indices, segment_indices
 
     def _read_batch(self, batch_size: int):
+        """
+        Read one batch from the memmaps and return a preprocessed FD tensor.
+
+        Reads are parallelised across detectors using a
+        :class:`~concurrent.futures.ThreadPoolExecutor`.  The resulting
+        numpy arrays are pinned and asynchronously copied to the GPU.
+
+        .. warning::
+            Calls :meth:`_sample_starts_batch` (non-thread-safe RNG).
+            Must only be called from the prefetch daemon thread.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of windows to read.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, D, F)`` complex64 (if postprocess_fn is
+        None, plain rfft output) or whatever shape ``postprocess_fn`` returns.
+        """
         B = batch_size
         D = self.n_detectors
         seq_len = self.seq_len

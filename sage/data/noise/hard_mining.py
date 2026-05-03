@@ -17,8 +17,6 @@ Two complementary buffers:
 """
 
 import torch
-import torch.nn as nn
-import numpy as np
 
 from tqdm import tqdm
 from contextlib import nullcontext
@@ -93,12 +91,14 @@ class HardSampleBuffer:
 
     @property
     def top_logit(self):
+        """Highest stored logit, or NaN if the buffer is empty."""
         if not self.is_ready:
             return float("nan")
         return self._logits[0].item()
 
     @property
     def median_logit(self):
+        """Median of all stored logits, or NaN if the buffer is empty."""
         if not self.is_ready:
             return float("nan")
         return self._logits.median().item()
@@ -119,16 +119,32 @@ class HardSampleMiner:
     Both mining passes use the model in eval / inference mode;
     no gradient computation or weight update occurs.
 
+    Thread-safety note
+    ------------------
+    MemmapNoiseSampler runs a prefetch thread that also drives _read_batch /
+    _sample_starts_batch, which share a non-thread-safe numpy RNG.  Calling
+    _read_batch from the main thread while the prefetch thread is running
+    causes a data race.  We avoid this entirely by consuming pre-fetched
+    batches through sample_batch() — which only touches the thread-safe Queue
+    — rather than calling _read_batch directly.  The batch size for mining
+    therefore matches cfg.batch_size; n_mine_noise / n_mine_signal are rounded
+    up to the nearest multiple automatically.
+
+    Memory note
+    -----------
+    Instead of accumulating all processed tensors in RAM and selecting top-K
+    at the end (O(n_mine × tensor_size) memory), we prune to top-K every
+    `prune_every` batches (O(prune_every × batch_size + K) memory).
+
     Parameters
     ----------
     hard_noise_buffer, hard_signal_buffer : HardSampleBuffer
     n_mine_noise : int
-        Number of noise windows to evaluate per mining pass.
+        Approximate number of noise windows to evaluate per mining pass.
     n_mine_signal : int
-        Number of signal+noise windows to evaluate per mining pass.
-    mine_batch_size : int
-        Batch size used during mining (independent of training batch size).
-        Must be >= cfg.batch_size for signal mining (signal sampler is fixed).
+        Approximate number of signal+noise windows to evaluate per mining pass.
+    prune_every : int
+        Prune accumulated candidates to buffer capacity every this many batches.
     """
 
     def __init__(
@@ -137,13 +153,49 @@ class HardSampleMiner:
         hard_signal_buffer: HardSampleBuffer,
         n_mine_noise:   int = 100_000,
         n_mine_signal:  int =  50_000,
-        mine_batch_size: int = 256,
+        prune_every:    int = 20,
     ):
         self.hard_noise_buffer  = hard_noise_buffer
         self.hard_signal_buffer = hard_signal_buffer
         self.n_mine_noise       = n_mine_noise
         self.n_mine_signal      = n_mine_signal
-        self.mine_batch_size    = mine_batch_size
+        self.prune_every        = prune_every
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _streaming_top_k(
+        new_data:    torch.Tensor,
+        new_logits:  torch.Tensor,
+        new_targets,
+        acc_data:    list,
+        acc_logits:  list,
+        acc_targets: list,
+        capacity:    int,
+    ):
+        """
+        Append new batch to accumulator lists, then prune to top-`capacity`
+        to keep memory bounded.
+        """
+        acc_data.append(new_data.cpu().float())
+        acc_logits.append(new_logits.cpu().float())
+        if new_targets is not None:
+            acc_targets.append(new_targets.cpu().float())
+
+        # Prune to capacity
+        all_l = torch.cat(acc_logits, dim=0)
+        if len(all_l) > capacity:
+            k = min(capacity, len(all_l))
+            _, topk_idx = torch.topk(all_l, k=k)
+            all_d = torch.cat(acc_data, dim=0)[topk_idx]
+            all_l = all_l[topk_idx]
+            acc_data.clear()
+            acc_logits.clear()
+            acc_data.append(all_d)
+            acc_logits.append(all_l)
+            if acc_targets:
+                all_t = torch.cat(acc_targets, dim=0)[topk_idx]
+                acc_targets.clear()
+                acc_targets.append(all_t)
 
     # ------------------------------------------------------------------
     @torch.no_grad()
@@ -159,11 +211,14 @@ class HardSampleMiner:
         """
         Run full mining pass and update both buffers.
 
-        Uses the configured batch size for signal mining (signal sampler is
-        fixed at cfg.batch_size).  Uses mine_batch_size for noise mining.
+        Uses noise_sampler.sample_batch() (thread-safe Queue consumer) so the
+        prefetch thread can remain running throughout.  The effective batch size
+        is therefore cfg.batch_size; n_mine values are rounded up accordingly.
         """
-        cfg = get_cfg()
-        sig_bs = cfg.batch_size   # signal sampler always uses this
+        cfg    = get_cfg()
+        bs     = cfg.batch_size
+        cap_n  = self.hard_noise_buffer.capacity
+        cap_s  = self.hard_signal_buffer.capacity
 
         was_training = model.training
         model.eval()
@@ -177,20 +232,29 @@ class HardSampleMiner:
         # Mine hard background
         # ----------------------------------------------------------------
         print("  [Miner] Mining hard background windows …")
-        all_proc, all_logits = [], []
-        n_batches = max(1, self.n_mine_noise // self.mine_batch_size)
+        acc_data, acc_logits = [], []
+        n_batches = max(1, -(-self.n_mine_noise // bs))  # ceiling division
 
-        for _ in tqdm(range(n_batches), desc="  hard-bg", leave=False):
-            noise_fd = noise_sampler._read_batch(self.mine_batch_size)
-            x = processor(noise_fd)
+        for i in tqdm(range(n_batches), desc="  hard-bg", leave=False):
+            # sample_batch() pulls from the prefetch queue — thread-safe
+            noise_fd = noise_sampler.sample_batch()
+            x        = processor(noise_fd)
             with cast:
                 out = model(x)
             logits = out[0].reshape(-1).float().cpu()
-            all_proc.append(x.float().cpu())
-            all_logits.append(logits)
 
-        noise_proc   = torch.cat(all_proc,   dim=0)
-        noise_logits = torch.cat(all_logits, dim=0)
+            if (i + 1) % self.prune_every == 0 or i == n_batches - 1:
+                self._streaming_top_k(
+                    x, logits, None,
+                    acc_data, acc_logits, [],
+                    cap_n,
+                )
+            else:
+                acc_data.append(x.float().cpu())
+                acc_logits.append(logits)
+
+        noise_proc   = torch.cat(acc_data,   dim=0)
+        noise_logits = torch.cat(acc_logits, dim=0)
         self.hard_noise_buffer.replace(noise_proc, noise_logits)
 
         print(
@@ -203,35 +267,59 @@ class HardSampleMiner:
         # Mine hard signals (worst missed detections)
         # ----------------------------------------------------------------
         print("  [Miner] Mining hard signal windows …")
-        all_sig_proc, all_sig_tgt, all_sig_logits = [], [], []
-        n_batches_sig = max(1, self.n_mine_signal // sig_bs)
+        acc_sig_data, acc_sig_logits, acc_sig_tgt = [], [], []
 
-        for _ in tqdm(range(n_batches_sig), desc="  hard-sig", leave=False):
-            signal_fd, signal_targets = signal_sampler()              # (B, D, F), (B, T)
-            noise_fd = noise_sampler._read_batch(sig_bs)              # (B, D, F)
-            # Inject all B signals (maximises mining coverage per batch)
-            x = (noise_fd + signal_fd).detach()
-            x = processor(x)
+        # signal_sampler returns S = batch_size * class_balance items per call.
+        # Use S (not bs) to count batches so n_mine_signal reflects actual
+        # signal evaluations, not noise-batch evaluations.
+        S = int(bs * cfg.class_balance)
+        n_batches_sig = max(1, -(-self.n_mine_signal // S))
+
+        for i in tqdm(range(n_batches_sig), desc="  hard-sig", leave=False):
+            signal_fd, signal_targets = signal_sampler()
+            # Pull a full noise batch from the prefetch queue (thread-safe)
+            noise_fd = noise_sampler.sample_batch()
+
+            # Mirror training: inject signals into random positions of the
+            # noise batch so processor sees realistic signal+noise windows.
+            # signal_fd.shape[0] == S; noise_fd.shape[0] == bs.
+            sig_idx    = torch.randperm(bs)[:S]
+            signal_pad = torch.zeros_like(noise_fd)
+            signal_pad[sig_idx] = signal_fd
+
+            x = processor(noise_fd + signal_pad)
             with cast:
                 out = model(x)
             logits = out[0].reshape(-1).float().cpu()
 
-            all_sig_proc.append(x.float().cpu())
-            all_sig_tgt.append(signal_targets.float().cpu())
-            all_sig_logits.append(logits)
+            # Extract only the signal positions: these are the missed-detection
+            # candidates.  sig_x: (S, ...), sig_logits: (S,), targets: (S, T).
+            sig_x       = x[sig_idx]
+            sig_logits  = logits[sig_idx.cpu()]
+            sig_targets = signal_targets
 
-        sig_proc    = torch.cat(all_sig_proc,   dim=0)
-        sig_targets = torch.cat(all_sig_tgt,    dim=0)
-        sig_logits  = torch.cat(all_sig_logits, dim=0)
+            if (i + 1) % self.prune_every == 0 or i == n_batches_sig - 1:
+                # Negate now so pruning keeps the LOWEST real logits (hardest misses)
+                self._streaming_top_k(
+                    sig_x, -sig_logits, sig_targets,
+                    acc_sig_data, acc_sig_logits, acc_sig_tgt,
+                    cap_s,
+                )
+            else:
+                acc_sig_data.append(sig_x.float().cpu())
+                acc_sig_logits.append(-sig_logits)      # negated: lowest → highest
+                acc_sig_tgt.append(sig_targets.float().cpu())
 
-        # Negate so lowest ranking stat (hardest miss) → highest buffer score
-        self.hard_signal_buffer.replace(sig_proc, -sig_logits, sig_targets)
+        sig_proc    = torch.cat(acc_sig_data,   dim=0)
+        sig_logits  = torch.cat(acc_sig_logits, dim=0)  # already negated
+        sig_targets = torch.cat(acc_sig_tgt,    dim=0)
+        self.hard_signal_buffer.replace(sig_proc, sig_logits, sig_targets)
 
-        worst_logit  = sig_logits.min().item()
-        median_logit = sig_logits.median().item()
+        worst_real_logit = (-sig_logits).max().item()   # un-negate for display
         print(
             f"  [Miner] Signal buffer: {len(self.hard_signal_buffer):,} samples | "
-            f"worst logit={worst_logit:.3f} | median={median_logit:.3f}"
+            f"worst logit={worst_real_logit:.3f} | "
+            f"median={(-sig_logits).median().item():.3f}"
         )
 
         if was_training:

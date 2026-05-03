@@ -41,6 +41,29 @@ from tqdm import tqdm
 
 
 def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, waveform_kwargs):
+    """
+    Iteratively lower the starting frequency until the waveform reaches ``signal_length``.
+
+    Parameters
+    ----------
+    h_pol : pycbc.TimeSeries
+        Current polarisation (h_plus or h_cross) used to estimate the required
+        frequency adjustment.
+    signal_length : float
+        Required waveform duration in seconds.
+    signal_low_freq_cutoff : float
+        Original low-frequency cutoff (Hz); used as the starting estimate.
+    sample_rate : float
+        Sample rate (Hz).
+    waveform_kwargs : dict
+        Keyword arguments passed to :func:`pycbc.waveform.get_td_waveform`.
+        Updated in-place with the adjusted ``f_lower``.
+
+    Returns
+    -------
+    h_plus, h_cross : pycbc.TimeSeries
+        Re-generated waveform meeting the duration requirement.
+    """
     # Use self.waveform_kwargs to calculate the fmin for given params
     # Such that the length of the signal is atleast 20s by the time it reaches fmin
     current_start_time = -1*h_pol.get_sample_times()[0]
@@ -63,6 +86,21 @@ def optimise_fmin(h_pol, signal_length, signal_low_freq_cutoff, sample_rate, wav
 
 
 def get_injection_snr(args):
+    """
+    Compute the optimal (matched-filter) network SNR for a single injection.
+
+    Parameters
+    ----------
+    args : tuple
+        ``(injection_values, data_cfg)`` where *injection_values* is a dict
+        of source parameters (masses, spins, sky-location, etc.) and
+        *data_cfg* is the dataset configuration object.
+
+    Returns
+    -------
+    float
+        Quadrature-summed network SNR :math:`\\sqrt{\\sum_d \\rho_d^2}`.
+    """
     ## Generate the full waveform
     injection_values, data_cfg = args
     # LAL Detector Objects (used in project_wave)

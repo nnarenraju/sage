@@ -114,10 +114,28 @@ def find_closest_index(array, value, assume_sorted=False):
 
 
 def mchirp(mass1, mass2):
+    """Return chirp mass (M☉) from component masses mass1 and mass2."""
     return (mass1 * mass2) ** (3.0 / 5.0) / (mass1 + mass2) ** (1.0 / 5.0)
 
 
 def figure(title="", size_x=16.0, size_y=14.0):
+    """
+    Create a single-panel matplotlib figure with serif font and a centred title.
+
+    Parameters
+    ----------
+    title : str, optional
+        Figure super-title.
+    size_x : float, optional
+        Figure width in inches (default 16.0).
+    size_y : float, optional
+        Figure height in inches (default 14.0).
+
+    Returns
+    -------
+    axs : matplotlib.axes.Axes
+    fig : matplotlib.figure.Figure
+    """
     plt.rc("font", family="serif")
     plt.rc("xtick", labelsize="medium")
     plt.rc("ytick", labelsize="medium")
@@ -421,6 +439,22 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
 def network_output(
     found_injections, noise_stats, output_dir, team_name, lower_threshold=0.0
 ):
+    """
+    Plot overlaid histograms of network scores for found injections and noise triggers.
+
+    Parameters
+    ----------
+    found_injections : numpy.ndarray, shape (2, N_found)
+        Row 0: injection indices; row 1: network scores for found injections.
+    noise_stats : numpy.ndarray, shape (N_bg,)
+        Network scores from background (noise-only) triggers.
+    output_dir : str
+        Directory where the PNG is saved.
+    team_name : str
+        Used to construct the output filename.
+    lower_threshold : float, optional
+        Minimum score for display; scores below are excluded (default 0.0).
+    """
     # Plotting the noise and signals stats for found samples
     plt.figure(figsize=(12.0, 12.0))
     foo = found_injections[1][found_injections[1] > lower_threshold]
@@ -435,6 +469,23 @@ def network_output(
 
 
 def parameter_learning(injparams, noise_stats, found_injections, output_dir):
+    """
+    Plot network output score versus each source parameter for found injections.
+
+    Scatter plots of (parameter value, network score) are saved under
+    ``output_dir/LEARNING/``, with FAR threshold lines overlaid.
+
+    Parameters
+    ----------
+    injparams : dict
+        Injection parameter arrays keyed by parameter name.
+    noise_stats : numpy.ndarray, shape (N_bg,)
+        Sorted background network scores used to derive FAR thresholds.
+    found_injections : numpy.ndarray, shape (2, N_found)
+        Row 0: injection indices; row 1: network scores.
+    output_dir : str
+        Root directory for output plots.
+    """
     ## Parameter learning
     learning_dir = os.path.join(output_dir, "LEARNING")
     if not os.path.exists(learning_dir):
@@ -495,6 +546,28 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
 
 
 def read_data(args, idxs):
+    """
+    Load injection parameters and foreground/background events for both teams.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed CLI arguments; must contain ``injection_file``, ``foreground_events``,
+        ``background_events``, ``team1``, ``team2``, and ``orchid_results``.
+    idxs : numpy.ndarray of bool
+        Boolean mask selecting which injections lie inside the analysed segments.
+
+    Returns
+    -------
+    team_1 : dict
+        Event arrays and metadata for the first team (Sage).
+    team_2 : dict
+        Event arrays and metadata for the second team (e.g. PyCBC).
+    injparams : dict
+        Injection parameters (masses, distance, tc, …) filtered by ``idxs``.
+    use_chirp_distance : bool
+        ``True`` if chirp-distance weighting should be used for sensitivity.
+    """
     # Read injection parameters
     logging.info(f"Reading injections from {args.injection_file}")
 

@@ -41,7 +41,32 @@ def plot_output_vs_param_heatmap(
     bins_y=30,
 ):
     """
-    2D heatmap: network output vs source parameter
+    2D histogram heatmap of network ranking statistic vs a source parameter.
+
+    Shows how the network output varies across the range of ``param_name``
+    for both signal and noise events.  A strong vertical gradient indicates
+    the parameter drives the detection score.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    source_params : dict[str, array-like]
+        Per-event parameter arrays.
+    param_name : str
+        Key of the parameter to use on one axis.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    bins_x : int
+        Number of parameter bins (default ``30``).
+    bins_y : int
+        Number of ranking-statistic bins (default ``30``).
     """
 
     if param_name not in source_params:

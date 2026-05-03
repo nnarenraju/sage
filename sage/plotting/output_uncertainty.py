@@ -37,7 +37,28 @@ def plot_output_vs_uncertainty(
     epoch=None,
 ):
     """
-    Plot network ranking statistic vs model uncertainty.
+    Scatter plot of network ranking statistic vs model-predicted uncertainty.
+
+    Calls ``model.predict`` with ``return_uncertainty=True`` and plots the
+    joint distribution of confidence and uncertainty for signal events.  A
+    well-calibrated model should show low uncertainty for high-confidence
+    detections.
+
+    Parameters
+    ----------
+    model : object with ``predict`` method
+        Model that returns ``(ranking_stat, uncertainty)`` when called with
+        ``return_uncertainty=True``.
+    source_params : dict[str, array-like]
+        Per-event parameter arrays passed to the model.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    epoch : int or str or None
+        Epoch identifier for the filename.
     """
     signal_mask = labels == 1.0
     input_dict = {k: v for k, v in source_params.items()}

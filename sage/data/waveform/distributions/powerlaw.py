@@ -29,9 +29,21 @@ import torch
 
 class UniformPowerLaw:
     """
-    GPU-friendly power-law sampler for 1D parameters
+    GPU-friendly power-law sampler for 1D parameters.
 
-    The PDF scales as r^(dim-1) over the bounds [low, high].
+    Draws samples from the distribution whose PDF scales as
+    ``r^(dim-1)`` over the interval ``[low, high]``.  For ``dim=3``
+    this is uniform in volume (the standard astrophysical distance prior
+    assuming a uniform spatial number density).
+
+    Parameters
+    ----------
+    low : float
+        Lower bound of the distribution.
+    high : float
+        Upper bound of the distribution.
+    dim : int
+        Dimensionality exponent; 3 gives uniform-in-volume (default).
     """
 
     name = "uniform_power_law"

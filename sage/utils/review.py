@@ -34,6 +34,7 @@ from json.decoder import JSONDecodeError
 
 
 def get_sage_abspath():
+    """Return the absolute path of the Sage repository root via ``git rev-parse``."""
     # Get Sage abspath
     git_revparse = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
@@ -43,6 +44,18 @@ def get_sage_abspath():
 
 
 def set_review_date(parent_name, module_name, last_review_date):
+    """
+    Record the last code-review date for a module in the review JSON log.
+
+    Parameters
+    ----------
+    parent_name : str
+        Top-level module group (e.g. ``"data"``).
+    module_name : str
+        Specific module being reviewed (e.g. ``"real_noise"``).
+    last_review_date : str or datetime
+        ISO-format date string or datetime object for the review date.
+    """
     repo_abspath = get_sage_abspath()
     review_file = os.path.join(
         repo_abspath, "/home/nnarenraju/Research/sage/sage/utils/review.json"

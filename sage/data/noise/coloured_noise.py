@@ -24,7 +24,27 @@ Documentation: NULL
 
 
 class ColouredNoiseGenerator:
-    """Generate Dataset 3 -like noise for Sage training"""
+    """
+    Legacy PyCBC-based coloured Gaussian noise generator.
+
+    Generates noise coloured by real measured PSDs from HDF files (one per
+    detector), matching the "Dataset 3" protocol from MLGWSC-1.  For each
+    noise realisation a random PSD is chosen from the precomputed ASD pool
+    for each detector and the corresponding coloured noise is generated via
+    PyCBC's inverse-spectrum-truncation whitening filter.
+
+    .. note::
+        This class depends on ``pycbc`` and is used only in legacy CPU-based
+        DataLoader pipelines.  The GPU-native real-noise path
+        (:class:`~sage.data.noise.real_noise.MemmapNoiseSampler`) is
+        preferred for on-the-fly training.
+
+    Parameters
+    ----------
+    psds_dir : str
+        Path to the parent directory containing ``H1/`` and ``L1/``
+        subdirectories of ``.hdf`` PSD files.
+    """
 
     def __init__(self, psds_dir: str = ""):
         self.psds_dir = psds_dir
@@ -43,6 +63,12 @@ class ColouredNoiseGenerator:
         self.sample_rate = None
 
     def precompute_common_params(self):
+        """
+        Load all configured PSDs from disk and convert each to a complex ASD.
+
+        Must be called once after construction before calling :meth:`generate`
+        or :meth:`apply`.  Results are stored in :attr:`complex_asds`.
+        """
         # Compute ASD for chosen PSD
         self.complex_asds = {det: [] for det in self.psd_options.keys()}
         for i, det in enumerate(self.psd_options.keys()):
@@ -70,7 +96,29 @@ class ColouredNoiseGenerator:
         low_frequency_cutoff=15.0,
         filter_duration=128,
     ):
+        """
+        Convert a PyCBC FrequencySeries PSD to a complex ASD suitable for
+        colouring white Gaussian noise.
 
+        Parameters
+        ----------
+        psd : pycbc.types.FrequencySeries
+            Power spectral density in ``Hz^-1``.
+        start_time, end_time : float
+            GPS start/end (seconds) used only for sizing the intermediate
+            time-series.
+        sample_rate : float
+            Target sample rate (Hz; default ``2048.0``).
+        low_frequency_cutoff : float
+            Below this frequency the PSD is zeroed (Hz; default ``15.0``).
+        filter_duration : float
+            Duration (seconds) of the coloring filter (default ``128``).
+
+        Returns
+        -------
+        pycbc.types.FrequencySeries
+            Complex ASD (fourth root of the squared-norm PSD).
+        """
         psd = psd.copy()
 
         flen = int(sample_rate / psd.delta_f) // 2 + 1
@@ -194,6 +242,7 @@ class ColouredNoiseGenerator:
         return TimeSeries(data, delta_t=1.0 / sample_rate)
 
     def choose_asd(self):
+        """Randomly select one pre-computed ASD per detector (H1, L1)."""
         # Choose asd for each detector randomly
         # Similar to D3 of MLGWSC-1
         H1_asd = random.choice(self.complex_asds["H1"])
@@ -201,6 +250,24 @@ class ColouredNoiseGenerator:
         return (H1_asd, L1_asd)
 
     def generate(self, asd, seed, det):
+        """
+        Generate a single coloured-noise time-series of length
+        :attr:`sample_length` seconds.
+
+        Parameters
+        ----------
+        asd : pycbc.types.FrequencySeries
+            Complex ASD used to colour the noise.
+        seed : int
+            Random seed for white-noise generation.
+        det : str
+            Detector name (unused but kept for interface compatibility).
+
+        Returns
+        -------
+        numpy.ndarray
+            Coloured noise array of shape ``(sample_length * sample_rate,)``.
+        """
         # Create noise realisation with given ASD
         noise = self.colored_noise(
             asd,
@@ -215,6 +282,23 @@ class ColouredNoiseGenerator:
         return noise
 
     def apply(self, special, det_only=""):
+        """
+        Generate a batch-size set of two-detector coloured-noise time-series.
+
+        Parameters
+        ----------
+        special : dict
+            Must contain ``"sample_seed"`` (int) used to generate reproducible
+            random seeds for each detector channel.
+        det_only : str, optional
+            If non-empty, generate noise only for this detector (unused in
+            most call sites).
+
+        Returns
+        -------
+        noise : numpy.ndarray, shape ``(batch_size, 2, sample_length_in_num)``
+            Coloured noise for both detectors.
+        """
         # choose a random asd from precomputed set
         time_1 = time.time()
         H1_asd, L1_asd = self.choose_asd()

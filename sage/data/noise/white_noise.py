@@ -24,15 +24,51 @@ Documentation: NULL
 
 
 class WhiteNoiseGenerator:
-    """Generate white Gaussian noise for Sage training"""
+    """
+    Generate independent white Gaussian noise for each detector.
+
+    Produces zero-mean, unit-variance Gaussian noise with independent seeds
+    per detector.  Primarily used for controlled testing and as a substitute
+    for real noise during pipeline development or unit tests.
+    """
 
     def generate(self, sample_length_in_num, seed=0):
-        """Generate data with a white Gaussian (normal) distribution"""
+        """
+        Draw a single white Gaussian noise realisation.
+
+        Parameters
+        ----------
+        sample_length_in_num : int
+            Number of samples to generate.
+        seed : int
+            NumPy random seed for reproducibility.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(sample_length_in_num,)``
+            Zero-mean, unit-variance Gaussian noise.
+        """
         np.random.seed(seed)
         # 0 mean, 1 std
         return np.random.normal(0, 1, size=sample_length_in_num)
 
     def apply(self, special, det_only=""):
+        """
+        Generate dual-detector white noise for a single sample.
+
+        Parameters
+        ----------
+        special : dict
+            Must contain ``"sample_seed"`` (int) and ``"data_cfg"`` with
+            ``signal_length`` (s) and ``sample_rate`` (Hz) attributes.
+        det_only : str
+            Unused; kept for API compatibility.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(2, N)``
+            Stacked H1/L1 white noise arrays.
+        """
         # Generate white Gaussian noise using random seeds
         rs = np.random.RandomState(seed=special["sample_seed"])
         seeds = list(rs.randint(0, 2**32, 2))  # one for each detector

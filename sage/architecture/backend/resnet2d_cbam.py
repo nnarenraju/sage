@@ -57,6 +57,22 @@ def conv3x3(in_planes, out_planes, stride=1):
 
 
 class ChannelAttention(nn.Module):
+    """
+    CBAM channel attention gate.
+
+    Squeezes spatial dimensions to a single scalar per channel using both
+    average and max pooling, then routes through a shared two-layer MLP and
+    sums the results before sigmoid gating.  Reduces channel redundancy by
+    re-weighting each feature map proportionally to its global importance.
+
+    Parameters
+    ----------
+    in_planes : int
+        Number of input channels.
+    ratio : int
+        Reduction ratio for the bottleneck MLP (default 16).
+    """
+
     def __init__(self, in_planes, ratio=16):
         super(ChannelAttention, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
@@ -77,6 +93,20 @@ class ChannelAttention(nn.Module):
 
 
 class SpatialAttention(nn.Module):
+    """
+    CBAM spatial attention gate.
+
+    Collapses the channel dimension into a 2-channel descriptor (channel-wise
+    average and max), then applies a single convolution to produce a spatial
+    weight map.  Highlights informative spatial locations while suppressing
+    background.
+
+    Parameters
+    ----------
+    kernel_size : int
+        Kernel size of the spatial convolution (default 7; must be odd).
+    """
+
     def __init__(self, kernel_size=7):
         super(SpatialAttention, self).__init__()
 
@@ -92,6 +122,24 @@ class SpatialAttention(nn.Module):
 
 
 class BasicBlock(nn.Module):
+    """
+    ResNet basic residual block with CBAM attention (for ResNet-18/34).
+
+    Structure: Conv-BN-ReLU → Conv-BN → channel attention → spatial attention
+    → residual add → ReLU.  Expansion factor is 1 (output channels == planes).
+
+    Parameters
+    ----------
+    inplanes : int
+        Number of input channels.
+    planes : int
+        Number of output channels (= expansion * planes).
+    stride : int
+        Stride for the first convolution (default 1).
+    downsample : nn.Module or None
+        Optional 1×1 projection shortcut when dimensions mismatch.
+    """
+
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
@@ -131,6 +179,25 @@ class BasicBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
+    """
+    ResNet bottleneck residual block with CBAM attention (for ResNet-50/101/152).
+
+    Structure: 1×1 Conv-BN-ReLU → 3×3 Conv-BN-ReLU → 1×1 Conv-BN →
+    channel attention → spatial attention → residual add → ReLU.
+    Expansion factor is 4 (output channels = 4 * planes).
+
+    Parameters
+    ----------
+    inplanes : int
+        Number of input channels.
+    planes : int
+        Bottleneck width; output channels = 4 * planes.
+    stride : int
+        Stride applied to the 3×3 convolution (default 1).
+    downsample : nn.Module or None
+        Optional 1×1 projection shortcut when dimensions mismatch.
+    """
+
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
@@ -178,6 +245,32 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
+    """
+    2D ResNet backbone with CBAM attention in every residual block.
+
+    Adapted from the standard torchvision ResNet to:
+    1. Accept multi-channel gravitational-wave inputs (default ``in_channels=2``
+       for H1/L1 detector pair).
+    2. Insert :class:`ChannelAttention` and :class:`SpatialAttention` gates
+       inside every :class:`BasicBlock` and :class:`Bottleneck`.
+    3. Output a flat feature vector of size ``num_classes`` (default 512)
+       via global average pooling + a linear projection.
+
+    The model is used as the **backend** of the Sage detection network,
+    receiving 2D feature maps produced by the per-detector 1D CNN frontend.
+
+    Parameters
+    ----------
+    block : type
+        Residual block class — :class:`BasicBlock` (ResNet-18/34) or
+        :class:`Bottleneck` (ResNet-50/101/152).
+    layers : list[int]
+        Number of blocks per stage, e.g. ``[3, 4, 6, 3]`` for ResNet-50.
+    num_classes : int
+        Output feature dimension (default 512).
+    in_channels : int
+        Number of input channels (default 2 for dual-detector).
+    """
 
     def __init__(self, block, layers, num_classes=512, in_channels=2):
         self.inplanes = 64
@@ -207,6 +300,25 @@ class ResNet(nn.Module):
         nn.init.zeros_(self.fc.bias)
 
     def _make_layer(self, block, planes, blocks, stride=1):
+        """Build one ResNet stage as a sequential stack of residual blocks.
+
+        Parameters
+        ----------
+        block : type
+            Block class to instantiate.
+        planes : int
+            Target channel width for this stage.
+        blocks : int
+            Number of residual blocks in this stage.
+        stride : int
+            Stride for the first block's convolution (halves spatial resolution
+            when stride=2).
+
+        Returns
+        -------
+        nn.Sequential
+            The stacked residual stage.
+        """
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(

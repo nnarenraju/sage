@@ -41,7 +41,30 @@ def plot_cumulative_volume(
     bins=50,
 ):
     """
-    Plot cumulative detection volume as a function of network output.
+    Plot cumulative detectable volume as a function of ranking-statistic threshold.
+
+    For each threshold value, counts the number of signals above threshold and
+    weights each signal by the volume element ``(distance/d_min)^3`` to
+    approximate a cumulative sensitive volume curve.  Higher is better.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    source_params : dict[str, array-like]
+        Per-event parameter arrays; must contain ``distance_param``.
+    distance_param : str
+        Key for the luminosity distance array (default ``"distance"``).
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    bins : int
+        Number of threshold bins (default ``50``).
     """
 
     # Only signals

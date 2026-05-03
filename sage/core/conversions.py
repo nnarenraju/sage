@@ -28,6 +28,26 @@ import torch
 
 
 def seconds_to_samples(nseconds, sample_rate, approx_mode=int, rounding=True):
+    """
+    Convert a duration in seconds to a sample count.
+
+    Parameters
+    ----------
+    nseconds : float
+        Duration in seconds.
+    sample_rate : float
+        Sampling rate in Hz.
+    approx_mode : callable
+        Type coercion applied to the result (default :class:`int`).
+    rounding : bool
+        If ``True`` (default) the result is rounded before coercion, avoiding
+        floating-point artefacts at exact integer multiples.
+
+    Returns
+    -------
+    int (or approx_mode result)
+        Number of samples corresponding to the given duration.
+    """
     if rounding:
         # No need to change the base for rounding
         return approx_mode(round(nseconds * sample_rate))
@@ -36,6 +56,21 @@ def seconds_to_samples(nseconds, sample_rate, approx_mode=int, rounding=True):
 
 
 def samples_to_seconds(nsamples, sample_rate):
+    """
+    Convert a sample count to a duration in seconds.
+
+    Parameters
+    ----------
+    nsamples : int
+        Number of samples.
+    sample_rate : float
+        Sampling rate in Hz.
+
+    Returns
+    -------
+    float
+        Duration in seconds.
+    """
     return nsamples / sample_rate
 
 
@@ -73,6 +108,19 @@ def mchirp_from_mass1_mass2(mass1, mass2):
 
 
 def mass1_mass2_to_mchirp_eta(mass1, mass2):
+    """
+    Convert component masses to chirp mass and symmetric mass ratio.
+
+    Parameters
+    ----------
+    mass1, mass2 : array-like
+        Component masses (any consistent units).
+
+    Returns
+    -------
+    tuple
+        ``(mchirp, eta)`` — chirp mass and symmetric mass ratio.
+    """
     mchirp = mchirp_from_mass1_mass2(mass1, mass2)
     eta = eta_from_mass1_mass2(mass1, mass2)
     return mchirp, eta

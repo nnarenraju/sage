@@ -35,6 +35,39 @@ from sage.core.config import get_cfg
 
 
 class CompileManager:
+    """
+    Orchestrates ``torch.compile`` for the training/validation inner loop.
+
+    Splits the pipeline into two parts:
+
+    * **Uncompiled block** — data generation calls (signal and noise
+      samplers) that may use Python-level randomness, HDF5/memmap I/O,
+      or other operations unsafe inside a ``torch.compile`` graph.  Only
+      samplers whose ``GRAPH_READY`` attribute is ``False`` (the default)
+      are called here.
+
+    * **Compiled block** — everything downstream of generation (signal
+      injection scatter, preprocessing, model forward, loss).  Compiled
+      with ``mode="max-autotune"``, ``fullgraph=True``, ``dynamic=False``
+      for maximum GPU throughput.
+
+    The compiled block is either :class:`CompiledTrainingBlock` or
+    :class:`CompiledValidationBlock` depending on the ``training`` flag.
+
+    Parameters
+    ----------
+    generator : tuple[signal_sampler, noise_sampler]
+        Pair of data-generation objects.  Each is tested for ``GRAPH_READY``.
+    processor : Iterable
+        Preprocessing pipeline (e.g. :class:`~sage.core.graph.Preprocessor`).
+    model : nn.Module
+        The network being trained.
+    loss_function : nn.Module
+        Loss module, must return a scalar or loss-component tensor.
+    training : bool
+        If ``True`` (default), build a :class:`CompiledTrainingBlock`;
+        otherwise build a :class:`CompiledValidationBlock`.
+    """
 
     def __init__(
         self,
@@ -65,6 +98,18 @@ class CompileManager:
         self.compiled_block = self._make_compiled_block(training)
 
     def uncompiled_block(self):
+        """
+        Run the graph-unsafe data generators and return ``(signal, noise)``.
+
+        Samplers whose ``GRAPH_READY`` flag is ``True`` are skipped (they
+        will be called inside the compiled graph instead).  Returns ``None``
+        for any graph-ready sampler so the compiled block can detect that
+        and call it internally.
+
+        Returns
+        -------
+        tuple[signal or None, noise or None]
+        """
         signal = None
         noise = None
 
@@ -102,6 +147,35 @@ class CompileManager:
 
 
 class CompiledTrainingBlock(nn.Module):
+    """
+    ``torch.compile``-compatible training inner loop.
+
+    Handles everything inside the compiled graph:
+
+    1. Calls graph-ready samplers (``GRAPH_READY=True``) if needed.
+    2. Pads noise targets to match the signal-target width.
+    3. Places signal waveforms at random positions in the noise batch using
+       ``scatter_add`` (avoids Python-level indexing).
+    4. Combines signal + noise, preprocesses, and runs the forward pass.
+    5. Computes the loss under optional AMP autocast.
+
+    Parameters
+    ----------
+    signal_sampler, noise_sampler
+        Data generators.
+    processor
+        Preprocessing pipeline.
+    B : int
+        Batch size.
+    S : int
+        Number of signal injections per batch (= B * class_balance).
+    T : int
+        Total target width (num_point_estimates + 1).
+    P : int
+        Number of point-estimate targets.
+    model : nn.Module
+    loss_function : nn.Module
+    """
 
     def __init__(
         self,
@@ -202,6 +276,18 @@ class CompiledTrainingBlock(nn.Module):
 
 
 class CompiledValidationBlock(nn.Module):
+    """
+    ``torch.compile``-compatible validation inner loop.
+
+    Mirrors :class:`CompiledTrainingBlock` exactly but wraps the forward
+    pass in ``torch.inference_mode()`` to disable gradient tracking.  This
+    is the only meaningful behavioural difference; the signal injection,
+    preprocessing, and loss computation are identical.
+
+    Parameters
+    ----------
+    Same as :class:`CompiledTrainingBlock`.
+    """
 
     def __init__(
         self,

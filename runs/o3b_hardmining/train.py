@@ -40,6 +40,7 @@ from sage.data.waveform.snr import OptimalSNRRescaler
 
 # Noise sampler + hard mining
 from sage.data.noise import MemmapNoiseSampler, RecolourPostprocess
+from sage.data.noise import GlitchOversampledNoiseSampler
 from sage.data.noise.hard_mining import HardSampleBuffer, HardSampleMiner
 
 # Preprocessing
@@ -80,8 +81,24 @@ def make_training_graph():
         p_recolour=0.37,
         recolour_dataset_dir="/local/scratch/igr/nnarenraju/search/o3a",
     )
-    training_noise_sampler = MemmapNoiseSampler(
-        postprocess_fn=recolour, prefetch=8, seed=150914,
+    # Class-balanced oversampling of high-SNR O3b glitches.
+    # 10 % of each training batch is replaced by GPS-aligned O3b glitch
+    # windows drawn with equal probability from every GravitySpy class.
+    # This directly addresses the Scattered_Light dominance (65 % of O3b H1)
+    # that starves rare-but-dangerous classes like Repeating_Blips of training
+    # signal.  The full recolour/FFT pipeline is applied to glitch windows
+    # unchanged, so they enter the model in the same format as regular noise.
+    training_noise_sampler = GlitchOversampledNoiseSampler(
+        postprocess_fn  = recolour,
+        prefetch        = 8,
+        seed            = 150914,
+        catalog_files   = [
+            (0, "/local/scratch/igr/nnarenraju/gwspy/H1_O3b.csv"),
+            (1, "/local/scratch/igr/nnarenraju/gwspy/L1_O3b.csv"),
+        ],
+        min_snr         = 15.0,
+        glitch_frac     = 0.10,
+        class_balanced  = True,
     )
     return training_signal_sampler, training_noise_sampler, training_param_sampler.bounds
 
@@ -154,7 +171,7 @@ def run_sage():
 
     # ── Optimiser / scheduler ─────────────────────────────────────────
     optimiser = optim.Adam(
-        model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True,
+        model.parameters(), lr=2e-4, weight_decay=1e-6,
     )
     scheduler = CosineAnnealingWarmRestarts(
         optimiser, T_0=5, T_mult=2, eta_min=1e-6,
@@ -169,13 +186,12 @@ def run_sage():
 
     # n_mine_noise=100_000  → sample 100K bg windows, keep hardest 2048
     # n_mine_signal=50_000  → sample 50K signal+noise pairs, keep hardest 2048
-    # mine_batch_size=256   for noise mining (independent of train batch)
+    # batch size is driven by cfg.batch_size via noise_sampler.sample_batch()
     miner = HardSampleMiner(
         hard_noise_buffer  = hard_noise_buffer,
         hard_signal_buffer = hard_signal_buffer,
         n_mine_noise       = 100_000,
         n_mine_signal      =  50_000,
-        mine_batch_size    = 256,
     )
 
     # ── Training loop ─────────────────────────────────────────────────

@@ -40,6 +40,36 @@ def plot_learning_parameter_prior(
     bin_width=500,
     step=10,
 ):
+    """
+    Overlay learned detection efficiency on the source-parameter prior distribution.
+
+    For each source parameter, shows the prior histogram alongside the
+    detection fraction curve — highlighting where the prior is dense versus
+    where the network actually achieves high detection efficiency.  Useful
+    for diagnosing whether efficiency follows the prior or is biased toward
+    high-probability regions.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier used in the output subdirectory name.
+    source_params : dict[str, array-like]
+        Per-signal parameter arrays.
+    pred_stat : array-like, shape ``(N_signal,)``
+        Predicted ranking statistic for signal events.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels for the full validation set.
+    export_dir : str or None
+        Parent directory; plots saved under ``LEARN_PARAMS/epoch_{epoch}/``.
+    save : bool
+        If ``True``, save to disk; otherwise display interactively.
+    save_name : str
+        Prefix for saved filenames (default ``"stat"``).
+    bin_width : int
+        Number of events per parameter bin (default ``500``).
+    step : float
+        Step size for threshold sweep (default ``10``).
+    """
 
     if save and export_dir is not None:
         base_dir = os.path.join(export_dir, f"LEARN_PARAMS/epoch_{epoch}")

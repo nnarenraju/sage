@@ -41,6 +41,24 @@ def to_sequence(x):
 
 
 def ensure_1d(x):
+    """
+    Convert ``x`` to a NumPy array and assert it is one-dimensional.
+
+    Parameters
+    ----------
+    x : array-like
+        Input to validate.
+
+    Returns
+    -------
+    numpy.ndarray, shape ``(N,)``
+        One-dimensional view of ``x``.
+
+    Raises
+    ------
+    ValueError
+        If the resulting array has more than one dimension.
+    """
     x = np.asarray(x)
     if x.ndim != 1:
         raise ValueError("Input must be 1D")

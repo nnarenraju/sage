@@ -50,24 +50,93 @@ _DATA_CFG = None
 
 
 def register_configs(cfg, data_cfg):
+    """
+    Register the global training and data configuration objects.
+
+    Must be called once at the start of each run (typically inside
+    ``set_configs()`` in the run-specific ``config.py``).  All Sage modules
+    that call :func:`get_cfg` or :func:`get_data_cfg` depend on this having
+    been called first.
+
+    Parameters
+    ----------
+    cfg : BaseConfig
+        Wrapped training configuration (batch size, device, dtype, …).
+    data_cfg : BaseDataConfig
+        Wrapped data configuration (file paths, sample rate, sequence length, …).
+    """
     global _CFG, _DATA_CFG
     _CFG = cfg
     _DATA_CFG = data_cfg
 
 
 def get_cfg():
+    """
+    Return the globally registered training configuration.
+
+    Returns
+    -------
+    BaseConfig
+        The configuration object registered via :func:`register_configs`.
+
+    Raises
+    ------
+    RuntimeError
+        If :func:`register_configs` has not been called yet.
+    """
     if _CFG is None:
         raise RuntimeError("cfg has not been registered.")
     return _CFG
 
 
 def get_data_cfg():
+    """
+    Return the globally registered data configuration.
+
+    Returns
+    -------
+    BaseDataConfig
+        The data configuration object registered via :func:`register_configs`.
+
+    Raises
+    ------
+    RuntimeError
+        If :func:`register_configs` has not been called yet.
+    """
     if _DATA_CFG is None:
         raise RuntimeError("data_cfg has not been registered.")
     return _DATA_CFG
 
 
 def inject_configs(cfg_cls, data_cfg_cls):
+    """
+    Class decorator that attaches ``cfg`` and ``data_cfg`` instances to any
+    class at construction time.
+
+    This is an alternative to inheriting from :class:`ConfiguredModule` for
+    non-``nn.Module`` classes that still need access to the configuration.
+
+    Parameters
+    ----------
+    cfg_cls : type
+        Config class to instantiate and assign to ``self.cfg``.
+    data_cfg_cls : type
+        Data config class to instantiate and assign to ``self.data_cfg``.
+
+    Returns
+    -------
+    Callable
+        A decorator that wraps the target class's ``__init__``.
+
+    Example
+    -------
+    .. code-block:: python
+
+        @inject_configs(MyCFG, MyDataCFG)
+        class MyProcessor:
+            def __init__(self):
+                pass  # self.cfg and self.data_cfg are already set
+    """
     def decorator(cls):
         original_init = cls.__init__
 
@@ -86,6 +155,13 @@ def inject_configs(cfg_cls, data_cfg_cls):
 
 
 class ConfiguredModule(torch.nn.Module):
+    """
+    Base ``nn.Module`` that automatically attaches the global ``cfg`` and
+    ``data_cfg`` objects to ``self`` at construction time.
+
+    Subclass this instead of ``nn.Module`` to avoid calling :func:`get_cfg`
+    and :func:`get_data_cfg` manually in every ``__init__``.
+    """
     def __init__(self):
         super().__init__()
         self.cfg = get_cfg()

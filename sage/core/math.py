@@ -29,13 +29,20 @@ import numpy as np
 
 class Normalise:
     """
-    Normalise the variable using known bounds
+    Min-max normalisation to the unit interval ``[0, 1]``.
 
-        For example, norm_tc = (tc - min_val)/(max_val - min_val)
-        The values of max_val and min_val are provided
-        to the class. obj.norm can be called during
-        data generation to get normalised values of tc, if needed.
+    Maps ``val`` linearly so that ``min_val`` → 0 and ``max_val`` → 1.
+    Provides a symmetric :meth:`unnorm` inverse.  Used by
+    :class:`~sage.data.waveform.sampler.DistributionSampler` to normalise
+    waveform parameters to a common scale before regression targets are
+    passed to the network.
 
+    Parameters
+    ----------
+    min_val : float
+        Lower bound of the original parameter range.
+    max_val : float
+        Upper bound of the original parameter range.
     """
 
     def __init__(self, min_val, max_val):
@@ -43,17 +50,29 @@ class Normalise:
         self.max_val = max_val
 
     def norm(self, val):
-        # Return normalised value in [0, 1]
+        """Normalise ``val`` to ``[0, 1]``."""
         return (val - self.min_val) / (self.max_val - self.min_val)
 
     def unnorm(self, val):
-        # Return unnormalised value in original scale
+        """Invert normalisation, recovering the original scale."""
         return (val * (self.max_val - self.min_val)) + self.min_val
 
 
 class Standardise:
     """
-    Standardise a variable to zero mean and unit variance.
+    Z-score standardisation to zero mean and unit variance.
+
+    Maps ``val`` so that the distribution has mean 0 and std 1.  The small
+    ``eps`` guard prevents division by zero for constant-valued parameters.
+
+    Parameters
+    ----------
+    mean : float
+        Population mean of the parameter.
+    std : float
+        Population standard deviation of the parameter.
+    eps : float
+        Numerical stability guard (default 1e-8).
     """
 
     def __init__(self, mean, std, eps=1e-8):
@@ -62,11 +81,11 @@ class Standardise:
         self.eps = eps
 
     def norm(self, val):
-        # Return zero mean unit variance output
+        """Standardise ``val`` to zero mean, unit variance."""
         return (val - self.mean) / (self.std + self.eps)
 
     def unnorm(self, val):
-        # Return original scale output
+        """Invert standardisation, recovering the original scale."""
         return val * (self.std + self.eps) + self.mean
 
 

@@ -31,6 +31,29 @@ import matplotlib.pyplot as plt
 def plot_correlation_matrix(
     ranking_stat, source_params, labels, export_dir=None, save=True, epoch=None
 ):
+    """
+    Plot a Pearson correlation matrix between source parameters and ranking statistic.
+
+    Computes pairwise correlations for all source parameters plus the ranking
+    statistic, restricting to signal events and dropping any rows containing
+    NaN values.  Useful for checking whether the network's output is driven
+    by a single parameter.
+
+    Parameters
+    ----------
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics.
+    source_params : dict[str, array-like]
+        Per-event source parameter arrays.
+    labels : array-like, shape ``(N,)``
+        Binary labels; only signal rows (label == 1) are included.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    epoch : int or str or None
+        Epoch identifier for the filename (optional).
+    """
     import numpy as np
 
     # Only signals (drop NaN rows from unaligned noise entries)

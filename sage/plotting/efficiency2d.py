@@ -43,7 +43,37 @@ def plot_2d_efficiency(
     bins_y=20,
 ):
     """
-    2D efficiency map: fraction of signals above threshold per parameter bin
+    Plot a 2D heatmap of detection efficiency as a function of two parameters.
+
+    Computes the fraction of signals above ``threshold`` in each
+    (``param_x``, ``param_y``) bin and displays the result as a colour-coded
+    grid.  Useful for identifying regions of parameter space where sensitivity
+    drops.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Predicted ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    source_params : dict[str, array-like]
+        Per-signal parameter arrays.
+    param_x : str
+        Key in ``source_params`` for the x-axis parameter.
+    param_y : str
+        Key in ``source_params`` for the y-axis parameter.
+    threshold : float
+        Detection threshold on the ranking statistic.
+    export_dir : str or None
+        Output directory.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    bins_x : int
+        Number of x-axis bins (default ``20``).
+    bins_y : int
+        Number of y-axis bins (default ``20``).
     """
     if param_x not in source_params or param_y not in source_params:
         return

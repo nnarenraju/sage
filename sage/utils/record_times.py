@@ -36,6 +36,24 @@ plt.rcParams["font.size"] = "32"
 
 
 def plot_split_times(ax, jobs, values, names, tot, errors=None):
+    """
+    Draw a horizontal stacked bar chart of timing splits on ``ax``.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes to draw on.
+    jobs : list[str]
+        Y-axis job names.
+    values : list[float]
+        Time for each segment in seconds.
+    names : list[str]
+        Labels for each segment (matched to ``values``).
+    tot : float
+        Total time used to compute percentage labels.
+    errors : ignored
+        Reserved for future error-bar support.
+    """
 
     left = 0.0
 
@@ -111,6 +129,26 @@ def _avg_dicts(load_split_times):
 
 
 def record(plot_times, all_total_time, cfg):
+    """
+    Produce and save a five-panel timing breakdown chart for one training epoch.
+
+    Reads timing dictionaries collected during the epoch and produces stacked
+    horizontal bar charts for: total epoch time, per-sample load time, signal
+    augmentation, noise augmentation, and transforms.  Saves the figure to
+    ``cfg.export_dir``.
+
+    Parameters
+    ----------
+    plot_times : dict
+        Dictionary with keys ``"load"``, ``"train"``, ``"section"``,
+        ``"signal_aug"``, ``"noise_aug"``, ``"transforms"`` each containing
+        lists of timing measurements.
+    all_total_time : float
+        Wall-clock duration of the entire epoch in seconds.
+    cfg : object
+        Configuration object with ``batch_size``, ``num_workers``, and
+        ``export_dir`` attributes.
+    """
 
     # Get all plotting sections
     load_times = plot_times["load"]

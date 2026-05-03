@@ -37,6 +37,32 @@ logger = logging.getLogger(__name__)
 
 
 class PSDGenerator:
+    """
+    Normalising-flow-based PSD generative model trained in log-spline space.
+
+    Fits a masked autoregressive flow (MAF, implemented via ``nflows``) to the
+    spline coefficients of real measured PSDs.  Once trained, the flow can
+    generate novel plausible PSD realisations by sampling from the latent
+    Gaussian and inverting through the learned transform.
+
+    The overall pipeline is:
+
+    1. Represent each real PSD as a set of log-spline coefficients (using
+       :class:`~sage.data.psd.smoothing.LogSplineSmoothing`).
+    2. Fit the MAF on those coefficients (:meth:`build_flow`,
+       :meth:`train_flow`).
+    3. Sample new coefficient vectors from the flow and reconstruct PSDs via
+       :meth:`spline_to_psd`.
+
+    Parameters
+    ----------
+    spline_coeffs : numpy.ndarray, shape ``(N_psd, num_spline_coeffs)``
+        Matrix of spline coefficients from the training PSDs.
+    num_layers : int
+        Number of autoregressive transform layers (default ``5``).
+    hidden_features : int
+        Hidden-layer width in each MADE block (default ``64``).
+    """
 
     def __init__(
         self,
@@ -44,12 +70,6 @@ class PSDGenerator:
         num_layers=5,
         hidden_features=64,
     ):
-        """
-        Args:
-            spline_coeffs: np.ndarray of shape (N_psd, num_spline_coeffs)
-            num_layers: number of flow layers
-            hidden_features: hidden features in MADE layers
-        """
         self.spline_coeffs = torch.tensor(spline_coeffs, dtype=torch.float32)
         self.num_layers = num_layers
         self.hidden_features = hidden_features

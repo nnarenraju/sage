@@ -69,6 +69,25 @@ _PARAM_NAMES = [
 
 
 class ValidationPlotManager:
+    """
+    Loads saved validation results from HDF5 and dispatches all diagnostic plots.
+
+    Reads the per-epoch validation HDF5 (network outputs, targets, signal
+    parameters, signal injection indices) and the losses HDF5, then exposes
+    a single :meth:`plot_all` method that generates the full suite of
+    training-diagnostics plots (ROC, loss curves, efficiency, parameter
+    recovery, etc.) into ``export_dir``.
+
+    Parameters
+    ----------
+    validation_h5 : str
+        Path to the per-epoch validation output HDF5 file.
+    losses_h5 : str
+        Path to the epoch loss HDF5 file produced by
+        :class:`~sage.utils.checkpoint.HDF5LossLogger`.
+    export_dir : str or None
+        Directory to save plots.  Subdirectories are created per plot type.
+    """
 
     def __init__(self, validation_h5, losses_h5, export_dir=None):
         self.validation_h5 = validation_h5
@@ -149,6 +168,19 @@ class ValidationPlotManager:
     # -------------------------------------------------------
 
     def make_all_plots(self, save=True):
+        """
+        Dispatch the full suite of validation diagnostic plots.
+
+        Iterates over all saved epochs, generates per-epoch plots (ROC, loss
+        curves, efficiency, parameter recovery, etc.), and produces
+        cross-epoch summaries (separation trajectory, parameter evolution).
+        All figures are written to ``self.export_dir``.
+
+        Parameters
+        ----------
+        save : bool
+            If ``True`` (default), save all plots to disk; otherwise display.
+        """
 
         epochs = sorted(self.validation_data.keys())
         best_epoch = np.argmin(self.validation_loss[:, 0])

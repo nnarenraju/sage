@@ -35,6 +35,35 @@ from sage.core.config import get_cfg
 
 
 class SageUncompiledTesting(torch.nn.Module):
+    """
+    Inference runner for offline testing on a pre-recorded data segment.
+
+    Slides a trained Sage model over a continuous data segment using a
+    DataLoader-backed slicer, applies the same preprocessing used during
+    training, and collects triggers above ``trigger_threshold``.  Results
+    (triggers, full network outputs, and slice times) are saved to HDF5 at
+    ``cfg.export_dir/testing_data.h5``.
+
+    This is the uncompiled version — suitable for export/analysis runs where
+    ``torch.compile`` is not required.  The compiled variant lives in
+    :class:`~sage.factory.manager.CompiledValidationBlock`.
+
+    Parameters
+    ----------
+    slicer : torch.utils.data.Dataset
+        Dataset that yields ``(x, slice_times)`` pairs for each data window.
+    processor : callable
+        Preprocessing callable applied to each batch before the model.
+    model : torch.nn.Module
+        Trained Sage model.
+    trigger_threshold : float
+        Ranking-statistic threshold; only windows above this are saved as
+        triggers.
+    batch_size : int
+        DataLoader batch size.
+    num_workers : int
+        Number of DataLoader worker processes.
+    """
 
     def __init__(
         self,

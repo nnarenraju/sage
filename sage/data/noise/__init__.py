@@ -31,6 +31,7 @@ from .real_noise import (
 
 from .recolour import RecolourPostprocess
 from .hard_mining import HardSampleBuffer, HardSampleMiner
+from .glitch_sampler import GlitchOversampledNoiseSampler
 
 __all__ = [
     "HDF5SingleNoiseSampler",
@@ -39,4 +40,5 @@ __all__ = [
     "RecolourPostprocess",
     "HardSampleBuffer",
     "HardSampleMiner",
+    "GlitchOversampledNoiseSampler",
 ]

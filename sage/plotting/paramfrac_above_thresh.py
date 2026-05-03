@@ -38,6 +38,32 @@ def plot_paramfrac_detected_above_thresh(
     save=True,
     nbins=4,
 ):
+    """
+    Detection fraction above threshold in bins of each source parameter.
+
+    For each parameter, divides signals into ``nbins`` equal-count bins and
+    plots the fraction detected (ranking statistic above a sweep of
+    thresholds) in each bin.  Reveals which parameter values the model
+    finds hardest to detect.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier used in the output subdirectory.
+    ranking_stat : array-like, shape ``(N,)``
+        Network ranking statistics.
+    labels : array-like, shape ``(N,)``
+        Binary ground-truth labels.
+    sample_params : dict[str, array-like]
+        Per-event parameter arrays.
+    export_dir : str or None
+        Parent directory; plots saved under
+        ``PARAMFRAC_ABOVE_THRESH/epoch_{epoch}/``.
+    save : bool
+        If ``True``, save to disk; otherwise display.
+    nbins : int
+        Number of equal-count parameter bins (default ``4``).
+    """
 
     if save and export_dir is not None:
         parent_dir = os.path.join(export_dir, "PARAMFRAC_ABOVE_THRESH")

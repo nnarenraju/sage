@@ -46,6 +46,7 @@ class UniformAngle:
         self.range = upper - lower
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        """Draw *shape* samples uniformly from ``[lower, upper)``."""
         x = (
             torch.rand(
                 shape,
@@ -66,6 +67,23 @@ class UniformAngle:
 
 
 class SinAngle(UniformAngle):
+    """
+    Isotropic polar-angle sampler for inclination-like parameters.
+
+    Draws samples from the distribution whose PDF is proportional to
+    ``sin(theta)`` over ``[low, high]``.  This is the correct prior for an
+    angle that is uniform over a sphere (e.g. binary inclination, source sky
+    polar angle).  Sampling is done via the inverse-CDF method in
+    ``cos(theta)`` space.
+
+    Parameters
+    ----------
+    low : float
+        Lower bound in radians (default ``0``).
+    high : float
+        Upper bound in radians (default ``pi``).
+    """
+
     PI = torch.pi
 
     def __init__(self, low=0.0, high=torch.pi):
@@ -77,6 +95,7 @@ class SinAngle(UniformAngle):
         self.cos_high = torch.cos(torch.tensor(self.low))
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        """Draw *shape* polar angles with the sin-angle prior (isotropic sphere)."""
         # uniform in cos(theta)
         u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
         cos_theta = u * (self.cos_high - self.cos_low) + self.cos_low
@@ -88,6 +107,21 @@ class SinAngle(UniformAngle):
 
 
 class CosAngle(SinAngle):
+    """
+    Isotropic azimuthal-like angle sampler for declination-type parameters.
+
+    Draws samples whose PDF is proportional to ``cos(theta)`` over
+    ``[-pi/2, pi/2]`` — the correct isotropic prior for declination or
+    elevation angles.  Sampling uses the inverse-CDF method in ``sin(theta)``
+    space, which is the dual of :class:`SinAngle`.
+
+    Parameters
+    ----------
+    low : float
+        Lower bound in radians (default ``-pi/2``).
+    high : float
+        Upper bound in radians (default ``pi/2``).
+    """
 
     HALF_PI = torch.pi / 2
 
@@ -99,6 +133,7 @@ class CosAngle(SinAngle):
         self.sin_high = torch.sin(torch.tensor(self.high))
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        """Draw *shape* declination angles with the cos-angle prior (isotropic sphere)."""
         # uniform in sin(theta)
         u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
         sin_theta = u * (self.sin_high - self.sin_low) + self.sin_low
@@ -110,6 +145,27 @@ class CosAngle(SinAngle):
 
 
 class UniformSolidAngle:
+    """
+    Joint sampler for a pair of angles that is uniform over the full sphere.
+
+    Combines :class:`SinAngle` for the polar angle (inclination / sky
+    colatitude) and :class:`UniformAngle` for the azimuthal angle (right
+    ascension / polarisation) to produce an isotropic orientation prior.
+    The ``sample`` method returns a dict keyed by the names given at
+    construction, making it easy to merge into a broader parameter dict.
+
+    Parameters
+    ----------
+    polar_name : str
+        Key for the polar-angle output (default ``"theta"``).
+    azimuthal_name : str
+        Key for the azimuthal-angle output (default ``"phi"``).
+    polar_bounds : tuple[float, float]
+        ``(low, high)`` in radians for the polar angle (default ``(0, pi)``).
+    azimuthal_bounds : tuple[float, float]
+        ``(low, high)`` in radians for the azimuthal angle
+        (default ``(0, 2*pi)``).
+    """
 
     def __init__(
         self,
@@ -126,6 +182,14 @@ class UniformSolidAngle:
         self.azimuth_sampler = UniformAngle(*azimuthal_bounds)
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
+        """
+        Draw *shape* angle pairs and return them as a dict.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            ``{polar_name: theta, azimuthal_name: phi}`` each of shape *shape*.
+        """
         theta = self.polar_sampler.sample(
             shape,
             device=device,

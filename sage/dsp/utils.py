@@ -30,19 +30,31 @@ logger = get_logger(__name__)
 
 
 def trim_edges(data, fs, trim=0.2):
-    """Trim data edges after filtering/resampling.
+    """
+    Trim corrupted edge samples from a filtered or resampled time series.
 
-    Args:
-        data (array): 1D time series
-        fs (float): Sampling rate (Hz)
-        trim (float, optional): Edge trim (seconds) for normal mode.
-            - Defaults to 0.2
+    Digital filters and resampling operations introduce transient artefacts
+    at the boundaries of a segment.  This function removes ``trim`` seconds
+    from each end to discard those corrupted samples.
 
-    Raises:
-        ValueError: _description_
+    Parameters
+    ----------
+    data : array-like, shape ``(N,)``
+        1D time series to trim.
+    fs : float
+        Sampling rate in Hz.
+    trim : float
+        Number of seconds to remove from each end (default 0.2 s).
 
-    Returns:
-        _type_: _description_
+    Returns
+    -------
+    numpy.ndarray
+        Trimmed time series of length ``N - 2 * round(trim * fs)``.
+
+    Raises
+    ------
+    ValueError
+        If the trim length equals or exceeds half the data length.
     """
 
     n = int(round(trim * fs))

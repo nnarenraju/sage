@@ -31,15 +31,29 @@ logger = get_logger(__name__)
 
 
 def safe_call(func, *args, fallback_return=None, **kwargs):
-    """Safe call helper: call func without exit
-    On exception, print the error and return fallback_return
+    """
+    Call ``func`` and suppress any exception, returning a fallback value instead.
 
-    Args:
-        func (_type_): _description_
-        fallback_return (_type_): value to return if exception occurs
+    Logs the exception at ERROR level (with function name, args, kwargs, and
+    traceback message) then returns ``fallback_return`` so the caller can
+    continue gracefully.
 
-    Returns:
-        _type_: _description_
+    Parameters
+    ----------
+    func : callable
+        Function to call.
+    *args
+        Positional arguments forwarded to ``func``.
+    fallback_return : any
+        Value returned if ``func`` raises (default ``None``).
+    **kwargs
+        Keyword arguments forwarded to ``func``.
+
+    Returns
+    -------
+    any
+        The return value of ``func(*args, **kwargs)``, or ``fallback_return``
+        if an exception was raised.
     """
 
     try:
