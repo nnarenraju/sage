@@ -5,6 +5,9 @@
 </p>
 
 [![DOI](https://zenodo.org/badge/482025216.svg)](https://doi.org/10.5281/zenodo.17290133)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-orange)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [Identifying and Mitigating Machine Learning Biases for the Gravitational Wave Detection Problem](https://arxiv.org/abs/2501.13846)
 
@@ -16,13 +19,22 @@ Matched-filtering is a long-standing technique for the optimal detection of know
 
 ## Installation
 
+> **Note:** These are local installation instructions. Sage will be available as a proper PyPI package soon.
+
 ```bash
 git clone https://github.com/nnarenraju/sage.git
 cd sage
 pip install -e .
 ```
 
-**Dependencies** (installed automatically): PyTorch ≥ 2.0, PyCBC, h5py, numpy, scipy, astropy, tqdm, pyyaml.
+**Core dependencies** (installed automatically via `setup.py`): PyTorch ≥ 2.0, h5py, numpy, scipy, astropy, tqdm, pyyaml.
+
+**Optional dependencies** for data acquisition and benchmarking:
+```bash
+pip install pycbc lalsuite gwpy gwosc
+```
+
+**Hardware**: A CUDA-capable GPU is strongly recommended for on-the-fly waveform generation and training.
 
 ---
 
@@ -35,7 +47,7 @@ sage/
 │   │   ├── backend/        #   2D/3D ResNet with CBAM attention
 │   │   ├── frontend/       #   Multi-scale 1D CNN (per detector)
 │   │   ├── network/        #   Assembled full networks
-│   │   ├── custom_losses/  #   BCEWithFARLoss and related
+│   │   ├── custom_losses/  #   BCE-based loss functions
 │   │   └── zoo/            #   Cross-attention modules
 │   ├── core/               # Config, logging, constants, interpolation
 │   ├── data/
@@ -50,66 +62,59 @@ sage/
 │   ├── presets/            # Pre-built config presets for common experiments
 │   └── utils/              # Checkpointing, timing, Condor utilities
 ├── runs/                   # Run scripts for specific experiments
+├── repro/                  # Reproducibility scripts for paper results
 └── docs/                   # Sphinx/ReadTheDocs documentation source
 ```
 
 ---
 
-## Key Design Choices
-
-| Feature | Detail |
-|---------|--------|
-| **On-the-fly training** | No pre-generated dataset — signals and noise are drawn per batch |
-| **Noise** | Real LIGO O3b strain via memory-mapped async prefetch |
-| **Signal injection** | Random batch positions; SNR drawn from prior distribution |
-| **Preprocessing** | FD whitening + dyadic multirate decimation (physics-driven bin layout) |
-| **Loss** | BCE + heteroscedastic regression + coupling + pAUC + focal (6-component) |
-| **Hard mining** | Online hard background buffer + worst-missed-signal replay |
-| **Glitch robustness** | GravitySpy-aligned glitch windows oversampled 10% of each batch |
-| **Domain adaptation** | Stochastic O3b → O3a PSD recolouring during training |
-| **Compilation** | `torch.compile(mode="max-autotune")` for the inner training loop |
-
----
-
 ## Quick Start
 
-```python
-from sage.core.config import register_configs
-from sage.data.waveform.sampler import read_from_config
-from sage.data.noise.real_noise import MemmapNoiseSampler
-
-# 1. Register configs (must be called once)
-register_configs(cfg, data_cfg)
-
-# 2. Build waveform sampler from a YAML prior
-param_sampler = read_from_config("priors/bbh_o3.yaml", seed=42)
-
-# 3. Build noise sampler
-noise_sampler = MemmapNoiseSampler(data_cfg)
-
-# 4. Draw a batch
-params = param_sampler(batch_size)          # (B, num_params)
-noise, noise_targets = noise_sampler()      # (B, D, T)
-```
-
-See `runs/o3b_hardmining/train.py` for a complete training script.
+Reproducibility scripts and a walkthrough notebook are provided in [`repro/`](repro/). Start with [`repro/start_here.ipynb`](repro/start_here.ipynb).
 
 ---
 
 ## Documentation
 
-Full API documentation is available at ReadTheDocs (auto-built from docstrings):
+Full API documentation is available at **[sage-gw.readthedocs.io](https://sage-gw.readthedocs.io/en/latest/)**.
+
+---
+
+## Testing
+
+A minimal smoke test exercises the waveform pipeline end-to-end:
 
 ```bash
-cd docs
-pip install -r requirements.txt
-make html
-# open build/html/index.html
+python -c "
+from sage.core.config import register_configs
+from sage.presets.data_configs import Default as data_cfg
+from sage.presets.configs import DefaultConfig as cfg
+register_configs(cfg, data_cfg)
+print('Config registration: OK')
+"
+```
+
+Individual module tests can be run with pytest (where present):
+
+```bash
+pytest tests/ -v
 ```
 
 ---
 
-### Cite
+## Contributing
+
+Contributions are welcome.  Please open an issue first to discuss the proposed change, then submit a pull request against the `main` branch.
+
+1. Fork the repository and create a feature branch from `main`.
+2. Write or update tests to cover the new behaviour.
+3. Ensure all existing syntax checks pass: `python -m py_compile sage/**/*.py`.
+4. Update docstrings (NumPy style) and `CHANGELOG.md` if applicable.
+5. Open a pull request with a clear description of the motivation and approach.
+
+---
+
+## Cite
 If you found this work useful in your research, please consider citing:
 
 ```
@@ -123,8 +128,14 @@ If you found this work useful in your research, please consider citing:
       url={https://arxiv.org/abs/2501.13846}, 
 }
 ```
-Will be updated after publication.
+---
 
-### Acknowledgements
+## License
 
-We appreciate the useful comments from Thomas Dent and Nikolaos Stergioulas on our paper. NN wishes to acknowledge and appreciate the support of Joseph Bayley, Michael Williams and Christian Chapman-Bird. We would also like to extend our sincere gratitude to the PHAS-ML group members from the University of Glasgow, for their fruitful weekly meetings. NN is supported by the College Scholarship offered by the School of Physics and Astronomy (2021-2025), University of Glasgow. CM is supported by STFC grant ST/Y004256/1. This material is based upon work supported by NSF’s LIGO Laboratory, a major facility fully funded by the National Science Foundation.
+This project is released under the [MIT License](LICENSE).
+
+---
+
+## Acknowledgements
+
+We appreciate the useful comments from Thomas Dent and Nikolaos Stergioulas on our paper. NN wishes to acknowledge and appreciate the support of Joseph Bayley, Michael Williams and Christian Chapman-Bird. We would also like to extend our sincere gratitude to the PHAS-ML group members from the University of Glasgow, for their fruitful weekly meetings. NN is supported by the College Scholarship offered by the School of Physics and Astronomy (2021-2025), University of Glasgow. CM is supported by STFC grant ST/Y004256/1. This material is based upon work supported by NSF's LIGO Laboratory, a major facility fully funded by the National Science Foundation.

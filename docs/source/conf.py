@@ -32,6 +32,15 @@ extensions = [
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
+# Suppress nitpicky warnings on missing cross-references (common with torch types)
+nitpicky = False
+
+# Show full qualified names in signatures
+add_module_names = False
+
+# Type-hints rendered as inline text in the description, not in the signature
+autodoc_typehints = "description"
+
 # Napoleon settings (Google-style + NumPy-style docstrings)
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
@@ -51,10 +60,17 @@ autoapi_options = [
     "undoc-members",
     "show-inheritance",
     "show-module-summary",
-    "special-members",
-    "imported-members",
 ]
 autoapi_python_class_content = "both"
+
+# Exclude internal / legacy / experimental sub-trees from the API docs
+autoapi_ignore = [
+    "*/evomcts/*",
+    "*/legacy/*",
+    "*/presets/legacy*",
+    "*/factory/legacy*",
+    "*/__pycache__/*",
+]
 
 # Intersphinx mapping for cross-referencing external docs
 intersphinx_mapping = {

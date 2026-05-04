@@ -1238,6 +1238,26 @@ class SageNetOTF_Russet_HL_HardSampleMined(SageNetOTF):
 
 
 class Norland_D3_Odds_Ratio(SageNetOTF):
+    """
+    On-the-fly training configuration for the Norland D3 odds-ratio run.
+
+    Inherits from :class:`SageNetOTF` and overrides dataset generation,
+    noise, transforms, and model settings for an experiment using the
+    D3 template-placement metric.  Coloured noise PSDs are drawn from the
+    same ``limited_psds`` directory for both training and validation,
+    so the PSD distribution matches exactly between the two splits.
+
+    Class Attributes
+    ----------------
+    name : str
+        Human-readable run identifier used for ``export_dir`` construction.
+    export_dir : pathlib.Path
+        Root directory where checkpoints and results are written.
+    dataset : type
+        Dataset class (``BBHDataset``).
+    num_workers : int
+        DataLoader worker count.
+    """
     # Running D3 on template placement metric
     # Due to the abscence of blip glitches sensitivitiy should not suffer
     # PSD distribution should match exactly between train and test

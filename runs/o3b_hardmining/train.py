@@ -2,18 +2,20 @@
 # -*- coding: utf-8 -*-
 
 """
-O3b hard-mining training script.
+O3b hard-noise-mining training script.
 
-Three complementary mechanisms improve performance at low FAR:
-  1. BCEWithFARLoss   — pAUC buffer targeting FAR threshold + focal amplification
-                        of hard samples (both classes) within every batch.
-  2. Hard replay      — periodic mining pass identifies the hardest backgrounds
-                        (model most likely to false-alarm on) and hardest signals
-                        (model most likely to miss); both are replayed at a
-                        controlled fraction of every training batch.
-  3. Adversarial noise — FGSM-style perturbation pushes background noise toward
-                         the model's current decision boundary, forcing it to
-                         suppress the spectral features that cause false alarms.
+Compared to the baseline O3b run, the only additions are:
+
+  1. GlitchOversampledNoiseSampler — class-balanced oversampling of O3b
+     glitch windows (from GravitySpy catalog) so rare-but-dangerous glitch
+     classes are not drowned out by Scattered_Light.
+
+  2. Hard noise replay — a periodic mining pass identifies the background
+     windows the model most strongly false-alarms on and replays them at a
+     controlled fraction of every training batch.
+
+Everything else (loss function, model, optimiser, scheduler) is identical
+to the baseline O3b run.
 
 Run from the runs/o3b_hardmining directory:
     python3 train.py
@@ -49,7 +51,7 @@ from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 
 # Model and loss
 from sage.architecture.network import MSCNN1D_2DResNetCBAM_Heteroscedastic
-from sage.architecture.custom_losses import BCEWithFARLoss
+from sage.architecture.custom_losses import BCEWithPEsigmaLoss
 from sage.core.logger import HDF5LossLogger
 
 # Optimiser / scheduler
@@ -84,10 +86,6 @@ def make_training_graph():
     # Class-balanced oversampling of high-SNR O3b glitches.
     # 10 % of each training batch is replaced by GPS-aligned O3b glitch
     # windows drawn with equal probability from every GravitySpy class.
-    # This directly addresses the Scattered_Light dominance (65 % of O3b H1)
-    # that starves rare-but-dangerous classes like Repeating_Blips of training
-    # signal.  The full recolour/FFT pipeline is applied to glitch windows
-    # unchanged, so they enter the model in the same format as regular noise.
     training_noise_sampler = GlitchOversampledNoiseSampler(
         postprocess_fn  = recolour,
         prefetch        = 8,
@@ -153,20 +151,10 @@ def run_sage():
     model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=True)
     print("Model compiled with torch.compile.")
 
-    # ── Loss ───────────────────────────────────────────────────────────
-    # target_far_quantile=0.9999 → 1-in-10,000 background training events.
-    # pauc_weight=0.15  gives the FAR term a meaningful gradient signal
-    #                   without overwhelming BCE.
-    # focal_mix=0.4     preserves 60 % pure-BCE gradient on easy examples.
-    loss_function = BCEWithFARLoss(
-        regression_weight   = 0.005,
-        coupling_weight     = 0.005,
-        focal_mix           = 0.4,
-        focal_gamma         = 2.0,
-        pauc_weight         = 0.15,
-        far_buffer_size     = 100_000,
-        target_far_quantile = 0.9999,
-        pauc_warmup         = 5_000,
+    # ── Loss (identical to baseline O3b) ───────────────────────────────
+    loss_function = BCEWithPEsigmaLoss(
+        regression_weight = 0.005,
+        coupling_weight   = 0.005,
     )
 
     # ── Optimiser / scheduler ─────────────────────────────────────────
@@ -178,20 +166,14 @@ def run_sage():
     )
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
-    # ── Hard sample buffers and miner ─────────────────────────────────
-    # Capacity 2048 keeps the top-2048 hardest noise windows and missed
-    # signals found each mining pass — bounded memory ~100 MB total.
-    hard_noise_buffer  = HardSampleBuffer(capacity=2048)
-    hard_signal_buffer = HardSampleBuffer(capacity=2048)
+    # ── Hard noise buffer and miner ───────────────────────────────────
+    # Capacity 2048: top-2048 hardest noise windows per mining pass.
+    hard_noise_buffer = HardSampleBuffer(capacity=2048)
 
-    # n_mine_noise=100_000  → sample 100K bg windows, keep hardest 2048
-    # n_mine_signal=50_000  → sample 50K signal+noise pairs, keep hardest 2048
-    # batch size is driven by cfg.batch_size via noise_sampler.sample_batch()
+    # Mine 100K background windows per pass, keep hardest 2048.
     miner = HardSampleMiner(
-        hard_noise_buffer  = hard_noise_buffer,
-        hard_signal_buffer = hard_signal_buffer,
-        n_mine_noise       = 100_000,
-        n_mine_signal      =  50_000,
+        hard_noise_buffer = hard_noise_buffer,
+        n_mine_noise      = 100_000,
     )
 
     # ── Training loop ─────────────────────────────────────────────────
@@ -206,16 +188,9 @@ def run_sage():
         scaler             = scaler,
         miner              = miner,
         hard_noise_buffer  = hard_noise_buffer,
-        hard_signal_buffer = hard_signal_buffer,
         num_iterations     = cfg.training_iterations,
         num_epochs         = cfg.num_epochs,
-        # Hard replay fractions — 15 % BG / 10 % signal slots per batch
         hard_noise_frac    = 0.15,
-        hard_signal_frac   = 0.10,
-        # 10 % of batches get adversarial background noise
-        adv_prob           = 0.10,
-        adv_eps            = 0.05,
-        # Mine every 5 epochs (also mines before epoch 0)
         mine_every_n_epochs = 5,
     )
 
@@ -247,7 +222,7 @@ def run_sage():
 
     for nepoch in range(cfg.num_epochs):
 
-        print(f"Epoch {nepoch}: Training Sage (hard-mining)")
+        print(f"Epoch {nepoch}: Training Sage (hard-noise mining)")
         train_sage(nepoch=nepoch)
         logger.log(train_sage.loss_components, nepoch, split="training")
 

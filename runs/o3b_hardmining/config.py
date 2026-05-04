@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-O3b hard-mining run configuration.
+O3b hard-noise-mining run configuration.
 
-Identical hardware setup to the base O3b run.  Key differences:
-  - BCEWithFARLoss (pAUC + focal mix) instead of BCEWithPEsigmaLoss
-  - SageHardMiningTraining with hard-noise / hard-signal replay + adv noise
-  - Slightly more training budget per epoch to absorb mining overhead
+Identical to the base O3b run except:
+  - GlitchOversampledNoiseSampler replaces MemmapNoiseSampler for training
+    (class-balanced oversampling of O3b GravitySpy glitch windows).
+  - SageHardMiningTraining replays the hardest background windows each batch.
+  - Loss function, model, and all other settings are unchanged.
 """
 
 import torch

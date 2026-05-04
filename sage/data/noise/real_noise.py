@@ -518,6 +518,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         )
 
         def read_detector(d):
+            """Read a batch of segments for detector index ``d`` from the memmap."""
             mm = self.mmaps[d]
             starts = start_indices[d]
             arr = np.empty((B, seq_len), dtype=np.float32)

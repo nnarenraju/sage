@@ -358,44 +358,21 @@ class SageUncompiledTraining(torch.nn.Module):
 
 class SageHardMiningTraining(torch.nn.Module):
     """
-    Drop-in replacement for SageUncompiledTraining that adds three mechanisms
-    for improving performance at low false-alarm rates:
+    Training loop that augments each batch with hard background examples.
 
-    1. pAUC + focal loss (via BCEWithFARLoss)
-       Handled entirely inside the loss function; no changes here.
-
-    2. Hard sample replay
-       Each batch mixes a controlled fraction of pre-mined hard examples:
-         • hard_noise_frac  : background windows the model currently ranks
-                              highest (false-alarm candidates).
-         • hard_signal_frac : signal+noise windows the model currently ranks
-                              lowest (missed detections).
-       Hard buffers are repopulated every `mine_every_n_epochs` epochs by
-       calling miner.mine(). The first mine happens before epoch 0 so the
-       buffers are populated from the start.
-
-    3. Adversarial noise perturbation
-       With probability `adv_prob`, background noise in the current batch is
-       perturbed in the direction that maximises the ranking statistic (FGSM
-       step, PSD-normalised). This exposes the model to noise excursions that
-       look maximally signal-like under the current weights — directly
-       targeting the spectral features that cause loud background triggers.
+    Each batch replaces a controlled fraction of background slots with
+    windows drawn from a pre-mined buffer of the highest-ranking noise
+    samples (false-alarm candidates the model currently struggles to
+    reject).  The buffer is repopulated every `mine_every_n_epochs` epochs
+    (and once before epoch 0).
 
     Parameters
     ----------
     hard_noise_frac : float
-        Fraction of background slots in each batch replaced by buffered hard
-        noise (pre-processed tensors). 0.15 = replace 15 % of BG slots.
-    hard_signal_frac : float
-        Fraction of signal slots replaced by buffered hard signals.
-    adv_prob : float
-        Probability per batch of applying an adversarial noise perturbation to
-        the current background noise before preprocessing.
-    adv_eps : float
-        Perturbation strength as a fraction of the local noise amplitude per
-        frequency bin (PSD-normalised). Keep < 0.1 to stay physical.
+        Fraction of background slots in each batch replaced by buffered
+        hard noise (pre-processed tensors).
     mine_every_n_epochs : int
-        Mining pass frequency. Set to 0 to mine only before epoch 0.
+        Mining pass frequency. 0 = mine only before epoch 0.
     """
 
     def __init__(
@@ -410,99 +387,45 @@ class SageHardMiningTraining(torch.nn.Module):
         scaler,
         miner,
         hard_noise_buffer,
-        hard_signal_buffer,
         num_iterations:      int,
         num_epochs:          int,
         scheduler_mode:      str   = "batch",
         hard_noise_frac:     float = 0.15,
-        hard_signal_frac:    float = 0.10,
-        adv_prob:            float = 0.10,
-        adv_eps:             float = 0.05,
         mine_every_n_epochs: int   = 5,
     ):
         super().__init__()
 
         self.cfg = get_cfg()
 
-        self.signal_sampler     = signal_sampler
-        self.noise_sampler      = noise_sampler
-        self.processor          = processor
-        self.model              = model.to(device=self.cfg.device, dtype=self.cfg.dtype)
-        self.loss_function      = loss_function.to(
+        self.signal_sampler    = signal_sampler
+        self.noise_sampler     = noise_sampler
+        self.processor         = processor
+        self.model             = model.to(device=self.cfg.device, dtype=self.cfg.dtype)
+        self.loss_function     = loss_function.to(
             device=self.cfg.device, dtype=self.cfg.dtype
         )
-        self.optimiser          = optimiser
-        self.scheduler          = ManageScheduler(scheduler, scheduler_mode)
-        self.scaler             = scaler
+        self.optimiser         = optimiser
+        self.scheduler         = ManageScheduler(scheduler, scheduler_mode)
+        self.scaler            = scaler
 
-        self.miner              = miner
-        self.hard_noise_buffer  = hard_noise_buffer
-        self.hard_signal_buffer = hard_signal_buffer
+        self.miner             = miner
+        self.hard_noise_buffer = hard_noise_buffer
 
         self.num_iterations      = num_iterations
         self.num_epochs          = num_epochs
         self.hard_noise_frac     = hard_noise_frac
-        self.hard_signal_frac    = hard_signal_frac
-        self.adv_prob            = adv_prob
-        self.adv_eps             = adv_eps
         self.mine_every_n_epochs = mine_every_n_epochs
 
         self.num_point_estimate = len(self.cfg.do_point_estimate)
         self.num_targets        = self.num_point_estimate + 1
-        self.B  = self.cfg.batch_size
-        self.S  = int(self.cfg.batch_size * self.cfg.class_balance)
+        self.B = self.cfg.batch_size
+        self.S = int(self.cfg.batch_size * self.cfg.class_balance)
 
         self.loss_components = torch.zeros(
             (num_epochs, self.loss_function.num_components),
             device=self.cfg.device,
             dtype=self.cfg.dtype,
         )
-
-    # ------------------------------------------------------------------
-    # Adversarial perturbation (eager mode, no compiled-graph issues)
-    # ------------------------------------------------------------------
-
-    @torch._dynamo.disable
-    def _adversarial_noise(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Apply a single FGSM step in the preprocessed (whitened) space.
-
-        FiducialWhitening.forward is decorated @torch.no_grad(), so
-        differentiating through the preprocessor is not possible.  Instead
-        we perturb the already-whitened tensor x that the model receives,
-        which is both differentiable and more directly relevant — the model
-        classifies on these features, not on raw FD data.
-
-        gradient = ∂(sum(ranking_stat)) / ∂(x)
-        delta     = adv_eps * (gradient / |gradient|) * |x|
-
-        Using torch.autograd.grad() avoids accumulating gradients into model
-        parameters. The uncompiled model (_orig_mod) is used for reliability
-        with torch.compile.
-        """
-        base_model = getattr(self.model, "_orig_mod", self.model)
-        base_model.eval()
-
-        x_leaf = x.detach().clone().requires_grad_(True)
-        with torch.enable_grad():
-            out = base_model(x_leaf)
-
-        (grad,) = torch.autograd.grad(
-            outputs=out[0].float().sum(),
-            inputs=x_leaf,
-        )
-
-        base_model.train()
-
-        g_dir  = grad / grad.abs().clamp_min(1e-8)
-        x_amp  = x.detach().abs().clamp_min(1e-10)
-        delta  = self.adv_eps * g_dir * x_amp
-
-        return (x_leaf + delta).detach()
-
-    # ------------------------------------------------------------------
-    # Main training loop
-    # ------------------------------------------------------------------
 
     def forward(self, nepoch: int):
 
@@ -512,14 +435,13 @@ class SageHardMiningTraining(torch.nn.Module):
             and nepoch % self.mine_every_n_epochs == 0
         )
         if do_mine:
-            print(f"\nEpoch {nepoch}: running hard-sample mining pass …")
+            print(f"\nEpoch {nepoch}: running hard-noise mining pass …")
             self.miner.mine(
-                model          = self.model,
-                noise_sampler  = self.noise_sampler,
-                signal_sampler = self.signal_sampler,
-                processor      = self.processor,
-                device         = self.cfg.device,
-                autocast       = self.cfg.autocast,
+                model         = self.model,
+                noise_sampler = self.noise_sampler,
+                processor     = self.processor,
+                device        = self.cfg.device,
+                autocast      = self.cfg.autocast,
             )
 
         self.model.train()
@@ -533,7 +455,7 @@ class SageHardMiningTraining(torch.nn.Module):
             noise_data,  noise_targets  = self.noise_sampler()
 
             # Pad noise targets to (B, num_pe + 1)
-            pad          = torch.zeros(
+            pad = torch.zeros(
                 noise_targets.shape[0], self.num_point_estimate,
                 device=device, dtype=noise_targets.dtype,
             )
@@ -549,24 +471,12 @@ class SageHardMiningTraining(torch.nn.Module):
             target_pad[idx] = signal_targets
 
             x       = noise_data + signal_pad
-            targets = noise_targets + target_pad  # (B, num_pe+1)
+            targets = noise_targets + target_pad
 
             # ── 3. Preprocess ─────────────────────────────────────────
-            x = self.processor(x)   # (B, D, L_compressed)
+            x = self.processor(x)
 
-            # ── 4. Adversarial perturbation (post-preprocessing) ──────
-            # FiducialWhitening runs under @torch.no_grad(), so we perturb
-            # in the already-whitened space where the model operates.
-            # Only background positions are perturbed — signal windows are
-            # left intact to preserve regression targets.
-            if torch.rand(1).item() < self.adv_prob:
-                bg_pos = torch.where(targets[:, -1] < 0.5)[0]
-                if len(bg_pos) > 0:
-                    x_bg_adv = self._adversarial_noise(x[bg_pos])
-                    x = x.clone()
-                    x[bg_pos] = x_bg_adv
-
-            # ── 5. Hard noise injection (post-preprocessing) ──────────
+            # ── 4. Hard noise injection (post-preprocessing) ──────────
             if self.hard_noise_buffer.is_ready:
                 bg_pos = torch.where(targets[:, -1] < 0.5)[0]
                 n_hard = min(
@@ -575,27 +485,11 @@ class SageHardMiningTraining(torch.nn.Module):
                     len(self.hard_noise_buffer),
                 )
                 if n_hard > 0:
-                    replace_pos      = bg_pos[torch.randperm(len(bg_pos))[:n_hard]]
-                    hard_x, _        = self.hard_noise_buffer.sample(n_hard, device, dtype)
-                    x[replace_pos]   = hard_x
-                    # targets remain all-zero background for these positions
+                    replace_pos    = bg_pos[torch.randperm(len(bg_pos))[:n_hard]]
+                    hard_x         = self.hard_noise_buffer.sample(n_hard, device, dtype)
+                    x[replace_pos] = hard_x
 
-            # ── 6. Hard signal injection (post-preprocessing) ─────────
-            if self.hard_signal_buffer.is_ready:
-                n_hard_sig = min(
-                    int(self.S * self.hard_signal_frac),
-                    len(self.hard_signal_buffer),
-                    len(idx),
-                )
-                if n_hard_sig > 0:
-                    sig_replace = idx[:n_hard_sig]
-                    hard_sig_x, hard_sig_t = self.hard_signal_buffer.sample(
-                        n_hard_sig, device, dtype
-                    )
-                    x[sig_replace]       = hard_sig_x
-                    targets[sig_replace] = hard_sig_t
-
-            # ── 7. Forward + backward ─────────────────────────────────
+            # ── 5. Forward + backward ─────────────────────────────────
             self.optimiser.zero_grad(set_to_none=True)
 
             with (

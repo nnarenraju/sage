@@ -305,6 +305,24 @@ def param_vs_param(output_dir, injparams, found_injections):
 
 
 def found_param_plots(noise_stats, output_dir, injparams, found_injections):
+    """
+    Generate parameter histograms and scatter plots for found injections at each FAR threshold.
+
+    Saves per-parameter injection histograms under ``output_dir/FOUND_INJECTIONS/``
+    and param-vs-param scatter plots for high-SNR bad-FAR events under
+    ``output_dir/HIGH_SNR_BAD/``.
+
+    Parameters
+    ----------
+    noise_stats : numpy.ndarray, shape (N_bg,)
+        Sorted background network scores used to derive FAR thresholds.
+    output_dir : str
+        Root output directory.
+    injparams : dict
+        Injection parameter arrays (masses, distance, snr, …).
+    found_injections : numpy.ndarray, shape (2, N_found)
+        Row 0: injection indices; row 1: network scores for found injections.
+    """
     ### Get the thresholds for different false alarm rates
     # TODO: Add PyCBC's results overlayed on top
     # For a month-long testing dataset these should give FAR per month, per week and per day
@@ -634,6 +652,21 @@ def read_data(args, idxs):
 
 
 def compare_plot_1(team_1, team_2, save_dir):
+    """
+    Plot overlaid injection-parameter histograms for both pipelines at each FAR threshold.
+
+    Saves one multi-panel PNG per FAR threshold under ``save_dir``.
+
+    Parameters
+    ----------
+    team_1 : dict
+        Must contain ``params`` (list of parameter names), ``found_idx``,
+        ``found_stats``, ``far_thresholds``, and per-parameter arrays.
+    team_2 : dict
+        Same structure as ``team_1`` for the comparison pipeline.
+    save_dir : str
+        Directory where plots are saved (created if absent).
+    """
     # Plot 1 (Histogram of all injections with found injections of both pipelines)
     os.makedirs(save_dir, exist_ok=False)
     params = team_1["params"]
@@ -710,6 +743,22 @@ def compare_plot_1(team_1, team_2, save_dir):
 
 
 def compare_plot_2(team_1, team_2, save_dir):
+    """
+    Scatter param-vs-param plots colour-coded by unique and shared detections.
+
+    Blue = unique to team_1, red = unique to team_2, grey = found by both.
+    One multi-panel PNG is saved per FAR threshold.
+
+    Parameters
+    ----------
+    team_1 : dict
+        Pipeline dict with ``found_idx``, ``found_stats``, ``far_thresholds``,
+        and per-parameter arrays (including ``mchirp`` for duration calculation).
+    team_2 : dict
+        Same structure as ``team_1``.
+    save_dir : str
+        Output directory (created if absent).
+    """
     # Plot 2 (Scatter plot of param vs param (unique finds from both teams are coloured))
     # Calculate signal duration
     lf = 20.0  # Hz
@@ -825,6 +874,22 @@ def compare_plot_2(team_1, team_2, save_dir):
 
 
 def compare_plot_3(team_1, team_2, save_dir):
+    """
+    Colour-strip plots showing the per-bin ratio of unique detections (team_1 / team_2).
+
+    Uses a diverging colormap centred at ratio=1 so bins where team_1 outperforms
+    team_2 appear red and vice-versa blue.
+
+    Parameters
+    ----------
+    team_1 : dict
+        Pipeline dict with ``params``, ``found_idx``, ``found_stats``,
+        ``far_thresholds``, and per-parameter arrays.
+    team_2 : dict
+        Same structure as ``team_1``.
+    save_dir : str
+        Output directory (created if absent).
+    """
     # Plot 3 (Colour strip plot quantifying np.log10(Nnn/Nmf) found in each bin)
     os.makedirs(save_dir, exist_ok=False)
     params = team_1["params"] + ["duration"]
@@ -913,6 +978,21 @@ def compare_plot_3(team_1, team_2, save_dir):
 
 
 def compare_plot_4(team_1, team_2, save_dir):
+    """
+    Plot SNR-binned efficiency curves (True Alarm Probability vs optimal SNR).
+
+    One PNG per FAR threshold, overlaying both pipelines.
+
+    Parameters
+    ----------
+    team_1 : dict
+        Pipeline dict with ``snr``, ``found_idx``, ``found_stats``,
+        and ``far_thresholds``.
+    team_2 : dict
+        Same structure as ``team_1``.
+    save_dir : str
+        Output directory (created if absent).
+    """
     # Plot 4 (Efficiency curves made for each of the two groups)
     os.makedirs(save_dir, exist_ok=False)
 
@@ -1252,7 +1332,23 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
 
 
 def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
+    """
+    CLI entry point for the MLGWSC-1 testing-phase evaluator.
 
+    Parses arguments, loads foreground/background events and injection parameters,
+    computes FAR and sensitive distance via :func:`get_stats`, writes results to
+    an HDF5 file, and saves sensitivity-vs-FAR plots comparing Sage against
+    MLGWSC-1 competition teams.
+
+    Parameters
+    ----------
+    raw_args : list of str, optional
+        Argument list for programmatic invocation; defaults to ``sys.argv``.
+    cfg_far_scaling_factor : float, optional
+        FAR scaling factor from config (overrides ``--far-scaling-factor`` CLI arg).
+    dataset : int, optional
+        Dataset index (overrides ``--dataset`` CLI arg).
+    """
     parser = argparse.ArgumentParser(description="Testing phase evaluator")
 
     parser.add_argument(

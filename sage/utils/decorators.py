@@ -44,6 +44,7 @@ def unreviewed_model(cls):
         to the original class.
     """
     def mark_as_unreviewed(*args, **kwargs):
+        """Print an unreviewed-model warning and construct the wrapped class."""
         print('UNREVIEWED: {} model has not be examined for issues'.format(cls.__name__))
         print('Use at your own discretion!')
         return cls(*args, **kwargs)

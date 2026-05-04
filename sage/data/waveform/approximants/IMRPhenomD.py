@@ -1033,6 +1033,30 @@ class IMRPhenomD(phenom.PhenomConstants):
         return Amp0 * Amp * (M_s * M_s) / dist_s
 
     def get_inspiral_Amp(self, f_Ms, chi1, chi2, eta_s, coeffs):
+        """
+        Compute the TaylorF2-like inspiral amplitude ansatz (Region I).
+
+        Implements the PN series A0…A6 plus three fitted coefficients A7–A9
+        from LALSimIMRPhenomD_internals.c (lines 302–351).
+
+        Parameters
+        ----------
+        f_Ms : torch.Tensor, shape (B, n_freq)
+            Dimensionless frequency grid f × M_s.
+        chi1 : torch.Tensor, shape (B, 1)
+            Dimensionless aligned spin of the larger BH.
+        chi2 : torch.Tensor, shape (B, 1)
+            Dimensionless aligned spin of the smaller BH.
+        eta_s : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+        coeffs : torch.Tensor, shape (B, 7+)
+            PhenomD fit coefficients; columns 0–2 are A7, A8, A9.
+
+        Returns
+        -------
+        Amp_Ins : torch.Tensor, shape (B, n_freq)
+            Inspiral amplitude (unnormalised, dimensionless).
+        """
         # Below is taken from lalsimulation/lib/LALSimIMRPhenomD_internals.c
         # Lines 302 --> 351
         eta2 = eta_s * eta_s
@@ -1152,6 +1176,31 @@ class IMRPhenomD(phenom.PhenomConstants):
         return Amp_Ins
 
     def get_IIa_Amp(self, f_Ms, fx_Ms, theta, derived, coeffs):
+        """
+        Compute the intermediate (IIa) amplitude via the quintic polynomial ansatz.
+
+        Solves for the five delta coefficients by matching the values and first
+        derivatives of the inspiral and merger-ringdown amplitudes at the
+        transition frequencies f1 and f3, then evaluates the quintic.
+
+        Parameters
+        ----------
+        f_Ms : torch.Tensor, shape (B, n_freq)
+            Dimensionless frequency grid for the IIa region.
+        fx_Ms : torch.Tensor, shape (B, 8)
+            Special frequency scale products (fref, f1, f2, f3, f4, fRD, fdamp, fmid).
+        theta : torch.Tensor, shape (B, 5+)
+            Waveform parameters; columns 2–3 are chi1, chi2.
+        derived : torch.Tensor, shape (B, 4+)
+            Derived parameters; column 3 is eta.
+        coeffs : torch.Tensor, shape (B, 7+)
+            PhenomD fit coefficients.
+
+        Returns
+        -------
+        Amp_IIa : torch.Tensor, shape (B, n_freq)
+            Intermediate amplitude on f_Ms.
+        """
         # Required vars
         # f1, f3, f_RD, f_damp
         eta_s = derived[:, 3:4]
@@ -1345,6 +1394,23 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_IIb_Amp(f_Ms, fx_Ms, coeffs):
+        """
+        Compute the merger-ringdown (IIb) amplitude via the Lorentzian ansatz.
+
+        Parameters
+        ----------
+        f_Ms : torch.Tensor, shape (B, n_freq)
+            Dimensionless frequency grid for the IIb region.
+        fx_Ms : torch.Tensor, shape (B, 8)
+            Special frequency scale products; columns 5–6 are fRD·M_s and fdamp·M_s.
+        coeffs : torch.Tensor, shape (B, 7+)
+            PhenomD coefficients; columns 4–6 are gamma1, gamma2, gamma3.
+
+        Returns
+        -------
+        Amp_IIb : torch.Tensor, shape (B, n_freq)
+            Merger-ringdown amplitude on f_Ms.
+        """
         gamma1 = coeffs[:, 4:5]
         gamma2 = coeffs[:, 5:6]
         gamma3 = coeffs[:, 6:7]
@@ -1360,6 +1426,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_delta0(f1, f2, f3, v1, v2, v3, d1, d3):
+        """Compute the δ₀ coefficient of the IIa quintic amplitude polynomial."""
         return (
             -(d3 * f1**2 * (f1 - f2) ** 2 * f2 * (f1 - f3) * (f2 - f3) * f3)
             + d1 * f1 * (f1 - f2) * f2 * (f1 - f3) * (f2 - f3) ** 2 * f3**2
@@ -1380,6 +1447,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_delta1(f1, f2, f3, v1, v2, v3, d1, d3):
+        """Compute the δ₁ coefficient of the IIa quintic amplitude polynomial."""
         return (
             d3 * f1 * (f1 - f3) * (f2 - f3) * (2 * f2 * f3 + f1 * (f2 + f3))
             - (
@@ -1412,6 +1480,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_delta2(f1, f2, f3, v1, v2, v3, d1, d3):
+        """Compute the δ₂ coefficient of the IIa quintic amplitude polynomial."""
         return (
             d1
             * (f1 - f2)
@@ -1450,6 +1519,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_delta3(f1, f2, f3, v1, v2, v3, d1, d3):
+        """Compute the δ₃ coefficient of the IIa quintic amplitude polynomial."""
         return (
             (d3 * (f1 - f3) * (2 * f1 + f2 + f3)) / (f2 - f3)
             - (d1 * (f1 - f3) * (f1 + f2 + 2 * f3)) / (f1 - f2)
@@ -1473,6 +1543,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     @staticmethod
     def get_delta4(f1, f2, f3, v1, v2, v3, d1, d3):
+        """Compute the δ₄ coefficient of the IIa quintic amplitude polynomial."""
         return (
             -(d3 * (f1 - f2) ** 2 * (f1 - f3) * (f2 - f3))
             + d1 * (f1 - f2) * (f1 - f3) * (f2 - f3) ** 2
@@ -1490,6 +1561,24 @@ class IMRPhenomD(phenom.PhenomConstants):
         ) / ((f1 - f2) ** 2 * (f1 - f3) ** 3 * (f2 - f3) ** 2)
 
     def get_Amp0(self, f_Ms, eta):
+        """
+        Compute the overall GW amplitude prefactor A₀(f, η).
+
+        This is the leading-order Newtonian factor that scales the full
+        PhenomD amplitude: A₀ = (2η/3)^(1/2) × (fM_s)^(-7/6) × π^(-1/6).
+
+        Parameters
+        ----------
+        f_Ms : torch.Tensor, shape (B, n_freq)
+            Dimensionless frequency f × M_s.
+        eta : torch.Tensor, shape (B, 1)
+            Symmetric mass ratio.
+
+        Returns
+        -------
+        Amp0 : torch.Tensor, shape (B, n_freq)
+            Newtonian amplitude prefactor.
+        """
         Amp0 = (
             (2.0 / 3.0 * eta) ** (1.0 / 2.0)
             * (f_Ms) ** (-7.0 / 6.0)

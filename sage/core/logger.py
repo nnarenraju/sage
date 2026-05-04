@@ -333,8 +333,8 @@ class HDF5LossLogger:
     num_epochs : int
         Total number of training epochs (pre-allocates the dataset).
     num_components : int
-        Number of scalar loss components logged per epoch (e.g. 6 for
-        :class:`BCEWithFARLoss`: total, BCE, reg, coupling, pAUC, focal).
+        Number of scalar loss components logged per epoch (e.g. 4 for
+        :class:`BCEWithPEsigmaLoss`: total, BCE, reg, coupling).
     dtype : str
         NumPy dtype string for the stored values (default ``"float32"``).
     """
