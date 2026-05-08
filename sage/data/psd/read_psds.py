@@ -56,7 +56,7 @@ def get_fiducial_psds():
     cfg = get_cfg()
 
     psds_all = []
-    for det in ["H1", "L1"]:
+    for det in cfg.detectors:
         psd_dir = Path(cfg.export_dir) / "fiducial_psds"
         bin_path = psd_dir / f"fiducial_{det}_psd.bin"
         meta_path = psd_dir / f"fiducial_{det}_psd.json"
