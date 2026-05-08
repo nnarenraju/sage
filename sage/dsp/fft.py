@@ -67,5 +67,5 @@ class BatchToFrequencyDomain:
             raise ValueError("Expected (B, D, T)")
 
         # rFFT over time dimension
-        batch_fd = torch.fft.rfft(batch_td, dim=-1)
+        batch_fd = torch.fft.rfft(batch_td, dim=-1, norm='forward')
         return batch_fd
