@@ -294,8 +294,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # final touches to hp and hc, stolen from Scott
         c2z = torch.cos(2 * converted_spins[:, 6:7])
         s2z = torch.sin(2 * converted_spins[:, 6:7])
-        hp = c2z * hp + s2z * hc
-        hc = c2z * hc - s2z * hp
+        final_hp = c2z * hp + s2z * hc
+        final_hc = c2z * hc - s2z * hp
 
         if not reproduce_lal:
             # Frequency domain tapering
@@ -305,23 +305,23 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
                 f_cut=fcut_true,
                 df=self.df,
             )
-            hp *= _taper
-            hc *= _taper
+            final_hp *= _taper
+            final_hc *= _taper
 
             # Apply phase shift equivalent to applying tc
-            hp, hc = self.apply_tc(hp, hc, theta[:, 9:10])
+            final_hp, final_hc = self.apply_tc(final_hp, final_hc, theta[:, 9:10])
 
             # Make hf consistent with the scale of other data
             # LAL works in continuous Fourier regime
-            hp *= self.df
-            hc *= self.df
+            final_hp *= self.df
+            final_hc *= self.df
 
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
         # Assuming f_min included in fs
-        hp, hc = self.pad_missing_frequencies(hp, hc)
+        final_hp, final_hc = self.pad_missing_frequencies(final_hp, final_hc)
 
-        return hp, hc
+        return final_hp, final_hc
 
     def apply_tc(self, hp, hc, tc):
         """
