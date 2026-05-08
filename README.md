@@ -1,4 +1,4 @@
-# Sage - Gravitational Wave Detection with Machine Learning
+## Sage - Gravitational Wave Detection with Machine Learning
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/ceabdb59-2847-45e6-a618-2153278049d0" alt="SAGE logo" width="400"/>
