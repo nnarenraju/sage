@@ -1,0 +1,26 @@
+figure.figsize: 6, 4
+figure.dpi: 120
+figure.facecolor: #222222
+
+axes.facecolor: #222222
+axes.edgecolor: #EEEEEE
+axes.labelcolor: #EEEEEE
+xtick.color: #EEEEEE
+ytick.color: #EEEEEE
+text.color: #EEEEEE
+
+lines.linewidth: 2.0
+
+axes.grid: True
+axes.grid.color: #555555
+axes.grid.alpha: 0.3
+
+axes.prop_cycle: cycler("color", [
+    "#59C3C3", "#F26DF9", "#FF6B6B", "#C7F464",
+    "#5EFC8D", "#A593E0"
+])
+
+legend.frameon: False
+
+savefig.facecolor: #222222
+savefig.bbox: tight

@@ -1,0 +1,49 @@
+# ===== FIGURE =====
+figure.figsize: 10, 8
+figure.dpi: 120
+figure.autolayout: True
+
+# ===== FONTS =====
+font.family: sans-serif
+font.sans-serif: DejaVu Sans
+font.size: 11
+
+# ===== AXES =====
+axes.titlesize: 13
+axes.labelsize: 12
+axes.linewidth: 1
+axes.grid: True
+axes.grid.which: both
+axes.grid.linewidth: 0.5
+axes.grid.alpha: 0.2
+
+# ===== TICKS =====
+xtick.labelsize: 11
+ytick.labelsize: 11
+xtick.direction: out
+ytick.direction: out
+xtick.major.size: 4
+ytick.major.size: 4
+
+# ===== LINES =====
+lines.linewidth: 1.5
+lines.markersize: 5
+
+# ===== LEGEND =====
+legend.frameon: False
+legend.fontsize: 11
+
+# ===== COLORS =====
+axes.prop_cycle: cycler("color", [
+    "#4477AA",
+    "#EE6677",
+    "#228833",
+    "#CCBB44",
+    "#66CCEE",
+    "#AA3377",
+    "#BBBBBB",
+])
+
+# ===== SAVING =====
+savefig.dpi: 300
+savefig.bbox: tight
