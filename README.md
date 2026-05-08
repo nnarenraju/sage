@@ -16,7 +16,7 @@ compression, training, validation, and diagnostic studies.
 
 The methods are described in:
 
-[Identifying and Mitigating Machine Learning Biases for the Gravitational Wave Detection Problem](https://arxiv.org/abs/2501.13846)
+[Identifying and Mitigating Machine Learning Biases for the Gravitational Wave Detection Problem](https://journals.aps.org/prd/abstract/10.1103/zwj9-ycyz)
 
 **Abstract**
 
@@ -145,14 +145,19 @@ changes, then submit a pull request against the `main` branch.
 If you use Sage in your research, please cite:
 
 ```bibtex
-@misc{nagarajan2025,
-      title={Identifying and Mitigating Machine Learning Biases for the Gravitational-wave Detection Problem}, 
-      author={Narenraju Nagarajan and Christopher Messenger},
-      year={2025},
-      eprint={2501.13846},
-      archivePrefix={arXiv},
-      primaryClass={gr-qc},
-      url={https://arxiv.org/abs/2501.13846}, 
+@article{sage,
+  title = {Identifying and mitigating machine-learning biases for the gravitational-wave detection problem},
+  author = {Nagarajan, Narenraju and Messenger, Christopher},
+  journal = {Phys. Rev. D},
+  volume = {112},
+  issue = {10},
+  pages = {103002},
+  numpages = {40},
+  year = {2025},
+  month = {Nov},
+  publisher = {American Physical Society},
+  doi = {10.1103/zwj9-ycyz},
+  url = {https://link.aps.org/doi/10.1103/zwj9-ycyz}
 }
 ```
 ---
