@@ -407,6 +407,12 @@ class DyadicPyramidBinning:
         self.tc_inject_lower, self.tc_inject_upper = param_bounds["tc"]
         self.safe_nyquist_gap = safe_nyquist_gap
         self.min_bin_duration = min_bin_duration
+        self.extra_pre_tc_leeway = max(
+            0.0, float(getattr(data_cfg, "multirate_extra_pre_tc_leeway", 0.0))
+        )
+        self.extra_post_tc_leeway = max(
+            0.0, float(getattr(data_cfg, "multirate_extra_post_tc_leeway", 0.0))
+        )
 
         # Precompute tf for lowest mass system
         self.t, self.f = self._get_tf_evolution_before_tc()
@@ -421,8 +427,12 @@ class DyadicPyramidBinning:
         self.light_travel_time = (
             Detector("H1").light_travel_time_to_detector(Detector("V1")) * 1.1
         )
-        self.pre_fudge_factor = self._get_pre_fudge_factor()
-        self.post_fudge_factor = self._get_post_fudge_factor()
+        self.pre_fudge_factor = (
+            self._get_pre_fudge_factor() + self.extra_pre_tc_leeway
+        )
+        self.post_fudge_factor = (
+            self._get_post_fudge_factor() + self.extra_post_tc_leeway
+        )
 
         # Construct bins immediately
         self.detailed_bins = self._construct_multirate_bins()
