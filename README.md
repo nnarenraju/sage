@@ -32,6 +32,8 @@ The repository contains the research code used for the Sage pipeline, including:
 - Diagnostic plotting tools for ranking statistics, efficiency curves, ROC
   curves, and parameter studies.
 
+All modules are GPU compatible.
+
 ---
 
 ## Installation
