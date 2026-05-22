@@ -4,6 +4,8 @@ from sage.dsp.multibanding import (
     FrequencyMultibandCompressor,
     describe_layout,
     make_dyadic_frequency_bands,
+    make_prior_informed_frequency_bands,
+    make_empirical_frequency_bands,
 )
 from sage.dsp.heterodyning import (
     apply_heterodyne,
@@ -18,6 +20,8 @@ __all__ = [
     "FrequencyMultibandCompressor",
     "describe_layout",
     "make_dyadic_frequency_bands",
+    "make_prior_informed_frequency_bands",
+    "make_empirical_frequency_bands",
     "apply_heterodyne",
     "compute_reference_phase",
     "make_median_reference_binary",

@@ -16,7 +16,6 @@ import torch
 from torch import Tensor
 
 
-OutputFormat = Literal["channels", "stacked", "complex"]
 PoolMode = Literal["sample", "mean"]
 
 
@@ -119,35 +118,52 @@ class FrequencyBandLayout:
 
 
 class FrequencyMultibandCompressor(torch.nn.Module):
-    """Compress complex rFFT data with a variable frequency grid.
+    """Compress rFFT data with a variable frequency grid.
 
-    Input tensors are expected to have shape ``(..., n_freq)`` and complex dtype.
-    For Sage strain batches this is normally ``(batch, detectors, n_freq)``.
+    Input tensors must have shape ``(..., n_freq)`` and may be any dtype
+    (complex or real).  The last axis is treated as the frequency axis; all
+    leading axes are passed through unchanged.
 
-    ``pool="sample"`` keeps representative frequency bins exactly.  This is the
-    safest first choice for training because it does not average away phase.
-    ``pool="mean"`` averages stride-sized chunks inside each band, which is more
-    aggressive and can be useful if the model should see smoothed spectra.
+    ``pool="sample"`` keeps one representative bin per stride block via a
+    single ``index_select`` call — zero Python overhead in the hot path.
+    ``pool="mean"`` averages each stride-sized block using
+    ``unfold(...).mean(-1)`` — two GPU ops per band, no Python bin loop.
+
+    The compressor is format-agnostic: complex ``(B, D, N)`` tensors and
+    real-packed ``(B, D, 2, N)`` tensors both work because all operations
+    act on the last axis only.
     """
+
+    GRAPH_READY = True
 
     def __init__(
         self,
         layout: FrequencyBandLayout,
         *,
-        output_format: OutputFormat = "channels",
         pool: PoolMode = "sample",
     ) -> None:
         super().__init__()
-        if output_format not in ("channels", "stacked", "complex"):
-            raise ValueError(f"unknown output_format: {output_format}")
         if pool not in ("sample", "mean"):
             raise ValueError(f"unknown pool mode: {pool}")
-        self.layout = layout
-        self.output_format = output_format
         self.pool = pool
 
-        indices = torch.cat(layout.band_indices())
-        self.register_buffer("indices", indices, persistent=False)
+        # Python-int scalars — never recomputed in forward.
+        self._n_freq: int = layout.n_freq
+        self._compressed_length: int = layout.compressed_length
+
+        # Pre-compute band slices as Python tuples (in_start, n_complete, stride).
+        # Stored as a plain list of int tuples so torch.compile can treat them as
+        # compile-time constants — mirrors MultirateSampler.power_to_bins.
+        band_slices: list[tuple[int, int, int]] = []
+        for band, idxs in zip(layout.bands, layout.band_indices()):
+            if len(idxs) == 0:
+                continue
+            band_slices.append((int(idxs[0].item()), len(idxs), band.stride))
+        self._band_slices: list[tuple[int, int, int]] = band_slices
+
+        # Registered buffers — automatically migrated with .to(device).
+        self.register_buffer("indices", torch.cat(layout.band_indices()), persistent=False)
+        self.register_buffer("_retained_frequencies", layout.frequencies(), persistent=False)
 
     @classmethod
     def from_bands(
@@ -156,7 +172,6 @@ class FrequencyMultibandCompressor(torch.nn.Module):
         duration: float,
         bands: Sequence[FrequencyBand | tuple[float, float, int]],
         *,
-        output_format: OutputFormat = "channels",
         pool: PoolMode = "sample",
     ) -> "FrequencyMultibandCompressor":
         parsed = tuple(
@@ -165,40 +180,36 @@ class FrequencyMultibandCompressor(torch.nn.Module):
         )
         return cls(
             FrequencyBandLayout(sample_rate=sample_rate, duration=duration, bands=parsed),
-            output_format=output_format,
             pool=pool,
         )
 
+    @torch.no_grad()
     def forward(self, fd: Tensor) -> Tensor:
-        self.layout.validate_for(fd)
-        if not torch.is_complex(fd):
-            raise TypeError("FrequencyMultibandCompressor expects a complex rFFT tensor")
+        """Compress ``fd`` along its last axis.
 
+        Parameters
+        ----------
+        fd : Tensor, shape ``(..., N_freq)``
+
+        Returns
+        -------
+        Tensor, shape ``(..., N_compressed)``
+        """
         if self.pool == "sample":
-            compressed = fd.index_select(-1, self.indices)
-        else:
-            compressed = self._mean_pool(fd)
+            return fd.index_select(-1, self.indices)
 
-        if self.output_format == "complex":
-            return compressed
-        if self.output_format == "stacked":
-            return torch.stack((compressed.real, compressed.imag), dim=-2)
-        return torch.cat((compressed.real, compressed.imag), dim=-2)
+        chunks: list[Tensor] = []
+        for in_start, n_complete, stride in self._band_slices:
+            seg = fd[..., in_start : in_start + n_complete * stride]
+            if stride == 1:
+                chunks.append(seg)
+            else:
+                chunks.append(seg.unfold(-1, stride, stride).mean(-1))
+        return torch.cat(chunks, dim=-1)
 
     def retained_frequencies(self) -> Tensor:
-        """Return retained frequencies on the same device as the module."""
-
-        return self.layout.frequencies(device=self.indices.device)
-
-    def _mean_pool(self, fd: Tensor) -> Tensor:
-        chunks = []
-        for band, indices in zip(self.layout.bands, self.layout.band_indices(fd.device)):
-            if len(indices) == 0:
-                continue
-            # band_indices() guarantees all windows are complete; stride is exact.
-            windows = [fd[..., int(i):int(i) + band.stride].mean(dim=-1) for i in indices.tolist()]
-            chunks.append(torch.stack(windows, dim=-1))
-        return torch.cat(chunks, dim=-1)
+        """Retained frequency grid on the same device as the module."""
+        return self._retained_frequencies
 
 
 def make_dyadic_frequency_bands(
