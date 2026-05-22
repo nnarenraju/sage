@@ -89,7 +89,9 @@ def get_logger(module_name: str, log_dir: str = "logs") -> logging.Logger:
     logger.setLevel(logging.DEBUG)
 
     # Per-module log file
-    module_log = Path(log_dir) / f"{module_name}.log"
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+    module_log = log_path / f"{module_name}.log"
 
     if not any(
         isinstance(h, logging.FileHandler) and h.baseFilename == str(module_log)
