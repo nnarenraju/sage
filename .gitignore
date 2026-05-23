@@ -155,6 +155,7 @@ source/baseline/data/psds/
 *.hdf
 *.bin
 *docs/source/autoapi
+.nfs*
 
 # Do not ignore these files
 !requirements.txt
