@@ -6,8 +6,42 @@ build-backend = "setuptools.build_meta"
 name = "sage"
 version = "0.0.1"
 description = "Sage: Discovering gravitational-wave transients using ML"
-authors = [{ name = "Narenraju Nagarajan" }]
+authors = [
+  { name = "Narenraju Nagarajan" },
+  { name = "Christopher Messenger" },
+]
 requires-python = ">=3.9"
+license = { text = "GPL-3.0-or-later" }
+keywords = [
+  "gravitational waves",
+  "compact binary coalescence",
+  "machine learning",
+  "deep learning",
+  "signal detection",
+  "matched filter",
+  "LIGO",
+  "PyTorch",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Astronomy",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/nnarenraju/sage"
+Documentation = "https://sage-gw.readthedocs.io"
+Repository = "https://github.com/nnarenraju/sage"
+"Bug Tracker" = "https://github.com/nnarenraju/sage/issues"
+Paper = "https://doi.org/10.1103/zwj9-ycyz"
+Zenodo = "https://doi.org/10.5281/zenodo.17290133"
 
 [tool.setuptools.packages.find]
 where = ["."]
