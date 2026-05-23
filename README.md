@@ -86,6 +86,18 @@ sage/
 
 ---
 
+## Colab Tutorials
+
+No local install needed — run Sage on a free Google Colab T4 GPU:
+
+| | Notebook | |
+|---|---|---|
+| 1 | Signal generation with IMRPhenomD | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/01_signal_generation.ipynb) |
+| 2 | Realistic data simulation and whitening | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/02_data_simulation.ipynb) |
+| 3 | Training and evaluating a GW detector | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/03_training_and_evaluation.ipynb) |
+
+---
+
 ## Quick Start
 
 Start with [`repro/start_here.ipynb`](repro/start_here.ipynb), which walks
