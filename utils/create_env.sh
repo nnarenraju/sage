@@ -14,8 +14,15 @@
 
 set -euo pipefail
 
-CONDA=/home/neuweiler/miniforge3/bin/conda
-REPO=$(cd "$(dirname "$0")" && pwd)   # absolute path to this repo
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)   # utils/
+REPO=$(cd "${SCRIPT_DIR}/.." && pwd)        # repo root (one level up)
+
+# Auto-detect conda; fall back to explicit path if not on PATH
+if command -v conda &>/dev/null; then
+    CONDA=conda
+else
+    CONDA=/home/neuweiler/miniforge3/bin/conda
+fi
 ENV_NAME=sage
 ENV_DIR="${HOME}/.conda/envs/${ENV_NAME}"
 
@@ -30,10 +37,10 @@ echo
 # ---------------------------------------------------------------------------
 if $CONDA env list | grep -q "^${ENV_NAME} "; then
     echo "[1/4] Updating existing env '${ENV_NAME}' ..."
-    $CONDA env update --name "${ENV_NAME}" --file "${REPO}/environment.yml" --prune
+    $CONDA env update --name "${ENV_NAME}" --file "${SCRIPT_DIR}/environment.yml" --prune
 else
     echo "[1/4] Creating env '${ENV_NAME}' in ${ENV_DIR} ..."
-    $CONDA env create --name "${ENV_NAME}" --file "${REPO}/environment.yml"
+    $CONDA env create --name "${ENV_NAME}" --file "${SCRIPT_DIR}/environment.yml"
 fi
 
 PIP="${ENV_DIR}/bin/pip"

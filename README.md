@@ -1,7 +1,7 @@
 ## Sage - Gravitational Wave Detection with Machine Learning
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/ceabdb59-2847-45e6-a618-2153278049d0" alt="SAGE logo" width="400"/>
+  <img src="docs/_static/sage_logo.png" alt="SAGE logo" width="400"/>
 </p>
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17290133-blue)](https://doi.org/10.5281/zenodo.17290133)
@@ -40,6 +40,22 @@ All modules are GPU compatible.
 ## Installation
 
 Sage is currently intended for local editable installs.
+
+**Option A — conda (recommended for GPU clusters)**
+
+The [`utils/environment.yml`](utils/environment.yml) file defines the full
+conda environment (Python 3.11, LALSuite, PyCBC, GWpy, and JupyterLab).
+[`utils/create_env.sh`](utils/create_env.sh) automates the three-step setup:
+conda packages → PyTorch CUDA wheel → editable Sage install.
+
+```bash
+git clone https://github.com/nnarenraju/sage.git
+cd sage/utils
+bash create_env.sh
+conda activate sage
+```
+
+**Option B — pip only**
 
 ```bash
 git clone https://github.com/nnarenraju/sage.git
