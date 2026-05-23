@@ -1,0 +1,43 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Sage: A machine-learning search pipeline for compact binary coalescence gravitational-wave signals"
+version: "0.0.1"
+date-released: "2025-11-01"
+license: GPL-3.0
+repository-code: "https://github.com/nnarenraju/sage"
+doi: 10.5281/zenodo.17290133
+url: "https://sage-gw.readthedocs.io"
+authors:
+  - family-names: Nagarajan
+    given-names: Narenraju
+    affiliation: "University of Glasgow"
+  - family-names: Messenger
+    given-names: Christopher
+    affiliation: "University of Glasgow"
+keywords:
+  - gravitational waves
+  - compact binary coalescence
+  - machine learning
+  - deep learning
+  - signal detection
+  - bias mitigation
+  - PyTorch
+preferred-citation:
+  type: article
+  title: "Identifying and mitigating machine-learning biases for the gravitational-wave detection problem"
+  authors:
+    - family-names: Nagarajan
+      given-names: Narenraju
+      affiliation: "University of Glasgow"
+    - family-names: Messenger
+      given-names: Christopher
+      affiliation: "University of Glasgow"
+  journal: "Physical Review D"
+  volume: 112
+  issue: 10
+  pages: "103002"
+  year: 2025
+  month: 11
+  publisher: "American Physical Society"
+  doi: 10.1103/zwj9-ycyz
+  url: "https://link.aps.org/doi/10.1103/zwj9-ycyz"
