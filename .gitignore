@@ -138,6 +138,7 @@ source/baseline/data/psds/
 # Ignore particular file types
 *.hdf
 *.png
+!docs/_static/*.png
 *.txt
 *.json
 *.jpg
