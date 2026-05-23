@@ -30,7 +30,7 @@ Just curiosity and a willingness to press a button and see what happens.
 | # | Notebook | What you will learn |
 |---|---|---|
 | 00 | [Sounds, Frequencies, and Patterns](00_frequencies.ipynb) | What sound is made of, high vs low frequencies, mixing tones, white noise, chirps, what speech looks like, and how to read a sound picture |
-| 01 | [Whitening: Making the Invisible Visible](01_whitening.ipynb) | Why some sounds hide signals, how balancing the noise reveals them, and what that sounds like |
+| 01 | [Shaping Sound: Turning Frequencies Up and Down](01_shaping_sound.ipynb) | How to boost, cut, and equalise frequencies — and what that sounds like on noise, chirps, and speech |
 | More coming soon! | | Gravitational waves, detectors, searching for signals, machine learning, where it works, where it fails |
 
 ---
