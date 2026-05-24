@@ -27,7 +27,8 @@ Documentation: NULL
 import torch
 
 
-def test_scatter_equivalence(B=32, S=8, C=4, device="cuda"):
+def test_scatter_equivalence(B=32, S=8, C=4):
+    device = "cpu"
 
     noise_data = torch.randn(B, C, device=device)
     signal_data = torch.randn(S, C, device=device)
@@ -43,4 +44,4 @@ def test_scatter_equivalence(B=32, S=8, C=4, device="cuda"):
     scatter_idx = idx.view(-1, 1).expand(-1, C)
     scatter = scatter.scatter_add(0, scatter_idx, signal_data)
 
-    return torch.allclose(ref, scatter)
+    assert torch.allclose(ref, scatter), "scatter_add must match direct index assignment"

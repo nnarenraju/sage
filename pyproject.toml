@@ -47,5 +47,21 @@ Zenodo = "https://doi.org/10.5281/zenodo.17290133"
 where = ["."]
 include = ["sage*"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["sage"]
+omit = [
+    "sage/plotting/*",
+    "sage/benchmark/*",
+    "sage/data/primer/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
 [tool.black]
 line-length = 88

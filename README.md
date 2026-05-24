@@ -6,6 +6,7 @@
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17290133-blue)](https://doi.org/10.5281/zenodo.17290133)
 [![CI](https://github.com/nnarenraju/sage/actions/workflows/ci.yml/badge.svg)](https://github.com/nnarenraju/sage/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/nnarenraju/sage/graph/badge.svg)](https://codecov.io/gh/nnarenraju/sage)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-orange)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
