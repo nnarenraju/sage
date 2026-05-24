@@ -30,6 +30,7 @@ from gwosc.datasets import run_segment, run_at_gps, find_datasets
 from gwosc.api import fetch_allevents_json as _fetch_allevents_json
 
 # General
+import time
 import numpy as np
 
 from itertools import product
@@ -202,24 +203,25 @@ class TimelineQuery:
 
         return tuple(runs)
 
-    def _get_segments(self, flag, start, end):
-        """Safe call get_segments method from GWOSC
+    def _get_segments(self, flag, start, end, max_retries=10, base_delay=15):
+        """Safe call get_segments method from GWOSC with retry on failure.
 
-        Args:
-            flags (_type_): _description_
-            start (_type_): _description_
-            end (_type_): _description_
-
-        Returns:
-            _type_: _description_
+        Retries up to max_retries times with exponential backoff starting at
+        base_delay seconds. Returns an empty array only after all retries fail.
         """
-
-        args = (
-            flag,
-            start,
-            end,
-        )
-        return np.array(safe_call(get_segments, *args, fallback_return=[]))
+        for attempt in range(max_retries):
+            result = safe_call(get_segments, flag, start, end, fallback_return=None)
+            if result is not None:
+                return np.array(result)
+            if attempt < max_retries - 1:
+                wait = base_delay * (2 ** attempt)
+                logger.warning(
+                    f"_get_segments failed for {flag} (attempt {attempt + 1}/{max_retries}). "
+                    f"Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+        logger.error(f"_get_segments exhausted all {max_retries} retries for {flag}. Returning empty.")
+        return np.array([])
 
     def _download_segment_metadata(
         self, runs=None, start=None, end=None, dets=None, flags=None
