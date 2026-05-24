@@ -1,8 +1,11 @@
 """Unit tests for sage.data.waveform.conversions."""
 
 import pytest
-import torch
 
+# sage.data.waveform.__init__ imports IMRPhenomPv2 -> sage.core.config -> matplotlib
+pytest.importorskip("matplotlib", reason="sage.data.waveform requires matplotlib")
+
+import torch
 from sage.data.waveform.conversions import (
     mass1_mass2_to_mchirp_q,
     chirp_distance_to_distance,

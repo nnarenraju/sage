@@ -2,7 +2,9 @@
 
 import pytest
 
-tqdm = pytest.importorskip("tqdm", reason="tqdm not installed")
+# sage.data.noise.__init__ eagerly imports real_noise which requires h5py
+pytest.importorskip("h5py", reason="sage.data.noise requires h5py")
+pytest.importorskip("tqdm", reason="sage.data.noise.hard_mining requires tqdm")
 
 import torch
 from sage.data.noise.hard_mining import HardSampleBuffer, HardSampleMiner
