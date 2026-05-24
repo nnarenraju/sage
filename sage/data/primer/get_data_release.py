@@ -240,6 +240,8 @@ class DataReleaseDownloader:
         max_download_retries: int = 10,
         retry_delay: float = 0.5,
         num_workers: int = 4,
+        proxy_reset_every: int = 50,
+        proxy_reset_sleep: float = 90.0,
         make_monolithic_file: bool = True,
         save_bin: bool = False,
         sample_rate: float = 2048.0,
@@ -255,6 +257,8 @@ class DataReleaseDownloader:
         self.max_retries = max_download_retries
         self.delay = retry_delay
         self.num_workers = num_workers
+        self.proxy_reset_every = proxy_reset_every
+        self.proxy_reset_sleep = proxy_reset_sleep
 
         # Save params
         self.save_parent_dir = save_parent_dir
@@ -291,7 +295,7 @@ class DataReleaseDownloader:
         # TODO: Generalise sage.core.errors --> "safe_call" to accommodate this
         for ntry in range(cfg.max_retries):
             try:
-                data = TimeSeries.fetch_open_data(det, b0, b1, cache=1)
+                data = TimeSeries.fetch_open_data(det, b0, b1, cache=False)
                 return data, True
             except Exception as e:
                 # logger.warning(
@@ -306,6 +310,10 @@ class DataReleaseDownloader:
             # bubble up the original error
             # logger.error(f"Failed to fetch {det} {b0}-{b1}: {last_exception}")
             return None, False
+
+    @staticmethod
+    def _get_detector_data_unpacked(args):
+        return DataReleaseDownloader._get_detector_data(*args)
 
     @staticmethod
     def _get_detector_data(cfg, n, b0, b1, det):
@@ -522,12 +530,15 @@ class DataReleaseDownloader:
             # Setup mp tasks
             with mp.Pool(self.num_workers) as pool, tqdm(total=len(segments)) as pbar:
                 pbar.set_description("MP-DET_SCIENCE_DATA GWOSC")
-                for n, data, metadata in pool.starmap(
-                    DataReleaseDownloader._get_detector_data, tasks
+                for n, data, metadata in pool.imap_unordered(
+                    DataReleaseDownloader._get_detector_data_unpacked, tasks, chunksize=1
                 ):
                     # NOTE: Always so save_chunk outside in main process
                     # DO NOT write let workers write to same HDF5
                     if self.save_bin:
+                        if data is None or not isinstance(data, np.ndarray):
+                            pbar.update()
+                            continue
                         nsamp, nbytes, dt, checksum = self._save_segment_bin(
                             bin_fh, data
                         )
@@ -565,11 +576,47 @@ class DataReleaseDownloader:
         else:
             with tqdm(total=len(segments)) as pbar:
                 pbar.set_description("DET_SCIENCE_DATA GWOSC")
+                n_written = 0
                 for args in tasks:
                     n, data, metadata = DataReleaseDownloader._get_detector_data(*args)
-                    hf = self._h5py_mkfile(f"data_{det}_{run}_chunk_{n}.hdf")
-                    self._save_segment(hf, n, data, det, run, metadata)
-                    hf.close()
+                    if self.save_bin:
+                        if data is None or not isinstance(data, np.ndarray):
+                            pbar.update()
+                            continue
+                        nsamp, nbytes, dt, checksum = self._save_segment_bin(bin_fh, data)
+                        seg_meta = {
+                            "segment_index": int(n),
+                            "detector": det,
+                            "observing_run": run,
+                            "gps_start": metadata["gps_start"],
+                            "gps_end": metadata["gps_end"],
+                            "sample_rate": metadata["sample_rate"],
+                            "nsamples": nsamp,
+                            "dtype": dt.name,
+                            "endianness": dt.byteorder,
+                            "sample_start_idx": self._bin_sample_cursor,
+                            "byte_offset": self._bin_byte_cursor,
+                            "byte_length": nbytes,
+                            "checksum": checksum,
+                            "checksum_algorithm": "sha256",
+                            "dyn_range_fac": float(DYN_RANGE_FAC),
+                            "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
+                        }
+                        assert nbytes == nsamp * dt.itemsize
+                        self._bin_metadata.append(seg_meta)
+                        self._bin_sample_cursor += nsamp
+                        self._bin_byte_cursor += nbytes
+                        n_written += 1
+                        if self.proxy_reset_every and n_written % self.proxy_reset_every == 0:
+                            logger.info(
+                                f"Proxy reset pause: {self.proxy_reset_sleep}s after "
+                                f"{n_written} segments ({det})."
+                            )
+                            time.sleep(self.proxy_reset_sleep)
+                    else:
+                        hf = self._h5py_mkfile(f"data_{det}_{run}_chunk_{n}.hdf")
+                        self._save_segment(hf, n, data, det, run, metadata)
+                        hf.close()
                     pbar.update()
 
         # Close monolithic output file
