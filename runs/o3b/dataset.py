@@ -51,6 +51,17 @@ def _get_timeline(data_cfg):
 
     tq.download_segments()
 
+    # Fail loudly if any detector came back empty (e.g. proxy dropped mid-query)
+    expected = ["H1", "L1", "V1"]
+    for record in tq.timeline:
+        det = record["detector"]
+        segs = record["segments"]
+        if det in expected and (segs is None or len(segs) == 0):
+            raise RuntimeError(
+                f"Segment query returned 0 segments for {det}. "
+                "Check GWOSC connectivity and retry."
+            )
+
     tq.prune_segments(
         rm_short_segments=True,
         rm_min_duration=22.0,
@@ -88,13 +99,15 @@ def _download_data_release(tq, data_cfg):
 
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
-        save_parent_dir="./",
+        save_parent_dir="/work/nagarajan/sage/",
         noise_low_freq_cutoff=15.0,
         minimum_segment_duration=22.0,
         corrupt_trim_length=buffer,
         max_download_retries=15,
-        retry_delay=0.5,
-        num_workers=16,
+        retry_delay=5.0,
+        num_workers=1,
+        proxy_reset_every=50,
+        proxy_reset_sleep=90.0,
         make_monolithic_file=True,
         sample_rate=data_cfg.sample_rate,
         save_bin=True,
@@ -140,14 +153,14 @@ def _make_psds(detector, data_cfg):
 
     # This is used for whitening with the exact segment PSD before recolouring
     epsd.estimate_segment_psds(
-        noise_segments_file=f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin"
+        noise_segments_file=f"/work/nagarajan/sage/data_release/data_{detector}_O3b.bin"
     )
 
     # With this we make num_samples random PSDs from the given data
     # We use this for recolouring augmentation
     # We also do blackout and aggregate the PSDs to produce the fiducial PSD
     noise_sampler = MemmapSingleNoiseSampler(
-        f"/local/scratch/igr/nnarenraju/data_release/data_{detector}_O3b.bin",
+        f"/work/nagarajan/sage/data_release/data_{detector}_O3b.bin",
         return_tensor=True,
     )
     epsd.estimate_raw_psds(
