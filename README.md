@@ -34,7 +34,7 @@ The repository contains the research code used for the Sage pipeline, including:
 - Diagnostic plotting tools for ranking statistics, efficiency curves, ROC
   curves, and parameter studies.
 
-All modules are optimised for CPU and GPU usage.
+All modules are optimised for CPU and GPU (PyTorch compile-friendly) usage.
 
 ---
 
