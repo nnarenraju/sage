@@ -1,11 +1,28 @@
 """Unit tests for sage.data.waveform.conversions."""
 
+import sys
+import types
 import pytest
-
-# sage.data.waveform.__init__ imports IMRPhenomPv2 -> sage.core.config -> matplotlib
-pytest.importorskip("matplotlib", reason="sage.data.waveform requires matplotlib")
-
 import torch
+from pathlib import Path
+
+# Bypass sage.data.waveform.__init__.py which eagerly imports IMRPhenomPv2
+# (→ astropy, pycbc, lal) so we can test the lightweight conversions submodule
+# without those optional dependencies.
+_SAGE = Path(__file__).resolve().parents[1] / "sage"
+
+
+def _bypass_pkg(name):
+    if name not in sys.modules:
+        parts = name.split(".")[1:]
+        mod = types.ModuleType(name)
+        mod.__path__ = [str(_SAGE.joinpath(*parts))]
+        mod.__package__ = name
+        sys.modules[name] = mod
+
+
+_bypass_pkg("sage.data.waveform")
+
 from sage.data.waveform.conversions import (
     mass1_mass2_to_mchirp_q,
     chirp_distance_to_distance,

@@ -1,7 +1,26 @@
 """Unit tests for sage.data.waveform.taper."""
 
+import sys
+import types
 import pytest
 import torch
+from pathlib import Path
+
+# Bypass sage.data.waveform.__init__.py which eagerly imports IMRPhenomPv2
+# (→ astropy, pycbc, lal). taper.py only depends on torch.
+_SAGE = Path(__file__).resolve().parents[1] / "sage"
+
+
+def _bypass_pkg(name):
+    if name not in sys.modules:
+        parts = name.split(".")[1:]
+        mod = types.ModuleType(name)
+        mod.__path__ = [str(_SAGE.joinpath(*parts))]
+        mod.__package__ = name
+        sys.modules[name] = mod
+
+
+_bypass_pkg("sage.data.waveform")
 
 from sage.data.waveform.taper import (
     fd_low_freq_taper,

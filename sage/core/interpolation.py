@@ -104,7 +104,7 @@ def torch_scipylike_cubic_interp(x, xp, fp):
     return h00 * y1 + h10 * (x2 - x1) * m1 + h01 * y2 + h11 * (x2 - x1) * m2
 
 
-@torch.jit.script
+@torch.compile
 def torch_catmull_rom_cubic_interp(
     xs: torch.Tensor,
     y: torch.Tensor,

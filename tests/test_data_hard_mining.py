@@ -1,10 +1,30 @@
 """Unit tests for sage.data.noise.hard_mining (CPU-only, no model required)."""
 
+import sys
+import types
 import pytest
+from pathlib import Path
 
-# sage.data.noise.__init__ eagerly imports real_noise which requires h5py
-pytest.importorskip("h5py", reason="sage.data.noise requires h5py")
+# h5py is needed by sage.core.logger (imported transitively via hard_mining →
+# sage.core.config → sage.core.logger). Skip the whole file if not installed.
+pytest.importorskip("h5py", reason="sage.core.logger requires h5py")
 pytest.importorskip("tqdm", reason="sage.data.noise.hard_mining requires tqdm")
+
+# Bypass sage.data.noise.__init__.py which imports lowfar_noise → pycbc/lal.
+# hard_mining itself only needs torch, tqdm, and sage.core.
+_SAGE = Path(__file__).resolve().parents[1] / "sage"
+
+
+def _bypass_pkg(name):
+    if name not in sys.modules:
+        parts = name.split(".")[1:]
+        mod = types.ModuleType(name)
+        mod.__path__ = [str(_SAGE.joinpath(*parts))]
+        mod.__package__ = name
+        sys.modules[name] = mod
+
+
+_bypass_pkg("sage.data.noise")
 
 import torch
 from sage.data.noise.hard_mining import HardSampleBuffer, HardSampleMiner
