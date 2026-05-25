@@ -53,7 +53,7 @@ The Sage Team
       :text-align: center
 
       .. image:: /_static/display_picture.jpg
-         :width: 100px
+         :width: 180px
          :align: center
          :alt: Narenraju Nagarajan
 
@@ -67,7 +67,7 @@ The Sage Team
       :text-align: center
 
       .. image:: /_static/generic_picture.png
-         :width: 100px
+         :width: 180px
          :align: center
          :alt: Christopher Messenger
 
