@@ -43,25 +43,25 @@ mitigations built in.
       :link: installation
       :link-type: doc
 
-      Set up Sage via conda or pip. GPU support included out of the box.
+      Install Sage via pip. GPU and ``torch.compile`` support included out of the box.
 
       +++
       :doc:`Installation guide <installation>`
 
-   .. grid-item-card:: :octicon:`book` User Guides
-      :link: data_priming/index
+   .. grid-item-card:: :octicon:`book` User Guide
+      :link: overview
       :link-type: doc
 
-      Hands-on walkthroughs: data download, waveforms, DSP, and training.
+      Hands-on walkthroughs: data download, waveforms, signal processing, and training.
 
       +++
-      :doc:`Browse guides <data_priming/index>`
+      :doc:`Browse guides <overview>`
 
    .. grid-item-card:: :octicon:`code-square` API Reference
       :link: autoapi/sage/index
       :link-type: doc
 
-      Autoapi documentation for every module, class, and function in Sage.
+      Auto-generated docs for every public module, class, and function in Sage.
 
       +++
       :doc:`Browse API <autoapi/sage/index>`
@@ -74,6 +74,42 @@ mitigations built in.
 
       +++
       :doc:`Open notebooks <quickstart>`
+
+   .. grid-item-card:: :octicon:`gear` Configuration
+      :link: configuration
+      :link-type: doc
+
+      Full reference for every field in ``RunCFG``, ``DataCFG``, and ``gwconfig.yaml``.
+
+      +++
+      :doc:`View reference <configuration>`
+
+   .. grid-item-card:: :octicon:`mortar-board;1em;sd-text-warning` Learning Guide
+      :link: learning_guide
+      :link-type: doc
+
+      New to gravitational waves, machine learning, or Sage? Start here.
+
+      +++
+      :doc:`Start learning <learning_guide>`
+
+   .. grid-item-card:: :octicon:`graph` Benchmarks
+      :link: benchmarks
+      :link-type: doc
+
+      Performance results against PyCBC and previous ML pipelines on MLGWSC-1.
+
+      +++
+      :doc:`See results <benchmarks>`
+
+   .. grid-item-card:: :octicon:`people` Collaborate
+      :link: collaboration
+      :link-type: doc
+
+      Want a production-level GW search built for your data? Get in touch.
+
+      +++
+      :doc:`Get in touch <collaboration>`
 
 ----
 
