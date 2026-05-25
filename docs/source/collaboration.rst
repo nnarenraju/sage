@@ -43,7 +43,7 @@ What we can do together
 
 ----
 
-Current team
+The Sage Team
 ------------
 
 .. grid:: 1 2 3 3
