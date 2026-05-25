@@ -66,7 +66,7 @@ The Sage Team
    .. grid-item-card:: Christopher Messenger
       :text-align: center
 
-      .. image:: /_static/sage_logo.png
+      .. image:: /_static/generic_picture.png
          :width: 100px
          :align: center
          :alt: Christopher Messenger
