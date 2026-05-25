@@ -1,10 +1,431 @@
-/* Sidebar logo size */
+/* ============================================================
+   Sage docs — custom styles
+   Primary:   #0d3b2e  (dark green)
+   Accent:    #2d9e6e  (mid green)
+   Surface:   #edf7f1  (light green tint)
+   Border:    #c8e6d4
+   ============================================================ */
+
+/* ----------------------------------------------------------
+   Sidebar — logo area
+   ---------------------------------------------------------- */
+
+.wy-side-nav-search {
+    background: linear-gradient(160deg, #0d3b2e 0%, #1a5c42 100%);
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.25);
+}
+
 .wy-side-nav-search > a img {
     max-height: 140px;
     width: auto;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+    transition: filter 0.2s ease;
 }
 
-/* Match sidebar header background to the logo's dark green */
-.wy-side-nav-search {
+.wy-side-nav-search > a img:hover {
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
+}
+
+.wy-side-nav-search input[type="text"] {
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.wy-side-nav-search input[type="text"]::placeholder {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.wy-side-nav-search input[type="text"]:focus {
+    background: rgba(255, 255, 255, 0.22);
+    border-color: rgba(255, 255, 255, 0.5);
+    outline: none;
+}
+
+/* ----------------------------------------------------------
+   Sidebar — navigation tree
+   ---------------------------------------------------------- */
+
+.wy-nav-side {
+    background: #0f4535;
+}
+
+.wy-menu-vertical a {
+    transition: background 0.15s ease, padding-left 0.15s ease, color 0.15s ease;
+}
+
+.wy-menu-vertical a:hover {
+    background-color: rgba(255, 255, 255, 0.07) !important;
+    color: #a8e6c4 !important;
+    padding-left: 1.3em;
+}
+
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.current > a:hover {
+    border-left: 3px solid #4ecb91;
+    background-color: rgba(78, 203, 145, 0.1) !important;
+    color: #a8e6c4 !important;
+}
+
+.wy-menu-vertical li.toctree-l2.current > a {
+    border-left: 3px solid #4ecb91;
+}
+
+/* Caption labels (e.g. "User Guide", "Reference") */
+.wy-menu-vertical p.caption {
+    color: rgba(255, 255, 255, 0.4);
+    letter-spacing: 0.08em;
+    font-size: 0.72em;
+    text-transform: uppercase;
+    margin-top: 1.2em;
+}
+
+/* ----------------------------------------------------------
+   Custom scrollbar (webkit)
+   ---------------------------------------------------------- */
+
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f4f4f4;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #2d9e6e;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #0d3b2e;
+}
+
+/* ----------------------------------------------------------
+   Main content area
+   ---------------------------------------------------------- */
+
+html {
+    scroll-behavior: smooth;
+}
+
+.wy-nav-content {
+    max-width: 1000px;
+}
+
+/* Text selection colour */
+::selection {
+    background: #c8e6d4;
+    color: #0d3b2e;
+}
+
+/* ----------------------------------------------------------
+   Typography
+   ---------------------------------------------------------- */
+
+.rst-content h1 {
+    letter-spacing: -0.025em;
+}
+
+.rst-content h2 {
+    letter-spacing: -0.02em;
+    border-bottom: 2px solid #edf7f1;
+    padding-bottom: 0.35em;
+    margin-top: 1.8em;
+}
+
+.rst-content h3 {
+    letter-spacing: -0.015em;
+    color: #1a5c42;
+}
+
+.rst-content h4 {
+    color: #2d9e6e;
+}
+
+/* Horizontal rules */
+.rst-content hr {
+    border: 0;
+    border-top: 1px solid #ddeee6;
+    margin: 2em 0;
+}
+
+/* ----------------------------------------------------------
+   Links
+   ---------------------------------------------------------- */
+
+.rst-content a {
+    color: #1a6b51;
+    text-decoration-color: rgba(26, 107, 81, 0.3);
+    text-underline-offset: 2px;
+    transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.rst-content a:hover {
+    color: #0d3b2e;
+    text-decoration-color: rgba(13, 59, 46, 0.7);
+}
+
+/* ----------------------------------------------------------
+   Inline code
+   ---------------------------------------------------------- */
+
+.rst-content code.literal,
+.rst-content tt.literal {
+    background-color: #edf7f1;
+    color: #0d3b2e;
+    border: 1px solid #c8e6d4;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.875em;
+}
+
+/* ----------------------------------------------------------
+   Code blocks
+   ---------------------------------------------------------- */
+
+.rst-content div[class^="highlight"],
+.rst-content div.highlight {
+    border-left: 3px solid #2d9e6e;
+    border-radius: 0 5px 5px 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    margin: 1.2em 0;
+    transition: box-shadow 0.2s ease;
+}
+
+.rst-content div[class^="highlight"]:hover,
+.rst-content div.highlight:hover {
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+
+/* ----------------------------------------------------------
+   Tables
+   ---------------------------------------------------------- */
+
+.rst-content table.docutils {
+    border-collapse: collapse;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+}
+
+.rst-content table.docutils thead th {
     background-color: #0d3b2e;
+    color: #ffffff;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: none;
+}
+
+.rst-content table.docutils tbody tr {
+    transition: background-color 0.12s ease;
+}
+
+.rst-content table.docutils tbody tr:nth-child(even) {
+    background-color: #f7fbf9;
+}
+
+.rst-content table.docutils tbody tr:hover {
+    background-color: #edf7f1;
+}
+
+.rst-content table.docutils td {
+    border-color: #ddeee6;
+}
+
+/* ----------------------------------------------------------
+   Admonitions
+   ---------------------------------------------------------- */
+
+.rst-content .admonition {
+    border-radius: 5px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border-left-width: 4px;
+}
+
+/* Custom "Collaborate with us!" box */
+.rst-content .admonition:not(.note):not(.warning):not(.tip):not(.important):not(.caution):not(.danger) {
+    border-left-color: #0d3b2e;
+    background-color: #f2faf6;
+}
+
+.rst-content .admonition:not(.note):not(.warning):not(.tip):not(.important):not(.caution):not(.danger) > .admonition-title {
+    background-color: #0d3b2e;
+    color: #ffffff;
+}
+
+/* Note box */
+.rst-content .admonition.note {
+    border-left-color: #2d9e6e;
+}
+
+.rst-content .admonition.note > .admonition-title {
+    background-color: #2d9e6e;
+}
+
+/* ----------------------------------------------------------
+   Sphinx-design cards
+   ---------------------------------------------------------- */
+
+.sd-card {
+    border: 1px solid #ddeee6 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 8px rgba(13, 59, 46, 0.07) !important;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease !important;
+    overflow: hidden;
+}
+
+.sd-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 28px rgba(13, 59, 46, 0.14) !important;
+    border-color: #2d9e6e !important;
+}
+
+.sd-card-header {
+    background: linear-gradient(135deg, #f2faf6 0%, #ffffff 100%) !important;
+    border-bottom: 1px solid #edf7f1 !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.01em !important;
+    color: #0d3b2e !important;
+    padding: 0.85em 1em !important;
+}
+
+.sd-card-footer {
+    background-color: #f8fcfa !important;
+    border-top: 1px solid #edf7f1 !important;
+    font-size: 0.875em !important;
+}
+
+.sd-card-footer a {
+    color: #1a6b51 !important;
+    font-weight: 500;
+    text-decoration: none !important;
+    transition: color 0.15s ease !important;
+}
+
+.sd-card-footer a:hover {
+    color: #0d3b2e !important;
+}
+
+/* ----------------------------------------------------------
+   Sphinx-design dropdowns (FAQ / Troubleshooting)
+   ---------------------------------------------------------- */
+
+.sd-dropdown {
+    border: 1px solid #ddeee6 !important;
+    border-radius: 6px !important;
+    margin-bottom: 0.75em !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+    transition: box-shadow 0.2s ease !important;
+    overflow: hidden;
+}
+
+.sd-dropdown:hover {
+    box-shadow: 0 3px 10px rgba(13, 59, 46, 0.1) !important;
+}
+
+.sd-dropdown summary {
+    background-color: #f2faf6 !important;
+    padding: 0.75em 1em !important;
+    font-weight: 500 !important;
+    color: #0d3b2e !important;
+    cursor: pointer;
+    transition: background-color 0.15s ease !important;
+    border-radius: 6px;
+}
+
+.sd-dropdown summary:hover {
+    background-color: #e4f5ec !important;
+}
+
+.sd-dropdown[open] summary {
+    border-bottom: 1px solid #ddeee6;
+    border-radius: 6px 6px 0 0;
+    background-color: #e4f5ec !important;
+}
+
+.sd-dropdown > div {
+    padding: 1em 1.25em !important;
+    background-color: #ffffff;
+}
+
+/* ----------------------------------------------------------
+   Warning icon pulse (under-construction cards)
+   ---------------------------------------------------------- */
+
+@keyframes gentle-pulse {
+    0%   { opacity: 1; }
+    50%  { opacity: 0.55; }
+    100% { opacity: 1; }
+}
+
+.sd-text-warning {
+    animation: gentle-pulse 2.4s ease-in-out infinite;
+}
+
+/* ----------------------------------------------------------
+   Glossary
+   ---------------------------------------------------------- */
+
+.rst-content dl.glossary dt {
+    color: #0d3b2e;
+    font-weight: 600;
+    border-left: 3px solid #4ecb91;
+    padding-left: 0.6em;
+    margin-top: 1em;
+}
+
+/* ----------------------------------------------------------
+   Footer
+   ---------------------------------------------------------- */
+
+footer {
+    border-top: 2px solid #edf7f1;
+    margin-top: 2.5em;
+    padding-top: 1em;
+    color: #6b8c7d;
+    font-size: 0.875em;
+}
+
+footer a {
+    color: #1a6b51;
+    transition: color 0.15s ease;
+}
+
+footer a:hover {
+    color: #0d3b2e;
+}
+
+/* ----------------------------------------------------------
+   Breadcrumbs
+   ---------------------------------------------------------- */
+
+.wy-breadcrumbs li a {
+    color: #1a6b51;
+    transition: color 0.15s ease;
+}
+
+.wy-breadcrumbs li a:hover {
+    color: #0d3b2e;
+}
+
+/* ----------------------------------------------------------
+   Version selector in sidebar
+   ---------------------------------------------------------- */
+
+.rst-versions {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: #0a2e22 !important;
+}
+
+.rst-versions .rst-current-version {
+    background: #0d3b2e !important;
+    transition: background 0.2s ease;
+}
+
+.rst-versions .rst-current-version:hover {
+    background: #1a5c42 !important;
 }
