@@ -28,17 +28,19 @@ from pathlib import Path
 pytest.importorskip("h5py", reason="sage.core.logger requires h5py")
 pytest.importorskip("tqdm", reason="lowfar_noise requires tqdm")
 
-# Ensure pycbc is importable so "from pycbc import DYN_RANGE_FAC" in
-# lowfar_noise.py succeeds.  Use the real package when it is installed;
-# only fall back to a stub when it is genuinely absent.  A module-level stub
-# that replaces a real package would poison sys.modules for every other test
-# in the same session (e.g. test_dsp_heterodyning.py needs pycbc.waveform).
+# lowfar_noise.py does "from pycbc import DYN_RANGE_FAC" at import time.
+# We need pycbc in sys.modules only for that one import; afterwards we remove
+# the stub so that other tests in the session (e.g. test_dsp_heterodyning.py)
+# see the correct state — pycbc absent — and are skipped via importorskip
+# rather than running against a hollow stub that has no submodules.
+_pycbc_stubbed = False
 try:
-    import pycbc as _pycbc  # noqa: F401  — triggers real package registration
+    import pycbc as _pycbc  # noqa: F401  real package — nothing to clean up
 except ImportError:
     _pycbc_stub = types.ModuleType("pycbc")
     _pycbc_stub.DYN_RANGE_FAC = 1.0
     sys.modules["pycbc"] = _pycbc_stub
+    _pycbc_stubbed = True
 
 # Bypass sage.data.noise.__init__ which would import lowfar_noise → pycbc/lal.
 _SAGE_ROOT = Path(__file__).resolve().parents[1] / "sage"
@@ -66,6 +68,12 @@ from sage.data.noise.lowfar_noise import (  # noqa: E402
 )
 # Retrieve the already-loaded module object without walking the sage.data chain.
 _lnm = sys.modules["sage.data.noise.lowfar_noise"]
+
+# Remove the temporary stub now that lowfar_noise has bound DYN_RANGE_FAC into
+# its own namespace.  Leaving a hollow pycbc stub in sys.modules would prevent
+# pytest.importorskip("pycbc") from skipping tests that genuinely need pycbc.
+if _pycbc_stubbed:
+    del sys.modules["pycbc"]
 
 # pin_memory() requires an NVIDIA driver even for CPU tensors.  Replace it
 # with a no-op for the duration of this test module so tests can run on
