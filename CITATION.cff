@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "Sage: A machine-learning search pipeline for compact binary coalescence gravitational-wave signals"
-version: "0.0.1"
-date-released: "2025-11-01"
+version: "0.1.0"
+date-released: "2026-05-25"
 license: GPL-3.0
 repository-code: "https://github.com/nnarenraju/sage"
 doi: 10.5281/zenodo.17290133

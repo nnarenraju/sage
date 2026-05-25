@@ -23,17 +23,19 @@ The methods are described in:
 
 **Abstract**
 
-Matched-filtering is a long-standing technique for the optimal detection of known signals in stationary Gaussian noise. However, it has known departures from optimality when operating on unknown signals in real noise and suffers from computational inefficiencies in its pursuit to near-optimality. A compelling alternative that has emerged in recent years to address this problem is deep learning. Although it has shown significant promise when applied to the search for gravitational-waves in detector noise, we demonstrate the existence of a multitude of learning biases that hinder generalisation and detection performance. Our work identifies the sources of a set of 11 interconnected biases present in the supervised learning of the gravitational-wave detection problem, and contributes mitigation tactics and training strategies to concurrently address them. We introduce, Sage, a machine-learning based binary black hole search pipeline. We evaluate our pipeline on the injection study presented in the Machine Learning Gravitational-Wave Search Challenge and show that Sage detects ~11.2% more signals than the benchmark PyCBC analysis at a false alarm rate of one per month in O3a noise. Moreover, we also show that it can detect ~48.29% more signals than the previous best performing machine-learning pipeline on the same dataset. We empirically prove that our pipeline has the capability to effectively handle out-of-distribution noise power spectral densities and reject non-Gaussian transient noise artefacts. By studying machine-learning biases and conducting empirical investigations to understand the reasons for performance improvement/degradation, we aim to address the need for interpretability of machine-learning methods for gravitational-wave detection.
+Sage is a complete, end-to-end machine-learning pipeline for gravitational-wave (GW) compact binary coalescence (CBC) detection. Training operates entirely on-the-fly — no pre-computed datasets required — with waveforms and noise windows generated per batch to eliminate data-reuse biases. Sage systematically identifies and mitigates 11 interconnected supervised-learning biases that degrade detection performance and generalisation. On the Machine Learning Gravitational-Wave Search Challenge injection study, Sage detects ~11.2% more signals than benchmark PyCBC matched-filtering and ~48.3% more than the previous best-performing ML pipeline at a false alarm rate of one per month, while remaining robust to out-of-distribution PSDs and non-Gaussian transient artefacts.
 
 The repository contains the research code used for the Sage pipeline, including:
 
-- Binary black hole waveform generation and detector projection.
-- Real-noise sampling, PSD handling, whitening, and preprocessing utilities.
-- Time-domain multirate sampling and frequency-domain multibanding utilities.
-- Neural network architectures and training loops.
-- Reproducibility notebooks and run scripts for paper-style experiments.
-- Diagnostic plotting tools for ranking statistics, efficiency curves, ROC
-  curves, and parameter studies.
+- Automated download and preparation of GWOSC data releases, segments, and PSDs.
+- Realistic noise simulation: real strain, coloured, recoloured, and glitch-injected noise.
+- Binary black hole waveform generation (IMRPhenomD/PhenomPv2), multi-detector projection, and SNR utilities.
+- Signal processing: whitening, inverse spectrum truncation, time-domain multirate sampling, frequency-domain multibanding, and prior-median heterodyning.
+- Hard noise mining for low-FAR robustness: brute-force, MAP-Elites, and Cross-Entropy Method strategies.
+- Modular neural network architectures with interchangeable frontends, backends, and attention mechanisms.
+- Training loops with on-the-fly data generation, schedulers, callbacks, and checkpointing.
+- Google Colab tutorials, reproducibility notebooks, and run scripts for paper-style experiments.
+- Diagnostic plotting tools for ranking statistics, efficiency curves, ROC curves, and parameter studies.
 
 All modules are optimised for CPU and GPU (PyTorch compile-friendly) usage.
 
