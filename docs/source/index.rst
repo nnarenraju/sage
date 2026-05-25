@@ -138,6 +138,7 @@ The methods are described in:
    :hidden:
 
    overview
+   configuration
    data_priming/index
    noise_dataset/index
    signal_dataset/index
