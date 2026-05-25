@@ -73,6 +73,17 @@ Visualise the time–frequency tiling:
 
     mrs.plot_multirate_tf()
 
+.. figure:: /_static/multirate_sampling_template.png
+   :align: center
+   :alt: Frequency vs time curves of GWs coloured by chirp mass
+
+   Frequency vs time curves of GWs generated from the testing dataset parameter
+   distributions, coloured by chirp mass. The dashed black line shows the frequency
+   profile of a GW with the lowest possible chirp mass (longest duration). The solid
+   red line shows the Nyquist limit at 1024 Hz given a sample rate of 2048 Hz; the
+   dashed red line shows the modified Nyquist limit after applying the multi-rate
+   sampling algorithm.
+
 Applying multirate sampling
 -----------------------------
 
@@ -135,3 +146,13 @@ Applying to pure signal
 
 On pure signal the chirp structure is still clearly visible in the merger bin, while the
 long low-amplitude inspiral is compressed to a handful of samples.
+
+.. figure:: /_static/multirate_sampling_example.png
+   :align: center
+   :alt: Multirate sampling applied to a BBH template
+
+   Example application of multirate sampling on a BBH template with
+   :math:`m_1 = 20\,M_\odot`, :math:`m_2 = 10\,M_\odot`, zero spins, and
+   :math:`t_c = 11.1\,\mathrm{s}`. Colours indicate the effective sampling
+   frequency :math:`f_s` of each section of the compressed signal;
+   :math:`f_s = 2048\,\mathrm{Hz}` corresponds to an unaltered (full-rate) section.

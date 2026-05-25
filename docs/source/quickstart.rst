@@ -50,7 +50,7 @@ Repository layout
     │   ├── benchmark/          # Benchmark integrations and comparison utilities
     │   ├── core/               # Config, logging, constants, interpolation
     │   ├── data/
-    │   │   ├── noise/          # Real noise samplers, hard mining, glitch handling
+    │   │   ├── noise/          # Real noise samplers and glitch handling
     │   │   ├── primer/         # Data download and preparation utilities
     │   │   ├── psd/            # PSD generation and loading
     │   │   └── waveform/       # Parameter sampling, waveforms, projection, SNR

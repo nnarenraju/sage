@@ -27,6 +27,7 @@ extensions = [
     "myst_parser",
     "autoapi.extension",
     "sphinx_autodoc_typehints",
+    "sphinx_design",
 ]
 
 templates_path = ["_templates"]

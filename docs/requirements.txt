@@ -1,5 +1,6 @@
 sphinx
 sphinx-rtd-theme
+sphinx-design
 myst-parser
 sphinx-autoapi
 sphinx-autodoc-typehints

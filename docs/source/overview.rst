@@ -74,11 +74,6 @@ At each iteration:
    — BCE classification combined with heteroscedastic regression and coupling
    regularisation for simultaneous detection and parameter estimation.
 
-Hard-noise mining (:class:`~sage.data.noise.hard_mining.HardSampleMiner`)
-and glitch oversampling
-(:class:`~sage.data.noise.glitch_sampler.GlitchOversampledNoiseSampler`)
-are used to address dataset imbalances and improve robustness to transient
-noise artefacts.
 
 Waveform generation
 -------------------
@@ -113,6 +108,3 @@ Noise handling
 * **Coloured / recoloured noise** — synthetic noise coloured to a target PSD.
 * **Glitch oversampling** — GW Classify-labelled glitch segments are oversampled
   to expose the network to realistic transient artefacts.
-* **Hard noise mining** — three strategies (brute-force, MAP-Elites, and
-  Cross-Entropy Method) identify noise windows that fool the current model,
-  building a low-FAR training curriculum.

@@ -1,53 +1,101 @@
 .. Sage documentation master file
 
-Sage — Gravitational Wave Detection Pipeline
-============================================
+Sage — Unbiased Machine Learning for Gravitational-Wave Discovery
+==================================================================
 
 .. image:: /_static/sage_logo.png
    :alt: Sage logo
-   :width: 380px
+   :width: 300px
    :align: center
 
 |
 
-|DOI| |ASCL| |CI| |codecov| |Python| |PyTorch| |License|
+An end-to-end PyTorch pipeline for compact binary coalescence (CBC) detection —
+from raw GWOSC data to a ``torch.compile``-optimised neural network, with
+11 systematic bias mitigations built in.
 
-.. |DOI| image:: https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20375078-blue
-   :target: https://doi.org/10.5281/zenodo.20375078
-   :alt: DOI
+.. warning::
 
-.. |ASCL| image:: https://img.shields.io/badge/ascl-4712-blue.svg?colorB=262255
-   :target: https://www.ascl.net/code/v/4712
-   :alt: ASCL
+   These docs are actively being built and are subject to change. Individual sections
+   may contain incomplete explanations, bugs, or mistakes. Additional plots and figures
+   will be added throughout to make each section easier to follow.
 
-.. |CI| image:: https://github.com/nnarenraju/sage/actions/workflows/ci.yml/badge.svg
-   :target: https://github.com/nnarenraju/sage/actions/workflows/ci.yml
-   :alt: CI
+----
 
-.. |codecov| image:: https://codecov.io/github/nnarenraju/sage/branch/main/graph/badge.svg?token=RLAAMEZEZ6
-   :target: https://codecov.io/github/nnarenraju/sage
-   :alt: codecov
+.. grid:: 1 2 2 4
+   :gutter: 3
 
-.. |Python| image:: https://img.shields.io/badge/python-3.9%2B-blue
-   :alt: Python
+   .. grid-item-card:: :octicon:`download` Install
+      :link: installation
+      :link-type: doc
 
-.. |PyTorch| image:: https://img.shields.io/badge/PyTorch-2.1%2B-orange
-   :alt: PyTorch
+      Set up Sage via conda or pip. GPU support included out of the box.
 
-.. |License| image:: https://img.shields.io/badge/License-GPLv3-blue.svg
-   :target: https://github.com/nnarenraju/sage/blob/main/LICENSE
-   :alt: License: GPL v3
+      +++
+      :doc:`Installation guide <installation>`
 
-|
+   .. grid-item-card:: :octicon:`book` User Guides
+      :link: data_priming/index
+      :link-type: doc
 
-**Sage** is a complete, end-to-end machine-learning pipeline for gravitational-wave (GW)
-compact binary coalescence (CBC) detection. Training operates entirely on-the-fly — no
-pre-computed datasets required — with waveforms and noise generated per batch to eliminate
-data-reuse biases.
+      Hands-on walkthroughs: data download, waveforms, DSP, and training.
 
-Sage detects ~11.2% more signals than benchmark PyCBC matched-filtering and ~48.3% more than
-the previous best-performing ML pipeline at a false alarm rate of one per month, while
-remaining robust to out-of-distribution PSDs and non-Gaussian transient artefacts.
+      +++
+      :doc:`Browse guides <data_priming/index>`
+
+   .. grid-item-card:: :octicon:`code-square` API Reference
+      :link: autoapi/sage/index
+      :link-type: doc
+
+      Autoapi documentation for every module, class, and function in Sage.
+
+      +++
+      :doc:`Browse API <autoapi/sage/index>`
+
+   .. grid-item-card:: :octicon:`rocket` Colab Tutorials
+      :link: quickstart
+      :link-type: doc
+
+      Zero-install notebooks — run the full pipeline in your browser.
+
+      +++
+      :doc:`Open notebooks <quickstart>`
+
+----
+
+.. admonition:: State-of-the-art performance on MLGWSC-1
+
+   At a false alarm rate of one per month, Sage detects **+11.2%** more signals
+   than the PyCBC matched-filter benchmark and **+48.3%** more signals than the
+   previous best ML pipeline — with demonstrated robustness to out-of-distribution
+   noise PSDs and non-Gaussian glitches.
+
+----
+
+**Sage** is a complete, end-to-end machine-learning pipeline for searching gravitational-wave
+(GW) detector data for compact binary coalescence (CBC) signals. The package spans the entire
+research workflow: automated download and preparation of GWOSC data releases and PSDs;
+realistic noise simulation (real strain, coloured, recoloured, and glitch-injected); waveform
+generation and multi-detector projection via IMRPhenomD and IMRPhenomPv2; signal processing
+including whitening, inverse spectrum truncation, time-domain multirate sampling,
+frequency-domain multibanding, and prior-median heterodyning; neural network training;
+and diagnostic evaluation and benchmarking against previous results.
+
+All data-generation, signal-processing, and neural-network components are written in PyTorch
+and are fully ``torch.compile``-compatible, enabling significant GPU throughput improvements
+without any code changes. Training operates entirely on-the-fly — no pre-computed datasets are
+required — with waveforms and noise windows generated per batch to eliminate data-reuse biases.
+
+Sage systematically identifies and mitigates 11 interconnected supervised-learning biases that
+degrade detection performance and generalisation. On the Machine Learning Gravitational-Wave
+Search Challenge injection study, Sage detects approximately 11.2% more signals than the
+benchmark PyCBC matched-filter analysis and approximately 48.3% more signals than the previous
+best-performing ML pipeline at a false alarm rate of one per month, while demonstrating
+robustness to out-of-distribution noise PSDs and non-Gaussian transient artefacts.
+
+The modular design — with interchangeable frontends, backends, attention mechanisms, and
+configurable presets — makes Sage straightforward to adapt for new architectures, parameter
+spaces, or observing runs. Google Colab tutorials allow zero-installation experimentation.
 
 The methods are described in:
 
@@ -61,20 +109,17 @@ The methods are described in:
 .. toctree::
    :maxdepth: 1
    :caption: Getting Started
+   :hidden:
 
    installation
    quickstart
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    :caption: User Guide
+   :hidden:
 
    overview
-
-.. toctree::
-   :maxdepth: 2
-   :caption: User Guides
-
    data_priming/index
    noise_dataset/index
    signal_dataset/index
@@ -93,8 +138,24 @@ The methods are described in:
 
 .. toctree::
    :maxdepth: 1
-   :caption: Reference
+   :caption: Developer Guide
+   :hidden:
 
+   developer_guide
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Reviewer Guide
+   :hidden:
+
+   reviewer_guide
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Reference
+   :hidden:
+
+   benchmarks
    citation
    autoapi/sage/index
 

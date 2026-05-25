@@ -39,10 +39,15 @@ Options
 Why remove events?
 ------------------
 
-Training on segments that contain real GW signals introduces a subtle bias: the network
-sees confirmed signals at their true SNRs, which is not representative of the
-signal-injection distribution used during training. Excising a ±30 s window around each
-catalogued event is a conservative but safe default.
+Sage needs a **pure noise dataset** — segments that are free from known gravitational-wave
+signals. The GWOSC catalogue lists GPS times of every confirmed detection. Leaving these
+segments in would contaminate the noise class with real events, undermining the assumption
+that the noise class contains only background noise.
+
+``rm_window_length=30`` excises 30 s either side of each catalogued event GPS time.
+This is a conservative window that accounts for the full inspiral-merger-ringdown duration
+of the heaviest systems in the prior, ensuring no signal power leaks into the noise training
+set.
 
 Inspecting the result
 ----------------------

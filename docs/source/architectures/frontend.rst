@@ -65,6 +65,18 @@ passed to the backend:
                                             → cat → (B, n_det, C, T_down)
     L1 frontend output  (B, 1, C, T_down)
 
+.. figure:: /_static/full_frontend.png
+   :align: center
+   :alt: Multiscale frontend feature extractor architecture
+
+   **(a)** A single multiscale residual block. The input :math:`x^i` is analysed
+   simultaneously by :math:`N_s` parallel 1D convolutions with kernel sizes
+   :math:`sk^i`, where :math:`s` is a set of constant prefactors applied to the base
+   kernel size :math:`k^i`; outputs are element-wise summed (:math:`\oplus`) with a
+   skip connection. **(b)** The full frontend architecture: three stages of paired
+   multiscale blocks with progressive spatial downsampling, one
+   :class:`~sage.architecture.frontend.mscnn1d.ConvBlock` per detector.
+
 Parameters
 ----------
 

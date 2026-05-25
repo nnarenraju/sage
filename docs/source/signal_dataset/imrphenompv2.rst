@@ -3,13 +3,14 @@ IMRPhenomPv2 on GPU
 
 :class:`~sage.data.waveform.approximants.IMRPhenomPv2.IMRPhenomPv2` extends
 IMRPhenomD to precessing-spin binaries using the PhenomPv2 "twist-up" formalism.
-It supports full 3-D spin vectors and is the default waveform model used for Sage
-training.
+It is the **production signal sampler** in Sage — wrapping parameter sampling,
+waveform generation, multi-detector projection, and SNR rescaling into a single
+callable that the training loop invokes once per batch.
 
 Parameters
 ----------
 
-Each row of the parameter batch carries 15 fields:
+Each waveform is characterised by 15 physical parameters:
 
 .. list-table::
    :header-rows: 1
@@ -52,83 +53,55 @@ Each row of the parameter batch carries 15 fields:
      - ``dec``
      - Declination in radians
 
-Generating a batch
--------------------
+Setting up the signal sampler
+------------------------------
+
+Pass a parameter sampler, a projection method, and an SNR rescaler at construction
+time. Sage handles the rest — no manual frequency-grid construction or explicit
+parameter batches are needed:
 
 .. code-block:: python
 
-    import torch
-    import numpy as np
-    from sage.data.waveform import IMRPhenomPv2
-    from sage.data.waveform import read_from_config, ConstantProjection
+    from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
+    from sage.data.waveform import HalfNorm
+    from sage.data.waveform.snr import OptimalSNRRescaler
 
-    params = torch.tensor(
-        [30.0, 29.0,           # m1, m2
-         0.5, 0.5, 0.5,        # s1x, s1y, s1z
-         0.5, 0.5, 0.5,        # s2x, s2y, s2z
-         440.0, 11.1, 0.2,     # dist_mpc, tc, phic
-         0.2, 0.0, 0.0, 0.0],  # inclination, polarization, ra, dec
-        device="cuda:0",
-        dtype=torch.float32,
-    )
+    # Parameter prior from the YAML config
+    param_sampler = read_from_config("./gwconfig.yaml", seed=150914)
 
-    batch_size = 512
-    params_batch = params.unsqueeze(0).expand(batch_size, -1).clone()
-
-    # Build the frequency grid
-    f_l, f_u, del_f = 20.0, 1024.0, 1.0 / 16.0
-    n = int(np.round((f_u - f_l) / del_f)) + 1
-    f = (f_l + del_f * torch.arange(n, device="cuda:0", dtype=torch.float64))
-    f = f.unsqueeze(0).expand(batch_size, -1).clone()
-
-    f_ref = torch.tensor(f_l, device="cuda:0", dtype=torch.float32)
-    f_ref = f_ref.unsqueeze(0).expand(batch_size, -1).clone()
-
-    # Instantiate using a YAML prior config and a constant-sky projection
-    param_sampler = read_from_config("./gwconfig.yaml", seed=0)
+    # ConstantProjection applies time-independent antenna-pattern weighting
+    # for each detector — no manual RA/dec/polarisation passing needed
     waveform_project = ConstantProjection()
-    php = IMRPhenomPv2(param_sampler, waveform_project)
 
-    hp, hc = php.get_hphc(params_batch, reproduce_lal=True)
-    # hp, hc: complex64 tensors of shape (512, n_freq)
+    # Half-normal SNR prior: most injections fall between SNR 5 and 20
+    snrscaler = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=150914))
 
-Multi-detector projection
---------------------------
+    signal_sampler = IMRPhenomPv2(param_sampler, waveform_project, augment=snrscaler)
 
-:class:`~sage.data.waveform.project.ConstantProjection` applies a constant (time-independent)
-antenna-pattern projection and returns a detector-strain batch:
+Calling the sampler
+--------------------
 
-.. code-block:: python
-
-    signal_batch = waveform_project(
-        hp, hc,
-        ra=params_batch[:, 13],
-        dec=params_batch[:, 14],
-        polarization=params_batch[:, 12],
-    )
-    print(signal_batch.shape)   # torch.Size([512, 2, 16385])
-
-Performance
------------
-
-A batch of 512 precessing waveforms (16 s at 1024 Hz) completes in approximately
-**0.19 s** on a single GPU (A100/V100 class), giving roughly **2 700 waveforms per
-second**:
+A single call samples parameters from the prior, generates precessing waveforms on
+the GPU, projects them onto each detector, and applies the SNR rescaler:
 
 .. code-block:: python
 
-    import time
+    signal_data, signal_targets = signal_sampler()
+    # signal_data:    (S, n_detectors, n_freq) — complex FD strain per detector
+    # signal_targets: (S, num_pe + 1)         — regression targets + class label (1)
 
-    t0 = time.time()
-    hp, hc = php.get_hphc(params_batch, reproduce_lal=True)
-    print(f"Batch of {batch_size} Pv2 waveforms: {time.time() - t0:.3f} s")
-    # Batch of 512 Pv2 waveforms: 0.187 s
+where ``S = int(batch_size * class_balance)`` (default 50% of the batch).
+The frequency grid is determined automatically from the data config.
+
+See :doc:`../bbh_params/gwconfig` for the full prior specification and
+:doc:`../full_run` for a complete production example.
 
 Comparison with LALSuite
 -------------------------
 
 Sage's IMRPhenomPv2 is validated against ``lalsimulation`` with a mismatch below
-**2 × 10⁻⁵** against an ``aLIGOZeroDetHighPower`` PSD:
+**2 × 10⁻⁵** against an ``aLIGOZeroDetHighPower`` PSD.  To reproduce the comparison,
+generate a waveform via ``get_hphc`` with known parameters and compare against LAL:
 
 .. code-block:: python
 

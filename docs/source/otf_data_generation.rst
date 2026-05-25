@@ -8,23 +8,14 @@ batches at each call.
 
 The full pipeline for one batch is:
 
-.. code-block:: text
+.. figure:: /_static/methodology-flowchart.png
+   :align: center
+   :alt: Sage methodology flowchart
 
-    gwconfig.yaml
-          │
-          ▼
-    DistributionSampler  ─── HalfNorm SNR prior
-          │                       │
-          ▼                       ▼
-    IMRPhenomPv2 ────── OptimalSNRRescaler
-          │
-          │         .bin files on disk
-          │               │
-          │               ▼
-          │         MemmapNoiseSampler ── RecolourPostprocess
-          │               │
-          ▼               ▼
-    signal_batch (FD)   noise_batch (FD)
+   Flowchart of the Sage on-the-fly generation pipeline. Elements in the dotted box
+   (configuration and data priming) are set once per run. The signal generation branch
+   is specific to the signal class; common settings apply to both signal and noise.
+   All boxes with solid outlines are iterated over at every training batch.
 
 Signal sampler with SNR rescaling
 -----------------------------------

@@ -131,23 +131,3 @@ to disk:
         train_sage(nepoch=nepoch)
         logger.log(train_sage.loss_components, nepoch, split="training")
 
-Hard-mining variant
---------------------
-
-:class:`~sage.factory.training.SageHardMiningTraining` extends the standard loop by
-periodically replacing a fraction of background slots with pre-mined high-ranking
-noise windows (false-alarm candidates the model currently struggles to reject):
-
-.. code-block:: python
-
-    from sage.factory.training import SageHardMiningTraining
-
-    train_sage = SageHardMiningTraining(
-        ...,                          # same as SageUncompiledTraining
-        miner=miner,                  # HardSampleMiner or subclass
-        hard_noise_buffer=buffer,     # HardNoiseBuffer — filled by the miner
-        hard_noise_frac=0.15,         # 15% of background slots → hard noise
-        mine_every_n_epochs=5,        # re-mine every 5 epochs
-    )
-
-See :doc:`noise_dataset/sampling` for details on the mining strategies.

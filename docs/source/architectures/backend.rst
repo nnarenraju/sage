@@ -55,6 +55,16 @@ CBAM adds a small overhead (~2% of backbone parameters) but consistently improve
 detection performance by allowing the network to attend to the merger rather than
 treating all positions equally.
 
+.. figure:: /_static/CBAM.png
+   :align: center
+   :alt: CBAM attention mechanism diagram
+
+   CBAM attention mechanism. **Channel attention** squeezes spatial dimensions via
+   global average and max pooling, combines them through a shared MLP, and produces
+   per-channel gating weights. **Spatial attention** then pools across channels and
+   applies a convolutional attention map to focus the network on the merger
+   time–frequency region.
+
 Feature pooling and output
 ---------------------------
 
