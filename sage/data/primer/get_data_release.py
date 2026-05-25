@@ -295,7 +295,7 @@ class DataReleaseDownloader:
         # TODO: Generalise sage.core.errors --> "safe_call" to accommodate this
         for ntry in range(cfg.max_retries):
             try:
-                data = TimeSeries.fetch_open_data(det, b0, b1, cache=False)
+                data = TimeSeries.fetch_open_data(det, b0, b1, cache=True)
                 return data, True
             except Exception as e:
                 # logger.warning(

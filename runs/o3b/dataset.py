@@ -105,7 +105,7 @@ def _download_data_release(tq, data_cfg):
         corrupt_trim_length=buffer,
         max_download_retries=15,
         retry_delay=5.0,
-        num_workers=1,
+        num_workers=16,
         proxy_reset_every=50,
         proxy_reset_sleep=90.0,
         make_monolithic_file=True,
