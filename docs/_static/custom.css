@@ -1,0 +1,5 @@
+/* Shrink the sidebar logo */
+.wy-side-nav-search > a img {
+    max-height: 48px;
+    width: auto;
+}

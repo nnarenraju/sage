@@ -1,7 +1,7 @@
 .. Sage documentation master file
 
-Sage — Unbiased Machine Learning for Gravitational-Wave Discovery
-==================================================================
+Physics-informed Representation Learning for Gravitational-wave Discovery
+=========================================================================
 
 .. image:: /_static/sage_logo.png
    :alt: Sage logo
@@ -14,7 +14,9 @@ An end-to-end PyTorch pipeline for compact binary coalescence detection —
 from raw gravitational-wave strain to a bespoke neural network, with systematic bias 
 mitigations built in. 
 
-We welcome collaborations — reach out if you want a production-level GW search built for your data!
+.. admonition:: Collaborate with us!
+
+   We welcome collaborations — reach out if you want a production-level GW search built for your data!
 
 .. warning::
 
@@ -105,10 +107,6 @@ The methods are described in:
    Problem* — Nagarajan & Messenger, Phys. Rev. D **112**, 103002 (2025).
    `[paper] <https://link.aps.org/doi/10.1103/zwj9-ycyz>`__
    `[arXiv] <https://arxiv.org/abs/2501.13846>`__
-
-If you are interested in applying Sage to your own data or observing run, we are open
-to collaboration and can work with you to build a production-level gravitational-wave
-search tailored to your specific science goals and detector configuration.
 
 ----
 
