@@ -1,7 +1,7 @@
 ## Sage - Gravitational Wave Detection with Machine Learning
 
-<p align="center">
-  <img src="docs/_static/sage_logo.png" alt="SAGE logo" width="400"/>
+<p align="left">
+  <img src="docs/_static/rectangular_logo.png" alt="SAGE logo" width="800"/>
 </p>
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20375078-blue)](https://doi.org/10.5281/zenodo.20375078)
