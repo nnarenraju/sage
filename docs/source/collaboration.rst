@@ -59,9 +59,9 @@ The Sage Team
 
       |
 
-      *PhD Researcher* · University of Glasgow
+      *Postdoctoral Researcher* · University of Potsdam
 
-      `ORCID <https://orcid.org/>`__ · `GitHub <https://github.com/nnarenraju>`__
+      `ORCID <https://orcid.org/0000-0003-3695-0078>`__ · `GitHub <https://github.com/nnarenraju>`__
 
    .. grid-item-card:: Christopher Messenger
       :text-align: center
@@ -73,9 +73,9 @@ The Sage Team
 
       |
 
-      *Professor* · University of Glasgow
+      *Senior Lecturer* · University of Glasgow
 
-      `ORCID <https://orcid.org/>`__
+      `ORCID <https://orcid.org/0000-0001-7488-5022>`__
 
 ----
 
