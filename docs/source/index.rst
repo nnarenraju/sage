@@ -3,9 +3,9 @@
 Physics-informed Representation Learning for Gravitational-wave Discovery
 =========================================================================
 
-.. image:: /_static/sage_logo.png
+.. image:: /_static/rectangular_logo.png
    :alt: Sage logo
-   :width: 300px
+   :width: 480px
    :align: center
 
 |
