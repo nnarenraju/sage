@@ -28,9 +28,14 @@ from pathlib import Path
 pytest.importorskip("h5py", reason="sage.core.logger requires h5py")
 pytest.importorskip("tqdm", reason="lowfar_noise requires tqdm")
 
-# Stub pycbc so the top-level "from pycbc import DYN_RANGE_FAC" succeeds
-# without a real pycbc installation.
-if "pycbc" not in sys.modules:
+# Ensure pycbc is importable so "from pycbc import DYN_RANGE_FAC" in
+# lowfar_noise.py succeeds.  Use the real package when it is installed;
+# only fall back to a stub when it is genuinely absent.  A module-level stub
+# that replaces a real package would poison sys.modules for every other test
+# in the same session (e.g. test_dsp_heterodyning.py needs pycbc.waveform).
+try:
+    import pycbc as _pycbc  # noqa: F401  — triggers real package registration
+except ImportError:
     _pycbc_stub = types.ModuleType("pycbc")
     _pycbc_stub.DYN_RANGE_FAC = 1.0
     sys.modules["pycbc"] = _pycbc_stub
