@@ -3,3 +3,8 @@
     max-height: 48px;
     width: auto;
 }
+
+/* Match sidebar header background to the logo's dark green */
+.wy-side-nav-search {
+    background-color: #0d3b2e;
+}

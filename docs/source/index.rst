@@ -17,6 +17,7 @@ mitigations built in.
 .. admonition:: Collaborate with us!
 
    We welcome collaborations — reach out if you want a production-level GW search built for your data!
+   Visit the :doc:`collaboration` page to get in touch.
 
 .. warning::
 
@@ -117,6 +118,7 @@ The methods are described in:
 
    installation
    quickstart
+   collaboration
 
 .. toctree::
    :maxdepth: 2
