@@ -19,6 +19,15 @@ mitigations built in.
    We welcome collaborations — reach out if you want a production-level GW search built for your data!
    Visit the :doc:`collaboration` page to get in touch.
 
+.. note::
+
+   **New to gravitational waves, machine learning, or detection pipelines?**
+   Head over to the :doc:`Learning Guide <learning_guide>` — a comprehensive introduction
+   being built for anyone starting from scratch, whether you are a high-school student
+   curious about LIGO, an ML engineer encountering GW data for the first time, or a
+   physicist who has never trained a neural network. Everything you need to understand
+   Sage, from first principles upwards, will be there.
+
 .. warning::
 
    These docs are actively being built and are subject to change. Individual sections
@@ -147,6 +156,13 @@ The methods are described in:
 
 .. toctree::
    :maxdepth: 1
+   :caption: Learning Guide
+   :hidden:
+
+   learning_guide
+
+.. toctree::
+   :maxdepth: 1
    :caption: Developer Guide
    :hidden:
 
@@ -168,13 +184,6 @@ The methods are described in:
    citation
    changelog
    glossary
+   indices
    autoapi/sage/index
 
-----
-
-Indices and tables
-------------------
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`

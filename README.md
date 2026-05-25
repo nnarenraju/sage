@@ -95,7 +95,7 @@ sage/
 │   ├── exec/               # Pipeline orchestration
 │   ├── factory/            # Training, validation, schedulers, callbacks
 │   ├── plotting/           # Diagnostic and publication plotting
-│   ├── presets/            # Pre-built config presets
+│   ├── presets/            # Legacy configs and shared data configs
 │   └── utils/              # Checkpointing, timing, Condor utilities
 ├── runs/                   # Run scripts for specific experiments
 ├── repro/                  # Reproducibility notebooks and configuration
@@ -120,11 +120,9 @@ No local install needed — run Sage on a free Google Colab T4 GPU:
 
 ## Quick Start
 
-Start with [`repro/start_here.ipynb`](repro/start_here.ipynb), which walks
-through the main Sage workflow used by the reproducibility scripts.
-
-The run-specific scripts live under [`runs/`](runs/), and shared configuration
-presets live under [`sage/presets/`](sage/presets/).
+The full User Guide is available at **[sage-gw.readthedocs.io](https://sage-gw.readthedocs.io/en/latest/)**.
+Complete run scripts for specific experiments live under [`runs/`](runs/) — start there
+to see how the full pipeline is configured and executed.
 
 ---
 

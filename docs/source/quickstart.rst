@@ -1,15 +1,13 @@
 Quick Start
 ===========
 
-Reproducibility walkthrough
-----------------------------
+Getting started
+----------------
 
-Start with `repro/start_here.ipynb <https://github.com/nnarenraju/sage/blob/main/repro/start_here.ipynb>`_,
-which walks through the main Sage workflow used by the reproducibility scripts.
-
-Run-specific scripts live under `runs/ <https://github.com/nnarenraju/sage/tree/main/runs>`_
-and shared configuration presets live under
-`sage/presets/ <https://github.com/nnarenraju/sage/tree/main/sage/presets>`_.
+The :doc:`User Guide <overview>` covers the full pipeline from data download to training
+and evaluation. For complete, working examples of how Sage is configured and run in
+practice, see the scripts under
+`runs/ <https://github.com/nnarenraju/sage/tree/main/runs>`_.
 
 Colab tutorials
 ---------------
@@ -58,7 +56,7 @@ Repository layout
     │   ├── exec/               # Pipeline orchestration
     │   ├── factory/            # Training, validation, schedulers, callbacks
     │   ├── plotting/           # Diagnostic and publication plotting
-    │   ├── presets/            # Pre-built config presets
+    │   ├── presets/            # Legacy configs and shared data configs
     │   └── utils/              # Checkpointing, timing, Condor utilities
     ├── runs/                   # Run scripts for specific experiments
     ├── repro/                  # Reproducibility notebooks and configuration

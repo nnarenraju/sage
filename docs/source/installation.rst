@@ -41,17 +41,11 @@ Option B — pip only
 Verifying the installation
 --------------------------
 
-Run a quick smoke test to confirm configuration registration works:
+Run a quick smoke test to confirm the package is importable:
 
 .. code-block:: bash
 
-    python -c "
-    from sage.core.config import register_configs
-    from sage.presets.data_configs import Default as data_cfg
-    from sage.presets.configs import DefaultConfig as cfg
-    register_configs(cfg, data_cfg)
-    print('Config registration: OK')
-    "
+    python -c "import sage; print('Import: OK')"
 
 To run the full test suite:
 
