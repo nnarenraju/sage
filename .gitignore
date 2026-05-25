@@ -160,7 +160,9 @@ source/baseline/data/psds/
 
 # Do not ignore these files
 !requirements.txt
+!docs/_static/display_picture.jpg
 
 # Automatically added files
 sage/architectures/zoo/mamba.py
 sage/benchmark/evomcts
+
