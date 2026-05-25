@@ -24,7 +24,7 @@ Minimum Requirements
    * - System RAM
      - *TBA*
    * - Storage
-     - *TBA* — O3b noise data is large; fast local SSD strongly recommended
+     - *TBA* — noise data is large; fast local SSD strongly recommended
    * - CUDA version
      - *TBA*
    * - PyTorch version
@@ -103,19 +103,19 @@ Throughput Estimates
 Storage Layout
 ---------------
 
-O3b data download
+Observing Run data download
 ~~~~~~~~~~~~~~~~~~
 
 .. code-block:: text
 
    data/
-   └── O3b/
+   └── O3/
        ├── H1/         # Hanford strain (.bin files, one per segment)
        ├── L1/         # Livingston strain
        ├── V1/         # Virgo strain
        └── psds/       # Pre-computed noise PSDs
 
-Estimated total size: *TBA* (O3b is several TB — download selectively if storage is limited).
+Estimated total size: *TBA* (Observing runs are 100s of GB at 2048 Hz sampling rate — download selectively if storage is limited).
 
 Checkpoint storage
 ~~~~~~~~~~~~~~~~~~~
