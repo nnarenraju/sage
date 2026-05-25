@@ -8,10 +8,10 @@ Learning Guide
 
 ----
 
-The Learning Guide is designed for two audiences who often approach gravitational-wave
-machine learning from opposite directions: physicists who want to understand the ML, and
-machine-learning practitioners who want to understand the GW physics. The goal is to make
-Sage approachable from either starting point.
+The Learning Guide is designed for three audiences: complete beginners with no prior
+background; physicists who want to understand the ML side of Sage; and machine-learning
+practitioners who want to understand the GW physics. See :doc:`beginners` if you are
+starting from scratch.
 
 ----
 
@@ -41,16 +41,6 @@ physicists already comfortable with GW data analysis. Topics will include:
 - How binary cross-entropy connects to detection statistics
 - What ``torch.compile`` does and why it is safe to treat as a black box
 
-The 11 Biases — A Guided Tour
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A section-by-section walkthrough of each bias identified in the paper, with:
-
-- An intuitive explanation of why the bias arises
-- A worked example showing its effect on detection performance
-- The specific Sage mechanism that mitigates it
-- A pointer to the relevant code and config option
-
 Step-by-Step Tutorials
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -77,3 +67,8 @@ Exercises
 ~~~~~~~~~~
 
 Short, self-contained exercises to test understanding — with solutions provided.
+
+.. toctree::
+   :hidden:
+
+   beginners

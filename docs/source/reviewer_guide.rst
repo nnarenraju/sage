@@ -29,8 +29,6 @@ The planned tools will include:
 
 - **Result reproducer** — a CLI that reruns the full MLGWSC-1 evaluation from a published
   checkpoint and prints the sensitive distance and FAR curves used in the paper
-- **Bias audit tool** — runs each of the 11 bias mitigation toggles independently so
-  referees can verify that each mitigation has the claimed effect on detection performance
 - **Waveform validator** — compares Sage IMRPhenomD/Pv2 outputs against LALSuite at
   a set of standard test points and reports mismatches above a threshold
 - **Checkpoint inspector** — loads a checkpoint and prints a human-readable summary of

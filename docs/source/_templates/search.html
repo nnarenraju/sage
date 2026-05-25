@@ -1,0 +1,21 @@
+{% extends "!search.html" %}
+
+{% block content %}
+<div style="margin-bottom: 2em;">
+  <p>
+    Search the full Sage documentation — user guides, API reference, glossary, and more.
+  </p>
+
+  <p><strong>Not sure where to start?</strong> Try one of these:</p>
+
+  <ul>
+    <li><a href="{{ pathto('overview') }}">Pipeline overview</a> — what each module does and how they fit together</li>
+    <li><a href="{{ pathto('configuration') }}">Configuration reference</a> — every field in <code>RunCFG</code>, <code>DataCFG</code>, and <code>gwconfig.yaml</code></li>
+    <li><a href="{{ pathto('glossary') }}">Glossary</a> — definitions for GW and ML terms used throughout the docs</li>
+    <li><a href="{{ pathto('troubleshooting') }}">Troubleshooting</a> — common errors and how to fix them</li>
+    <li><a href="{{ pathto('autoapi/sage/index') }}">API reference</a> — full auto-generated documentation for every module</li>
+  </ul>
+</div>
+
+{{ super() }}
+{% endblock %}

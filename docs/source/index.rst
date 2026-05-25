@@ -161,6 +161,7 @@ The methods are described in:
    :hidden:
 
    learning_guide
+   beginners
 
 .. toctree::
    :maxdepth: 1
