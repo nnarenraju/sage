@@ -89,8 +89,7 @@ Get in touch
       :text-align: center
 
       .. raw:: html
-
-         <p><strong>Email</strong></p>
+         
          <p style="margin-bottom: 0.6em;">nagarajan@uni-potsdam.de</p>
          <button
            onclick="
