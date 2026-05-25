@@ -41,7 +41,7 @@ Documentation = "https://sage-gw.readthedocs.io"
 Repository = "https://github.com/nnarenraju/sage"
 "Bug Tracker" = "https://github.com/nnarenraju/sage/issues"
 Paper = "https://doi.org/10.1103/zwj9-ycyz"
-Zenodo = "https://doi.org/10.5281/zenodo.17290133"
+Zenodo = "https://doi.org/10.5281/zenodo.20375078"
 
 [tool.setuptools.packages.find]
 where = ["."]

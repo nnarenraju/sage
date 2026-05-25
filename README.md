@@ -4,7 +4,7 @@
   <img src="docs/_static/sage_logo.png" alt="SAGE logo" width="400"/>
 </p>
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17290133-blue)](https://doi.org/10.5281/zenodo.17290133)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20375078-blue)](https://doi.org/10.5281/zenodo.20375078)
 [![ASCL](https://img.shields.io/badge/ascl-4712-blue.svg?colorB=262255)](https://www.ascl.net/code/v/4712)
 [![CI](https://github.com/nnarenraju/sage/actions/workflows/ci.yml/badge.svg)](https://github.com/nnarenraju/sage/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/nnarenraju/sage/branch/main/graph/badge.svg?token=RLAAMEZEZ6)](https://codecov.io/github/nnarenraju/sage)

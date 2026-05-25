@@ -5,7 +5,7 @@ version: "0.1.0"
 date-released: "2026-05-25"
 license: GPL-3.0
 repository-code: "https://github.com/nnarenraju/sage"
-doi: 10.5281/zenodo.17290133
+doi: 10.5281/zenodo.20375078
 url: "https://sage-gw.readthedocs.io"
 authors:
   - family-names: Nagarajan
