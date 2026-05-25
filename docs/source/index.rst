@@ -119,6 +119,9 @@ The methods are described in:
    installation
    quickstart
    collaboration
+   faq
+   troubleshooting
+   hardware
 
 .. toctree::
    :maxdepth: 2
@@ -163,6 +166,8 @@ The methods are described in:
 
    benchmarks
    citation
+   changelog
+   glossary
    autoapi/sage/index
 
 ----

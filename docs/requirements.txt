@@ -4,3 +4,4 @@ sphinx-design
 myst-parser
 sphinx-autoapi
 sphinx-autodoc-typehints
+sphinxext-opengraph

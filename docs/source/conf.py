@@ -28,6 +28,17 @@ extensions = [
     "autoapi.extension",
     "sphinx_autodoc_typehints",
     "sphinx_design",
+    "sphinxext.opengraph",
+]
+
+# -- Open Graph / social card settings --------------------------------------
+
+ogp_site_url = "https://sage-gw.readthedocs.io/"
+ogp_image = "https://sage-gw.readthedocs.io/en/latest/_static/rectangular_logo.png"
+ogp_description_length = 200
+ogp_type = "website"
+ogp_custom_meta_tags = [
+    '<meta name="twitter:card" content="summary_large_image">',
 ]
 
 templates_path = ["_templates"]
