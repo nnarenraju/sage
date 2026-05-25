@@ -66,10 +66,30 @@ The methods are described in:
    quickstart
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: User Guide
 
    overview
+
+.. toctree::
+   :maxdepth: 2
+   :caption: User Guides
+
+   data_priming/index
+   noise_dataset/index
+   signal_dataset/index
+   whitening
+   multirate
+   snr_estimation
+   bbh_params/index
+   otf_data_generation
+   data_transforms
+   architectures/index
+   losses/index
+   optimisers
+   training
+   validation
+   full_run
 
 .. toctree::
    :maxdepth: 1
