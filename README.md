@@ -1,4 +1,4 @@
-## Sage - Gravitational Wave Detection with Machine Learning
+## Physics-informed Representation Learning for Gravitational Wave Discovery
 
 <p align="left">
   <img src="docs/_static/rectangular_logo.png" alt="SAGE logo" width="800"/>

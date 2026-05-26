@@ -62,7 +62,7 @@
 .wy-menu-vertical li.current > a:hover {
     border-left: 3px solid #4ecb91;
     background-color: rgba(78, 203, 145, 0.12) !important;
-    color: #ffffff !important;
+    color: #2b2b2b !important;
 }
 
 .wy-menu-vertical li.toctree-l2.current > a {
@@ -71,7 +71,7 @@
 
 /* Caption labels (e.g. "User Guide", "Reference") */
 .wy-menu-vertical p.caption {
-    color: #4ecb91;
+    color: #2d9e6e;
     letter-spacing: 0.08em;
     font-size: 0.72em;
     text-transform: uppercase;
@@ -240,17 +240,6 @@ html {
     border-radius: 5px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     border-left-width: 4px;
-}
-
-/* Custom "Collaborate with us!" box */
-.rst-content .admonition:not(.note):not(.warning):not(.tip):not(.important):not(.caution):not(.danger) {
-    border-left-color: #0d3b2e;
-    background-color: #f2faf6;
-}
-
-.rst-content .admonition:not(.note):not(.warning):not(.tip):not(.important):not(.caution):not(.danger) > .admonition-title {
-    background-color: #0d3b2e;
-    color: #ffffff;
 }
 
 /* Note box */
