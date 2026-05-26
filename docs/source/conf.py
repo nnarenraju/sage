@@ -98,6 +98,7 @@ html_theme = "sphinx_rtd_theme"
 html_logo = "_static/rectangular_logo.png"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
+html_js_files = ["custom.js"]
 
 html_theme_options = {
     "logo_only": False,

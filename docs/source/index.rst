@@ -7,6 +7,7 @@ Physics-informed Learning for Gravitational-wave Discovery
    :alt: Sage logo
    :width: 480px
    :align: center
+   :class: sage-logo-hero
 
 |
 

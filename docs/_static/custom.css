@@ -414,3 +414,174 @@ footer a:hover {
 .rst-versions .rst-current-version:hover {
     background: #1a5c42 !important;
 }
+
+/* ----------------------------------------------------------
+   Hero logo — no pointer, no lightbox
+   ---------------------------------------------------------- */
+
+img.sage-logo-hero {
+    cursor: default !important;
+}
+
+/* ----------------------------------------------------------
+   Logo download button
+   ---------------------------------------------------------- */
+
+#sage-logo-download {
+    display: block;
+    width: fit-content;
+    margin: 0.6em auto 0;
+    padding: 0.3em 0.85em;
+    border: 1px solid #c8e6d4;
+    border-radius: 20px;
+    background: #f8fcfa;
+    color: #1a6b51;
+    font-size: 0.78em;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-decoration: none !important;
+    line-height: 1.6;
+    transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+#sage-logo-download svg {
+    vertical-align: middle;
+    margin-right: 0.3em;
+    position: relative;
+    top: -1px;
+}
+
+#sage-logo-download:hover {
+    border-color: #2d9e6e;
+    background: #edf7f1;
+    color: #0d3b2e;
+}
+
+/* ----------------------------------------------------------
+   Reading progress bar
+   ---------------------------------------------------------- */
+
+#sage-progress-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    width: 0%;
+    background: #2d9e6e;
+    z-index: 9999;
+    transition: width 0.1s linear;
+    pointer-events: none;
+}
+
+/* ----------------------------------------------------------
+   Scroll-triggered fade-in
+   ---------------------------------------------------------- */
+
+@keyframes sage-fade-up {
+    from {
+        opacity: 0;
+        transform: translateY(18px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.sage-reveal {
+    opacity: 0;
+    transform: translateY(18px);
+}
+
+.sage-reveal.sage-visible {
+    animation: sage-fade-up 0.45s ease forwards;
+}
+
+/* ----------------------------------------------------------
+   Back-to-top button
+   ---------------------------------------------------------- */
+
+#sage-back-to-top {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 50%;
+    border: 2px solid #2d9e6e;
+    background: #ffffff;
+    color: #2d9e6e;
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.25s ease, transform 0.25s ease, background 0.2s ease;
+    z-index: 9998;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(13, 59, 46, 0.15);
+}
+
+#sage-back-to-top.sage-btt-visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+#sage-back-to-top:hover {
+    background: #edf7f1;
+}
+
+/* ----------------------------------------------------------
+   Figure lightbox
+   ---------------------------------------------------------- */
+
+#sage-lightbox {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 20, 15, 0.88);
+    z-index: 10000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+}
+
+#sage-lightbox.sage-lightbox-open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+#sage-lightbox img {
+    max-width: 92vw;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: 6px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+    transform: scale(0.94);
+    transition: transform 0.25s ease;
+}
+
+#sage-lightbox.sage-lightbox-open img {
+    transform: scale(1);
+}
+
+#sage-lightbox-close {
+    position: absolute;
+    top: 1rem;
+    right: 1.25rem;
+    background: transparent;
+    border: none;
+    color: #ffffff;
+    font-size: 2rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.15s ease;
+}
+
+#sage-lightbox-close:hover {
+    opacity: 1;
+}
