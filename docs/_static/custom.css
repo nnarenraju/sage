@@ -48,25 +48,21 @@
    Sidebar — navigation tree
    ---------------------------------------------------------- */
 
-.wy-nav-side {
-    background: #0f4535;
-}
-
 .wy-menu-vertical a {
     transition: background 0.15s ease, padding-left 0.15s ease, color 0.15s ease;
 }
 
 .wy-menu-vertical a:hover {
     background-color: rgba(255, 255, 255, 0.07) !important;
-    color: #a8e6c4 !important;
+    color: #ffffff !important;
     padding-left: 1.3em;
 }
 
 .wy-menu-vertical li.current > a,
 .wy-menu-vertical li.current > a:hover {
     border-left: 3px solid #4ecb91;
-    background-color: rgba(78, 203, 145, 0.1) !important;
-    color: #a8e6c4 !important;
+    background-color: rgba(78, 203, 145, 0.12) !important;
+    color: #ffffff !important;
 }
 
 .wy-menu-vertical li.toctree-l2.current > a {
@@ -75,7 +71,7 @@
 
 /* Caption labels (e.g. "User Guide", "Reference") */
 .wy-menu-vertical p.caption {
-    color: rgba(255, 255, 255, 0.4);
+    color: #4ecb91;
     letter-spacing: 0.08em;
     font-size: 0.72em;
     text-transform: uppercase;
@@ -259,11 +255,11 @@ html {
 
 /* Note box */
 .rst-content .admonition.note {
-    border-left-color: #2d9e6e;
+    border-left-color: #1a5c42;
 }
 
 .rst-content .admonition.note > .admonition-title {
-    background-color: #2d9e6e;
+    background-color: #1a5c42;
 }
 
 /* ----------------------------------------------------------
