@@ -437,22 +437,32 @@ class DataReleaseDownloader:
         return (int(t) // 4096) * 4096
 
     @staticmethod
-    def _resolve_file_url(det, f0, session):
-        """One small get_urls query for the single file starting at GPS f0."""
-        urls = _gwosc_get_urls(det, f0, f0 + 1, sample_rate=4096, session=session)
-        return urls[0] if urls else None
+    def _construct_file_url(det, f0, observing_run="O3b"):
+        """Construct GWOSC 4KHz HDF5 URL from detector and GPS file start.
+
+        URL pattern (verified for O3b):
+          https://gwosc.org/archive/data/{run}_4KHZ_R1/{parent}/{prefix}-{det}_GWOSC_{run}_4KHZ_R1-{gps}-4096.hdf5
+        where parent = (gps // 65536) * 65536 and prefix = det[0] (L for L1, V for V1).
+        """
+        prefix = det[0]
+        parent = (int(f0) // 65536) * 65536
+        tag = f"{observing_run}_4KHZ_R1"
+        return (
+            f"https://gwosc.org/archive/data/{tag}/{parent}/"
+            f"{prefix}-{det}_GWOSC_{tag}-{int(f0)}-4096.hdf5"
+        )
 
     def _resolve_and_group(self, segments, det):
         """
-        Group mini-segments by GWOSC 4096s file with no fallback path.
+        Group mini-segments by GWOSC 4096s file.
 
-        GWOSC files start at exact GPS multiples of 4096s. For each
-        mini-segment we compute its file(s) mathematically, then resolve
-        each URL with one tiny per-file API call (no pagination).
+        URLs are constructed mathematically — no API calls needed.
+        GWOSC O3b 4KHz files follow a deterministic path pattern, so we can
+        skip the get_urls() round-trip entirely and go straight to grouping.
 
-        Segments that straddle a file boundary are assigned to BOTH adjacent
-        files as partial tasks ('first'/'second'). The caller concatenates the
-        raw pieces before downsampling — zero redundant HTTP requests.
+        Segments straddling a file boundary get 'first'/'second' partial tasks
+        in both adjacent files; the caller concatenates raw pieces before
+        downsampling (zero redundant HTTP requests).
 
         Returns
         -------
@@ -461,11 +471,10 @@ class DataReleaseDownloader:
                    'first': [(n,b0,b1,f0_b),...],
                    'second': [(n,b0,b1,f0_b),...]}
         n_cross : int
-            Number of cross-file segments (informational).
+            Number of cross-file segments.
         """
         segs = np.asarray(segments)
 
-        # Step 1: pure-math grouping — no API call
         _GWOSC_FILE_DUR = 4096
         by_f0 = collections.defaultdict(lambda: {"same": [], "first": [], "second": []})
         n_cross = 0
@@ -478,7 +487,6 @@ class DataReleaseDownloader:
             if b1 <= f0_b:
                 by_f0[f0_a]["same"].append((n, b0, b1))
             else:
-                # Assign to both files; caller concatenates raw pieces
                 by_f0[f0_a]["first"].append((n, b0, b1, float(f0_b)))
                 by_f0[f0_b]["second"].append((n, b0, b1, float(f0_b)))
                 n_cross += 1
@@ -486,27 +494,15 @@ class DataReleaseDownloader:
         n_files = len(by_f0)
         n_same = sum(len(v["same"]) for v in by_f0.values())
         print(
-            f"Resolving {n_files} file URLs for {det} "
-            f"({n_same} same-file, {n_cross} cross-file split across adjacent files)..."
+            f"Grouping {n_files} GWOSC files for {det} "
+            f"({n_same} same-file, {n_cross} cross-file) — constructing URLs..."
         )
 
-        # Step 2: parallel URL resolution — one tiny query per file
-        # Cap at 4 workers: gwosc.org returns 429 if we send too many concurrent API calls
-        _url_workers = min(4, self.num_workers)
-        session = DataReleaseDownloader._make_retry_session(pool_size=_url_workers + 4)
-        file_tasks = {}
-        with ThreadPoolExecutor(max_workers=_url_workers) as executor:
-            futures = {
-                executor.submit(
-                    DataReleaseDownloader._resolve_file_url, det, f0, session
-                ): f0
-                for f0 in by_f0
-            }
-            for future in as_completed(futures):
-                f0 = futures[future]
-                url = future.result()
-                if url:
-                    file_tasks[url] = by_f0[f0]
+        # No API calls: build all URLs from GPS times using the known O3b path pattern
+        file_tasks = {
+            DataReleaseDownloader._construct_file_url(det, f0): tasks
+            for f0, tasks in by_f0.items()
+        }
 
         return file_tasks, n_cross
 
