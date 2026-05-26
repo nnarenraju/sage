@@ -1,4 +1,4 @@
-### Physics-informed Representation Learning for Gravitational Wave Discovery
+## Physics-informed Learning for Gravitational Wave Discovery
 
 <p align="left">
   <img src="docs/_static/rectangular_logo.png" alt="SAGE logo" width="800"/>
