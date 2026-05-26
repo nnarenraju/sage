@@ -402,12 +402,15 @@ class DataReleaseDownloader:
         return None, None
 
     @staticmethod
-    def _make_retry_session(connect_retries=5):
-        """Return a requests.Session with urllib3 retry for connection drops."""
-        import requests as _req
+    def _make_retry_session(connect_retries=5, pool_size=32):
+        """Return a requests.Session with urllib3 retry and adequate pool size.
+
+        pool_size must be >= num_workers to avoid "Connection pool is full"
+        discards. Default of 32 comfortably covers up to 32 parallel threads.
+        """
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
-        session = _req.Session()
+        session = _requests.Session()
         retry = Retry(
             total=connect_retries,
             connect=connect_retries,
@@ -416,7 +419,11 @@ class DataReleaseDownloader:
             status_forcelist=[500, 502, 503, 504],
             raise_on_status=False,
         )
-        adapter = HTTPAdapter(max_retries=retry)
+        adapter = HTTPAdapter(
+            max_retries=retry,
+            pool_connections=pool_size,
+            pool_maxsize=pool_size,
+        )
         session.mount("https://", adapter)
         session.mount("http://", adapter)
         return session
@@ -484,9 +491,11 @@ class DataReleaseDownloader:
         )
 
         # Step 2: parallel URL resolution — one tiny query per file
-        session = DataReleaseDownloader._make_retry_session()
+        # Cap at 4 workers: gwosc.org returns 429 if we send too many concurrent API calls
+        _url_workers = min(4, self.num_workers)
+        session = DataReleaseDownloader._make_retry_session(pool_size=_url_workers + 4)
         file_tasks = {}
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+        with ThreadPoolExecutor(max_workers=_url_workers) as executor:
             futures = {
                 executor.submit(
                     DataReleaseDownloader._resolve_file_url, det, f0, session
