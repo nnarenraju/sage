@@ -1,6 +1,6 @@
 .. Sage documentation master file
 
-Physics-informed Representation Learning for Gravitational-wave Discovery
+Physics-informed Learning for Gravitational-wave Discovery
 =========================================================================
 
 .. image:: /_static/rectangular_logo.png
