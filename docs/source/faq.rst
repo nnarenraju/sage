@@ -21,7 +21,7 @@ Frequently Asked Questions
    Define "worried." If your validation loss is still decreasing, you are making measurable
    progress on at least one front. If you need to find someone who is
    a better match for you, we recommend the matched-filter pipelines for theoretical guarantees
-   in the mismatch. There are plenty of templates in the bank. She's not the one for you.
+   in the mismatch. There are plenty of templates in the bank. Your partner is not the one for you.
 
 ----
 
