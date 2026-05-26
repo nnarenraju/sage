@@ -401,58 +401,140 @@ class DataReleaseDownloader:
             return t0, t0 + int(m.group(2))
         return None, None
 
+    @staticmethod
+    def _make_retry_session(connect_retries=5):
+        """Return a requests.Session with urllib3 retry for connection drops."""
+        import requests as _req
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        session = _req.Session()
+        retry = Retry(
+            total=connect_retries,
+            connect=connect_retries,
+            read=connect_retries,
+            backoff_factor=2.0,
+            status_forcelist=[500, 502, 503, 504],
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
+    @staticmethod
+    def _gwosc_file_start(t):
+        """GPS start of the 4096s GWOSC file that contains time t.
+
+        GWOSC 4096s files start at GPS times that are exact multiples of 4096.
+        """
+        return (int(t) // 4096) * 4096
+
+    @staticmethod
+    def _resolve_file_url(det, f0, session):
+        """One small get_urls query for the single file starting at GPS f0."""
+        urls = _gwosc_get_urls(det, f0, f0 + 1, sample_rate=4096, session=session)
+        return urls[0] if urls else None
+
     def _resolve_and_group(self, segments, det):
         """
-        Make one gwosc API call to get all GWOSC file URLs for the segment span,
-        then group mini-segments by which file they fall entirely within.
+        Group mini-segments by GWOSC 4096s file with no fallback path.
+
+        GWOSC files start at exact GPS multiples of 4096s. For each
+        mini-segment we compute its file(s) mathematically, then resolve
+        each URL with one tiny per-file API call (no pagination).
+
+        Segments that straddle a file boundary are assigned to BOTH adjacent
+        files as partial tasks ('first'/'second'). The caller concatenates the
+        raw pieces before downsampling — zero redundant HTTP requests.
 
         Returns
         -------
-        same_file : dict  {url: [(n, b0, b1), ...]}
-            Segments fully covered by a single file.
-        cross_file : list [(n, b0, b1)]
-            Segments that straddle a file boundary (~12% of segments);
-            these fall back to TimeSeries.fetch_open_data.
+        file_tasks : dict
+            url → {'same': [(n,b0,b1),...],
+                   'first': [(n,b0,b1,f0_b),...],
+                   'second': [(n,b0,b1,f0_b),...]}
+        n_cross : int
+            Number of cross-file segments (informational).
         """
         segs = np.asarray(segments)
-        t0, t1 = float(segs[:, 0].min()), float(segs[:, 1].max())
 
-        all_urls = _gwosc_get_urls(det, t0, t1, sample_rate=4096)
-
-        file_intervals = sorted(
-            (f0, f1, url)
-            for url in all_urls
-            for f0, f1 in [DataReleaseDownloader._file_gps_interval(url)]
-            if f0 is not None
-        )
-
-        same_file = collections.defaultdict(list)
-        cross_file = []
+        # Step 1: pure-math grouping — no API call
+        _GWOSC_FILE_DUR = 4096
+        by_f0 = collections.defaultdict(lambda: {"same": [], "first": [], "second": []})
+        n_cross = 0
 
         for n, (b0, b1) in enumerate(segs):
             b0, b1 = float(b0), float(b1)
-            covering = [url for f0, f1, url in file_intervals if f0 <= b0 and f1 >= b1]
-            if covering:
-                same_file[covering[0]].append((n, b0, b1))
-            else:
-                cross_file.append((n, b0, b1))
+            f0_a = DataReleaseDownloader._gwosc_file_start(b0)
+            f0_b = f0_a + _GWOSC_FILE_DUR
 
-        return dict(same_file), cross_file
+            if b1 <= f0_b:
+                by_f0[f0_a]["same"].append((n, b0, b1))
+            else:
+                # Assign to both files; caller concatenates raw pieces
+                by_f0[f0_a]["first"].append((n, b0, b1, float(f0_b)))
+                by_f0[f0_b]["second"].append((n, b0, b1, float(f0_b)))
+                n_cross += 1
+
+        n_files = len(by_f0)
+        n_same = sum(len(v["same"]) for v in by_f0.values())
+        print(
+            f"Resolving {n_files} file URLs for {det} "
+            f"({n_same} same-file, {n_cross} cross-file split across adjacent files)..."
+        )
+
+        # Step 2: parallel URL resolution — one tiny query per file
+        session = DataReleaseDownloader._make_retry_session()
+        file_tasks = {}
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            futures = {
+                executor.submit(
+                    DataReleaseDownloader._resolve_file_url, det, f0, session
+                ): f0
+                for f0 in by_f0
+            }
+            for future in as_completed(futures):
+                f0 = futures[future]
+                url = future.result()
+                if url:
+                    file_tasks[url] = by_f0[f0]
+
+        return file_tasks, n_cross
 
     @staticmethod
-    def _download_and_extract_file(url, seg_tasks, cfg, max_retries=5):
+    def _download_and_extract_file(url, task_groups, cfg, max_retries=5):
         """
-        Download one GWOSC 4096s HDF5 file and extract every requested
-        mini-segment from it locally.  Returns a list of (n, data, metadata)
-        tuples in the same format as _get_detector_data.
+        Download one GWOSC 4096s HDF5 file and extract all requested slices.
+
+        task_groups keys
+        ----------------
+        'same'   : [(n, b0, b1)]          — segment fully inside this file
+        'first'  : [(n, b0, b1, f0_b)]    — segment starts here, ends in next file
+        'second' : [(n, b0, b1, f0_b)]    — segment started in previous file, ends here
+
+        Return format
+        -------------
+        List of tagged tuples:
+          ('done',    n, data, meta)          — complete segment, ready to save
+          ('first',   n, raw, sr, b0, b1)    — first raw piece; await 'second'
+          ('second',  n, raw, sr, b0, b1)    — second raw piece; await 'first'
+        On file-level failure:
+          ('done',   n, None, {})            for same tasks
+          ('first',  n, None, sr, b0, b1)    for first tasks
+          ('second', n, None, sr, b0, b1)    for second tasks
         """
+        same_tasks   = task_groups.get("same",   [])
+        first_tasks  = task_groups.get("first",  [])
+        second_tasks = task_groups.get("second", [])
+
         for attempt in range(max_retries):
             tmp_path = None
             try:
                 with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=False) as tmp:
                     tmp_path = tmp.name
 
-                resp = _requests.get(url, stream=True, timeout=300)
+                session = DataReleaseDownloader._make_retry_session()
+                resp = session.get(url, stream=True, timeout=300)
                 resp.raise_for_status()
                 with open(tmp_path, "wb") as fh:
                     for chunk in resp.iter_content(chunk_size=1 << 20):
@@ -465,12 +547,12 @@ class DataReleaseDownloader:
                     duration = float(hf["meta/Duration"][()])
                     sr = len(strain) / duration
 
-                    for n, b0, b1 in seg_tasks:
+                    # --- same-file segments: extract + downsample now ---
+                    for n, b0, b1 in same_tasks:
                         try:
                             i0 = max(0, int(round((b0 - t_file) * sr)))
                             i1 = min(len(strain), int(round((b1 - t_file) * sr)))
                             raw = strain[i0:i1].astype(np.float64)
-
                             data = pycbc_downsample(
                                 raw, sr, cfg.sample_rate,
                                 cfg.trim, cfg.noise_low_freq_cutoff,
@@ -484,9 +566,27 @@ class DataReleaseDownloader:
                                 "old_sample_rate": sr,
                                 "sample_rate": cfg.sample_rate,
                             }
-                            results.append((n, data, meta))
+                            results.append(("done", n, data, meta))
                         except Exception:
-                            results.append((n, None, {}))
+                            results.append(("done", n, None, {}))
+
+                    # --- first half of cross-file segment: raw up to file end ---
+                    for n, b0, b1, _f0_b in first_tasks:
+                        try:
+                            i0 = max(0, int(round((b0 - t_file) * sr)))
+                            raw = strain[i0:].astype(np.float64)
+                            results.append(("first", n, raw, sr, b0, b1))
+                        except Exception:
+                            results.append(("first", n, None, sr, b0, b1))
+
+                    # --- second half of cross-file segment: raw from file start ---
+                    for n, b0, b1, _f0_b in second_tasks:
+                        try:
+                            i1 = min(len(strain), int(round((b1 - t_file) * sr)))
+                            raw = strain[:i1].astype(np.float64)
+                            results.append(("second", n, raw, sr, b0, b1))
+                        except Exception:
+                            results.append(("second", n, None, sr, b0, b1))
 
                 return results
 
@@ -494,7 +594,10 @@ class DataReleaseDownloader:
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
-                    return [(n, None, {}) for n, b0, b1 in seg_tasks]
+                    failed = [("done",   n, None, {})          for n, b0, b1        in same_tasks]
+                    failed += [("first",  n, None, 0.0, b0, b1) for n, b0, b1, _ in first_tasks]
+                    failed += [("second", n, None, 0.0, b0, b1) for n, b0, b1, _ in second_tasks]
+                    return failed
             finally:
                 if tmp_path and os.path.exists(tmp_path):
                     try:
@@ -644,80 +747,106 @@ class DataReleaseDownloader:
         tasks = ((self.dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
 
         if self.num_workers > 1:
-            # Group mini-segments by GWOSC 4096s file to eliminate redundant
-            # downloads. One HTTP request per unique file instead of one per
-            # mini-segment (~8x fewer requests for 512s segments in 4096s files).
-            print(f"Resolving GWOSC file URLs for {det} ({run})...")
-            same_file, cross_file = self._resolve_and_group(segments, det)
-            n_files = len(same_file)
-            n_cross = len(cross_file)
-            n_same = sum(len(v) for v in same_file.values())
+            file_tasks, n_cross = self._resolve_and_group(segments, det)
             print(
-                f"  {n_files} unique files covering {n_same} segments; "
-                f"{n_cross} cross-file segments (fallback)"
+                f"  {len(file_tasks)} files to download "
+                f"({n_cross} cross-file segments split across adjacent files)"
             )
 
-            # Build futures: one per file (extracts all its segments) plus
-            # one per cross-file segment (uses fetch_open_data fallback).
-            def _save_results(items, pbar):
-                for n, data, metadata in items:
-                    if self.save_bin:
-                        if data is None or not isinstance(data, np.ndarray):
-                            pbar.update()
-                            continue
-                        nsamp, nbytes, dt, checksum = self._save_segment_bin(
-                            bin_fh, data
-                        )
-                        seg_meta = {
-                            "segment_index": int(n),
-                            "detector": det,
-                            "observing_run": run,
-                            "gps_start": metadata["gps_start"],
-                            "gps_end": metadata["gps_end"],
-                            "sample_rate": metadata["sample_rate"],
-                            "nsamples": nsamp,
-                            "dtype": dt.name,
-                            "endianness": dt.byteorder,
-                            "sample_start_idx": self._bin_sample_cursor,
-                            "byte_offset": self._bin_byte_cursor,
-                            "byte_length": nbytes,
-                            "checksum": checksum,
-                            "checksum_algorithm": "sha256",
-                            "dyn_range_fac": float(DYN_RANGE_FAC),
-                            "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
-                        }
-                        assert nbytes == nsamp * dt.itemsize
-                        self._bin_metadata.append(seg_meta)
-                        self._bin_sample_cursor += nsamp
-                        self._bin_byte_cursor += nbytes
-                    else:
-                        self._save_segment(hf, n, data, det, run, metadata)
+            # Helper: save one complete (n, data, meta) to bin or HDF5
+            def _save_one(n, data, metadata):
+                if self.save_bin:
+                    if data is None or not isinstance(data, np.ndarray):
+                        return
+                    nsamp, nbytes, dt, checksum = self._save_segment_bin(bin_fh, data)
+                    seg_meta = {
+                        "segment_index": int(n),
+                        "detector": det,
+                        "observing_run": run,
+                        "gps_start": metadata["gps_start"],
+                        "gps_end": metadata["gps_end"],
+                        "sample_rate": metadata["sample_rate"],
+                        "nsamples": nsamp,
+                        "dtype": dt.name,
+                        "endianness": dt.byteorder,
+                        "sample_start_idx": self._bin_sample_cursor,
+                        "byte_offset": self._bin_byte_cursor,
+                        "byte_length": nbytes,
+                        "checksum": checksum,
+                        "checksum_algorithm": "sha256",
+                        "dyn_range_fac": float(DYN_RANGE_FAC),
+                        "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
+                    }
+                    assert nbytes == nsamp * dt.itemsize
+                    self._bin_metadata.append(seg_meta)
+                    self._bin_sample_cursor += nsamp
+                    self._bin_byte_cursor += nbytes
+                else:
+                    self._save_segment(hf, n, data, det, run, metadata)
+
+            # Accumulator for cross-file partial pieces: n → {kind: (raw, sr, b0, b1)}
+            partials = {}
+
+            def _combine_and_save(n, parts, pbar):
+                """Concatenate first+second raw pieces, downsample, save."""
+                fr, sr, b0, b1 = parts["first"]
+                sr_r, b0_r, b1_r = parts["second"][1], parts["second"][2], parts["second"][3]
+                sec_raw = parts["second"][0]
+                if fr is None or sec_raw is None:
                     pbar.update()
+                    return
+                raw = np.concatenate([fr, sec_raw])
+                try:
+                    data = pycbc_downsample(
+                        raw, sr, self.dcfg.sample_rate,
+                        self.dcfg.trim, self.dcfg.noise_low_freq_cutoff,
+                    )
+                    data = data * DYN_RANGE_FAC
+                    meta = {
+                        "gps_start": b0 + self.dcfg.trim,
+                        "gps_end": b1 - self.dcfg.trim,
+                        "trim": int(round(self.dcfg.trim * self.dcfg.sample_rate)),
+                        "nsamples": len(data),
+                        "old_sample_rate": sr,
+                        "sample_rate": self.dcfg.sample_rate,
+                    }
+                    _save_one(n, data, meta)
+                except Exception:
+                    pass
+                pbar.update()
 
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor, \
                     tqdm(total=len(segments)) as pbar:
                 pbar.set_description(f"GWOSC-FILE {det}")
 
-                file_futures = {
+                futures = {
                     executor.submit(
                         DataReleaseDownloader._download_and_extract_file,
-                        url, seg_tasks, self.dcfg,
+                        url, tasks, self.dcfg,
                     ): url
-                    for url, seg_tasks in same_file.items()
-                }
-                cross_futures = {
-                    executor.submit(
-                        DataReleaseDownloader._get_detector_data,
-                        self.dcfg, n, b0, b1, det,
-                    ): (n, b0, b1)
-                    for n, b0, b1 in cross_file
+                    for url, tasks in file_tasks.items()
                 }
 
-                for future in as_completed({**file_futures, **cross_futures}):
-                    result = future.result()
-                    # file futures return list; cross-file futures return tuple
-                    items = result if isinstance(result, list) else [result]
-                    _save_results(items, pbar)
+                for future in as_completed(futures):
+                    for item in future.result():
+                        tag = item[0]
+
+                        if tag == "done":
+                            _, n, data, meta = item
+                            _save_one(n, data, meta)
+                            pbar.update()
+
+                        elif tag == "first":
+                            _, n, raw, sr, b0, b1 = item
+                            partials.setdefault(n, {})["first"] = (raw, sr, b0, b1)
+                            if "second" in partials[n]:
+                                _combine_and_save(n, partials.pop(n), pbar)
+
+                        elif tag == "second":
+                            _, n, raw, sr, b0, b1 = item
+                            partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
+                            if "first" in partials[n]:
+                                _combine_and_save(n, partials.pop(n), pbar)
         else:
             with tqdm(total=len(segments)) as pbar:
                 pbar.set_description("DET_SCIENCE_DATA GWOSC")
