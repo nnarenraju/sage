@@ -5,6 +5,34 @@ Sage is an end-to-end supervised learning pipeline that tackles gravitational-wa
 detection by systematically identifying and mitigating 11 interconnected learning biases.
 All modules are optimised for CPU and GPU (``torch.compile``-compatible) usage.
 
+How to use this guide
+---------------------
+
+The **User Guide** sidebar entries are arranged in the exact order you should follow
+them — start at the top and work your way down. Each page builds on the one before it,
+so following them in sequence is the smoothest path from a fresh install to a
+fully-trained Sage model. You do not need to read everything in one sitting; every page
+is self-contained enough that you can pick up exactly where you left off.
+
+.. tip::
+
+   Don't be put off by the number of steps — each one is short and focused on a
+   single concept. Work through them at your own pace and you will have a complete
+   picture of the pipeline before you know it. You've got this!
+
+The diagram below shows the full Sage methodology at a glance, so you can always
+orient yourself within the bigger picture as you work through the guide.
+
+.. figure:: /_static/methodology-flowchart.png
+   :alt: Sage full methodology flowchart
+   :align: center
+   :width: 100%
+
+   The complete Sage pipeline — from raw GWOSC strain data through signal processing,
+   on-the-fly data generation, and neural-network training, to final evaluation.
+
+----
+
 Modules
 -------
 
