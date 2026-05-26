@@ -26,7 +26,6 @@ Documentation: NULL
 # Packages
 import math
 
-
 # LOCAL
 from sage.data.primer import DataReleaseDownloader
 from sage.data.primer import TimelineQuery
