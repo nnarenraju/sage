@@ -1,4 +1,4 @@
-## Physics-informed Representation Learning for Gravitational Wave Discovery
+### Physics-informed Representation Learning for Gravitational Wave Discovery
 
 <p align="left">
   <img src="docs/_static/rectangular_logo.png" alt="SAGE logo" width="800"/>
@@ -23,7 +23,7 @@ The methods are described in:
 
 **Abstract**
 
-Sage is a complete, end-to-end machine-learning pipeline for gravitational-wave (GW) compact binary coalescence (CBC) detection. Training operates entirely on-the-fly — no pre-computed datasets required — with waveforms and noise windows generated per batch to eliminate data-reuse biases. Sage systematically identifies and mitigates 11 interconnected supervised-learning biases that degrade detection performance and generalisation. On the Machine Learning Gravitational-Wave Search Challenge injection study, Sage detects ~11.2% more signals than benchmark PyCBC matched-filtering and ~48.3% more than the previous best-performing ML pipeline at a false alarm rate of one per month, while remaining robust to out-of-distribution PSDs and non-Gaussian transient artefacts.
+Sage is a complete, end-to-end machine-learning pipeline for gravitational-wave compact binary coalescence detection. Training operates entirely on-the-fly — no pre-computed datasets required — with waveforms and noise windows generated per batch to eliminate data-reuse biases. Sage systematically identifies and mitigates 11 interconnected supervised-learning biases that degrade detection performance and generalisation. On the Machine Learning Gravitational-Wave Search Challenge injection study, Sage detects ~11.2% more signals than benchmark PyCBC matched-filtering and ~48.3% more than the previous best-performing ML pipeline at a false alarm rate of one per month, while remaining robust to out-of-distribution PSDs and non-Gaussian transient artefacts.
 
 The repository contains the research code used for the Sage pipeline, including:
 
