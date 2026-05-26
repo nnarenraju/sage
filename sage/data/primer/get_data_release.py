@@ -25,15 +25,19 @@ Documentation: NULL
 
 # General
 import os
+import re
 import time
 import h5py
 import json
 import hashlib
 import warnings
+import tempfile
+import collections
 
 # Utilities
 import numpy as np
 import urllib.request
+import requests as _requests
 
 from tqdm import tqdm
 from pathlib import Path
@@ -42,6 +46,9 @@ from dataclasses import dataclass
 # Multiprocessing
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# GWOSC file URL resolution
+from gwosc.locate import get_urls as _gwosc_get_urls
 
 # Suppressing LAL warnings
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
@@ -385,6 +392,116 @@ class DataReleaseDownloader:
 
         return data.size, len(raw), dt, checksum
 
+    @staticmethod
+    def _file_gps_interval(url):
+        """Return (gps_start, gps_end) from a GWOSC HDF5 file URL, or (None, None)."""
+        m = re.search(r"-(\d+)-(\d+)\.(hdf5?|gwf)$", url)
+        if m:
+            t0 = int(m.group(1))
+            return t0, t0 + int(m.group(2))
+        return None, None
+
+    def _resolve_and_group(self, segments, det):
+        """
+        Make one gwosc API call to get all GWOSC file URLs for the segment span,
+        then group mini-segments by which file they fall entirely within.
+
+        Returns
+        -------
+        same_file : dict  {url: [(n, b0, b1), ...]}
+            Segments fully covered by a single file.
+        cross_file : list [(n, b0, b1)]
+            Segments that straddle a file boundary (~12% of segments);
+            these fall back to TimeSeries.fetch_open_data.
+        """
+        segs = np.asarray(segments)
+        t0, t1 = float(segs[:, 0].min()), float(segs[:, 1].max())
+
+        all_urls = _gwosc_get_urls(det, t0, t1, sample_rate=4096)
+
+        file_intervals = sorted(
+            (f0, f1, url)
+            for url in all_urls
+            for f0, f1 in [DataReleaseDownloader._file_gps_interval(url)]
+            if f0 is not None
+        )
+
+        same_file = collections.defaultdict(list)
+        cross_file = []
+
+        for n, (b0, b1) in enumerate(segs):
+            b0, b1 = float(b0), float(b1)
+            covering = [url for f0, f1, url in file_intervals if f0 <= b0 and f1 >= b1]
+            if covering:
+                same_file[covering[0]].append((n, b0, b1))
+            else:
+                cross_file.append((n, b0, b1))
+
+        return dict(same_file), cross_file
+
+    @staticmethod
+    def _download_and_extract_file(url, seg_tasks, cfg, max_retries=5):
+        """
+        Download one GWOSC 4096s HDF5 file and extract every requested
+        mini-segment from it locally.  Returns a list of (n, data, metadata)
+        tuples in the same format as _get_detector_data.
+        """
+        for attempt in range(max_retries):
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=False) as tmp:
+                    tmp_path = tmp.name
+
+                resp = _requests.get(url, stream=True, timeout=300)
+                resp.raise_for_status()
+                with open(tmp_path, "wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=1 << 20):
+                        fh.write(chunk)
+
+                results = []
+                with h5py.File(tmp_path, "r") as hf:
+                    strain = hf["strain/Strain"][:]
+                    t_file = float(hf["meta/GPSstart"][()])
+                    duration = float(hf["meta/Duration"][()])
+                    sr = len(strain) / duration
+
+                    for n, b0, b1 in seg_tasks:
+                        try:
+                            i0 = max(0, int(round((b0 - t_file) * sr)))
+                            i1 = min(len(strain), int(round((b1 - t_file) * sr)))
+                            raw = strain[i0:i1].astype(np.float64)
+
+                            data = pycbc_downsample(
+                                raw, sr, cfg.sample_rate,
+                                cfg.trim, cfg.noise_low_freq_cutoff,
+                            )
+                            data = data * DYN_RANGE_FAC
+                            meta = {
+                                "gps_start": b0 + cfg.trim,
+                                "gps_end": b1 - cfg.trim,
+                                "trim": int(round(cfg.trim * cfg.sample_rate)),
+                                "nsamples": len(data),
+                                "old_sample_rate": sr,
+                                "sample_rate": cfg.sample_rate,
+                            }
+                            results.append((n, data, meta))
+                        except Exception:
+                            results.append((n, None, {}))
+
+                return results
+
+            except Exception:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    return [(n, None, {}) for n, b0, b1 in seg_tasks]
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
     def _return_download_config(self):
         """Return download config dict for MP runs"""
         return DownloadConfig(
@@ -527,14 +644,23 @@ class DataReleaseDownloader:
         tasks = ((self.dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
 
         if self.num_workers > 1:
-            # Setup mp tasks
-            with mp.Pool(self.num_workers) as pool, tqdm(total=len(segments)) as pbar:
-                pbar.set_description("MP-DET_SCIENCE_DATA GWOSC")
-                for n, data, metadata in pool.imap_unordered(
-                    DataReleaseDownloader._get_detector_data_unpacked, tasks, chunksize=1
-                ):
-                    # NOTE: Always so save_chunk outside in main process
-                    # DO NOT write let workers write to same HDF5
+            # Group mini-segments by GWOSC 4096s file to eliminate redundant
+            # downloads. One HTTP request per unique file instead of one per
+            # mini-segment (~8x fewer requests for 512s segments in 4096s files).
+            print(f"Resolving GWOSC file URLs for {det} ({run})...")
+            same_file, cross_file = self._resolve_and_group(segments, det)
+            n_files = len(same_file)
+            n_cross = len(cross_file)
+            n_same = sum(len(v) for v in same_file.values())
+            print(
+                f"  {n_files} unique files covering {n_same} segments; "
+                f"{n_cross} cross-file segments (fallback)"
+            )
+
+            # Build futures: one per file (extracts all its segments) plus
+            # one per cross-file segment (uses fetch_open_data fallback).
+            def _save_results(items, pbar):
+                for n, data, metadata in items:
                     if self.save_bin:
                         if data is None or not isinstance(data, np.ndarray):
                             pbar.update()
@@ -542,7 +668,6 @@ class DataReleaseDownloader:
                         nsamp, nbytes, dt, checksum = self._save_segment_bin(
                             bin_fh, data
                         )
-
                         seg_meta = {
                             "segment_index": int(n),
                             "detector": det,
@@ -561,18 +686,38 @@ class DataReleaseDownloader:
                             "dyn_range_fac": float(DYN_RANGE_FAC),
                             "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
                         }
-
-                        # Sanity check for truncation bugs
                         assert nbytes == nsamp * dt.itemsize
-
                         self._bin_metadata.append(seg_meta)
                         self._bin_sample_cursor += nsamp
                         self._bin_byte_cursor += nbytes
-
                     else:
                         self._save_segment(hf, n, data, det, run, metadata)
-
                     pbar.update()
+
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor, \
+                    tqdm(total=len(segments)) as pbar:
+                pbar.set_description(f"GWOSC-FILE {det}")
+
+                file_futures = {
+                    executor.submit(
+                        DataReleaseDownloader._download_and_extract_file,
+                        url, seg_tasks, self.dcfg,
+                    ): url
+                    for url, seg_tasks in same_file.items()
+                }
+                cross_futures = {
+                    executor.submit(
+                        DataReleaseDownloader._get_detector_data,
+                        self.dcfg, n, b0, b1, det,
+                    ): (n, b0, b1)
+                    for n, b0, b1 in cross_file
+                }
+
+                for future in as_completed({**file_futures, **cross_futures}):
+                    result = future.result()
+                    # file futures return list; cross-file futures return tuple
+                    items = result if isinstance(result, list) else [result]
+                    _save_results(items, pbar)
         else:
             with tqdm(total=len(segments)) as pbar:
                 pbar.set_description("DET_SCIENCE_DATA GWOSC")

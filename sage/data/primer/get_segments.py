@@ -32,6 +32,9 @@ from gwosc.api import fetch_allevents_json as _fetch_allevents_json
 # General
 import time
 import numpy as np
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from itertools import product
 from typing import Union, List, Sequence
@@ -203,6 +206,28 @@ class TimelineQuery:
 
         return tuple(runs)
 
+    def _make_session(self, connect_retries=5):
+        """Return a requests.Session with urllib3-level retry for connection errors.
+
+        gwosc's tenacity retry only handles requests.Timeout; RemoteDisconnected
+        and other ConnectionError subclasses bypass it and surface immediately.
+        A urllib3 Retry on the HTTPAdapter catches those at the socket level,
+        before gwosc's tenacity layer even sees the call.
+        """
+        session = requests.Session()
+        retry = Retry(
+            total=connect_retries,
+            connect=connect_retries,
+            read=connect_retries,
+            backoff_factor=2.0,
+            status_forcelist=[500, 502, 503, 504],
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
     def _get_segments(self, flag, start, end, max_retries=10, base_delay=15):
         """Safe call get_segments method from GWOSC with retry on failure.
 
@@ -210,7 +235,11 @@ class TimelineQuery:
         base_delay seconds. Returns an empty array only after all retries fail.
         """
         for attempt in range(max_retries):
-            result = safe_call(get_segments, flag, start, end, fallback_return=None)
+            session = self._make_session()
+            result = safe_call(
+                get_segments, flag, start, end,
+                session=session, fallback_return=None,
+            )
             if result is not None:
                 return np.array(result)
             if attempt < max_retries - 1:

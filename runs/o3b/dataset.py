@@ -38,12 +38,13 @@ from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.psd import smoothing
 
 from sage.core.config import get_cfg, get_data_cfg
+from config import set_configs
 
 
 def _get_timeline(data_cfg):
 
     tq = TimelineQuery(
-        detector=["H1", "L1", "V1"],
+        detector=["L1", "V1"],
         observing_run=["O3b"],
         auto_clean_empty_timelines=True,
     )
@@ -51,7 +52,7 @@ def _get_timeline(data_cfg):
     tq.download_segments()
 
     # Fail loudly if any detector came back empty (e.g. proxy dropped mid-query)
-    expected = ["H1", "L1", "V1"]
+    expected = ["L1", "V1"]
     for record in tq.timeline:
         det = record["detector"]
         segs = record["segments"]
@@ -98,7 +99,7 @@ def _download_data_release(tq, data_cfg):
 
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
-        save_parent_dir="/work/nagarajan/sage/",
+        save_parent_dir="/home/nnarenraju/Research/sage/runs/o3b/",
         noise_low_freq_cutoff=15.0,
         minimum_segment_duration=22.0,
         corrupt_trim_length=buffer,
@@ -152,14 +153,14 @@ def _make_psds(detector, data_cfg):
 
     # This is used for whitening with the exact segment PSD before recolouring
     epsd.estimate_segment_psds(
-        noise_segments_file=f"/work/nagarajan/sage/data_release/data_{detector}_O3b.bin"
+        noise_segments_file=f"/home/nnarenraju/Research/sage/runs/o3b/data_release/data_{detector}_O3b.bin"
     )
 
     # With this we make num_samples random PSDs from the given data
     # We use this for recolouring augmentation
     # We also do blackout and aggregate the PSDs to produce the fiducial PSD
     noise_sampler = MemmapSingleNoiseSampler(
-        f"/work/nagarajan/sage/data_release/data_{detector}_O3b.bin",
+        f"/home/nnarenraju/Research/sage/runs/o3b/data_release/data_{detector}_O3b.bin",
         return_tensor=True,
     )
     epsd.estimate_raw_psds(
@@ -169,11 +170,13 @@ def _make_psds(detector, data_cfg):
 
 def make_dataset():
 
+    set_configs()
+
     # Shared configs
     cfg, data_cfg = get_cfg(), get_data_cfg()
 
     # Make datasets
     tq = _get_timeline(data_cfg)
     _download_data_release(tq, data_cfg)
-    for det in ["H1", "L1", "V1"]:
+    for det in ["L1", "V1"]:
         _make_psds(det, data_cfg)
