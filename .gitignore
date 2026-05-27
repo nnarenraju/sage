@@ -165,4 +165,4 @@ source/baseline/data/psds/
 # Automatically added files
 sage/architectures/zoo/mamba.py
 sage/benchmark/evomcts
-
+sage/data/waveform/lalsim_src
