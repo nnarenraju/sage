@@ -595,9 +595,15 @@ class DataReleaseDownloader:
 
                 return results
 
-            except Exception:
+            except Exception as exc:
                 if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)
+                    # Connection refused = server outage: wait up to 5 min before retrying.
+                    # Other errors: exponential backoff capped at 60 s.
+                    if "Connection refused" in str(exc) or "Failed to establish" in str(exc):
+                        wait = min(300, 60 * (attempt + 1))
+                    else:
+                        wait = min(60, 2 ** attempt)
+                    time.sleep(wait)
                 else:
                     failed = [("done",   n, None, {})          for n, b0, b1        in same_tasks]
                     failed += [("first",  n, None, 0.0, b0, b1) for n, b0, b1, _ in first_tasks]
@@ -827,7 +833,7 @@ class DataReleaseDownloader:
                 futures = {
                     executor.submit(
                         DataReleaseDownloader._download_and_extract_file,
-                        url, tasks, self.dcfg,
+                        url, tasks, self.dcfg, self.max_retries,
                     ): url
                     for url, tasks in file_tasks.items()
                 }
