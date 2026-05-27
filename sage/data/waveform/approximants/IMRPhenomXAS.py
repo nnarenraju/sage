@@ -177,7 +177,7 @@ class IMRPhenomXAS(PhenomConstants):
 
         Returns
         -------
-        derived : torch.Tensor, shape (B, 11)
+        derived : torch.Tensor, shape (B, 13)
             ┌─────┬───────────────────────────────────────────────────────┐
             │  0  │ m1_s   = m1 * GM               (seconds)              │
             │  1  │ m2_s   = m2 * GM                                      │
@@ -190,6 +190,8 @@ class IMRPhenomXAS(PhenomConstants):
             │  8  │ chiPNHat (= S in all XAS fits)                        │
             │  9  │ STotR  = (Xa²*chi1 + Xb²*chi2)/(Xa²+Xb²)            │
             │ 10  │ dchi   = chi1 - chi2                                  │
+            │ 11  │ chi1   = chi1z (raw aligned spin, body 1)             │
+            │ 12  │ chi2   = chi2z (raw aligned spin, body 2)             │
             └─────┴───────────────────────────────────────────────────────┘
         """
         m1   = theta[:, 0:1]
@@ -219,7 +221,8 @@ class IMRPhenomXAS(PhenomConstants):
 
         return torch.cat(
             [m1_s, m2_s, M_s, eta, delta, Xa, Xb,
-             chiEff, chiPNHat, STotR, dchi],
+             chiEff, chiPNHat, STotR, dchi,
+             chi1, chi2],   # cols 11-12: raw aligned spins (needed by PN amplitude)
             dim=1,
         )
 
@@ -557,17 +560,512 @@ class IMRPhenomXAS(PhenomConstants):
         """
         Compute all IMRPhenomXAS amplitude coefficients for the batch.
 
-        Returns a dict or NamedTuple of tensors, one per coefficient.
+        Mirrors ``IMRPhenomXGetAmplitudeCoefficients`` in
+        LALSimIMRPhenomX_internals.c.  All versions are fixed to the LAL
+        defaults: InspiralAmpVersion=103, IntermediateAmpVersion=104,
+        RingdownAmpVersion=103.
+
+        Parameters
+        ----------
+        derived : (B, 13)  — output of ``compute_derived_parameters``
+
+        Returns
+        -------
+        ac : dict
+            Keys (all (B, 1) tensors unless noted):
+            ``pnTT`` through ``pnST``, ``rho1``–``rho3``  — inspiral
+            ``delta0``–``delta4``                         — intermediate
+            ``gamma1``, ``gammaR``, ``gammaD2``, ``gammaD13``, ``fRING``
+                                                          — ringdown
+            ``fAmpMatchIN``, ``fAmpRDMin``               — boundaries
         """
-        raise NotImplementedError
+        # ------------------------------------------------------------------
+        # Unpack derived parameters
+        # ------------------------------------------------------------------
+        eta      = derived[:, 3:4]
+        delta    = derived[:, 4:5]
+        chi1     = derived[:, 11:12]   # chi1z (body 1 aligned spin)
+        chi2     = derived[:, 12:13]   # chi2z (body 2 aligned spin)
+        STotR    = derived[:, 9:10]    # S used in ringdown / intermediate fits
+        chiPNHat = derived[:, 8:9]     # S used in inspiral amplitude fits
+        dchi     = derived[:, 10:11]
+
+        eta2  = eta  * eta
+        eta3  = eta2 * eta
+        chi12 = chi1 * chi1
+        chi13 = chi12 * chi1
+        chi22 = chi2 * chi2
+
+        pi    = math.pi
+
+        # ------------------------------------------------------------------
+        # 1. Final mass and spin → fRING, fDAMP  (dimensionless Mf units)
+        # ------------------------------------------------------------------
+        Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi, delta)
+        afinal = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        fRING, fDAMP = IMRPhenomXAS.get_fRD_fdamp(afinal, Mfinal)
+
+        # ------------------------------------------------------------------
+        # 2. MECO and ISCO frequencies  (dimensionless Mf units)
+        # ------------------------------------------------------------------
+        fmeco = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi, delta)
+        fisco = IMRPhenomXAS.fISCO(afinal)
+
+        # ------------------------------------------------------------------
+        # 3. Amplitude region boundaries
+        # fAmpMatchIN = fMECO + 0.25*(fISCO - fMECO)   (Eq. 5.16)
+        # fAmpRDMin   = ringdown peak frequency          (Eq. 5.14)
+        # ------------------------------------------------------------------
+        # --- ringdown phenomenological coefficients (STotR spin) ----------
+        S  = STotR;  S2 = S*S
+
+        # gamma2  (λ in arXiv:2001.11412)
+        gamma2 = (
+            (0.8312293675316895 + 7.480371544268765*eta - 18.256121237800397*eta2)
+            / (1.0 + 10.915453595496611*eta - 30.578409433912874*eta2)
+            + (S*(0.5869408584532747 + eta*(-0.1467158405070222 - 2.8489481072076472*S)
+               + 0.031852563636196894*S + eta2*(0.25295441250444334 + 4.6849496672664594*S)))
+            / (3.8775263105069953 - 3.41755361841226*S + S2)
+            - 0.00548054788508203*dchi*delta*eta
+        )
+
+        # gamma3  (σ in arXiv:2001.11412)
+        gamma3 = (
+            (1.3666000000000007 - 4.091333144596439*eta + 2.109081209912545*eta2 - 4.222259944408823*eta3)
+            / (1.0 - 2.7440263888207594*eta)
+            + (0.07179105336478316 + eta2*(2.331724812782498 - 0.6330998412809531*S)
+               + eta*(-0.8752427297525086 + 0.4168560229353532*S) - 0.05633734476062242*S)*S
+        )
+
+        # Ringdown peak frequency: fAmpRDMin  (Eq. 5.14)
+        # |fRING + fDAMP*gamma3*(sqrt(1 - gamma2^2) - 1)/gamma2|
+        # If gamma2 > 1, use |fRING - fDAMP*gamma3/gamma2| instead
+        sqrt_arg = (1.0 - gamma2*gamma2).clamp(min=0.0)
+        fAmpRDMin_normal = torch.abs(fRING + fDAMP * gamma3 * (sqrt_arg.sqrt() - 1.0) / gamma2)
+        fAmpRDMin_large  = torch.abs(fRING - fDAMP * gamma3 / gamma2)
+        fAmpRDMin = torch.where(gamma2 <= 1.0, fAmpRDMin_normal, fAmpRDMin_large)
+
+        # v1RD: amplitude collocation at fAmpRDMin  (STotR spin)
+        S3 = S2*S;  S4 = S3*S
+        v1RD = (
+            (0.03689164742964719 + 25.417967754401182*eta + 162.52904393600332*eta2)
+            / (1.0 + 61.19874463331437*eta - 29.628854485544874*eta2)
+            + (S*(-0.14352506969368556 + 0.026356911108320547*S + 0.19967405175523437*S2
+               - 0.05292913111731128*S3
+               + eta3*(-48.31945248941757 - 3.751501972663298*S + 81.9290740950083*S2
+                       + 30.491948143930266*S3 - 132.77982622925845*S4)
+               + eta*(-4.805034453745424 + 1.11147906765112*S + 6.176053843938542*S2
+                      - 0.2874540719094058*S3 - 8.990840289951514*S4)
+               - 0.18147275151697131*S4
+               + eta2*(27.675454081988036 - 2.398327419614959*S - 47.99096500250743*S2
+                       - 5.104257870393138*S3 + 72.08174136362386*S4)))
+            / (-1.4160870461211452 + S)
+            - 0.04426571511345366*dchi*delta*eta2
+        )
+
+        # gamma1 (solved analytically from ansatzRD(fAmpRDMin) == v1RD)
+        # gammaR = gamma2 / (fDAMP * gamma3);  gammaD2 = (fDAMP*gamma3)^2
+        # gammaD13 = fDAMP * gamma1 * gamma3
+        # gamma1 = v1RD * (fAmpRDMin - fRING)^2 + gammaD2) / (fDAMP*gamma3)
+        #           * exp((fAmpRDMin - fRING)*gamma2 / (fDAMP*gamma3))
+        fDMg3  = fDAMP * gamma3                   # fDAMP * gamma3
+        gammaR  = gamma2 / fDMg3
+        gammaD2 = fDMg3 * fDMg3
+        dfr_rd  = fAmpRDMin - fRING
+        gamma1  = (v1RD / fDMg3) * (dfr_rd*dfr_rd + gammaD2) * torch.exp(dfr_rd * gammaR)
+        gammaD13 = fDMg3 * gamma1
+
+        # Inspiral boundary frequency
+        fAmpMatchIN = fmeco + 0.25 * (fisco - fmeco)
+
+        # ------------------------------------------------------------------
+        # 4. TaylorF2 PN amplitude coefficients
+        #    Source: IMRPhenomXGetAmplitudeCoefficients in LAL internals.c
+        #    (Section V.A of arXiv:2001.11412)
+        # ------------------------------------------------------------------
+        p2o3 = pi**(2.0/3.0)
+        p1o3 = pi**(1.0/3.0)
+        p4o3 = pi**(4.0/3.0)
+        p5o3 = pi**(5.0/3.0)
+        p2   = pi * pi
+
+        pnTwoThirds  = ((-969.0 + 1804.0*eta) / 672.0) * p2o3
+
+        pnThreeThirds = (
+            (81.0*(chi1 + chi2) + 81.0*chi1*delta - 81.0*chi2*delta
+             - 44.0*(chi1 + chi2)*eta) / 48.0
+        ) * pi
+
+        pnFourThirds  = (
+            (-27312085.0 - 10287648.0*chi12*(1.0 + delta)
+             + 24.0*(428652.0*chi22*(-1.0 + delta)
+                     + (-1975055.0 + 10584.0*(81.0*chi12 - 94.0*chi1*chi2 + 81.0*chi22))*eta
+                     + 1473794.0*eta2))
+            / 8.128512e6
+        ) * p1o3 * pi
+
+        pnFiveThirds  = (
+            (-6048.0*chi13*(-1.0 - delta + (3.0 + delta)*eta)
+             + chi2*(-(287213.0 + 6048.0*chi22)*(-1.0 + delta)
+                     + 4.0*(-93414.0 + 1512.0*chi22*(-3.0 + delta) + 2083.0*delta)*eta
+                     - 35632.0*eta2)
+             + chi1*(287213.0*(1.0 + delta) - 4.0*eta*(93414.0 + 2083.0*delta + 8908.0*eta))
+             + 42840.0*(-1.0 + 4.0*eta)*pi)
+            / 32256.0
+        ) * p5o3
+
+        pnSixThirds   = (
+            (-1242641879927.0
+             + 12.0*(28.0*(-3248849057.0
+                           + 11088.0*(163199.0*chi12 - 266498.0*chi1*chi2 + 163199.0*chi22))*eta2
+                    + 27026893936.0*eta3
+                    - 116424.0*(147117.0*(-(chi22*(-1.0 + delta)) + chi12*(1.0 + delta))
+                                + 60928.0*(chi1 + chi2 + chi1*delta - chi2*delta)*pi)
+                    + eta*(545384828789.0
+                           - 77616.0*(638642.0*chi1*chi2
+                                      + chi12*(-158633.0 + 282718.0*delta)
+                                      - chi22*(158633.0 + 282718.0*delta)
+                                      - 107520.0*(chi1 + chi2)*pi
+                                      + 275520.0*p2))))
+            / 6.0085960704e10
+        ) * p2
+
+        # ------------------------------------------------------------------
+        # 5. Inspiral pseudo-PN collocation points (version 103, chiPNHat spin)
+        #    F1 = 0.50 * fAmpMatchIN   F2 = 0.75   F3 = 1.00
+        # ------------------------------------------------------------------
+        S_ins = chiPNHat;  S2_ins = S_ins*S_ins;  S3_ins = S2_ins*S_ins
+        eta4  = eta3 * eta
+
+        V2 = (   # v2 at 0.5 * fAmpMatchIN
+            (-0.015178276424448592 - 0.06098548699809163*eta + 0.4845148547154606*eta2)
+            / (1.0 + 0.09799277215675059*eta)
+            + ((0.02300153747158323 + 0.10495263104245876*eta2)*S_ins
+               + (0.04834642258922544 - 0.14189350657140673*eta)*eta*S3_ins
+               + (0.01761591799745109 - 0.14404522791467844*eta2)*S2_ins)
+            / (1.0 - 0.7340448493183307*S_ins)
+            + dchi*delta*eta4*(0.0018724905795891192 + 34.90874132485147*eta)
+        )
+
+        V3 = (   # v3 at 0.75 * fAmpMatchIN
+            (-0.058572000924124644 - 1.1970535595488723*eta + 8.4630293045015*eta2)
+            / (1.0 + 15.430818840453686*eta)
+            + ((-0.08746408292050666 + eta*(-0.20646621646484237 - 0.21291764491897636*S_ins)
+                + eta2*(0.788717372588848 + 0.8282888482429105*S_ins)
+                - 0.018924013869130434*S_ins)*S_ins)
+            / (-1.332123330797879 + S_ins)
+            + dchi*delta*eta4*(0.004389995099201855 + 105.84553997647659*eta)
+        )
+
+        V4 = (   # v4 at 1.00 * fAmpMatchIN
+            (-0.16212854591357853 + 1.617404703616985*eta - 3.186012733446088*eta2 + 5.629598195000046*eta3)
+            / (1.0 + 0.04507019231274476*eta)
+            + (S_ins*(1.0055835408962206
+               + eta2*(18.353433894421833 - 18.80590889704093*S_ins)
+               - 0.31443470118113853*S_ins
+               + eta*(-4.127597118865669 + 5.215501942120774*S_ins)
+               + eta3*(-41.0378120175805 + 19.099315016873643*S_ins)))
+            / (5.852706459485663 - 5.717874483424523*S_ins + S2_ins)
+            + dchi*delta*eta4*(0.05575955418803233 + 208.92352600701068*eta)
+        )
+
+        # Collocation frequencies (Mf)
+        F1 = 0.50 * fAmpMatchIN
+        F2 = 0.75 * fAmpMatchIN
+        F3 = 1.00 * fAmpMatchIN          # = fAmpMatchIN itself
+
+        # Solve for rho1, rho2, rho3 (pseudo-PN amplitude correction coefficients)
+        # Source: IMRPhenomX_Inspiral_Amp_22_rho1/2/3 in LAL inspiral.c (case 103)
+        F1p1o3 = F1.pow(1.0/3.0);  F2p1o3 = F2.pow(1.0/3.0);  F3p1o3 = F3.pow(1.0/3.0)
+        F1p7o3 = F1p1o3.pow(7);    F2p7o3 = F2p1o3.pow(7);    F3p7o3 = F3p1o3.pow(7)
+        F1p8o3 = F1p7o3 * F1p1o3;  F2p8o3 = F2p7o3 * F2p1o3;  F3p8o3 = F3p7o3 * F3p1o3
+        F13    = F1*F1*F1;          F23    = F2*F2*F2;          F33    = F3*F3*F3
+
+        D = F1p7o3*(F1p1o3 - F2p1o3)*F2p7o3*(F1p1o3 - F3p1o3)*(F2p1o3 - F3p1o3)*F3p7o3
+
+        rho1 = (
+            -F2p8o3*F33*V2 + F23*F3p8o3*V2 + F1p8o3*F33*V3 - F13*F3p8o3*V3
+            - F1p8o3*F23*V4 + F13*F2p8o3*V4
+        ) / D
+
+        rho2 = (
+            F2p7o3*F33*V2 - F23*F3p7o3*V2 - F1p7o3*F33*V3 + F13*F3p7o3*V3
+            + F1p7o3*F23*V4 - F13*F2p7o3*V4
+        ) / D
+
+        rho3 = (
+            F2p8o3*F3p7o3*V2 - F2p7o3*F3p8o3*V2 - F1p8o3*F3p7o3*V3 + F1p7o3*F3p8o3*V3
+            + F1p8o3*F2p7o3*V4 - F1p7o3*F2p8o3*V4
+        ) / D
+
+        # ------------------------------------------------------------------
+        # 6. Inspiral amplitude at F1 = fAmpMatchIN  (needed for d1 and V1)
+        # pnAmp(Mf) = 1 + pnTT*Mf^{2/3} + pnThT*Mf + pnFoT*Mf^{4/3}
+        #           + pnFiT*Mf^{5/3} + pnST*Mf^2
+        #           + rho1*Mf^{7/3} + rho2*Mf^{8/3} + rho3*Mf^3
+        # ------------------------------------------------------------------
+        Fma = fAmpMatchIN                         # short alias for F1 = fAmpMatchIN
+        inspF1 = (
+            1.0
+            + pnTwoThirds  * Fma.pow(2.0/3.0)
+            + pnThreeThirds * Fma
+            + pnFourThirds  * Fma.pow(4.0/3.0)
+            + pnFiveThirds  * Fma.pow(5.0/3.0)
+            + pnSixThirds   * Fma * Fma
+            + rho1 * Fma.pow(7.0/3.0)
+            + rho2 * Fma.pow(8.0/3.0)
+            + rho3 * Fma * Fma * Fma
+        )
+
+        # Inspiral amplitude derivative (d pnAmp / d Mf) at Fma  (case 103)
+        Fma_m1o3 = Fma.pow(-1.0/3.0)
+        Fma_p1o3 = Fma.pow(1.0/3.0)
+        Fma_p2o3 = Fma.pow(2.0/3.0)
+        Fma_p2   = Fma * Fma
+
+        d_inspF1 = (
+            ((chi2*(81.0 - 81.0*delta - 44.0*eta) + chi1*(81.0*(1.0 + delta) - 44.0*eta))*pi) / 48.0
+            + ((-969.0 + 1804.0*eta)*p2o3) / (1008.0 * Fma_m1o3)
+            + ((-27312085.0 - 10287648.0*chi22 + 10287648.0*chi22*delta
+               - 10287648.0*chi12*(1.0 + delta)
+               + 24.0*(-1975055.0 + 857304.0*chi12 - 994896.0*chi1*chi2 + 857304.0*chi22)*eta
+               + 35371056.0*eta2) * p4o3 * Fma_p1o3) / 6.096384e6
+            + (5.0 * p5o3 * (-6048.0*chi13*(-1.0 - delta + (3.0 + delta)*eta)
+               + chi1*(287213.0*(1.0 + delta) - 4.0*(93414.0 + 2083.0*delta)*eta - 35632.0*eta2)
+               + chi2*(-(287213.0 + 6048.0*chi22)*(-1.0 + delta)
+                       + 4.0*(-93414.0 + 1512.0*chi22*(-3.0 + delta) + 2083.0*delta)*eta
+                       - 35632.0*eta2)
+               + 42840.0*(-1.0 + 4.0*eta)*pi) * Fma_p2o3) / 96768.0
+            - (p2 * (-336.0*(-3248849057.0 + 1809550512.0*chi12 - 2954929824.0*chi1*chi2
+                              + 1809550512.0*chi22)*eta2
+                      - 324322727232.0*eta3
+                      + 7.0*(177520268561.0 + 29362199328.0*chi22
+                             - 29362199328.0*chi22*delta
+                             + 29362199328.0*chi12*(1.0 + delta)
+                             + 12160253952.0*(chi1 + chi2 + chi1*delta - chi2*delta)*pi)
+                      + 12.0*eta*(-545384828789.0 + 49568837472.0*chi1*chi2
+                                  - 12312458928.0*chi22 - 21943440288.0*chi22*delta
+                                  + 77616.0*chi12*(-158633.0 + 282718.0*delta)
+                                  - 8345272320.0*(chi1 + chi2)*pi
+                                  + 21384760320.0*p2)) * Fma) / 3.0042980352e10
+            + (7.0/3.0) * Fma.pow(4.0/3.0) * rho1
+            + (8.0/3.0) * Fma.pow(5.0/3.0) * rho2
+            + 3.0 * Fma_p2 * rho3
+        )
+
+        # d1 = d/dMf [Mf^{7/6} / inspAmp(Mf)] at Mf = Fma
+        d1 = (7.0/6.0) * Fma.pow(1.0/6.0) / inspF1 - Fma.pow(7.0/6.0) * d_inspF1 / (inspF1*inspF1)
+
+        # ------------------------------------------------------------------
+        # 7. Ringdown amplitude at F4 = fAmpRDMin  (needed for d4 and V4_rd)
+        # ------------------------------------------------------------------
+        F4 = fAmpRDMin
+        dfr4 = F4 - fRING
+        rdF4  = torch.exp(-dfr4 * gammaR) * gammaD13 / (dfr4*dfr4 + gammaD2)
+
+        # Ringdown amplitude derivative at F4
+        d_rdF4 = (
+            -torch.exp(-gamma2 * dfr4 / fDMg3) * gamma1
+            * (dfr4*dfr4*gamma2 + 2.0*fDAMP*dfr4*gamma3 + fDAMP*fDAMP*gamma2*gamma3*gamma3)
+            / ((dfr4*dfr4 + gammaD2) * (dfr4*dfr4 + gammaD2))
+        )
+
+        # d4 = d/dMf [Mf^{7/6} / rdAmp(Mf)] at Mf = F4
+        d4 = (7.0/6.0) * F4.pow(1.0/6.0) / rdF4 - F4.pow(7.0/6.0) * d_rdF4 / (rdF4*rdF4)
+
+        # ------------------------------------------------------------------
+        # 8. Intermediate amplitude collocation  (version 104, STotR spin)
+        #    F1 = fAmpMatchIN,  F2 = F1 + 0.5*(F4 - F1),  F4 = fAmpRDMin
+        #    V1 = F1^{7/6} / inspAmp(F1)  (rho polynomial at F1)
+        #    V2 = 1 / vA(F2)              (rho polynomial at F2, from fit)
+        #    V4 = F4^{7/6} / rdAmp(F4)   (rho polynomial at F4)
+        # ------------------------------------------------------------------
+        F2_int = F1 + 0.5*(F4 - F1)   # midpoint of intermediate region (F1 = fAmpMatchIN, F4 = fAmpRDMin)
+        F1_int = fAmpMatchIN            # alias for clarity
+
+        V1_int = F1_int.pow(7.0/6.0) / inspF1     # rho at F1
+        V4_int = F4.pow(7.0/6.0) / rdF4           # rho at F4
+
+        # vA: intermediate amplitude at F2 from the fit (version 104, STotR spin)
+        S3   = S2*S  # reuse S = STotR from above
+        vA = (
+            (1.4873184918202145 + 1974.6112656679577*eta + 27563.641024162127*eta2
+             - 19837.908020966777*eta3)
+            / (1.0 + 143.29004876335128*eta + 458.4097306093354*eta2)
+            + (S*(27.952730865904343 + eta*(-365.55631765202895 - 260.3494489873286*S)
+               + 3.2646808851249016*S + 3011.446602208493*eta2*S
+               - 19.38970173389662*S2 + eta3*(1612.2681322644232 - 6962.675551371755*S
+                                               + 1486.4658089990298*S2)))
+            / (12.647425554323242 - 10.540154508599963*S + S2)
+            + dchi*delta*(-0.016404056649860943 - 296.473359655246*eta)*eta2
+        )
+        V2_int = 1.0 / vA      # rho at F2 (inverse of amplitude-at-F2)
+
+        # ------------------------------------------------------------------
+        # 9. Solve for delta coefficients (4th-order polynomial, case 104)
+        #    Source: IMRPhenomX_Intermediate_Amp_22_delta0..4 in intermediate.c
+        #    F1, F2, F4 → f1, f2, f4  (f3=0, v3=0 not used in case 104)
+        # ------------------------------------------------------------------
+        f1 = F1_int;  f2 = F2_int;  f4 = F4
+        v1 = V1_int;  v2 = V2_int;  v4 = V4_int
+
+        f12 = f1*f1;  f13 = f12*f1;  f14 = f13*f1;  f15 = f14*f1
+        f22 = f2*f2;  f23 = f22*f2;  f24 = f23*f2
+        f42 = f4*f4;  f43 = f42*f4;  f44 = f43*f4;  f45 = f44*f4
+
+        f1mf2 = f1 - f2;  f1mf4 = f1 - f4;  f2mf4 = f2 - f4
+        f1mf22 = f1mf2*f1mf2
+        f2mf42 = f2mf4*f2mf4
+        f1mf43 = f1mf4*f1mf4*f1mf4
+
+        delta0 = (
+            (-(d4*f12*f1mf22*f1mf4*f2*f2mf4*f4)
+             + d1*f1*f1mf2*f1mf4*f2*f2mf42*f42
+             + f42*(f2*f2mf42*(-4.0*f12 + 3.0*f1*f2 + 2.0*f1*f4 - f2*f4)*v1
+                    + f12*f1mf43*v2)
+             + f12*f1mf22*f2*(f1*f2 - 2.0*f1*f4 - 3.0*f2*f4 + 4.0*f42)*v4)
+            / (f1mf22*f1mf43*f2mf42)
+        )
+
+        delta1 = (
+            (d4*f1*f1mf22*f1mf4*f2mf4*(2.0*f2*f4 + f1*(f2 + f4))
+             + f4*(-(d1*f1mf2*f1mf4*f2mf42*(2.0*f1*f2 + (f1 + f2)*f4))
+                  - 2.0*f1*(f44*(v1 - v2) + 3.0*f24*(v1 - v4) + f14*(v2 - v4)
+                             + 4.0*f23*f4*(-v1 + v4)
+                             + 2.0*f13*f4*(-v2 + v4)
+                             + f1*(2.0*f43*(-v1 + v2) + 6.0*f22*f4*(v1 - v4)
+                                   + 4.0*f23*(-v1 + v4)))))
+            / (f1mf22*f1mf43*f2mf42)
+        )
+
+        # delta2: source: IMRPhenomX_Intermediate_Amp_22_delta2 case 104
+        # f15 = f1^5, f45 = f4^5 are both needed here
+        delta2 = (
+            (-(d4*f1mf22*f1mf4*f2mf4*(f12 + f2*f4 + 2.0*f1*(f2 + f4)))
+             + d1*f1mf2*f1mf4*f2mf42*(f1*f2 + 2.0*(f1 + f2)*f4 + f42)
+             - 4.0*f12*f23*v1 + 3.0*f1*f24*v1 - 4.0*f1*f23*f4*v1 + 3.0*f24*f4*v1
+             + 12.0*f12*f2*f42*v1 - 4.0*f23*f42*v1 - 8.0*f12*f43*v1
+             + f1*f44*v1 + f45*v1
+             + f15*v2 + f14*f4*v2 - 8.0*f13*f42*v2 + 8.0*f12*f43*v2
+             - f1*f44*v2 - f45*v2
+             - f1mf22*(f13 + f2*(3.0*f2 - 4.0*f4)*f4 + f12*(2.0*f2 + f4)
+                       + f1*(3.0*f2 - 4.0*f4)*(f2 + 2.0*f4))*v4)
+            / (f1mf22*f1mf43*f2mf42)
+        )
+
+        delta3 = (
+            (d4*f1mf22*f1mf4*f2mf4*(2.0*f1 + f2 + f4)
+             - d1*f1mf2*f1mf4*f2mf42*(f1 + f2 + 2.0*f4)
+             + 2.0*(f44*(-v1 + v2) + 2.0*f12*f2mf42*(v1 - v4)
+                    + 2.0*f22*f42*(v1 - v4)
+                    + 2.0*f13*f4*(v2 - v4) + f24*(-v1 + v4) + f14*(-v2 + v4)
+                    + 2.0*f1*f4*(f42*(v1 - v2) + f22*(v1 - v4) + 2.0*f2*f4*(-v1 + v4))))
+            / (f1mf22*f1mf43*f2mf42)
+        )
+
+        delta4 = (
+            (-(d4*f1mf22*f1mf4*f2mf4) + d1*f1mf2*f1mf4*f2mf42
+             - 3.0*f1*f22*v1 + 2.0*f23*v1 + 6.0*f1*f2*f4*v1 - 3.0*f22*f4*v1
+             - 3.0*f1*f42*v1 + f43*v1 + f13*v2 - 3.0*f12*f4*v2 + 3.0*f1*f42*v2 - f43*v2
+             - f1mf22*(f1 + 2.0*f2 - 3.0*f4)*v4)
+            / (f1mf22*f1mf43*f2mf42)
+        )
+
+        return {
+            # Inspiral
+            'pnTwoThirds':   pnTwoThirds,
+            'pnThreeThirds': pnThreeThirds,
+            'pnFourThirds':  pnFourThirds,
+            'pnFiveThirds':  pnFiveThirds,
+            'pnSixThirds':   pnSixThirds,
+            'rho1': rho1, 'rho2': rho2, 'rho3': rho3,
+            'fAmpMatchIN': fAmpMatchIN,
+            # Intermediate
+            'delta0': delta0, 'delta1': delta1, 'delta2': delta2,
+            'delta3': delta3, 'delta4': delta4,
+            'fAmpRDMin': fAmpRDMin,
+            # Ringdown (pre-cached combinations)
+            'fRING':   fRING,
+            'gammaR':  gammaR,   # gamma2 / (fDAMP * gamma3)
+            'gammaD2': gammaD2,  # (fDAMP * gamma3)^2
+            'gammaD13': gammaD13, # fDAMP * gamma1 * gamma3
+        }
 
     def amp(self, f_Ms, amp_coeffs, derived):
         """
-        Evaluate the full IMRPhenomXAS amplitude over the frequency grid.
+        Evaluate the IMRPhenomXAS normalised amplitude A(Mf) over the grid.
 
-        Stitches inspiral / intermediate / ringdown with torch.where.
+        The full FD waveform amplitude is:
+            |h(f)| = Amp0 * Mf^{-7/6} * A(Mf)
+        where  Amp0 = sqrt(2η/3) * π^{-1/6}  and the physical prefactor
+        M_s² / dist_s is applied in get_hphc.
+
+        Region definitions (boundary frequencies in Mf units):
+          Inspiral   :  Mf ≤ fAmpMatchIN
+          Intermediate:  fAmpMatchIN < Mf ≤ fAmpRDMin
+          Ringdown   :  Mf > fAmpRDMin
+
+        Inspiral ansatz (Eq. 5.2 of arXiv:2001.11412):
+            A_ins(Mf) = 1 + pnTT·Mf^{2/3} + pnThT·Mf + pnFoT·Mf^{4/3}
+                        + pnFiT·Mf^{5/3} + pnST·Mf²
+                        + ρ₁·Mf^{7/3} + ρ₂·Mf^{8/3} + ρ₃·Mf³
+
+        Intermediate ansatz (Eq. 6.12):
+            A_int(Mf) = Mf^{7/6} / (δ₀ + δ₁·Mf + δ₂·Mf² + δ₃·Mf³ + δ₄·Mf⁴)
+
+        Ringdown ansatz (Eq. 6.17):
+            A_rd(Mf) = γ₁·fDAMP·γ₃ · exp(-(Mf-fRING)·γ₂/(fDAMP·γ₃))
+                       / ((Mf-fRING)² + (fDAMP·γ₃)²)
+
+        Parameters
+        ----------
+        f_Ms      : (B, F) — dimensionless frequency grid Mf = f·M_s
+        amp_coeffs: dict   — output of get_amp_coeffs
+        derived   : (B, 13) — (unused here; kept for API symmetry)
+
+        Returns
+        -------
+        amp : (B, F) — normalised amplitude A(Mf)
         """
-        raise NotImplementedError
+        ac = amp_coeffs
+
+        # ---- Inspiral ----
+        Mf = f_Ms
+        A_ins = (
+            1.0
+            + ac['pnTwoThirds']  * Mf.pow(2.0/3.0)
+            + ac['pnThreeThirds'] * Mf
+            + ac['pnFourThirds']  * Mf.pow(4.0/3.0)
+            + ac['pnFiveThirds']  * Mf.pow(5.0/3.0)
+            + ac['pnSixThirds']   * Mf * Mf
+            + ac['rho1'] * Mf.pow(7.0/3.0)
+            + ac['rho2'] * Mf.pow(8.0/3.0)
+            + ac['rho3'] * Mf * Mf * Mf
+        )
+
+        # ---- Intermediate  (polynomial in 1/A, then inverted back) ----
+        rho_int = (
+            ac['delta0']
+            + ac['delta1'] * Mf
+            + ac['delta2'] * Mf * Mf
+            + ac['delta3'] * Mf * Mf * Mf
+            + ac['delta4'] * Mf * Mf * Mf * Mf
+        )
+        A_int = Mf.pow(7.0/6.0) / rho_int
+
+        # ---- Ringdown  (Lorentzian) ----
+        dfr   = Mf - ac['fRING']
+        A_rd  = (
+            torch.exp(-dfr * ac['gammaR'])
+            * ac['gammaD13']
+            / (dfr*dfr + ac['gammaD2'])
+        )
+
+        # ---- Stitch regions with torch.where ----
+        fIN = ac['fAmpMatchIN']    # (B, 1) — inspiral/intermediate boundary
+        fRD = ac['fAmpRDMin']      # (B, 1) — intermediate/ringdown boundary
+        return torch.where(Mf <= fIN, A_ins,
+               torch.where(Mf <= fRD, A_int, A_rd))
 
     # ------------------------------------------------------------------
     # Phase: 3 regions
