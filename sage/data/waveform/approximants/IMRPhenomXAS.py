@@ -1074,13 +1074,834 @@ class IMRPhenomXAS(PhenomConstants):
     def get_phase_coeffs(self, derived):
         """
         Compute all IMRPhenomXAS phase coefficients for the batch.
+
+        Mirrors ``IMRPhenomXGetPhaseCoefficients`` +
+        ``IMRPhenomX_Phase_22_ConnectionCoefficients`` in
+        LALSimIMRPhenomX_internals.c.  Fixed to default LAL flags:
+          IMRPhenomXInspiralPhaseVersion   = 104
+          IMRPhenomXIntermediatePhaseVersion = 104
+          IMRPhenomXRingdownPhaseVersion    = 105
+
+        Parameters
+        ----------
+        derived : (B, 13) — output of compute_derived_parameters
+
+        Returns
+        -------
+        pc : dict  — all tensors (B, 1) unless noted:
+            inspiral: phi0..phi9L (PN integrals),
+                      sigma1..sigma5 (pseudo-PN integral coefficients),
+                      a0..a3 (pseudo-PN derivative coefficients),
+                      phiNorm, dphase0
+            intermediate: b0..b4
+            ringdown: c0, c1, c2, c4, cL, cLovfda, c4ov3
+            boundaries: fPhaseMatchIN, fPhaseMatchIM
+            continuity: C1Int, C2Int, C1MRD, C2MRD
         """
-        raise NotImplementedError
+        # ---------------------------------------------------------------
+        # Unpack derived parameters
+        # ---------------------------------------------------------------
+        eta      = derived[:, 3:4]
+        delta    = derived[:, 4:5]
+        chi1     = derived[:, 11:12]   # chi1z
+        chi2     = derived[:, 12:13]   # chi2z
+        STotR    = derived[:, 9:10]
+        chiPNHat = derived[:, 8:9]
+        dchi     = derived[:, 10:11]
+
+        eta2  = eta  * eta
+        eta3  = eta2 * eta
+        eta4  = eta3 * eta
+
+        chi1L  = chi1    # aligned-spin = projected on L
+        chi2L  = chi2
+        chi1L2 = chi1L * chi1L
+        chi1L3 = chi1L2 * chi1L
+        chi2L2 = chi2L * chi2L
+        chi2L3 = chi2L2 * chi2L
+        chi1L2L = chi1L * chi2L  # cross term
+
+        pi    = math.pi
+        GAMMA = 0.5772156649015328606   # Euler–Mascheroni constant
+        log2  = math.log(2.0)
+        logpi = math.log(pi)
+
+        # Powers of pi used in PN coefficients (scalar constants)
+        pi2o3 = pi ** (2.0/3.0)
+        pi4o3 = pi ** (4.0/3.0)
+        pi5o3 = pi ** (5.0/3.0)
+        pi7o3 = pi ** (7.0/3.0)
+        pi2   = pi * pi
+        pi8o3 = pi ** (8.0/3.0)
+
+        # ---------------------------------------------------------------
+        # Normalisations
+        # ---------------------------------------------------------------
+        phiNorm  = -(3.0 / (128.0 * pi5o3))    # = phiNorm in LAL
+        dphase0  = 5.0 / (128.0 * pi5o3)        # = dphase0 in LAL
+
+        # ---------------------------------------------------------------
+        # 1. Final mass / spin → QNM frequencies (same as amplitude)
+        # ---------------------------------------------------------------
+        Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi, delta)
+        afinal = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        fRING, fDAMP = IMRPhenomXAS.get_fRD_fdamp(afinal, Mfinal)
+        fmeco  = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi, delta)
+        fisco  = IMRPhenomXAS.fISCO(afinal)
+
+        # ---------------------------------------------------------------
+        # 2. Phase region boundaries (Sect. VII of arXiv:2001.11412)
+        # ---------------------------------------------------------------
+        fIMmatch = 0.6 * (0.5 * fRING + fisco)      # Eq. 5.11
+        fINmatch = fmeco                              # MECO
+        deltaf   = (fIMmatch - fINmatch) * 0.03      # Eq. 5.10
+
+        fPhaseMatchIN  = fINmatch - deltaf            # Eq. 7.7 f_L
+        fPhaseMatchIM  = fIMmatch + 0.5 * deltaf      # Eq. 7.7 f_H
+        fPhaseInsMin   = torch.full_like(fRING, 0.0026)
+        fPhaseInsMax   = 1.020 * fmeco
+        fPhaseRDMin    = fIMmatch
+        fPhaseRDMax    = fRING + 1.25 * fDAMP
+
+        # ---------------------------------------------------------------
+        # 3. TaylorF2 PN phase coefficients (phi0..phi9L)
+        #    Source: Lines 1754-1887 of LALSimIMRPhenomX_internals.c
+        #    Convention: coefficients are *already* multiplied by powers
+        #    of pi so that phi_PN(Mf) = phiNorm * Mf^{-5/3} * sum_n phi_n*Mf^{n/3}
+        # ---------------------------------------------------------------
+
+        # --- 0.0 PN (Newtonian) ---
+        phi0 = torch.ones_like(eta)   # = 1.0
+
+        # --- 0.5 PN ---
+        phi1 = torch.zeros_like(eta)  # = 0
+
+        # --- 1.0 PN ---
+        phi2 = (3715.0/756.0 + (55.0 * eta) / 9.0) * pi2o3
+
+        # --- 1.5 PN ---
+        phi3NS = -16.0 * pi2
+        phi3S  = (
+            (113.0*(chi1L + chi2L + chi1L*delta - chi2L*delta)
+             - 76.0*(chi1L + chi2L)*eta) / 6.0
+        ) * pi
+        phi3 = phi3NS + phi3S
+
+        # --- 2.0 PN ---
+        phi4NS = (
+            15293365.0/508032.0 + (27145.0 * eta)/504.0 + (3085.0 * eta2)/72.0
+        ) * pi4o3
+        phi4S  = (
+            -5.0*(81.0*chi1L2*(1.0 + delta - 2.0*eta)
+                  + 316.0*chi1L2L*eta
+                  - 81.0*chi2L2*(-1.0 + delta + 2.0*eta)) / 16.0
+        ) * pi4o3
+        phi4 = phi4NS + phi4S
+
+        # --- 2.5 PN (phi5 = 0; only log term survives) ---
+        phi5 = torch.zeros_like(eta)
+
+        phi5LNS = (5.0*(46374.0 - 6552.0*eta)*pi / 4536.0) * pi5o3
+        phi5LS  = (
+            (-732985.0*(chi1L + chi2L + chi1L*delta - chi2L*delta)
+             - 560.0*(-1213.0*(chi1L + chi2L) + 63.0*(chi1L - chi2L)*delta)*eta
+             + 85680.0*(chi1L + chi2L)*eta2) / 4536.0
+        ) * pi5o3
+        phi5L = phi5LNS + phi5LS
+
+        # --- 3.0 PN ---
+        phi6NS = (
+            11583231236531.0 / 4.69421568e9
+            - (5.0*eta*(3147553127.0 + 588.0*eta*(-45633.0 + 102260.0*eta)))/3.048192e6
+            - (6848.0*GAMMA)/21.0
+            - (640.0*pi2)/3.0
+            + (2255.0*eta*pi2)/12.0
+            - (13696.0*log2)/21.0
+            - (6848.0*logpi)/63.0
+        ) * pi2
+        phi6S  = (
+            (5.0*(227.0*(chi1L + chi2L + chi1L*delta - chi2L*delta)
+                  - 156.0*(chi1L + chi2L)*eta)*pi) / 3.0
+            + (5.0*(20.0*chi1L2L*eta*(11763.0 + 12488.0*eta)
+                    + 7.0*chi2L2*(-15103.0*(-1.0 + delta)
+                                   + 2.0*(-21683.0 + 6580.0*delta)*eta - 9808.0*eta2)
+                    - 7.0*chi1L2*(-15103.0*(1.0 + delta)
+                                   + 2.0*(21683.0 + 6580.0*delta)*eta + 9808.0*eta2)))/4032.0
+        ) * pi2
+        phi6 = phi6NS + phi6S
+
+        phi6LNS = (-6848.0/63.0) * pi2
+        phi6L   = phi6LNS        # phi6LS = 0
+
+        # --- 3.5 PN ---
+        phi7NS = (
+            5.0*(15419335.0 + 168.0*(75703.0 - 29618.0*eta)*eta)*pi / 254016.0
+        ) * pi7o3
+        phi7S  = (
+            (5.0*(-5030016755.0*(chi1L + chi2L + chi1L*delta - chi2L*delta)
+                   + 4.0*(2113331119.0*(chi1L + chi2L)
+                          + 675484362.0*(chi1L - chi2L)*delta)*eta
+                   - 1008.0*(208433.0*(chi1L + chi2L) + 25011.0*(chi1L - chi2L)*delta)*eta2
+                   + 90514368.0*(chi1L + chi2L)*eta3)) / 6.096384e6
+            - 5.0*(57.0*chi1L2*(1.0 + delta - 2.0*eta)
+                    + 220.0*chi1L2L*eta
+                    - 57.0*chi2L2*(-1.0 + delta + 2.0*eta))*pi
+            + (14585.0*(-(chi2L3*(-1.0 + delta)) + chi1L3*(1.0 + delta))
+               - 5.0*(chi2L3*(8819.0 - 2985.0*delta)
+                      + 8439.0*chi1L*chi2L2*(-1.0 + delta)
+                      - 8439.0*chi1L2*chi2L*(1.0 + delta)
+                      + chi1L3*(8819.0 + 2985.0*delta))*eta
+               + 40.0*(chi1L + chi2L)*(17.0*chi1L2 - 14.0*chi1L2L + 17.0*chi2L2)*eta2) / 48.0
+        ) * pi7o3
+        phi7 = phi7NS + phi7S
+
+        # --- 4.0 PN (phi8NS = 0 for 104/105) ---
+        # phi8S uses pi8o3 and (log(pi) - 1) factor
+        spin_combo_8 = (
+            1263141.0*(chi1L + chi2L + chi1L*delta - chi2L*delta)
+            - 2.0*(794075.0*(chi1L + chi2L) + 178533.0*(chi1L - chi2L)*delta)*eta
+            + 94344.0*(chi1L + chi2L)*eta2
+        )
+        # phi8: coefficient of Mf^{8/3} in integral: phi8S * pi^{8/3}
+        # phi8S uses LAL_PI * (log(pi) - 1)
+        phi8S  = (
+            -5.0 * spin_combo_8 * pi * (logpi - 1.0) / 9072.0
+        ) * pi8o3
+        phi8L_S = (
+            -5.0 * spin_combo_8 * pi / 9072.0
+        ) * pi8o3
+        phi8   = phi8S        # phi8NS = 0
+        phi8L  = phi8L_S      # phi8LNS = 0
+
+        # --- 4.5 PN: phi9 = phi9L = 0 for versions 104/105 ---
+        phi9  = torch.zeros_like(eta)
+        phi9L = torch.zeros_like(eta)
+
+        # ---------------------------------------------------------------
+        # 4. Derivative coefficients dphi (from d/dMf of phiNorm*Mf^{-5/3}*sum)
+        #    Relation:  dphi_n = factor_n * phi_n
+        #    where factor_n = -(v_n - 5/3)/1 = (5/3 - v_n) / (5/3)
+        #    Source: lines 1916-1929 of LALSimIMRPhenomX_internals.c
+        # ---------------------------------------------------------------
+        dphi0  = phi0
+        dphi1  = (4.0/5.0) * phi1
+        dphi2  = (3.0/5.0) * phi2
+        dphi3  = (2.0/5.0) * phi3
+        dphi4  = (1.0/5.0) * phi4
+        dphi5  = -(3.0/5.0) * phi5L          # phi5 = 0
+        dphi6  = -(1.0/5.0) * phi6 - (3.0/5.0) * phi6L
+        dphi6L = -(1.0/5.0) * phi6L
+        dphi7  = -(2.0/5.0) * phi7
+        dphi8  = -(3.0/5.0) * phi8 - (3.0/5.0) * phi8L
+        dphi8L = -(3.0/5.0) * phi8L
+        # phi9 = phi9L = 0  →  dphi9 = dphi9L = 0
+
+        # ---------------------------------------------------------------
+        # 5. Inspiral pseudo-PN phase coefficients (case 104: 4 terms)
+        #    Source: LALSimIMRPhenomX_inspiral.c – v3, d13, d23, d43
+        #    Effective spin: chiPNHat
+        # ---------------------------------------------------------------
+        S    = chiPNHat
+        S2   = S  * S
+        S3   = S2 * S
+        S4   = S3 * S
+        dchi2 = dchi * dchi
+
+        # v3  (absolute collocation value at the 3rd GC point)
+        v3_ins = (
+            (15415.0 + 873401.6255736464*eta + 376665.64637025696*eta2
+             - 3.9719980569125614e6*eta3 + 8.913612508054944e6*eta4)
+            / (1.0 + 46.83697749859996*eta)
+            + (S*(397951.95299014193 - 207180.42746987*S
+                  + eta3*(4.662143741417853e6 - 584728.050612325*S - 1.6894189124921719e6*S2)
+                  + eta*(-1.0053073129700898e6 + 1.235279439281927e6*S - 174952.69161683554*S2)
+                  - 130668.37221912303*S2
+                  + eta2*(-1.9826323844247842e6 + 208349.45742548333*S + 895372.155565861*S2)))
+            / (-9.675704197652225 + 3.5804521763363075*S + 2.5298346636273306*S2 + S3)
+            + dchi2*(-1296.9289110696955*eta)
+            + dchi*delta*eta*(-24708.109411857182 + 24703.28267342699*eta + 47752.17032707405*S)
+        )
+
+        # d13 = v1 - v3  (difference)
+        d13_ins = (
+            (-17294.0 - 19943.076428555978*eta + 483033.0998073767*eta2)
+            / (1.0 + 4.460294035404433*eta)
+            + (S*(68384.62786426462 + 67663.42759836042*S - 2179.3505885609297*S2
+                  + eta*(-58475.33302037833 + 62190.404951852535*S + 18298.307770807573*S2 - 303141.1945565486*S3)
+                  + 19703.894135534803*S3
+                  + eta2*(-148368.4954044637 - 758386.5685734496*S - 137991.37032619823*S2 + 1.0765877367729193e6*S3)
+                  + 32614.091002011017*S4))
+            / (2.0412979553629143 + S)
+            + 12017.062595934838*dchi*delta*eta
+        )
+
+        # d23 = v2 - v3  (difference)
+        d23_ins = (
+            (-7579.3 - 120297.86185566607*eta + 1.1694356931282217e6*eta2 - 557253.0066989232*eta3)
+            / (1.0 + 18.53018618227582*eta)
+            + (S*(-27089.36915061857 - 66228.9369155027*S
+                  + eta2*(150022.21343386435 - 50166.382087278434*S - 399712.22891153296*S2)
+                  - 44331.41741405198*S2
+                  + eta*(50644.13475990821 + 157036.45676788126*S + 126736.43159783827*S2)
+                  + eta3*(-593633.5370110178 - 325423.99477314285*S + 847483.2999508682*S2)))
+            / (-1.5232497464826662 - 3.062957826830017*S - 1.130185486082531*S2 + S3)
+            + 3843.083992827935*dchi*delta*eta
+        )
+
+        # d43 = v4 - v3  (difference)
+        d43_ins = (
+            (2439.0 - 31133.52170083207*eta + 28867.73328134167*eta2)
+            / (1.0 + 0.41143032589262585*eta)
+            + (S*(16116.057657391262
+                  + eta3*(-375818.0132734753 - 386247.80765802023*S)
+                  + eta*(-82355.86732027541 - 25843.06175439942*S)
+                  + 9861.635308837876*S
+                  + eta2*(229284.04542668918 + 117410.37432997991*S)))
+            / (-3.7385208695213668 + 0.25294420589064653*S + S2)
+            + 194.5554531509207*dchi*delta*eta
+        )
+
+        # Reconstruct absolute values: v1 = d13 + v3, v2 = d23 + v3, v4 = d43 + v3
+        v1_ins = d13_ins + v3_ins
+        v2_ins = d23_ins + v3_ins
+        v4_ins = d43_ins + v3_ins
+
+        # Gauss–Chebyshev collocation points in [fPhaseInsMin, fPhaseInsMax]
+        # gpoints4 = [0, 1/4, 3/4, 1]
+        dx_ins = fPhaseInsMax - fPhaseInsMin
+        f1_ins = fPhaseInsMin                          # gpoints4[0] = 0
+        f2_ins = fPhaseInsMin + 0.25 * dx_ins         # gpoints4[1] = 1/4
+        f3_ins = fPhaseInsMin + 0.75 * dx_ins         # gpoints4[2] = 3/4
+        f4_ins = fPhaseInsMax                          # gpoints4[3] = 1
+
+        # Build 4×4 matrix A: ansatz a0 + a1*f^{1/3} + a2*f^{2/3} + a3*f
+        def _ins_row(fi):
+            fi13 = fi.pow(1.0/3.0)
+            fi23 = fi13 * fi13
+            return torch.cat([torch.ones_like(fi), fi13, fi23, fi], dim=-1)
+
+        A_ins = torch.stack([
+            _ins_row(f1_ins), _ins_row(f2_ins),
+            _ins_row(f3_ins), _ins_row(f4_ins),
+        ], dim=-2)  # (B, 4, 4)
+
+        b_ins = torch.stack(
+            [v1_ins, v2_ins, v3_ins, v4_ins], dim=-2
+        )  # (B, 4, 1)
+
+        x_ins = torch.linalg.solve(A_ins, b_ins)  # (B, 4, 1)
+        a0 = x_ins[:, 0, :]   # (B, 1)
+        a1 = x_ins[:, 1, :]
+        a2 = x_ins[:, 2, :]
+        a3 = x_ins[:, 3, :]
+        # a4 = 0 for case 104
+
+        # Pseudo-PN sigma coefficients for the phase *integral*
+        sigma1 = (-5.0/3.0) * a0    # contributes Mf term in integral
+        sigma2 = (-5.0/4.0) * a1    # contributes Mf^{4/3}
+        sigma3 = (-5.0/5.0) * a2    # = -a2, contributes Mf^{5/3}
+        sigma4 = (-5.0/6.0) * a3    # contributes Mf^2
+        sigma5 = torch.zeros_like(a0)  # a4 = 0
+
+        # ---------------------------------------------------------------
+        # 6. Ringdown phase coefficients (case 105: 5 terms)
+        #    Source: LALSimIMRPhenomX_ringdown.c – v4, d12, d24, d34, d54
+        #    Effective spin: STotR
+        # ---------------------------------------------------------------
+        S   = STotR
+        S2  = S  * S
+        S3  = S2 * S
+        S4  = S3 * S
+        S5  = S4 * S
+
+        eta5 = eta4 * eta
+
+        # v4 (direct collocation value)
+        v4_rd = (
+            (-85.86062966719405 - 4616.740713893726*eta - 4925.756920247186*eta2
+             + 7732.064464348168*eta3 + 12828.269960300782*eta4 - 39783.51698102803*eta5)
+            / (1.0 + 50.206318806624004*eta)
+            + (S*(33.335857451144356 - 36.49019206094966*S
+                  + eta3*(1497.3545918387515 - 101.72731770500685*S)*S
+                  - 3.835967351280833*S2 + 2.302712009652155*S3
+                  + eta2*(93.64156367505917 - 18.184492163348665*S + 423.48863373726243*S2
+                          - 104.36120236420928*S3 - 719.8775484010988*S4)
+                  + 1.6533417657003922*S4
+                  + eta*(-69.19412903018717 + 26.580344399838758*S - 15.399770764623746*S2
+                          + 31.231253209893488*S3 + 97.69027029734173*S4)
+                  + eta4*(1075.8686153198323 - 3443.0233614187396*S - 4253.974688619423*S2
+                          - 608.2901586790335*S3 + 5064.173605639933*S4)))
+            / (-1.3705601055555852 + S)
+            + dchi*delta*eta*(22.363215261437862 + 156.08206945239374*eta)
+        )
+
+        # d12 = v1 - v2
+        d12_rd = (
+            (eta*(0.7207992174994245 - 1.237332073800276*eta + 6.086871214811216*eta2))
+            / (0.006851189888541745 + 0.06099184229137391*eta - 0.15500218299268662*eta2 + eta3)
+            + ((0.06519048552628343 - 25.25397971063995*eta - 308.62513664956975*eta4
+                + 58.59408241189781*eta2 + 160.14971486043524*eta3)*S
+               + eta*(-5.215945111216946 + 153.95945758807616*eta - 693.0504179144295*eta2
+                       + 835.1725103648205*eta3)*S2
+               + (0.20035146870472367 - 0.28745205203100666*eta - 47.56042058800358*eta4)*S3
+               + eta*(5.7756520242745735 - 43.97332874253772*eta + 338.7263666984089*eta3)*S4
+               + (-0.2697933899920511 + 4.917070939324979*eta - 22.384949087140086*eta4
+                  - 11.61488280763592*eta2)*S5)
+            / (1.0 - 0.6628745847248266*S)
+            - 23.504907495268824*dchi*delta*eta2
+        )
+
+        # d24 = v2 - v4
+        d24_rd = (
+            (eta*(-9.460253118496386 + 9.429314399633007*eta + 64.69109972468395*eta2))
+            / (-0.0670554310666559 - 0.09987544893382533*eta + eta2)
+            + (17.36495157980372*eta*S
+               + eta3*S*(930.3458437154668 + 808.457330742532*S)
+               + eta4*S*(-774.3633787391745 - 2177.554979351284*S - 1031.846477275069*S2)
+               + eta2*S*(-191.00932194869588 - 62.997389062600035*S + 64.42947340363101*S2)
+               + 0.04497628581617564*S3)
+            / (1.0 - 0.7267610313751913*S)
+            + dchi*delta*(-36.66374091965371 + 91.60477826830407*eta)*eta2
+        )
+
+        # d34 = v3 - v4
+        d34_rd = (
+            (eta*(-8.506898502692536 + 13.936621412517798*eta)) / (-0.40919671232073945 + eta)
+            + (eta*(1.7280582989361533*S + 18.41570325463385*S3 - 13.743271480938104*S4)
+               + eta2*(73.8367329022058*S - 95.57802408341716*S3 + 215.78111099820157*S4)
+               + 0.046849371468156265*S2
+               + eta3*S*(-27.976989112929353 + 6.404060932334562*S - 633.1966645925428*S3 + 109.04824706217418*S2))
+            / (1.0 - 0.6862449113932192*S)
+            + 641.8965762829259*dchi*delta*eta5
+        )
+
+        # d54 = v5 - v4
+        d54_rd = (
+            (eta*(7.05731400277692 + 22.455288821807095*eta + 119.43820622871043*eta2))
+            / (0.26026709603623255 + eta)
+            + (eta2*(134.88158268621922 - 56.05992404859163*S)*S
+               + eta*S*(-7.9407123129681425 + 9.486783128047414*S)
+               + eta3*S*(-316.26970506215554 + 90.31815139272628*S))
+            / (1.0 - 0.7162058321905909*S)
+            + 43.82713604567481*dchi*delta*eta3
+        )
+
+        # Reconstruct absolute values: vj = d_j4 + v4
+        v2_rd = d24_rd + v4_rd
+        v3_rd = d34_rd + v4_rd
+        v5_rd = d54_rd + v4_rd
+        v1_rd = d12_rd + v2_rd    # v1 = d12 + v2
+
+        # GC collocation points for ringdown in [fPhaseRDMin, fPhaseRDMax]
+        # gpoints5 = [0, 1/2 - 1/(2*sqrt(2)), 1/2, 1/2 + 1/(2*sqrt(2)), 1]
+        half_inv_sqrt2 = 1.0 / (2.0 * math.sqrt(2.0))
+        gp5 = [0.0, 0.5 - half_inv_sqrt2, 0.5, 0.5 + half_inv_sqrt2, 1.0]
+        dx_rd = fPhaseRDMax - fPhaseRDMin
+        fi_rd = [fPhaseRDMin + gp * dx_rd for gp in gp5]
+        fi_rd[3] = fRING    # override point 4 (0-indexed) to fRING exactly
+
+        # Build 5×5 matrix for RD phase derivative ansatz:
+        #   dphase_RD(f) = c0 + c1*f^{-1/3} + c2*f^{-2} + c4*f^{-4}
+        #                + cRD * [ -dphase0 / (fDAMP^2 + (f-fRING)^2) ]
+        def _rd_row(fi):
+            inv_fi   = 1.0 / fi
+            fi_m1o3  = fi.pow(-1.0/3.0)
+            fi_m2    = inv_fi * inv_fi
+            fi_m4    = fi_m2 * fi_m2
+            lorentz  = -dphase0 / (fDAMP*fDAMP + (fi - fRING)*(fi - fRING))
+            return torch.cat([torch.ones_like(fi), fi_m1o3, fi_m2, fi_m4, lorentz], dim=-1)
+
+        A_rd = torch.stack(
+            [_rd_row(fi_rd[i]) for i in range(5)], dim=-2
+        )  # (B, 5, 5)
+
+        b_rd = torch.stack(
+            [v1_rd, v2_rd, v3_rd, v4_rd, v5_rd], dim=-2
+        )  # (B, 5, 1)
+
+        x_rd = torch.linalg.solve(A_rd, b_rd)  # (B, 5, 1)
+        c0   = x_rd[:, 0, :]
+        c1   = x_rd[:, 1, :]
+        c2   = x_rd[:, 2, :]
+        c4   = x_rd[:, 3, :]
+        cRD  = x_rd[:, 4, :]
+        cL   = -dphase0 * cRD            # Eq. 7.12: cL = -dphase0 * aRD
+        cLovfda = cL / fDAMP
+        c4ov3   = c4 / 3.0
+
+        # phaseRD = v1_rd  (used in intermediate fit)
+        phaseRD = v1_rd
+
+        # ---------------------------------------------------------------
+        # 7. Inspiral phase derivative at fPhaseMatchIN (= phaseIN in LAL)
+        #    Used as collocation value for the intermediate phase fit.
+        #    Source: lines 1959-1985 of LALSimIMRPhenomX_internals.c
+        # ---------------------------------------------------------------
+        fIN = fPhaseMatchIN
+        logfIN = torch.log(fIN)
+
+        phaseIN = (
+            dphi0
+            + dphi1  * fIN.pow(1.0/3.0)
+            + dphi2  * fIN.pow(2.0/3.0)
+            + dphi3  * fIN
+            + dphi4  * fIN.pow(4.0/3.0)
+            + dphi5  * fIN.pow(5.0/3.0)
+            + dphi6  * fIN * fIN
+            + dphi6L * fIN * fIN * logfIN
+            + dphi7  * fIN.pow(7.0/3.0)
+            + dphi8  * fIN.pow(8.0/3.0)
+            + dphi8L * fIN.pow(8.0/3.0) * logfIN
+            # phi9 = phi9L = 0 for versions 104/105
+            # pseudo-PN a terms (contribute Mf^{8/3}, Mf^3, Mf^{10/3}, Mf^{11/3})
+            + a0 * fIN.pow(8.0/3.0)
+            + a1 * fIN.pow(3.0)
+            + a2 * fIN.pow(10.0/3.0)
+            + a3 * fIN.pow(11.0/3.0)
+        ) * fIN.pow(-8.0/3.0) * dphase0
+
+        # ---------------------------------------------------------------
+        # 8. Intermediate phase coefficients (case 104: 4 terms)
+        #    Source: lines 2031-2127 of LALSimIMRPhenomX_internals.c
+        #    Effective spin: STotR
+        # ---------------------------------------------------------------
+        S   = STotR
+        S2  = S * S
+
+        # Three intermediate phase collocation fits (STotR spin)
+        v2mRDv4 = (   # v2_IM - v4_RD (conditioned fit)
+            (eta*(-8.244230124407343 - 182.80239160435949*eta + 638.2046409916306*eta2
+                  - 578.878727101827*eta3))
+            / (-0.004863669418916522 - 0.5095088831841608*eta + eta2)
+            + (S*(0.1344136125169328 + 0.0751872427147183*S
+                  + eta2*(7.158823192173721 + 25.489598292111104*S - 7.982299108059922*S2)
+                  + eta*(-5.792368563647471 + 1.0190164430971749*S + 0.29150399620268874*S2)
+                  + 0.033627267594199865*S2
+                  + eta3*(17.426503081351534 - 90.69790378048448*S + 20.080325133405847*S2)))
+            / (0.03449545664201546 - 0.027941977370442107*S
+               + (0.005274757661661763 + 0.0455523144123269*eta - 0.3880379911692037*eta2 + eta3)*S2)
+            + 160.2975913661124*dchi*delta*eta2
+        )
+
+        v3mRDv4 = (   # v3_IM - v4_RD (conditioned fit)
+            (0.3145740304678042 + 299.79825045000655*eta - 605.8886581267144*eta2
+             - 1302.0954503758007*eta3)
+            / (1.0 + 2.3903703875353255*eta - 19.03836730923657*eta2)
+            + (S*(1.150925084789774 - 0.3072381261655531*S
+                  + eta4*(12160.22339193134 - 1459.725263347619*S - 9581.694749116636*S2)
+                  + eta2*(1240.3900459406875 - 289.48392062629966*S - 1218.1320231846412*S2)
+                  - 1.6191217310064605*S2 + eta*(-41.38762957457647 + 60.47477582076457*S2)
+                  + eta3*(-7540.259952257055 + 1379.3429194626635*S + 6372.99271204178*S2)))
+            / (-1.4325421225106187 + S)
+            + dchi*delta*eta3*(-444.797248674011 + 1448.47758082697*eta + 152.49290092435044*S)
+        )
+
+        v2IM = (   # direct fit to v2_IM
+            (-84.094 - 1782.8025405571802*eta + 5384.38721936653*eta2)
+            / (1.0 + 28.515617312596103*eta + 12.404097877099353*eta2)
+            + (S*(22.5665046165141 - 39.94907120140026*S + 4.668251961072*S2
+                  + 12.648584361431245*S3
+                  + eta2*(-298.7528127869681 + 14.228745354543983*S + 398.1736953382448*S2
+                          + 506.94924905801673*S3 - 626.3693674479357*S4)
+                  - 5.360554789680035*S4
+                  + eta*(152.07900889608595 - 121.70617732909962*S2
+                          - 169.36311036967322*S3 + 182.40064586992762*S4)))
+            / (-1.1571201220629341 + S)
+            + dchi*delta*eta3*(5357.695021063607 - 15642.019339339662*eta + 674.8698102366333*S)
+        )
+
+        # Collocation values (case 104):
+        #   v1_int = phaseIN  (inspiral derivative at fPhaseMatchIN)
+        #   v2_int = weighted average of conditioned and direct fit
+        #   v3_int = v3_IM = v3mRDv4 + v4_rd
+        #   v4_int = phaseRD = v1_rd  (first RD collocation = d12 + d24 + v4_rd)
+        v1_int = phaseIN
+        v2_int = 0.75 * (v2mRDv4 + v4_rd) + 0.25 * v2IM
+        v3_int = v3mRDv4 + v4_rd
+        v4_int = phaseRD     # = v1_rd = d12 + d24 + v4_rd
+
+        # GC collocation points for intermediate in [fPhaseMatchIN, fPhaseMatchIM]
+        dx_int = fPhaseMatchIM - fPhaseMatchIN
+        f1_int = fPhaseMatchIN                      # gpoints4[0] = 0
+        f2_int = fPhaseMatchIN + 0.25 * dx_int      # gpoints4[1]
+        f3_int = fPhaseMatchIN + 0.75 * dx_int      # gpoints4[2]
+        f4_int = fPhaseMatchIM                      # gpoints4[3] = 1
+
+        # For case 104, the matrix ansatz is:
+        #   dphase_int(f) = x[0] + x[1]*(fRING/f) + x[2]*(fRING/f)^2 + x[3]*(fRING/f)^4
+        # The Lorentzian (4*cL)/(4*fDAMP^2+(f-fRING)^2) is subtracted from b.
+        def _int_row(fi):
+            rt = fRING / fi       # = fRING / f
+            rt2 = rt * rt
+            rt4 = rt2 * rt2
+            return torch.cat([torch.ones_like(fi), rt, rt2, rt4], dim=-1)
+
+        def _int_lorentz(fi):
+            return 4.0 * cL / (4.0 * fDAMP*fDAMP + (fi - fRING)*(fi - fRING))
+
+        A_int = torch.stack([
+            _int_row(f1_int), _int_row(f2_int),
+            _int_row(f3_int), _int_row(f4_int),
+        ], dim=-2)  # (B, 4, 4)
+
+        b_int = torch.stack([
+            v1_int - _int_lorentz(f1_int),
+            v2_int - _int_lorentz(f2_int),
+            v3_int - _int_lorentz(f3_int),
+            v4_int - _int_lorentz(f4_int),
+        ], dim=-2)  # (B, 4, 1)
+
+        x_int = torch.linalg.solve(A_int, b_int)  # (B, 4, 1)
+        b0_raw = x_int[:, 0, :]
+        b1_raw = x_int[:, 1, :]
+        b2_raw = x_int[:, 2, :]
+        b4_raw = x_int[:, 3, :]
+
+        # Rescale back to physical coefficients
+        # b1 = x[1] * fRING  (so that b1/f = x[1]*(fRING/f))
+        b0 = b0_raw
+        b1 = b1_raw * fRING
+        b2 = b2_raw * fRING * fRING
+        # b3 = 0 for case 104
+        b4 = b4_raw * fRING * fRING * fRING * fRING
+
+        # ---------------------------------------------------------------
+        # 9. Phase-continuity constants (C1Int, C2Int, C1MRD, C2MRD)
+        #    Source: IMRPhenomX_Phase_22_ConnectionCoefficients in internals.c
+        # ---------------------------------------------------------------
+        fIns = fPhaseMatchIN
+        fInt = fPhaseMatchIM
+
+        # Helper: evaluate inspiral derivative at f
+        def _dphi_ins(f):
+            logf = torch.log(f)
+            return (
+                dphi0
+                + dphi1  * f.pow(1.0/3.0)
+                + dphi2  * f.pow(2.0/3.0)
+                + dphi3  * f
+                + dphi4  * f.pow(4.0/3.0)
+                + dphi5  * f.pow(5.0/3.0)
+                + dphi6  * f * f
+                + dphi6L * f * f * logf
+                + dphi7  * f.pow(7.0/3.0)
+                + dphi8  * f.pow(8.0/3.0)
+                + dphi8L * f.pow(8.0/3.0) * logf
+                + a0 * f.pow(8.0/3.0)
+                + a1 * f.pow(3.0)
+                + a2 * f.pow(10.0/3.0)
+                + a3 * f.pow(11.0/3.0)
+            ) * f.pow(-8.0/3.0) * dphase0
+
+        # Helper: evaluate inspiral phase integral at f
+        def _phi_ins(f):
+            logf = torch.log(f)
+            phasing = (
+                phi0
+                + phi1  * f.pow(1.0/3.0)
+                + phi2  * f.pow(2.0/3.0)
+                + phi3  * f
+                + phi4  * f.pow(4.0/3.0)
+                + phi5  * f.pow(5.0/3.0)   # phi5 = 0
+                + phi5L * f.pow(5.0/3.0) * logf
+                + phi6  * f.pow(2.0)
+                + phi6L * f.pow(2.0) * logf
+                + phi7  * f.pow(7.0/3.0)
+                + phi8  * f.pow(8.0/3.0)
+                + phi8L * f.pow(8.0/3.0) * logf
+                + phi9  * f.pow(3.0)       # phi9 = 0
+                + phi9L * f.pow(3.0) * logf  # phi9L = 0
+                # pseudo-PN sigma terms
+                + sigma1 * f.pow(8.0/3.0)   # σ₁ → Mf term after * Mf^{-5/3}
+                + sigma2 * f.pow(3.0)
+                + sigma3 * f.pow(10.0/3.0)
+                + sigma4 * f.pow(11.0/3.0)
+                + sigma5 * f.pow(4.0)       # sigma5 = 0
+            )
+            return phiNorm * f.pow(-5.0/3.0) * phasing
+
+        # Helper: evaluate intermediate derivative at f
+        def _dphi_int(f):
+            inv1 = 1.0 / f
+            inv2 = inv1 * inv1
+            inv4 = inv2 * inv2
+            lorentz = 4.0 * cL / (4.0*fDAMP*fDAMP + (f - fRING)*(f - fRING))
+            return b0 + b1*inv1 + b2*inv2 + b4*inv4 + lorentz
+
+        # Helper: evaluate intermediate phase integral at f
+        def _phi_int(f):
+            inv1 = 1.0 / f
+            inv3 = inv1 * inv1 * inv1
+            logf = torch.log(f)
+            atan_term = (2.0 * cL / fDAMP) * torch.atan((f - fRING) / (2.0 * fDAMP))
+            return b0*f + b1*logf - b2*inv1 - (b4/3.0)*inv3 + atan_term
+
+        # Helper: evaluate ringdown derivative at f
+        def _dphi_rd(f):
+            inv1 = 1.0 / f
+            fi_m1o3 = f.pow(-1.0/3.0)
+            fi_m2   = inv1 * inv1
+            fi_m4   = fi_m2 * fi_m2
+            lorentz = cL / (fDAMP*fDAMP + (f - fRING)*(f - fRING))
+            return c0 + c1*fi_m1o3 + c2*fi_m2 + c4*fi_m4 + lorentz
+
+        # Helper: evaluate ringdown phase integral at f
+        def _phi_rd(f):
+            inv1 = 1.0 / f
+            inv3 = inv1 * inv1 * inv1
+            f2o3 = f.pow(2.0/3.0)
+            atan_term = cLovfda * torch.atan((f - fRING) / fDAMP)
+            return c0*f + 1.5*c1*f2o3 - c2*inv1 - c4ov3*inv3 + atan_term
+
+        # C2Int = DPhiIns(fIns) - DPhiInt(fIns)
+        C2Int = _dphi_ins(fIns) - _dphi_int(fIns)
+
+        # C1Int = PhiIns(fIns) - PhiInt(fIns) - C2Int * fIns
+        C1Int = _phi_ins(fIns) - _phi_int(fIns) - C2Int * fIns
+
+        # C2MRD = [DPhiInt(fInt) + C2Int] - DPhiRD(fInt)
+        C2MRD = _dphi_int(fInt) + C2Int - _dphi_rd(fInt)
+
+        # C1MRD = [PhiInt(fInt) + C1Int + C2Int*fInt] - PhiRD(fInt) - C2MRD*fInt
+        C1MRD = (_phi_int(fInt) + C1Int + C2Int*fInt) - _phi_rd(fInt) - C2MRD*fInt
+
+        return {
+            # Normalisations
+            'phiNorm':  phiNorm,
+            'dphase0':  dphase0,
+            # PN integral coefficients
+            'phi0': phi0, 'phi1': phi1, 'phi2': phi2, 'phi3': phi3,
+            'phi4': phi4, 'phi5': phi5, 'phi5L': phi5L,
+            'phi6': phi6, 'phi6L': phi6L,
+            'phi7': phi7,
+            'phi8': phi8, 'phi8L': phi8L,
+            'phi9': phi9, 'phi9L': phi9L,
+            # Pseudo-PN integral coefficients
+            'sigma1': sigma1, 'sigma2': sigma2, 'sigma3': sigma3,
+            'sigma4': sigma4, 'sigma5': sigma5,
+            # Pseudo-PN derivative coefficients
+            'a0': a0, 'a1': a1, 'a2': a2, 'a3': a3,
+            # PN derivative coefficients
+            'dphi0': dphi0, 'dphi1': dphi1, 'dphi2': dphi2, 'dphi3': dphi3,
+            'dphi4': dphi4, 'dphi5': dphi5,
+            'dphi6': dphi6, 'dphi6L': dphi6L,
+            'dphi7': dphi7,
+            'dphi8': dphi8, 'dphi8L': dphi8L,
+            # Intermediate coefficients
+            'b0': b0, 'b1': b1, 'b2': b2, 'b4': b4,
+            # Ringdown coefficients
+            'c0': c0, 'c1': c1, 'c2': c2, 'c4': c4,
+            'cL': cL, 'cLovfda': cLovfda, 'c4ov3': c4ov3,
+            # QNM frequencies
+            'fRING': fRING, 'fDAMP': fDAMP,
+            # Boundary frequencies
+            'fPhaseMatchIN': fPhaseMatchIN,
+            'fPhaseMatchIM': fPhaseMatchIM,
+            # Continuity constants
+            'C1Int': C1Int, 'C2Int': C2Int,
+            'C1MRD': C1MRD, 'C2MRD': C2MRD,
+        }
 
     def phase(self, f_Ms, phase_coeffs, derived):
         """
-        Evaluate the full IMRPhenomXAS phase over the frequency grid.
+        Evaluate the raw IMRPhenomXAS phase Ψ₂₂(Mf) over the frequency grid.
 
-        Stitches inspiral / intermediate / ringdown with C¹ continuity.
+        Does NOT apply the 1/η re-scaling or the tc/phic offsets — those are
+        handled in ``get_hphc``.  The full FD phase used to build h(f) is:
+
+            phi_total = (1/η) * Ψ₂₂(Mf) + linb*Mf + phifRef
+
+        where linb is the time-alignment shift and phifRef is the reference
+        phase (both computed in get_hphc).
+
+        Region definitions:
+          Inspiral     :  Mf < fPhaseMatchIN
+          Intermediate :  fPhaseMatchIN ≤ Mf < fPhaseMatchIM
+          Ringdown     :  Mf ≥ fPhaseMatchIM
+
+        Inspiral ansatz integral (Eq. 7.4 of arXiv:2001.11412):
+            phiNorm * Mf^{-5/3} * [phi0 + phi1*Mf^{1/3} + … + sigma1*Mf^{8/3} + …]
+
+        Intermediate ansatz integral (Eq. 7.7):
+            b0*Mf + b1*log(Mf) - b2/Mf - b4/(3*Mf³)
+            + (2*cL/fDAMP)*atan((Mf-fRING)/(2*fDAMP)) + C1Int + C2Int*Mf
+
+        Ringdown ansatz integral (Eq. 7.12):
+            c0*Mf + 1.5*c1*Mf^{2/3} - c2/Mf - (c4/3)*Mf^{-3}
+            + (cL/fDAMP)*atan((Mf-fRING)/fDAMP) + C1MRD + C2MRD*Mf
+
+        Parameters
+        ----------
+        f_Ms        : (B, F) — dimensionless frequency grid  Mf = f·M_s
+        phase_coeffs: dict   — output of get_phase_coeffs
+        derived     : (B, 13) — (unused here; kept for API symmetry)
+
+        Returns
+        -------
+        psi : (B, F) — raw phase Ψ₂₂(Mf) in radians
         """
-        raise NotImplementedError
+        pc = phase_coeffs
+        Mf = f_Ms
+
+        fIN  = pc['fPhaseMatchIN']   # (B, 1) inspiral→intermediate boundary
+        fIM  = pc['fPhaseMatchIM']   # (B, 1) intermediate→ringdown boundary
+        fRING = pc['fRING']
+        fDAMP = pc['fDAMP']
+        cL    = pc['cL']
+        cLovfda = pc['cLovfda']
+        c4ov3   = pc['c4ov3']
+
+        # ---- Inspiral ----
+        logMf = torch.log(Mf)
+        phi_ins = (
+            pc['phi0']
+            + pc['phi1']  * Mf.pow(1.0/3.0)
+            + pc['phi2']  * Mf.pow(2.0/3.0)
+            + pc['phi3']  * Mf
+            + pc['phi4']  * Mf.pow(4.0/3.0)
+            + pc['phi5']  * Mf.pow(5.0/3.0)
+            + pc['phi5L'] * Mf.pow(5.0/3.0) * logMf
+            + pc['phi6']  * Mf * Mf
+            + pc['phi6L'] * Mf * Mf * logMf
+            + pc['phi7']  * Mf.pow(7.0/3.0)
+            + pc['phi8']  * Mf.pow(8.0/3.0)
+            + pc['phi8L'] * Mf.pow(8.0/3.0) * logMf
+            + pc['phi9']  * Mf.pow(3.0)
+            + pc['phi9L'] * Mf.pow(3.0) * logMf
+            # pseudo-PN sigma terms
+            + pc['sigma1'] * Mf.pow(8.0/3.0)
+            + pc['sigma2'] * Mf.pow(3.0)
+            + pc['sigma3'] * Mf.pow(10.0/3.0)
+            + pc['sigma4'] * Mf.pow(11.0/3.0)
+            + pc['sigma5'] * Mf.pow(4.0)
+        )
+        phi_ins = pc['phiNorm'] * Mf.pow(-5.0/3.0) * phi_ins
+
+        # ---- Intermediate ----
+        inv1_Mf = 1.0 / Mf
+        inv3_Mf = inv1_Mf * inv1_Mf * inv1_Mf
+        atan_int = (2.0 * cL / fDAMP) * torch.atan((Mf - fRING) / (2.0 * fDAMP))
+        phi_int  = (
+            pc['b0'] * Mf
+            + pc['b1'] * logMf
+            - pc['b2'] * inv1_Mf
+            - (pc['b4'] / 3.0) * inv3_Mf
+            + atan_int
+            + pc['C1Int'] + pc['C2Int'] * Mf
+        )
+
+        # ---- Ringdown ----
+        Mf_2o3  = Mf.pow(2.0/3.0)
+        atan_rd = cLovfda * torch.atan((Mf - fRING) / fDAMP)
+        phi_rd  = (
+            pc['c0'] * Mf
+            + 1.5 * pc['c1'] * Mf_2o3
+            - pc['c2'] * inv1_Mf
+            - c4ov3 * inv3_Mf
+            + atan_rd
+            + pc['C1MRD'] + pc['C2MRD'] * Mf
+        )
+
+        # ---- Stitch regions ----
+        return torch.where(Mf < fIN, phi_ins,
+               torch.where(Mf < fIM, phi_int, phi_rd))
