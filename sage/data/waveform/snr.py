@@ -174,14 +174,16 @@ class OptimalSNRRescaler(torch.nn.Module):
         self.target_snr_sampler = target_snr_sampler
 
     @torch.no_grad()
-    def forward(self, signal_batch: Tensor) -> Tensor:
+    def forward(self, signal_batch: Tensor):
         """
         Rescale signals to target SNR.
 
         Args:
             signal_batch: shape [B, L] or [B, C, L]
         Returns:
-            rescaled_signal_batch: same shape as input
+            rescaled_signal_batch: same shape as input, shape (B, ...)
+            scale: (B,) float tensor — per-sample amplitude scale factors
+                   (hf_new = hf_old * scale, so distance_new = distance_old / scale)
         """
         B = signal_batch.size(0)
         device = signal_batch.device
@@ -195,4 +197,4 @@ class OptimalSNRRescaler(torch.nn.Module):
         # Compute scaling factors safely
         scale = target_rho.div(rho_net + 1e-12)  # [B]
 
-        return signal_batch * scale[:, None, None]
+        return signal_batch * scale[:, None, None], scale
