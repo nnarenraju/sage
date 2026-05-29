@@ -241,8 +241,22 @@ class MultirateSampler(torch.nn.Module):
         beta = 9  # A ~ 8.7 + 9.08 * beta ~ 90.4 dB attenuation
         h *= torch.kaiser_window(NTAPS, periodic=False, beta=beta)
 
-        # normalize DC gain
-        # h /= h.sum() --> This does not preserve L2 energy
+        # L2-normalise the filter (||h||₂ = 1).
+        # This ensures that white noise variance is preserved per sample after
+        # each 2x decimation stage: E[y²] = σ²·||h||₂² = σ², regardless of
+        # how many times the signal has been decimated.  For whitened GW data
+        # (unit-variance noise floor) this keeps all frequency bins on the same
+        # noise scale, which is important for the neural network.
+        #
+        # Consequence: the DC gain is NOT 1.  For this 63-tap Kaiser β=9
+        # halfband kernel the DC gain is ≈ 1.439 per stage (= sum(h)/||h||₂).
+        # The GW signal amplitude in a bin that went through N stages is
+        # therefore scaled by ≈ 1.439^N relative to a no-decimation bin, but
+        # the per-bin noise variance stays at 1.0 throughout.
+        #
+        # The L1 alternative (h /= h.sum(), DC gain = 1) would reduce the
+        # per-sample noise variance to ≈ 0.48·σ² per decimation stage, making
+        # low-frequency bins quieter and inconsistent with higher-fs bins.
         h /= torch.sqrt((h**2).sum())
 
         self.register_buffer(
