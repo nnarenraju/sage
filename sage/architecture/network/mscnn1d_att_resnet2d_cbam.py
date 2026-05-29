@@ -67,11 +67,13 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
 
         self.num_detectors = len(cfg.detectors)
 
-        # Normalization layer
+        # Normalization layer — normalises each detector channel independently.
+        # Use self.num_detectors instead of hardcoding 2 so this works for any
+        # detector network (e.g. H1+L1+V1 → 3 detectors).
         norm_layers = {
-            "batchnorm": nn.BatchNorm1d(2),
-            "layernorm": nn.LayerNorm(2),
-            "instancenorm": nn.InstanceNorm1d(2, affine=True),
+            "batchnorm": nn.BatchNorm1d(self.num_detectors),
+            "layernorm": nn.LayerNorm(self.num_detectors),
+            "instancenorm": nn.InstanceNorm1d(self.num_detectors, affine=True),
         }
         self.norm = norm_layers[norm_type]
 
@@ -173,11 +175,13 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         cfg = get_cfg()
         self.num_detectors = len(cfg.detectors)
 
-        # Normalization layer
+        # Normalization layer — normalises each detector channel independently.
+        # Use self.num_detectors instead of hardcoding 2 so this works for any
+        # detector network (e.g. H1+L1+V1 → 3 detectors).
         norm_layers = {
-            "batchnorm": nn.BatchNorm1d(2),
-            "layernorm": nn.LayerNorm(2),
-            "instancenorm": nn.InstanceNorm1d(2, affine=True),
+            "batchnorm": nn.BatchNorm1d(self.num_detectors),
+            "layernorm": nn.LayerNorm(self.num_detectors),
+            "instancenorm": nn.InstanceNorm1d(self.num_detectors, affine=True),
         }
         self.norm = norm_layers[norm_type]
 
@@ -233,7 +237,11 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         x: Tensor of shape (B, num_detectors=2, signal_length)
         Returns:
             ranking_statistic: (B, 1)
-            point_estimates: (B, 2*num_pe)  -> mu_1, log_var_1, mu_2, log_var_2, ...
+            point_estimates: (B, 2*num_pe)
+                Blocked format: [mu_0, mu_1, ..., log_var_0, log_var_1, ...]
+                (all predicted means first, then all log-variances).
+                This matches the layout expected by BCEWithPEsigmaLoss and
+                SageUncompiledValidation, which split at [:num_pe] / [num_pe:].
         """
         # Normalize input
         x = self.norm(x)
@@ -251,9 +259,16 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         # Ranking statistic for BCE
         ranking_statistic = self.get_ranking_statistic(features)
 
-        # Heteroscedastic PE predictions
-        point_estimates = torch.cat(
-            [layer(features) for layer in self.point_estimate_layers], dim=1
-        )
+        # Heteroscedastic PE predictions.
+        # Each layer outputs (B, 2): [mu_k, log_var_k].
+        # We collect all mus first and all log_vars second so the concatenated
+        # tensor has the blocked layout [mu_0, ..., mu_K, log_var_0, ..., log_var_K]
+        # rather than the interleaved layout [mu_0, log_var_0, mu_1, log_var_1, ...].
+        # BCEWithPEsigmaLoss splits at [:num_pe] for mu and [num_pe:] for log_var,
+        # so interleaved would silently mix mu/log_var for num_pe > 1.
+        raw = [layer(features) for layer in self.point_estimate_layers]
+        mus = torch.cat([r[:, :1] for r in raw], dim=1)       # (B, num_pe)
+        log_vars = torch.cat([r[:, 1:] for r in raw], dim=1)  # (B, num_pe)
+        point_estimates = torch.cat([mus, log_vars], dim=1)    # (B, 2*num_pe)
 
         return ranking_statistic, point_estimates
