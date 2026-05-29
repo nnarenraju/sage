@@ -136,6 +136,11 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
                 dtype=torch.int32,
             )
 
+        # Column index of "distance" in the full all_theta parameter tensor.
+        # req_idx maps self.param_names → columns of all_theta; "distance" is
+        # self.param_names[8], so req_idx[8] gives its all_theta column.
+        self.dist_col = int(self.req_idx[8].item())
+
         # Target handling
         self.param_sampler.req_idx = self.req_idx
         self.param_sampler._compile_batch_normaliser()
@@ -160,9 +165,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             polarization=req_theta[:, -3],
         )
 
-        # TODO: Handle distance rescaling after augment
         if self.augment:
-            hf = self.augment(hf)
+            # augment returns (hf_scaled, scale) where hf_new = hf_old * scale.
+            # Since strain ∝ 1/distance, distance_new = distance_old / scale.
+            hf, scale = self.augment(hf)
+            all_theta[:, self.dist_col] = (
+                all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
+            )
 
         # Target handling
         normed_targets = self.param_sampler.standardise_from_batch(all_theta)
@@ -265,12 +274,19 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         )
 
         # PhenomP get hp and hc
+        # LALSim PhenomPCoreTwistUp convention (after internal mass swap where m1<=m2):
+        #   chi1_l = spin of SMALLER body (m1 in LALSim after swap where m1 <= m2)
+        #   chi2_l = spin of LARGER body (m2 in LALSim after swap)
+        # Sage's convert_spins stores:
+        #   converted_spins[:,0] = chi1_l = spin of SMALLER body  (theta[:,7] = spin1z_input with m2<m1)
+        #   converted_spins[:,1] = chi2_l = spin of LARGER body   (theta[:,4] = spin2z_input with m1>m2)
+        # No swap needed; pass directly.
         hp, hc = self.PhenomPCoreTwistUp(
             f_Ms,
             hPhenomD,
             derived[:, 1:2],
-            converted_spins[:, 0:1],
-            converted_spins[:, 1:2],
+            converted_spins[:, 0:1],  # chi1_l for TwistUp = spin of SMALLER body
+            converted_spins[:, 1:2],  # chi2_l for TwistUp = spin of LARGER body
             converted_spins[:, 2:3],
             angcoeffs,
             Y2,
@@ -413,9 +429,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         eta = theta[:, 1:2] * theta[:, 0:1] / (M * M)
         q = theta[:, 0:1] / theta[:, 1:2]  # q>=1 due to swapped masses
         M_s = (theta[:, 1:2] + theta[:, 0:1]) * self.GM  # also called m_sec
-        # This should prevent NaNs
-        nudge_backward_(eta, 0.25, 1e-6)
-        nudge_forward_(q, 1.0, 1e-6)
+        # Mirror LALSim PhenomPCore: "if (eta > 0.25 || q < 1.0) { nudge(&eta,0.25,...); nudge(&q,1.0,...); }"
+        # LALSim's nudge() rounds TO the boundary; clamp_(max/min) matches that.
+        eta.clamp_(max=0.25)
+        q.clamp_(min=1.0)
 
         return torch.cat([M, eta, q, M_s], dim=1)
 
@@ -687,9 +704,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         Parameters
         ----------
         theta : torch.Tensor, shape (B, 12+)
-            Columns: mass1[0], mass2[1], spin2x[2], spin2y[3], spin2z[4],
-            spin1x[5], spin1y[6], spin1z[7], distance[8], tc[9],
+            Columns: mass1[0], mass2[1], spin1x[2], spin1y[3], spin1z[4],
+            spin2x[5], spin2y[6], spin2z[7], distance[8], tc[9],
             coa_phase[10], inclination[11].
+            Sage convention: mass1 >= mass2 (enforced by mass_order constraint),
+            so spin1 belongs to the LARGER body and spin2 to the SMALLER body.
+            Therefore theta[:,7] (spin2z) = aligned spin of the SMALLER body
+            and theta[:,4] (spin1z) = aligned spin of the LARGER body, which
+            is why chi1_l reads from index 7 and chi2_l from index 4 below.
         derived : torch.Tensor, shape (B, 4)
             Output of :meth:`compute_derived_parameters`.
 
@@ -1638,10 +1660,15 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         p_prev = phase_fixed.gather(1, idx - 1)
         p_next = phase_fixed.gather(1, idx + 1)
 
-        t_corr_fixed = (p_next - p_prev) / (f_next - f_prev) / (2 * self.PI)
+        # LALSim stores phase_fixed = *phasing = -phPhenom (negated PhenomD phase).
+        # Sage stores phase_fixed = +phPhenom - 2*phic (positive).
+        # Therefore: d(Sage phase_fixed)/df = -d(LALSim phase_fixed)/df
+        # => negate here so Sage t_corr matches LALSim t_corr.
+        t_corr_fixed = -(p_next - p_prev) / (f_next - f_prev) / (2 * self.PI)
 
         # Compute phase correction factor
-        phase_corr = torch.exp(self.TWO_J * self.PI * self.f * t_corr_fixed)
+        # LALSim line 1157: exp(-i*2pi*f*t_corr)  — negative sign
+        phase_corr = torch.exp(-self.TWO_J * self.PI * self.f * t_corr_fixed)
 
         # Apply to waveform, respecting offset
         hptilde[..., offset : offset + self.f_numel] *= phase_corr
