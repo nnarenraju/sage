@@ -209,7 +209,7 @@ class ConstantProjection(torch.nn.Module):
 
         return torch.tensor(resps[0] - resps[1], device=self.device, dtype=self.dtype)
 
-    def random_gmst_estimate(self):
+    def random_gmst_estimate(self, B=None):
         """
         Return a batch of uniformly random GMST values in ``[0, 2π)``.
 
@@ -218,15 +218,38 @@ class ConstantProjection(torch.nn.Module):
         rotation, which is equivalent to drawing uniformly from all
         possible observation times.
 
+        Parameters
+        ----------
+        B : int or None
+            Batch size to use.  When ``None``, falls back to
+            ``self.batch_size`` (the value fixed at construction time from
+            ``cfg.batch_size * cfg.class_balance``).  Pass an explicit value
+            when calling from a context where the runtime batch size may
+            differ from the training batch size (e.g. validation), because
+            using the fixed ``self.batch_size`` would produce a shape mismatch.
+            NOTE: torch.compile with static shapes requires a fixed batch size;
+            if you re-enable compilation, revert to the ``self.batch_size``
+            path and ensure the caller always uses the same B.
+
         Returns
         -------
-        torch.Tensor, shape ``(batch_size,)``
+        torch.Tensor, shape ``(B,)``
             GMST values in radians.
         """
         # Random GMST in radians to compute the antenna patterns
         # Reference times to GMST requires table reads and is expensive
         # Instead we simply randomise GMST in [0, 2PI)
-        return 2 * PI * torch.rand(self.batch_size, device=self.device)
+        #
+        # NOTE (kept for torch.compile compatibility reference):
+        # The original implementation used self.batch_size (a fixed integer
+        # baked in at construction time) so that torch.compile sees a static
+        # shape and does not retrace.  The dynamic version below uses the
+        # caller-supplied B; this triggers retracing if B changes between
+        # calls, which breaks torch.compile with static-shape assumptions.
+        # Old line (static, compile-safe but wrong at validation time):
+        #   return 2 * PI * torch.rand(self.batch_size, device=self.device)
+        _B = self.batch_size if B is None else B
+        return 2 * PI * torch.rand(_B, device=self.device)
 
     def antenna_pattern(
         self, right_ascension, declination, polarization, gmst_estimate
@@ -323,7 +346,12 @@ class ConstantProjection(torch.nn.Module):
 
         ehat = torch.stack([e0, e1, e2], dim=-1)
 
-        return torch.einsum("bi,dj->bd", ehat, self.dx) / C
+        # "bi,di->bd": dot product over spatial index i for each batch sample b
+        # and detector d.  The previous "bi,dj->bd" was wrong — it computed
+        # (sum_i ehat[b,i]) * (sum_j dx[d,j]), a product of scalar sums rather
+        # than a proper 3D dot product.  PyCBC reference: dx.dot(ehat) in
+        # Detector.time_delay_from_location (pycbc/detector/ground.py:449).
+        return torch.einsum("bi,di->bd", ehat, self.dx) / C
 
     def forward(self, hp, hc, ra, dec, polarization):
         """Return the strain of a waveform as measured by all detectors.
@@ -344,9 +372,10 @@ class ConstantProjection(torch.nn.Module):
         polarization: float
             Polarization angle of the source
         """
-        # Get GMST estimates for entire batch
-        # Batch shape should be (batch_size, num_dets, seq_len)
-        gmst_estimate = self.random_gmst_estimate()
+        # Get GMST estimates for entire batch.
+        # Pass the actual runtime batch size so validation (where B may differ
+        # from self.batch_size) does not produce a shape mismatch.
+        gmst_estimate = self.random_gmst_estimate(B=ra.shape[0])
         # 'constant' assume fixed orientation relative to source over the
         # duration of the signal, accurate for short duration signals
         fp, fc = self.antenna_pattern(ra, dec, polarization, gmst_estimate)
