@@ -228,7 +228,11 @@ def run_checkpoint_validation(epoch, num_samples, save_path=None, verbose=True):
             mu_std   = network_output[:, 1 : 1 + num_pe]
             log_var  = network_output[:, 1 + num_pe : 1 + 2 * num_pe]
             mu_phys  = signal_sampler.param_sampler.unstandardise_from_batch(mu_std)
-            sig_phys = torch.exp(0.5 * log_var)
+            # log_var is in standardised parameter space; multiply by prior std
+            # to obtain sigma in physical units (same fix as SageUncompiledValidation).
+            sig_std  = torch.exp(0.5 * log_var)
+            std_prior = signal_sampler.param_sampler._std_stds.to(sig_std.device)
+            sig_phys = sig_std * std_prior
             network_output = torch.cat([ranking, mu_phys, sig_phys], dim=1)
 
             save["network_output"].append(network_output.cpu())
