@@ -186,8 +186,11 @@ class IMRPhenomD(phenom.PhenomConstants):
         m2_s = theta[:, 1:2] * self.GM
         M_s = m1_s + m2_s
         eta_s = m1_s * m2_s / (M_s * M_s)
-        # This should prevents NaNs
-        nudge_backward_(eta_s, 0.25, 1e-6)
+        # Clip to 0.25 (mirrors LALSim: "if(eta > 0.25) eta = 0.25" — corrects
+        # floating-point drift above the equal-mass limit, does NOT nudge below).
+        # No division by Seta = sqrt(1-4*eta) exists in the fit functions, so
+        # eta = 0.25 exactly is safe.
+        eta_s.clamp_(max=0.25)
 
         return torch.cat([m1_s, m2_s, M_s, eta_s], dim=1)
 
@@ -448,10 +451,9 @@ class IMRPhenomD(phenom.PhenomConstants):
         # Compute standard Phenom effective spin combination
         m1sf = m1f * m1f
         m2sf = m2f * m2f
-        # NOTE: LAL does not include this denominator?
-        # Including this will cause mismatch in equal mass
-        # high spin cases; but still not by much given noise floor
-        s = m1sf * chi1 + m2sf * chi2 / (m1sf + m2sf)
+        # LALSim PhenomInternal_EradRational0815 (line 320):
+        # double s = (m1s * chi1 + m2s * chi2) / (m1s + m2s);
+        s = (m1sf * chi1 + m2sf * chi2) / (m1sf + m2sf)
 
         eta2 = eta * eta
         eta3 = eta2 * eta
