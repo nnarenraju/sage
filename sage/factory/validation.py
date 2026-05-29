@@ -305,7 +305,13 @@ class SageUncompiledValidation(torch.nn.Module):
                 mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
                     mu_std
                 )
-                sigma_phys = torch.exp(0.5 * log_var)
+                # log_var is the network's predicted log-variance in *standardised*
+                # parameter space.  Converting to physical sigma requires multiplying
+                # by the per-parameter prior standard deviation used during
+                # standardisation (σ_phys = σ_std · std_prior).
+                sigma_std = torch.exp(0.5 * log_var)  # (B, num_pe), standardised units
+                std_prior = self.signal_sampler.param_sampler._std_stds.to(sigma_std.device)
+                sigma_phys = sigma_std * std_prior     # (B, num_pe), physical units
                 network_output = torch.cat([ranking, mu_phys, sigma_phys], dim=1)
 
                 save["network_output"].append(network_output.cpu())
