@@ -170,6 +170,7 @@ sage/data/waveform/lalsim_src
 # Experimental runs
 runs/o3b_dummy_1
 runs/test
+runs/
 
 # New network modules
 sage/architecture/network/attentive_*.py
