@@ -44,6 +44,7 @@ from pycbc import pnutils
 
 # LOCAL
 from sage.core.config import get_cfg, get_data_cfg
+from sage.core.pipeline import GWBatch, ProcessingState
 
 
 class MultirateSampler(torch.nn.Module):
@@ -93,8 +94,6 @@ class MultirateSampler(torch.nn.Module):
     forward(noisy_signals) : (B, D, L) float32 → (B, D, L_compressed) float32
         where ``L_compressed ≪ L`` with all signal information preserved.
     """
-
-    GRAPH_READY = True
 
     def __init__(
         self,
@@ -294,25 +293,38 @@ class MultirateSampler(torch.nn.Module):
         return y.reshape(B, D, y.shape[-1])
 
     @torch.no_grad()
-    def forward(self, noisy_signals: torch.Tensor) -> torch.Tensor:
+    def forward(self, input) -> "torch.Tensor | GWBatch":
         """
         Decimate the input signal according to the pre-computed bin layout.
 
-        Pads the input, then iteratively decimates to each required power
-        level, extracts the corresponding bin slices, and concatenates them
-        into the compressed output tensor.
+        Accepts either a raw float32 tensor (legacy) or a
+        :class:`~sage.core.pipeline.GWBatch`.  When a GWBatch is provided,
+        the state is validated — the grid must be ``TD_UNIFORM`` (uniform
+        time-domain data produced by :class:`FiducialWhitening`).
+        A ``PipelineError`` is raised immediately if the grid is incompatible
+        (e.g. ``FD_COARSE`` — non-uniform FD data cannot be multirate-sampled).
 
         Parameters
         ----------
-        noisy_signals : torch.Tensor, shape ``(B, D, L)`` float32
-            Whitened time-domain strain at the full detector sample rate.
+        input : torch.Tensor or GWBatch
+            Whitened time-domain strain ``(B, D, L)`` float32, or a GWBatch
+            wrapping it with ``TD_UNIFORM`` state.
 
         Returns
         -------
-        torch.Tensor, shape ``(B, D, L_compressed)`` float32
-            Multi-rate compressed time series ready for the neural network.
+        torch.Tensor or GWBatch
+            Multi-rate compressed time series ``(B, D, L_compressed)`` float32.
+            Returns a GWBatch when input is a GWBatch (``TD_MULTIRATE`` state);
+            returns a raw tensor when input is a raw tensor.
         """
+        if isinstance(input, GWBatch):
+            new_state = input.state.after_multirate()   # raises PipelineError if invalid
+            compressed = self._decimate(input.data)
+            return GWBatch(compressed, new_state, freqs=None, coarse_indices=None)
+        return self._decimate(input)
 
+    def _decimate(self, noisy_signals: torch.Tensor) -> torch.Tensor:
+        """Core decimation logic (raw tensor in, raw tensor out)."""
         x = F.pad(
             noisy_signals,
             (self.pad, self.pad),
@@ -339,7 +351,7 @@ class MultirateSampler(torch.nn.Module):
                 chunk = current[:, :, sidx:eidx]
                 outputs[original_idx] = chunk
 
-        return torch.cat(outputs, dim=-1)
+        return torch.cat(outputs, dim=-1)   # (B, D, L_compressed)
 
 
 class DyadicPyramidBinning:
