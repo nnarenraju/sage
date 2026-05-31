@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 # LOCAL
 from sage.data.psd import get_fiducial_psds
 from sage.core.config import get_cfg, get_data_cfg
+from sage.core.pipeline import GWBatch, Grid, ProcessingState
 
 
 class FiducialWhitening(torch.nn.Module):
@@ -71,8 +72,6 @@ class FiducialWhitening(torch.nn.Module):
     forward(X_fd) : (B, D, F) complex64 → (B, D, T_valid) float32
         where ``T_valid = seq_len - 2 * corrupted_len``.
     """
-
-    GRAPH_READY = True
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -123,35 +122,57 @@ class FiducialWhitening(torch.nn.Module):
         return x[..., start:end]
 
     @torch.no_grad()
-    def forward(self, X_fd: torch.Tensor) -> torch.Tensor:
+    def forward(self, input):
         """
-        Whiten and convert FD strain to a valid TD time series.
+        Whiten frequency-domain strain.
 
-        .. note::
-            This method runs under ``@torch.no_grad()``, severing the
-            autograd graph.  Gradient-based methods (adversarial noise,
-            saliency maps) must operate on the *output* tensor.
+        Accepts either a raw tensor (legacy path) or a :class:`GWBatch`
+        (state-tracked path).  The behaviour depends on the grid type:
+
+        * **FD_UNIFORM** — whiten → IFFT → strip corrupted edges → return
+          ``GWBatch`` with ``TD_UNIFORM`` state (real float32, shape
+          ``(B, D, T_valid)``).
+        * **FD_COARSE** — whiten at the coarse frequency indices using
+          ``batch.coarse_indices`` → return ``GWBatch`` with ``FD_COARSE``
+          whitened state (complex, shape ``(B, D, N_coarse)``).
+          No IFFT is applied — the non-uniform grid cannot be IFFTed.
+        * **Raw tensor** (no GWBatch) — treated as FD_UNIFORM and the raw
+          whitened TD tensor is returned for backward compatibility.
 
         Parameters
         ----------
-        X_fd : torch.Tensor, shape ``(B, D, F)`` complex64
-            Frequency-domain strain for a batch of B windows across D detectors.
+        input : torch.Tensor or GWBatch
+            FD strain ``(B, D, F)`` complex, or a GWBatch wrapping it.
 
         Returns
         -------
-        torch.Tensor, shape ``(B, D, T_valid)`` float32
-            Whitened time-domain strain with corrupted edges removed.
+        GWBatch or torch.Tensor
+            GWBatch when input is a GWBatch; raw float32 tensor otherwise.
         """
+        if isinstance(input, GWBatch):
+            return self._forward_batch(input)
+        # Legacy raw-tensor path: FD → whitened TD (backward compatible)
+        return self._whiten_to_td(input)
 
-        # Apply whitening in FD
+    def _whiten_to_td(self, X_fd: torch.Tensor) -> torch.Tensor:
+        """Whiten FD strain and convert to valid TD float32."""
         X_white = X_fd * self.whitening.unsqueeze(0)
+        x_td    = torch.fft.irfft(X_white, dim=-1, norm="forward") * self.delta_f
+        return self.remove_corrupted(x_td)
 
-        # Back to time domain
-        x_td_white = torch.fft.irfft(X_white, dim=-1, norm="forward") * self.delta_f
+    def _forward_batch(self, batch: GWBatch) -> GWBatch:
+        if batch.state.grid == Grid.FD_COARSE:
+            # Non-uniform grid: whiten at the exact coarse indices only.
+            # coarse_indices are integer offsets into the full 0→Nyquist
+            # whitening buffer — guaranteed to be exact integer multiples of
+            # delta_f, so no interpolation is needed.
+            idx = batch.coarse_indices                         # (N_coarse,)
+            whitening_coarse = self.whitening[:, idx]          # (D, N_coarse)
+            X_white = batch.data * whitening_coarse.unsqueeze(0)
+            new_state = batch.state.after_whiten()
+            return GWBatch(X_white, new_state, batch.freqs, batch.coarse_indices)
 
-        # Remove corrupted regions
-        # Typically we remove half the window length used
-        # for estimating the PSD in Welch method
-        x_td_white = self.remove_corrupted(x_td_white)
-
-        return x_td_white
+        # FD_UNIFORM: existing whiten → IFFT → strip path, wrapped in GWBatch
+        x_td      = self._whiten_to_td(batch.data)
+        new_state = batch.state.after_whiten().after_ifft()
+        return GWBatch(x_td, new_state, freqs=None, coarse_indices=None)
