@@ -92,7 +92,10 @@ class IMRPhenomXAS(PhenomConstants):
         self.B      = f.shape[0]
 
         # Pre-allocate output buffers (complex128 matches LAL double precision)
-        self.n_pad = int(torch.round((self.f[0, 0] - self.df) / self.df).item()) + 1
+        # Number of zero-bins from DC to just below f_low.
+        # Computed as round(f_low / df) so it is robust to float32/float64
+        # rounding — equivalent to the bin count in get_freqs(f_l=0, ...).
+        self.n_pad = int(round(self.f[0, 0].item() / self.df.item()))
         self.hp_buffer = torch.empty(
             (self.B, self.n_pad + self.f_numel),
             dtype=torch.complex128,
