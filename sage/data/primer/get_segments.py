@@ -235,10 +235,9 @@ class TimelineQuery:
         base_delay seconds. Returns an empty array only after all retries fail.
         """
         for attempt in range(max_retries):
-            session = self._make_session()
             result = safe_call(
                 get_segments, flag, start, end,
-                session=session, fallback_return=None,
+                fallback_return=None,
             )
             if result is not None:
                 return np.array(result)
@@ -698,15 +697,19 @@ class TimelineQuery:
                     next_end = cursor + mini_segment_length
                     if next_end < seg_end:
                         mini_segments.append([cursor, next_end])
-                        # move cursor to 1 sample after previous sample
+                        # move cursor to 1 sample after previous mini-segment end
                         cursor = (
                             next_end - minimum_segment_duration + (1.0 / sample_rate)
                         )
                     else:
-                        # Remaining part of segment
+                        # Last partial segment: back-extend to a full mini_segment_length
+                        # by moving the start backwards (adding overlap with previous segment).
+                        # If the original segment itself is shorter than mini_segment_length,
+                        # keep whatever is available from seg_start.
                         remaining = seg_end - cursor
                         if remaining >= minimum_segment_duration:
-                            mini_segments.append([cursor, seg_end])
+                            new_start = max(seg_start, seg_end - mini_segment_length)
+                            mini_segments.append([new_start, seg_end])
                         break
 
             # Convert to numpy array
@@ -769,10 +772,17 @@ class TimelineQuery:
                 if i > 0:
                     prev_end = original_segments[i - 1][1]
                     gap = start - prev_end
-                    if gap < -(minimum_segment_duration - (1.0 / sample_rate)):
+                    if gap < -(mini_segment_length + 1.0):
+                        # Truly impossible: overlap larger than one full mini-segment
                         raise ValueError(
                             f"Mini-segment {i} overlaps previous segment for detector {detector}"
                         )
+                    elif gap < -(minimum_segment_duration - (1.0 / sample_rate)) - 1e-6:
+                        # Back-extended last segment — expected, just warn
+                        if verbose:
+                            print(
+                                f"Warning: Back-extended overlap at segment {i} for {detector}: {-gap:.2f}s"
+                            )
                     elif gap > 1.0:
                         if verbose:
                             print(
