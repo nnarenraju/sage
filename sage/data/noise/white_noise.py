@@ -3,7 +3,7 @@
 
 """
 Filename      : white_noise.py
-Description   : Short description of the file
+Description   : White Gaussian noise generators for pipeline testing.
 
 Created on 2026-01-19 16:18:49
 
@@ -21,6 +21,13 @@ GitHub Repository: NULL
 Documentation: NULL
 
 """
+
+# Packages
+import numpy as np
+import torch
+
+# LOCAL
+from sage.core.config import get_cfg, get_data_cfg
 
 
 class WhiteNoiseGenerator:
@@ -82,3 +89,76 @@ class WhiteNoiseGenerator:
         # Return noise to dataset object
         noise = np.stack([H1_noise, L1_noise], axis=0)
         return noise
+
+
+class WhiteGaussianNoiseSampler(torch.nn.Module):
+    """
+    Batch white Gaussian noise sampler for pipeline development and testing.
+
+    Generates independent zero-mean unit-variance Gaussian noise in the time
+    domain per detector, converts to the frequency domain via rfft
+    (``norm='forward'``), and returns a GPU-resident FD_UNIFORM batch that
+    mirrors the :class:`~sage.data.noise.real_noise.MemmapNoiseSampler` API.
+
+    The returned noise is ``(B, D, F)`` complex, ready to be combined with
+    signal batches and passed through :class:`~sage.dsp.whiten.FiducialWhitening`.
+    When the signal sampler uses worst-case multibanding, the training loop's
+    auto-multibanding selector converts this to FD_COARSE automatically before
+    injection.
+
+    Parameters
+    ----------
+    seed : int or None
+        Seed for the internal NumPy RNG (for reproducibility).
+
+    Attributes
+    ----------
+    GRAPH_READY : bool
+        ``False`` — ``standard_normal`` is not traceable by ``torch.compile``.
+    """
+
+    GRAPH_READY = False
+
+    def __init__(self, seed=None):
+        super().__init__()
+
+        cfg = get_cfg()
+        data_cfg = get_data_cfg()
+
+        self.seq_len = data_cfg.padded_length_in_nsamples
+        self.device = cfg.device
+        self.n_detectors = len(cfg.detectors)
+        self.batch_size = cfg.batch_size
+
+        self.rng = np.random.default_rng(seed)
+
+        self.noise_target = torch.zeros(
+            (self.batch_size, 1), dtype=cfg.dtype, device=cfg.device
+        )
+
+    def _sample_batch(self):
+        """
+        Draw one batch of white Gaussian noise and convert to FD complex.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, D, F)`` complex64
+            rfft of unit-variance Gaussian TD noise with ``norm='forward'``.
+        """
+        arr = self.rng.standard_normal(
+            (self.batch_size, self.n_detectors, self.seq_len)
+        ).astype(np.float32)
+        td = torch.from_numpy(arr).to(device=self.device)
+        return torch.fft.rfft(td, dim=-1, norm="forward")
+
+    @torch.no_grad()
+    def forward(self):
+        """
+        Return a noise batch and zero targets.
+
+        Returns
+        -------
+        noise_fd : torch.Tensor, shape ``(B, D, F)`` complex
+        noise_target : torch.Tensor, shape ``(B, 1)`` float — all zeros
+        """
+        return self._sample_batch(), self.noise_target
