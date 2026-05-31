@@ -452,12 +452,12 @@ class DataReleaseDownloader:
             f"{prefix}-{det}_GWOSC_{tag}-{int(f0)}-4096.hdf5"
         )
 
-    def _resolve_and_group(self, segments, det):
+    def _resolve_and_group(self, segments, det, run):
         """
         Group mini-segments by GWOSC 4096s file.
 
         URLs are constructed mathematically — no API calls needed.
-        GWOSC O3b 4KHz files follow a deterministic path pattern, so we can
+        GWOSC 4KHz files follow a deterministic path pattern, so we can
         skip the get_urls() round-trip entirely and go straight to grouping.
 
         Segments straddling a file boundary get 'first'/'second' partial tasks
@@ -498,9 +498,9 @@ class DataReleaseDownloader:
             f"({n_same} same-file, {n_cross} cross-file) — constructing URLs..."
         )
 
-        # No API calls: build all URLs from GPS times using the known O3b path pattern
+        # No API calls: build all URLs from GPS times using the known GWOSC path pattern
         file_tasks = {
-            DataReleaseDownloader._construct_file_url(det, f0): tasks
+            DataReleaseDownloader._construct_file_url(det, f0, observing_run=run): tasks
             for f0, tasks in by_f0.items()
         }
 
@@ -746,6 +746,7 @@ class DataReleaseDownloader:
             bin_fh = self._bin_open(f"data_{det}_{run}.bin")
             # reset cursors
             self._bin_metadata = []
+            self._failed_metadata = []
             self._bin_sample_cursor = 0
             self._bin_byte_cursor = 0
 
@@ -758,7 +759,7 @@ class DataReleaseDownloader:
         tasks = ((self.dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
 
         if self.num_workers > 1:
-            file_tasks, n_cross = self._resolve_and_group(segments, det)
+            file_tasks, n_cross = self._resolve_and_group(segments, det, run)
             print(
                 f"  {len(file_tasks)} files to download "
                 f"({n_cross} cross-file segments split across adjacent files)"
@@ -768,6 +769,15 @@ class DataReleaseDownloader:
             def _save_one(n, data, metadata):
                 if self.save_bin:
                     if data is None or not isinstance(data, np.ndarray):
+                        b0, b1 = float(segments[n][0]), float(segments[n][1])
+                        self._failed_metadata.append({
+                            "segment_index": int(n),
+                            "detector": det,
+                            "observing_run": run,
+                            "gps_start": b0,
+                            "gps_end": b1,
+                            "reason": "processing_or_download_failed",
+                        })
                         return
                     nsamp, nbytes, dt, checksum = self._save_segment_bin(bin_fh, data)
                     seg_meta = {
@@ -804,6 +814,14 @@ class DataReleaseDownloader:
                 sr_r, b0_r, b1_r = parts["second"][1], parts["second"][2], parts["second"][3]
                 sec_raw = parts["second"][0]
                 if fr is None or sec_raw is None:
+                    self._failed_metadata.append({
+                        "segment_index": int(n),
+                        "detector": det,
+                        "observing_run": run,
+                        "gps_start": float(b0),
+                        "gps_end": float(b1),
+                        "reason": "download_failed_cross_file",
+                    })
                     pbar.update()
                     return
                 raw = np.concatenate([fr, sec_raw])
@@ -822,8 +840,15 @@ class DataReleaseDownloader:
                         "sample_rate": self.dcfg.sample_rate,
                     }
                     _save_one(n, data, meta)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._failed_metadata.append({
+                        "segment_index": int(n),
+                        "detector": det,
+                        "observing_run": run,
+                        "gps_start": float(b0),
+                        "gps_end": float(b1),
+                        "reason": f"processing_failed: {exc}",
+                    })
                 pbar.update()
 
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor, \
@@ -915,6 +940,10 @@ class DataReleaseDownloader:
             with open(meta_path, "w") as f:
                 json.dump(self._bin_metadata, f, indent=2)
 
+            failed_path = self.save_dir / f"data_{det}_{run}_failed_segments.json"
+            with open(failed_path, "w") as f:
+                json.dump(self._failed_metadata, f, indent=2)
+
         elif not self.monolithic:
             metadata_path = Path(self.save_parent_dir) / "full_metadata.json"
             with open(metadata_path, "w") as f:
@@ -987,6 +1016,206 @@ class DataReleaseDownloader:
         return record
 
     ## --- Main function for end user ---
+
+    def retry_and_append(
+        self,
+        bin_path,
+        seg_json_path,
+        segments_to_retry,
+        detector: str,
+        run: str,
+    ):
+        """
+        Download missing/failed segments and append them to an existing .bin file.
+
+        Parameters
+        ----------
+        bin_path : Path or str
+            Path to the existing monolithic ``.bin`` file.
+        seg_json_path : Path or str
+            Path to the existing ``*_segments.json`` sidecar.
+        segments_to_retry : array-like of shape (N, 2)
+            Pre-trim GPS start/end times for each segment to retry.
+        detector : str
+            Detector name (e.g. ``"H1"``).
+        run : str
+            Observing run label (e.g. ``"O3b"``).
+
+        After this call ``seg_json_path`` is updated with new entries appended
+        and a ``*_retry_failed.json`` is written with any segments that still
+        could not be downloaded.
+        """
+        bin_path = Path(bin_path)
+        seg_json_path = Path(seg_json_path)
+
+        with open(seg_json_path) as f:
+            existing_meta = json.load(f)
+
+        # Compute append cursors from tail of existing data
+        if existing_meta:
+            last = max(existing_meta, key=lambda m: m["byte_offset"])
+            byte_cursor = last["byte_offset"] + last["byte_length"]
+            sample_cursor = last["sample_start_idx"] + last["nsamples"]
+            next_seg_idx = max(m["segment_index"] for m in existing_meta) + 1
+        else:
+            byte_cursor = 0
+            sample_cursor = 0
+            next_seg_idx = 0
+
+        # Sanity check: cursor must match actual file size
+        actual_size = bin_path.stat().st_size
+        if byte_cursor != actual_size:
+            print(
+                f"WARNING: expected byte_cursor={byte_cursor} but file is {actual_size} bytes. "
+                "Adjusting to actual size."
+            )
+            byte_cursor = actual_size
+            if existing_meta:
+                dt = np.dtype(existing_meta[0]["dtype"]).newbyteorder(
+                    existing_meta[0]["endianness"]
+                )
+                sample_cursor = actual_size // dt.itemsize
+
+        retry_segs = np.asarray(segments_to_retry, dtype=np.float64)
+        if retry_segs.ndim != 2 or retry_segs.shape[1] != 2:
+            raise ValueError("segments_to_retry must be shape (N, 2)")
+
+        file_tasks, n_cross = self._resolve_and_group(retry_segs, detector, run)
+        print(
+            f"  {len(retry_segs)} segments to retry "
+            f"({n_cross} cross-file) across {len(file_tasks)} GWOSC files"
+        )
+
+        new_meta = []
+        still_failed = []
+        partials = {}
+
+        with open(bin_path, "ab") as bin_fh:
+
+            def _save_retry(n, data, metadata):
+                nonlocal byte_cursor, sample_cursor, next_seg_idx
+                if data is None or not isinstance(data, np.ndarray):
+                    still_failed.append({
+                        "segment_index": int(n),
+                        "detector": detector,
+                        "observing_run": run,
+                        "gps_start": float(retry_segs[n, 0]),
+                        "gps_end": float(retry_segs[n, 1]),
+                        "reason": "retry_failed",
+                    })
+                    return
+                dt = np.dtype(data.dtype).newbyteorder("<")
+                data = np.ascontiguousarray(data.astype(dt, copy=False))
+                raw = data.tobytes(order="C")
+                bin_fh.write(raw)
+                checksum = hashlib.sha256(raw).hexdigest()
+                nsamp = data.size
+                nbytes = len(raw)
+                new_meta.append({
+                    "segment_index": next_seg_idx,
+                    "detector": detector,
+                    "observing_run": run,
+                    "gps_start": metadata["gps_start"],
+                    "gps_end": metadata["gps_end"],
+                    "sample_rate": metadata["sample_rate"],
+                    "nsamples": nsamp,
+                    "dtype": dt.name,
+                    "endianness": dt.byteorder,
+                    "sample_start_idx": sample_cursor,
+                    "byte_offset": byte_cursor,
+                    "byte_length": nbytes,
+                    "checksum": checksum,
+                    "checksum_algorithm": "sha256",
+                    "dyn_range_fac": float(DYN_RANGE_FAC),
+                    "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
+                })
+                byte_cursor += nbytes
+                sample_cursor += nsamp
+                next_seg_idx += 1
+
+            def _combine_retry(n, parts, pbar):
+                fr, sr, b0, b1 = parts["first"]
+                sec_raw = parts["second"][0]
+                if fr is None or sec_raw is None:
+                    still_failed.append({
+                        "segment_index": int(n),
+                        "detector": detector,
+                        "observing_run": run,
+                        "gps_start": float(retry_segs[n, 0]),
+                        "gps_end": float(retry_segs[n, 1]),
+                        "reason": "retry_failed_cross_file",
+                    })
+                    pbar.update()
+                    return
+                raw = np.concatenate([fr, sec_raw])
+                try:
+                    data = pycbc_downsample(
+                        raw, sr, self.dcfg.sample_rate,
+                        self.dcfg.trim, self.dcfg.noise_low_freq_cutoff,
+                    )
+                    data = data * DYN_RANGE_FAC
+                    meta = {
+                        "gps_start": b0 + self.dcfg.trim,
+                        "gps_end": b1 - self.dcfg.trim,
+                        "trim": int(round(self.dcfg.trim * self.dcfg.sample_rate)),
+                        "nsamples": len(data),
+                        "old_sample_rate": sr,
+                        "sample_rate": self.dcfg.sample_rate,
+                    }
+                    _save_retry(n, data, meta)
+                except Exception as exc:
+                    still_failed.append({
+                        "segment_index": int(n),
+                        "detector": detector,
+                        "observing_run": run,
+                        "gps_start": float(retry_segs[n, 0]),
+                        "gps_end": float(retry_segs[n, 1]),
+                        "reason": f"retry_processing_failed: {exc}",
+                    })
+                pbar.update()
+
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor, \
+                    tqdm(total=len(retry_segs), desc=f"RETRY {detector}") as pbar:
+                futures = {
+                    executor.submit(
+                        DataReleaseDownloader._download_and_extract_file,
+                        url, tasks, self.dcfg, self.max_retries,
+                    ): url
+                    for url, tasks in file_tasks.items()
+                }
+                for future in as_completed(futures):
+                    for item in future.result():
+                        tag = item[0]
+                        if tag == "done":
+                            _, n, data, meta = item
+                            _save_retry(n, data, meta)
+                            pbar.update()
+                        elif tag == "first":
+                            _, n, raw, sr, b0, b1 = item
+                            partials.setdefault(n, {})["first"] = (raw, sr, b0, b1)
+                            if "second" in partials[n]:
+                                _combine_retry(n, partials.pop(n), pbar)
+                        elif tag == "second":
+                            _, n, raw, sr, b0, b1 = item
+                            partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
+                            if "first" in partials[n]:
+                                _combine_retry(n, partials.pop(n), pbar)
+
+        # Persist updated metadata
+        all_meta = existing_meta + new_meta
+        with open(seg_json_path, "w") as f:
+            json.dump(all_meta, f, indent=2)
+
+        retry_failed_path = seg_json_path.parent / seg_json_path.name.replace(
+            "_segments.json", "_retry_failed.json"
+        )
+        with open(retry_failed_path, "w") as f:
+            json.dump(still_failed, f, indent=2)
+
+        print(
+            f"Retry complete: {len(new_meta)} new segments appended, "
+            f"{len(still_failed)} still failed → {retry_failed_path.name}"
+        )
 
     def download(self):
         """
