@@ -26,6 +26,10 @@ Documentation: NULL
 # Packages
 import torch
 
+# Configs
+from sage.core.config import register_configs
+from sage.core.base_classes import BaseConfig, BaseDataConfig
+
 
 class O3aCFG:
 
@@ -45,17 +49,30 @@ class O3aCFG:
 
 class O3aDataCFG:
 
-    data_dir = "/local/scratch/igr/nnarenraju/o3a/data_dir"
+    data_dir = "/data/wiay/nnarenraju/data_dir"
     training_noise_files = [
-        "/local/scratch/igr/nnarenraju/o3a/data_release/data_H1_O3a.bin",
-        "/local/scratch/igr/nnarenraju/o3a/data_release/data_L1_O3a.bin",
+        "/data/wiay/nnarenraju/data_release/data_H1_O3a.bin",
+        "/data/wiay/nnarenraju/data_release/data_L1_O3a.bin",
     ]
     validation_noise_files = [
-        "/local/scratch/igr/nnarenraju/o3a/data_release/data_H1_O3b.bin",
-        "/local/scratch/igr/nnarenraju/o3a/data_release/data_L1_O3b.bin",
+        "/data/wiay/nnarenraju/data_release/data_H1_O3b.bin",
+        "/data/wiay/nnarenraju/data_release/data_L1_O3b.bin",
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz
     signal_low_frequency_cutoff = 20.0  # Hz
     sample_length_in_s = 12.0  # seconds
     padding_length_in_s = 2.0  # seconds
+
+
+def _register():
+
+    cfg = BaseConfig(O3aCFG())
+    data_cfg = BaseDataConfig(O3aDataCFG())
+    register_configs(cfg, data_cfg)
+    print("Registered cfg and data_cfg!")
+
+
+def set_configs():
+
+    _register()

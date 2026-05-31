@@ -26,20 +26,25 @@ Documentation: NULL
 # Packages
 import math
 
+# Data root — all downloaded files land under this directory
+_DATA_DIR = "/data/wiay/nnarenraju"
 
 # LOCAL
 from sage.data.primer import DataReleaseDownloader
-from sage.data.primer import TimelineQuery, get_all_detnames, get_all_runnames
+from sage.data.primer import TimelineQuery
 
 from sage.data.primer import EstimatePSD
 from sage.dsp.welch import TorchWelch
 
-from sage.data.primer import NoBlackout, HardRatioBlackout
+from sage.data.primer import NoBlackout
 from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.psd import smoothing
 
+from sage.core.config import get_cfg, get_data_cfg
+from config import set_configs
 
-def get_timeline(data_cfg):
+
+def _get_timeline(data_cfg):
 
     tq = TimelineQuery(
         detector=["H1", "L1", "V1"],
@@ -48,6 +53,17 @@ def get_timeline(data_cfg):
     )
 
     tq.download_segments()
+
+    # Fail loudly if any detector came back empty (e.g. proxy dropped mid-query)
+    expected = ["H1", "L1", "V1"]
+    for record in tq.timeline:
+        det = record["detector"]
+        segs = record["segments"]
+        if det in expected and (segs is None or len(segs) == 0):
+            raise RuntimeError(
+                f"Segment query returned 0 segments for {det}. "
+                "Check GWOSC connectivity and retry."
+            )
 
     tq.prune_segments(
         rm_short_segments=True,
@@ -80,19 +96,21 @@ def _get_buffer(data_cfg):
     return math.ceil(0.2 * data_cfg.sample_rate) / data_cfg.sample_rate
 
 
-def download_dataset(tq, data_cfg):
+def _download_data_release(tq, data_cfg):
 
     buffer = _get_buffer(data_cfg)
 
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
-        save_parent_dir="/local/scratch/igr/nnarenraju/o3a",
+        save_parent_dir=_DATA_DIR,
         noise_low_freq_cutoff=15.0,
         minimum_segment_duration=22.0,
         corrupt_trim_length=buffer,
         max_download_retries=15,
-        retry_delay=0.5,
-        num_workers=64,
+        retry_delay=5.0,
+        num_workers=16,
+        proxy_reset_every=50,
+        proxy_reset_sleep=90.0,
         make_monolithic_file=True,
         sample_rate=data_cfg.sample_rate,
         save_bin=True,
@@ -101,7 +119,7 @@ def download_dataset(tq, data_cfg):
     drd.download()
 
 
-def make_psds(detector, data_cfg):
+def _make_psds(detector, data_cfg):
 
     torch_welch = TorchWelch(
         delta_t=1 / 2048,
@@ -138,16 +156,30 @@ def make_psds(detector, data_cfg):
 
     # This is used for whitening with the exact segment PSD before recolouring
     epsd.estimate_segment_psds(
-        noise_segments_file=f"/local/scratch/igr/nnarenraju/o3a/data_release/data_{detector}_O3a.bin"
+        noise_segments_file=f"{_DATA_DIR}/data_release/data_{detector}_O3a.bin"
     )
 
     # With this we make num_samples random PSDs from the given data
     # We use this for recolouring augmentation
     # We also do blackout and aggregate the PSDs to produce the fiducial PSD
     noise_sampler = MemmapSingleNoiseSampler(
-        f"/local/scratch/igr/nnarenraju/o3a/data_release/data_{detector}_O3a.bin",
+        f"{_DATA_DIR}/data_release/data_{detector}_O3a.bin",
         return_tensor=True,
     )
     epsd.estimate_raw_psds(
         noise_sampler=noise_sampler, duration=int(round(2048.0 * 16))
     )
+
+
+def make_dataset():
+
+    set_configs()
+
+    # Shared configs
+    cfg, data_cfg = get_cfg(), get_data_cfg()
+
+    # Make datasets
+    tq = _get_timeline(data_cfg)
+    _download_data_release(tq, data_cfg)
+    for det in ["H1", "L1", "V1"]:
+        _make_psds(det, data_cfg)
