@@ -25,6 +25,7 @@ Documentation: NULL
 
 from .approximants.IMRPhenomD import IMRPhenomD
 from .approximants.IMRPhenomPv2 import IMRPhenomPv2
+from .approximants.IMRPhenomXAS_NRTidalv3 import IMRPhenomXAS_NRTidalv3
 from .project import ConstantProjection
 from .sampler import read_from_config
 from .distributions.snr_rescaling import HalfNorm

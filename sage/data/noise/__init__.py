@@ -29,6 +29,7 @@ from .real_noise import (
     MemmapNoiseSampler,
 )
 
+from .white_noise import WhiteGaussianNoiseSampler
 from .recolour import RecolourPostprocess
 from .hard_mining import HardSampleBuffer, HardSampleMiner
 from .glitch_sampler import GlitchOversampledNoiseSampler
@@ -39,11 +40,19 @@ from .lowfar_noise import (
     MAPElitesMiner,
     CEMRareEventMiner,
 )
+from .qd_mining import (
+    NoiseSVDProjector,
+    SharedHardNoiseBank,
+    CMAMEMiner,
+    CMAMEGAMiner,
+    make_miner_preprocessor,
+)
 
 __all__ = [
     "HDF5SingleNoiseSampler",
     "MemmapSingleNoiseSampler",
     "MemmapNoiseSampler",
+    "WhiteGaussianNoiseSampler",
     "RecolourPostprocess",
     "HardSampleBuffer",
     "HardSampleMiner",
@@ -53,4 +62,9 @@ __all__ = [
     "BruteForceMiner",
     "MAPElitesMiner",
     "CEMRareEventMiner",
+    "NoiseSVDProjector",
+    "SharedHardNoiseBank",
+    "CMAMEMiner",
+    "CMAMEGAMiner",
+    "make_miner_preprocessor",
 ]
