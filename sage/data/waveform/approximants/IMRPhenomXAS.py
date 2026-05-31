@@ -53,6 +53,7 @@ from sage.data.waveform.approximants.phenomx_data import (
     _XAS_QNMData_fring22,
     _XAS_QNMData_fdamp22,
 )
+from sage.data.waveform import taper as _taper_mod
 from sage.core.interpolation import torch_scipylike_cubic_interp
 from sage.core.torch import nudge_backward_
 
@@ -123,6 +124,183 @@ class IMRPhenomXAS(PhenomConstants):
     # Public interface
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Time-shift and psi4-to-strain fits
+    # Source: XLALSimIMRPhenomXLinb / XLALSimIMRPhenomXPsi4ToStrain
+    #         in LALSimIMRPhenomXUtilities.c
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _linb_fit(eta, STotR, dchi, delta):
+        """
+        Empirical time-alignment shift fit.
+
+        Mirrors XLALSimIMRPhenomXLinb (LALSimIMRPhenomXUtilities.c).
+        Returns ``linb`` in units of 1/Mf (the linear phase slope that
+        aligns the model's peak to the hybrid waveform peak).
+
+        Parameters
+        ----------
+        eta, STotR, dchi, delta : torch.Tensor, shape (B, 1)
+
+        Returns
+        -------
+        linb : torch.Tensor, shape (B, 1)
+        """
+        eta2 = eta * eta
+        eta3 = eta2 * eta
+        eta4 = eta3 * eta
+        eta5 = eta4 * eta
+        eta6 = eta5 * eta
+        S2 = STotR * STotR
+        S3 = S2 * STotR
+        S4 = S3 * STotR
+
+        noSpin = (
+            3155.1635543201924
+            + 1257.9949740608242   * eta
+            - 32243.28428870599   * eta2
+            + 347213.65466875216  * eta3
+            - 1.9223851649491738e6 * eta4
+            + 5.3035911346921865e6 * eta5
+            - 5.789128656876938e6 * eta6
+        )
+        eqSpin = (
+            (-24.181508118588667 + 115.49264174560281*eta - 380.19778216022763*eta2) * STotR
+            + (24.72585609641552 - 328.3762360751952*eta + 725.6024119989094*eta2)   * S2
+            + (23.404604124552   - 646.3410199799737*eta + 1941.8836639529036*eta2)  * S3
+            + (-12.814828278938885 - 325.92980012408367*eta + 1320.102640190539*eta2) * S4
+        )
+        uneqSpin = -148.17317525117338 * dchi * delta * eta2
+
+        return noSpin + eqSpin + uneqSpin
+
+    @staticmethod
+    def _psi4tostrain_fit(eta, STotR, dchi):
+        """
+        Psi4-to-strain time correction fit.
+
+        Mirrors XLALSimIMRPhenomXPsi4ToStrain (LALSimIMRPhenomXUtilities.c).
+        Returns the number of M cycles (psi4tostrain) by which the psi4 peak
+        precedes the strain peak.
+
+        Parameters
+        ----------
+        eta, STotR, dchi : torch.Tensor, shape (B, 1)
+
+        Returns
+        -------
+        psi4tostrain : torch.Tensor, shape (B, 1)
+        """
+        eta2 = eta * eta
+        eta3 = eta2 * eta
+        eta4 = eta3 * eta
+        S2 = STotR * STotR
+        S3 = S2 * STotR
+        S4 = S3 * STotR
+
+        noSpin = (
+            13.39320482758057
+            - 175.42481512989315 * eta
+            + 2097.425116152503  * eta2
+            - 9862.84178637907   * eta3
+            + 16026.897939722587 * eta4
+        )
+        eqSpin = (
+            (4.7895602776763 - 163.04871764530466*eta + 609.5575850476959*eta2) * STotR
+            + (1.3934428041390161 - 97.51812681228478*eta + 376.9200932531847*eta2) * S2
+            + (15.649521097877374 + 137.33317057388916*eta - 755.9566456906406*eta2) * S3
+            + (13.097315867845788 + 149.30405703643288*eta - 764.5242164872267*eta2) * S4
+        )
+        uneqSpin = 105.37711654943146 * dchi * torch.sqrt(
+            torch.clamp(1.0 - 4.0*eta, min=0.0)
+        ) * eta2
+
+        return noSpin + eqSpin + uneqSpin
+
+    # ------------------------------------------------------------------
+    # Phase derivative (three-region, needed for linb computation)
+    # ------------------------------------------------------------------
+
+    def dphase(self, Mf, phase_coeffs, derived=None):  # noqa: ARG002 – derived unused, kept for API symmetry
+        """
+        Evaluate the IMRPhenomXAS phase *derivative* dΨ₂₂/d(Mf) over the grid.
+
+        This is used by ``get_hphc`` to compute the time-alignment shift
+        (``linb``) at ``Mf = fRING - fDAMP``.  The returned value is the
+        raw derivative (not scaled by 1/η).
+
+        Region definitions match ``phase()``.
+
+        Parameters
+        ----------
+        Mf          : (B, F) or (B, 1) — dimensionless frequency Mf
+        phase_coeffs: dict — output of get_phase_coeffs
+        derived     : (B, 13) — unused, kept for API symmetry
+
+        Returns
+        -------
+        dphi : (B, F) or (B, 1)
+        """
+        pc   = phase_coeffs
+        fIN  = pc['fPhaseMatchIN']
+        fIM  = pc['fPhaseMatchIM']
+
+        dphase0 = pc['dphase0']
+        fRING = pc['fRING']
+        fDAMP = pc['fDAMP']
+        C2Int = pc['C2Int']
+        C2MRD = pc['C2MRD']
+
+        # ---- Inspiral derivative ----
+        logMf = torch.log(Mf)
+        dphi_ins = (
+            pc['dphi0']
+            + pc['dphi1']  * Mf.pow(1.0/3.0)
+            + pc['dphi2']  * Mf.pow(2.0/3.0)
+            + pc['dphi3']  * Mf
+            + pc['dphi4']  * Mf.pow(4.0/3.0)
+            + pc['dphi5']  * Mf.pow(5.0/3.0)
+            + pc['dphi6']  * Mf * Mf
+            + pc['dphi6L'] * Mf * Mf * logMf
+            + pc['dphi7']  * Mf.pow(7.0/3.0)
+            + pc['dphi8']  * Mf.pow(8.0/3.0)
+            + pc['dphi8L'] * Mf.pow(8.0/3.0) * logMf
+            # pseudo-PN inspiral terms (a0..a3 are derivatives, not integrals)
+            + pc['a0'] * Mf.pow(8.0/3.0)
+            + pc['a1'] * Mf.pow(3.0)
+            + pc['a2'] * Mf.pow(10.0/3.0)
+            + pc['a3'] * Mf.pow(11.0/3.0)
+        ) * Mf.pow(-8.0/3.0) * dphase0
+
+        # ---- Intermediate derivative (case 105: includes b3/f^3) ----
+        inv1 = 1.0 / Mf
+        inv2 = inv1 * inv1
+        inv3 = inv2 * inv1
+        inv4 = inv2 * inv2
+        lorentz_int = 4.0 * pc['cL'] / (
+            4.0*fDAMP*fDAMP + (Mf - fRING)*(Mf - fRING)
+        )
+        dphi_int = pc['b0'] + pc['b1']*inv1 + pc['b2']*inv2 + pc['b3']*inv3 + pc['b4']*inv4 + lorentz_int + C2Int
+
+        # ---- Ringdown derivative ----
+        lorentz_rd = pc['cL'] / (fDAMP*fDAMP + (Mf - fRING)*(Mf - fRING))
+        dphi_rd = (
+            pc['c0']
+            + pc['c1'] * Mf.pow(-1.0/3.0)
+            + pc['c2'] * inv2
+            + pc['c4'] * inv4
+            + lorentz_rd
+            + C2MRD
+        )
+
+        return torch.where(Mf < fIN, dphi_ins,
+               torch.where(Mf < fIM, dphi_int, dphi_rd))
+
+    # ------------------------------------------------------------------
+    # Full waveform assembly
+    # ------------------------------------------------------------------
+
     def get_hphc(self, theta, reproduce_lal=False):
         """
         Compute FD plus and cross polarisations for a BBH parameter batch.
@@ -130,15 +308,139 @@ class IMRPhenomXAS(PhenomConstants):
         Parameters
         ----------
         theta : torch.Tensor, shape (B, 8+)
-            [m1, m2, chi1z, chi2z, distance, tc, phic, inclination, ...]
+            Columns: [m1, m2, chi1z, chi2z, distance, tc, phic, inclination, ...]
+            Masses in solar masses, distance in Mpc, angles in radians.
         reproduce_lal : bool
-            Skip tapering/tc/df normalisation to match raw LAL output.
+            If True, skip FD tapering, tc shift, and df normalisation so
+            the output can be compared directly with raw LALSim output at
+            the same frequency grid.
 
         Returns
         -------
-        hp, hc : torch.Tensor, shape (B, F), complex
+        hp, hc : torch.Tensor, shape (B, n_pad + F), complex
+            Plus and cross polarisations.  The first ``n_pad`` bins
+            (DC to f_min) are always zero.
         """
-        raise NotImplementedError("get_hphc not yet implemented")
+        # ----------------------------------------------------------------
+        # 1. Parameters and derived quantities
+        # ----------------------------------------------------------------
+        dist_Mpc = theta[:, 4:5]   # Mpc
+        tc       = theta[:, 5:6]   # s
+        phic     = theta[:, 6:7]   # rad  (orbital phase at f_ref)
+        iota     = theta[:, 7:8]   # rad  (inclination)
+
+        derived  = self.compute_derived_parameters(theta)
+        M_s  = derived[:, 2:3]     # (B, 1) total mass in seconds
+        eta  = derived[:, 3:4]
+        delta= derived[:, 4:5]
+        STotR= derived[:, 9:10]
+        dchi = derived[:, 10:11]
+
+        # ----------------------------------------------------------------
+        # 2. Amplitude and phase coefficients
+        # ----------------------------------------------------------------
+        amp_coeffs   = self.get_amp_coeffs(derived)
+        phase_coeffs = self.get_phase_coeffs(derived)
+
+        fRING = phase_coeffs['fRING']   # (B, 1) in Mf
+        fDAMP = phase_coeffs['fDAMP']   # (B, 1)
+
+        # ----------------------------------------------------------------
+        # 3. Overall amplitude prefactor  Amp0 = amp0 * ampNorm
+        #    amp0    = M_meters * M_s / dist_m  (LALSim internals.c line 609)
+        #    ampNorm = sqrt(2*eta/3) * pi^{-1/6}
+        # ----------------------------------------------------------------
+        M_m    = M_s * self.C                    # total mass in metres
+        dist_m = dist_Mpc * self.Mpc             # luminosity distance in metres
+        amp0   = M_m * M_s / dist_m              # (B, 1)
+        ampNorm = torch.sqrt(2.0*eta / 3.0) * (self.PI ** (-1.0/6.0))
+        Amp0   = amp0 * ampNorm                  # (B, 1)
+
+        # ----------------------------------------------------------------
+        # 4. Time-alignment shift  linb  (= tshift from TimeShift_22)
+        #    Source: IMRPhenomX_TimeShift_22 in internals.c lines 2624-2643
+        #
+        #    linb_fit  = XLALSimIMRPhenomXLinb(eta, STotR, dchi, delta)
+        #    frefFit   = fRING - fDAMP
+        #    dphi22Ref = (1/eta) * dPhase_22(frefFit)  [raw, without C2 terms]
+        #    psi4      = XLALSimIMRPhenomXPsi4ToStrain(eta, STotR, dchi)
+        #    linb      = linb_fit - dphi22Ref - 2π*(500 + psi4)
+        # ----------------------------------------------------------------
+        linb_fit_val = IMRPhenomXAS._linb_fit(eta, STotR, dchi, delta)     # (B,1)
+        psi4val      = IMRPhenomXAS._psi4tostrain_fit(eta, STotR, dchi)    # (B,1)
+
+        # Phase derivative at fRING-fDAMP (always in ringdown region)
+        frefFit   = fRING - fDAMP                                           # (B,1) in Mf
+        dphi22Ref = (1.0 / eta) * self.dphase(frefFit, phase_coeffs, derived)  # (B,1)
+
+        linb = linb_fit_val - dphi22Ref - 2.0*math.pi*(500.0 + psi4val)    # (B,1)
+
+        # ----------------------------------------------------------------
+        # 5. Reference phase  phifRef
+        #    = -(1/η * Ψ₂₂(MfRef) + linb*MfRef) + 2*phic + π/4
+        # ----------------------------------------------------------------
+        MfRef   = self.f_ref * M_s                                    # (B,1)
+        phi22ref = self.phase(MfRef, phase_coeffs, derived)           # (B,1)
+        phifRef  = -(phi22ref / eta + linb * MfRef) + 2.0*phic + 0.25*math.pi  # (B,1)
+
+        # ----------------------------------------------------------------
+        # 6. Build h22(f) over the full frequency grid
+        #    φ_total(Mf) = (1/η) Ψ₂₂(Mf) + linb·Mf + phifRef
+        #    |h22|(Mf)   = Amp0 · Mf^{-7/6} · A(Mf)
+        # ----------------------------------------------------------------
+        Mf = self.f * M_s                                             # (B,F)
+
+        phi22 = self.phase(Mf, phase_coeffs, derived)                # (B,F)
+        phi_total = phi22 / eta + linb * Mf + phifRef                # (B,F)
+
+        A_mf   = self.amp(Mf, amp_coeffs, derived)                   # (B,F)
+        A_total = Amp0 * Mf.pow(-7.0/6.0) * A_mf                    # (B,F)
+
+        # ----------------------------------------------------------------
+        # 7. hp / hc from inclination
+        #
+        #    LALSim convention: h22 = A * exp(+i φ)
+        #    hp = -(1/2) * sqrt(5/(4π)) * (1 + cos²ι) * h22
+        #       = YLM * (1+cos²ι)/2 * A * exp(+i(φ + π))
+        #    hc = -(1/2) * sqrt(5/(4π)) * cos(ι) * (-i) * h22
+        #       = YLM * cos(ι)       * A * exp(+i(φ + π/2))
+        #
+        #    where YLM = sqrt(5/(4π))/2 ≈ 0.31539
+        #    Source: LALSimIMRPhenomX.c line 893, standard mode decomposition
+        # ----------------------------------------------------------------
+        YLM = math.sqrt(5.0 / (4.0 * math.pi)) / 2.0               # ≈ 0.31539
+        cos_iota = torch.cos(iota)                                   # (B,1)
+        hp = torch.polar(
+            YLM * 0.5 * A_total * (1.0 + cos_iota * cos_iota),
+            phi_total + math.pi,
+        )
+        hc = torch.polar(
+            YLM * A_total * cos_iota,
+            phi_total + 0.5 * math.pi,
+        )
+
+        if not reproduce_lal:
+            # ---- FD taper (Planck roll-on at f_min, roll-off at fcut) ----
+            fcut = self.fM_CUT_XAS / M_s                             # (B,1) Hz
+            _win = _taper_mod.fd_taper(
+                f=self.f,
+                f_min=self.f[0, 0].item(),
+                f_cut=fcut,
+                df=self.df,
+            )
+            hp = hp * _win
+            hc = hc * _win
+
+            # ---- Apply tc (time of coalescence) ----
+            hp, hc = self.apply_tc(hp, hc, tc)
+
+            # ---- df normalisation (match LALSim continuous-FT convention) ----
+            hp = hp * self.df
+            hc = hc * self.df
+
+        # ---- Zero-pad from DC to f_min ----
+        hp, hc = self.pad_missing_frequencies(hp, hc)
+        return hp, hc
 
     def apply_tc(self, hp, hc, tc):
         """Apply a frequency-domain time-shift by tc seconds."""
@@ -203,9 +505,12 @@ class IMRPhenomXAS(PhenomConstants):
         m2_s = m2 * self.GM
         M_s  = m1_s + m2_s
 
-        # Symmetric mass ratio — nudge below 0.25 to avoid edge-case NaNs
+        # Symmetric mass ratio — clip at 0.25 to handle roundoff (mirrors LALSim:
+        # "if(eta > 0.25) eta = 0.25;")
+        # delta = sqrt(1 - 4*eta) is 0 for equal-mass; no divisions by delta
+        # exist in the fit functions, so eta = 0.25 is safe.
         eta = m1_s * m2_s / (M_s * M_s)
-        nudge_backward_(eta, 0.25, 1e-6)
+        eta.clamp_(max=0.25)
 
         # PN asymmetry parameter and dimensionless mass fractions
         # delta = sqrt(1 - 4*eta);  Xa = 0.5*(1+delta);  Xb = 0.5*(1-delta)
@@ -880,8 +1185,8 @@ class IMRPhenomXAS(PhenomConstants):
         #    V2 = 1 / vA(F2)              (rho polynomial at F2, from fit)
         #    V4 = F4^{7/6} / rdAmp(F4)   (rho polynomial at F4)
         # ------------------------------------------------------------------
-        F2_int = F1 + 0.5*(F4 - F1)   # midpoint of intermediate region (F1 = fAmpMatchIN, F4 = fAmpRDMin)
-        F1_int = fAmpMatchIN            # alias for clarity
+        F1_int = fAmpMatchIN            # left  boundary of intermediate region
+        F2_int = F1_int + 0.5*(F4 - F1_int)   # midpoint  (LAL: F2 = F1 + 0.5*(F4-F1))
 
         V1_int = F1_int.pow(7.0/6.0) / inspF1     # rho at F1
         V4_int = F4.pow(7.0/6.0) / rdF4           # rho at F4
@@ -1561,108 +1866,130 @@ class IMRPhenomXAS(PhenomConstants):
         ) * fIN.pow(-8.0/3.0) * dphase0
 
         # ---------------------------------------------------------------
-        # 8. Intermediate phase coefficients (case 104: 4 terms)
-        #    Source: lines 2031-2127 of LALSimIMRPhenomX_internals.c
+        # 8. Intermediate phase coefficients (case 105: 5 terms)
+        #    Source: lines 2130-2307 of LALSimIMRPhenomX_internals.c
+        #    Default IMRPhenomXIntermediatePhaseVersion = 105
         #    Effective spin: STotR
         # ---------------------------------------------------------------
         S   = STotR
         S2  = S * S
+        eta6 = eta3 * eta3
 
-        # Three intermediate phase collocation fits (STotR spin)
-        v2mRDv4 = (   # v2_IM - v4_RD (conditioned fit)
-            (eta*(-8.244230124407343 - 182.80239160435949*eta + 638.2046409916306*eta2
-                  - 578.878727101827*eta3))
-            / (-0.004863669418916522 - 0.5095088831841608*eta + eta2)
-            + (S*(0.1344136125169328 + 0.0751872427147183*S
-                  + eta2*(7.158823192173721 + 25.489598292111104*S - 7.982299108059922*S2)
-                  + eta*(-5.792368563647471 + 1.0190164430971749*S + 0.29150399620268874*S2)
-                  + 0.033627267594199865*S2
-                  + eta3*(17.426503081351534 - 90.69790378048448*S + 20.080325133405847*S2)))
-            / (0.03449545664201546 - 0.027941977370442107*S
-               + (0.005274757661661763 + 0.0455523144123269*eta - 0.3880379911692037*eta2 + eta3)*S2)
-            + 160.2975913661124*dchi*delta*eta2
+        # Four intermediate phase collocation fits (STotR spin, version 105)
+        v2mRDv4 = (   # v2_IM - v4_RD (conditioned fit, version 105)
+            (eta*(0.9951733419499662 + 101.21991715215253*eta + 632.4731389009143*eta2))
+            / (0.00016803066316882238 + 0.11412314719189287*eta + 1.8413983770369362*eta2 + eta3)
+            + (S*(18.694178521101332 + 16.89845522539974*S + 4941.31613710257*eta2*S
+                  + eta*(-697.6773920613674 - 147.53381808989846*S2) + 0.3612417066833153*S2
+                  + eta3*(3531.552143264721 - 14302.70838220423*S + 178.85850322465944*S2)))
+            / (2.965640445745779 - 2.7706595614504725*S + S2)
+            + dchi*delta*eta2*(356.74395864902294 + 1693.326644293169*eta2*S)
         )
 
-        v3mRDv4 = (   # v3_IM - v4_RD (conditioned fit)
-            (0.3145740304678042 + 299.79825045000655*eta - 605.8886581267144*eta2
-             - 1302.0954503758007*eta3)
-            / (1.0 + 2.3903703875353255*eta - 19.03836730923657*eta2)
-            + (S*(1.150925084789774 - 0.3072381261655531*S
-                  + eta4*(12160.22339193134 - 1459.725263347619*S - 9581.694749116636*S2)
-                  + eta2*(1240.3900459406875 - 289.48392062629966*S - 1218.1320231846412*S2)
-                  - 1.6191217310064605*S2 + eta*(-41.38762957457647 + 60.47477582076457*S2)
-                  + eta3*(-7540.259952257055 + 1379.3429194626635*S + 6372.99271204178*S2)))
-            / (-1.4325421225106187 + S)
-            + dchi*delta*eta3*(-444.797248674011 + 1448.47758082697*eta + 152.49290092435044*S)
+        v3mRDv4 = (   # v3_IM - v4_RD (conditioned fit, version 105)
+            (eta*(-5.126358906504587 - 227.46830225846668*eta + 688.3609087244353*eta2
+                  - 751.4184178636324*eta3))
+            / (-0.004551938711031158 - 0.7811680872741462*eta + eta2)
+            + (S*(0.1549280856660919 - 0.9539250460041732*S - 539.4071941841604*eta2*S
+                  + eta*(73.79645135116367 - 8.13494176717772*S2) - 2.84311102369862*S2
+                  + eta3*(-936.3740515136005 + 1862.9097047992134*S + 224.77581754671272*S2)))
+            / (-1.5308507364054487 + S)
+            + 2993.3598520496153*dchi*delta*eta6
         )
 
-        v2IM = (   # direct fit to v2_IM
-            (-84.094 - 1782.8025405571802*eta + 5384.38721936653*eta2)
-            / (1.0 + 28.515617312596103*eta + 12.404097877099353*eta2)
-            + (S*(22.5665046165141 - 39.94907120140026*S + 4.668251961072*S2
-                  + 12.648584361431245*S3
-                  + eta2*(-298.7528127869681 + 14.228745354543983*S + 398.1736953382448*S2
-                          + 506.94924905801673*S3 - 626.3693674479357*S4)
-                  - 5.360554789680035*S4
-                  + eta*(152.07900889608595 - 121.70617732909962*S2
-                          - 169.36311036967322*S3 + 182.40064586992762*S4)))
-            / (-1.1571201220629341 + S)
-            + dchi*delta*eta3*(5357.695021063607 - 15642.019339339662*eta + 674.8698102366333*S)
+        v2IM = (   # direct fit to v2_IM (version 105)
+            (-82.54500000000004 - 5.58197349185435e6*eta - 3.5225742421184325e8*eta2
+             + 1.4667258334378073e9*eta3)
+            / (1.0 + 66757.12830903867*eta + 5.385164380400193e6*eta2
+               + 2.5176585751772933e6*eta3)
+            + (S*(19.416719811164853 - 36.066611959079935*S - 0.8612656616290079*S2
+                  + eta2*(170.97203068800542 - 107.41099349364234*S - 647.8103976942541*S3)
+                  + 5.95010003393006*S3
+                  + eta3*(-1365.1499998427248 + 1152.425940764218*S + 415.7134909564443*S2
+                          + 1897.5444343138167*S3 - 866.283566780576*S4)
+                  + 4.984750041013893*S4
+                  + eta*(207.69898051583655 - 132.88417400679026*S - 17.671713040498304*S2
+                         + 29.071788188638315*S3 + 37.462217031512786*S4)))
+            / (-1.1492259468169692 + S)
+            + dchi*delta*eta3*(7343.130973149263 - 20486.813161100774*eta + 515.9898508588834*S)
         )
 
-        # Collocation values (case 104):
+        d43_int = (   # d43 = v4_IM - v3_IM (version 105, no equivalent in 104)
+            (0.4248820426833804 - 906.746595921514*eta - 282820.39946006844*eta2
+             - 967049.2793750163*eta3 + 670077.5414916876*eta4)
+            / (1.0 + 1670.9440812294847*eta + 19783.077247023448*eta2)
+            + (S*(0.22814271667259703 + 1.1366593671801855*S
+                  + eta3*(3499.432393555856 - 877.8811492839261*S - 4974.189172654984*S2)
+                  + eta*(12.840649528989287 - 61.17248283184154*S2) + 0.4818323187946999*S2
+                  + eta2*(-711.8532052499075 + 269.9234918621958*S + 941.6974723887743*S2)
+                  + eta4*(-4939.642457025497 - 227.7672020783411*S + 8745.201037897836*S2)))
+            / (-1.2442293719740283 + S)
+            + dchi*delta*(-514.8494071830514 + 1493.3851099678195*eta)*eta3
+        )
+
+        # Collocation values (case 105):
         #   v1_int = phaseIN  (inspiral derivative at fPhaseMatchIN)
         #   v2_int = weighted average of conditioned and direct fit
-        #   v3_int = v3_IM = v3mRDv4 + v4_rd
-        #   v4_int = phaseRD = v1_rd  (first RD collocation = d12 + d24 + v4_rd)
+        #   v3_int = v3mRDv4 + v4_rd
+        #   v4_int = d43_int + v3_int  (new fourth point)
+        #   v5_int = phaseRD = v1_rd  (first RD collocation = d12 + d24 + v4_rd)
         v1_int = phaseIN
         v2_int = 0.75 * (v2mRDv4 + v4_rd) + 0.25 * v2IM
         v3_int = v3mRDv4 + v4_rd
-        v4_int = phaseRD     # = v1_rd = d12 + d24 + v4_rd
+        v4_int = d43_int + v3_int
+        v5_int = phaseRD     # = v1_rd = d12 + d24 + v4_rd
 
         # GC collocation points for intermediate in [fPhaseMatchIN, fPhaseMatchIM]
+        # gpoints5 = [0, 0.5-1/(2√2), 0.5, 0.5+1/(2√2), 1.0]
         dx_int = fPhaseMatchIM - fPhaseMatchIN
-        f1_int = fPhaseMatchIN                      # gpoints4[0] = 0
-        f2_int = fPhaseMatchIN + 0.25 * dx_int      # gpoints4[1]
-        f3_int = fPhaseMatchIN + 0.75 * dx_int      # gpoints4[2]
-        f4_int = fPhaseMatchIM                      # gpoints4[3] = 1
+        f1_int = fPhaseMatchIN
+        f2_int = fPhaseMatchIN + (0.5 - half_inv_sqrt2) * dx_int
+        f3_int = fPhaseMatchIN + 0.5 * dx_int
+        f4_int = fPhaseMatchIN + (0.5 + half_inv_sqrt2) * dx_int
+        f5_int = fPhaseMatchIM
 
-        # For case 104, the matrix ansatz is:
-        #   dphase_int(f) = x[0] + x[1]*(fRING/f) + x[2]*(fRING/f)^2 + x[3]*(fRING/f)^4
+        # For case 105, the matrix ansatz is:
+        #   dphase_int(f) = x[0] + x[1]*rt + x[2]*rt^2 + x[3]*rt^3 + x[4]*rt^4
+        #   where rt = fRING/f
         # The Lorentzian (4*cL)/(4*fDAMP^2+(f-fRING)^2) is subtracted from b.
+        # LALSim stores:  b1=x[1]*fRING, b2=x[2]*fRING^2, b3=x[3]*fRING^3, b4=x[4]*fRING^4
+        # Source: internals.c lines 2130-2307 (case 105)
         def _int_row(fi):
             rt = fRING / fi       # = fRING / f
             rt2 = rt * rt
-            rt4 = rt2 * rt2
-            return torch.cat([torch.ones_like(fi), rt, rt2, rt4], dim=-1)
+            rt3 = rt * rt2        # (fRING/f)^3
+            rt4 = rt2 * rt2       # (fRING/f)^4
+            return torch.cat([torch.ones_like(fi), rt, rt2, rt3, rt4], dim=-1)
 
         def _int_lorentz(fi):
             return 4.0 * cL / (4.0 * fDAMP*fDAMP + (fi - fRING)*(fi - fRING))
 
         A_int = torch.stack([
-            _int_row(f1_int), _int_row(f2_int),
-            _int_row(f3_int), _int_row(f4_int),
-        ], dim=-2)  # (B, 4, 4)
+            _int_row(f1_int), _int_row(f2_int), _int_row(f3_int),
+            _int_row(f4_int), _int_row(f5_int),
+        ], dim=-2)  # (B, 5, 5)
 
         b_int = torch.stack([
             v1_int - _int_lorentz(f1_int),
             v2_int - _int_lorentz(f2_int),
             v3_int - _int_lorentz(f3_int),
             v4_int - _int_lorentz(f4_int),
-        ], dim=-2)  # (B, 4, 1)
+            v5_int - _int_lorentz(f5_int),
+        ], dim=-2)  # (B, 5, 1)
 
-        x_int = torch.linalg.solve(A_int, b_int)  # (B, 4, 1)
+        x_int = torch.linalg.solve(A_int, b_int)  # (B, 5, 1)
         b0_raw = x_int[:, 0, :]
         b1_raw = x_int[:, 1, :]
         b2_raw = x_int[:, 2, :]
-        b4_raw = x_int[:, 3, :]
+        b3_raw = x_int[:, 3, :]
+        b4_raw = x_int[:, 4, :]
 
         # Rescale back to physical coefficients
         # b1 = x[1] * fRING  (so that b1/f = x[1]*(fRING/f))
         b0 = b0_raw
         b1 = b1_raw * fRING
         b2 = b2_raw * fRING * fRING
-        # b3 = 0 for case 104
+        b3 = b3_raw * fRING * fRING * fRING
         b4 = b4_raw * fRING * fRING * fRING * fRING
 
         # ---------------------------------------------------------------
@@ -1720,21 +2047,23 @@ class IMRPhenomXAS(PhenomConstants):
             )
             return phiNorm * f.pow(-5.0/3.0) * phasing
 
-        # Helper: evaluate intermediate derivative at f
+        # Helper: evaluate intermediate derivative at f (case 105: includes b3/f^3)
         def _dphi_int(f):
             inv1 = 1.0 / f
             inv2 = inv1 * inv1
+            inv3 = inv2 * inv1
             inv4 = inv2 * inv2
             lorentz = 4.0 * cL / (4.0*fDAMP*fDAMP + (f - fRING)*(f - fRING))
-            return b0 + b1*inv1 + b2*inv2 + b4*inv4 + lorentz
+            return b0 + b1*inv1 + b2*inv2 + b3*inv3 + b4*inv4 + lorentz
 
-        # Helper: evaluate intermediate phase integral at f
+        # Helper: evaluate intermediate phase integral at f (case 105: includes -b3/(2*f^2))
         def _phi_int(f):
             inv1 = 1.0 / f
-            inv3 = inv1 * inv1 * inv1
+            inv2 = inv1 * inv1
+            inv3 = inv2 * inv1
             logf = torch.log(f)
             atan_term = (2.0 * cL / fDAMP) * torch.atan((f - fRING) / (2.0 * fDAMP))
-            return b0*f + b1*logf - b2*inv1 - (b4/3.0)*inv3 + atan_term
+            return b0*f + b1*logf - b2*inv1 - (b3/2.0)*inv2 - (b4/3.0)*inv3 + atan_term
 
         # Helper: evaluate ringdown derivative at f
         def _dphi_rd(f):
@@ -1787,8 +2116,8 @@ class IMRPhenomXAS(PhenomConstants):
             'dphi6': dphi6, 'dphi6L': dphi6L,
             'dphi7': dphi7,
             'dphi8': dphi8, 'dphi8L': dphi8L,
-            # Intermediate coefficients
-            'b0': b0, 'b1': b1, 'b2': b2, 'b4': b4,
+            # Intermediate coefficients (case 105: b3 ≠ 0)
+            'b0': b0, 'b1': b1, 'b2': b2, 'b3': b3, 'b4': b4,
             # Ringdown coefficients
             'c0': c0, 'c1': c1, 'c2': c2, 'c4': c4,
             'cL': cL, 'cLovfda': cLovfda, 'c4ov3': c4ov3,
@@ -1822,8 +2151,8 @@ class IMRPhenomXAS(PhenomConstants):
         Inspiral ansatz integral (Eq. 7.4 of arXiv:2001.11412):
             phiNorm * Mf^{-5/3} * [phi0 + phi1*Mf^{1/3} + … + sigma1*Mf^{8/3} + …]
 
-        Intermediate ansatz integral (Eq. 7.7):
-            b0*Mf + b1*log(Mf) - b2/Mf - b4/(3*Mf³)
+        Intermediate ansatz integral (Eq. 7.7, case 105):
+            b0*Mf + b1*log(Mf) - b2/Mf - b3/(2*Mf²) - b4/(3*Mf³)
             + (2*cL/fDAMP)*atan((Mf-fRING)/(2*fDAMP)) + C1Int + C2Int*Mf
 
         Ringdown ansatz integral (Eq. 7.12):
@@ -1877,14 +2206,16 @@ class IMRPhenomXAS(PhenomConstants):
         )
         phi_ins = pc['phiNorm'] * Mf.pow(-5.0/3.0) * phi_ins
 
-        # ---- Intermediate ----
+        # ---- Intermediate (case 105: includes -b3/(2*f^2)) ----
         inv1_Mf = 1.0 / Mf
-        inv3_Mf = inv1_Mf * inv1_Mf * inv1_Mf
+        inv2_Mf = inv1_Mf * inv1_Mf
+        inv3_Mf = inv2_Mf * inv1_Mf
         atan_int = (2.0 * cL / fDAMP) * torch.atan((Mf - fRING) / (2.0 * fDAMP))
         phi_int  = (
             pc['b0'] * Mf
             + pc['b1'] * logMf
             - pc['b2'] * inv1_Mf
+            - (pc['b3'] / 2.0) * inv2_Mf
             - (pc['b4'] / 3.0) * inv3_Mf
             + atan_int
             + pc['C1Int'] + pc['C2Int'] * Mf
