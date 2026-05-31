@@ -353,7 +353,7 @@ class ConstantProjection(torch.nn.Module):
         # Detector.time_delay_from_location (pycbc/detector/ground.py:449).
         return torch.einsum("bi,di->bd", ehat, self.dx) / C
 
-    def forward(self, hp, hc, ra, dec, polarization):
+    def forward(self, hp, hc, ra, dec, polarization, freqs=None):
         """Return the strain of a waveform as measured by all detectors.
         Apply the time shift for all given detectors relative to the assumed
         geocentric frame and apply the antenna patterns to the plus and cross
@@ -361,9 +361,9 @@ class ConstantProjection(torch.nn.Module):
 
         Parameters
         ----------
-        hp: pycbc.types.TimeSeries
+        hp: torch.Tensor, shape (B, F)
             Plus polarization of the GW
-        hc: pycbc.types.TimeSeries
+        hc: torch.Tensor, shape (B, F)
             Cross polarization of the GW
         ra: float
             Right ascension of source location
@@ -371,7 +371,15 @@ class ConstantProjection(torch.nn.Module):
             Declination of source location
         polarization: float
             Polarization angle of the source
+        freqs: torch.Tensor, shape (F,) or None
+            Frequency array in Hz.  When None the module's stored full
+            uniform grid (self.freqs) is used.  Pass the coarse multibanding
+            frequency array here when hp/hc are already in the coarse
+            representation so the time-delay phase is computed at the right
+            frequencies.
         """
+        if freqs is None:
+            freqs = self.freqs
         # Get GMST estimates for entire batch.
         # Pass the actual runtime batch size so validation (where B may differ
         # from self.batch_size) does not produce a shape mismatch.
@@ -384,11 +392,9 @@ class ConstantProjection(torch.nn.Module):
         # Get hf from hp and hc given detector response
         hf = fp[..., None] * hp[:, None, :] + fc[..., None] * hc[:, None, :]
         # Apply time shift relative to detectors
-        # phase = torch.exp(-2j * PI * freqs[:, None, :] * dt[..., None])
-        # Doing the same thing without torch exp
         phase = torch.polar(
-            torch.ones(1, 1, len(self.freqs), device=self.device, dtype=self.dtype),
-            -2 * PI * self.freqs[None, None, :] * dt[:, :, None],
+            torch.ones(1, 1, freqs.shape[-1], device=self.device, dtype=self.dtype),
+            -2 * PI * freqs[None, None, :] * dt[:, :, None],
         )
         # hf is (B, N_ifo, seq_len) and phase is (B, 1, seq_len)
         hf *= phase
