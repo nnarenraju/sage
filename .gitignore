@@ -166,3 +166,23 @@ source/baseline/data/psds/
 sage/architectures/zoo/mamba.py
 sage/benchmark/evomcts
 sage/data/waveform/lalsim_src
+
+# Experimental runs
+runs/
+
+# New network modules
+sage/architecture/network/attentive_*.py
+sage/architecture/network/[!_]*/
+
+# New waveform modules
+sage/data/waveform/multiband_*.py
+
+# New noise modules
+sage/data/noise/*_mining.py
+
+# New pipeline components
+sage/core/pipeline.py
+sage/factory/curriculum.py
+
+# New integration tests
+tests/test_*_pipeline.py
