@@ -41,7 +41,11 @@ from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.psd import smoothing
 
 from sage.core.config import get_cfg, get_data_cfg
+from sage.data.primer.retry import retry_detector
 from config import set_configs
+
+_RUN = "O3a"
+_DETECTORS = ["H1", "L1", "V1"]
 
 
 def _get_timeline(data_cfg):
@@ -181,5 +185,17 @@ def make_dataset():
     # Make datasets
     tq = _get_timeline(data_cfg)
     _download_data_release(tq, data_cfg)
-    for det in ["H1", "L1", "V1"]:
+    for det in _DETECTORS:
         _make_psds(det, data_cfg)
+
+
+def retry_dataset(detectors=None, num_workers=8):
+
+    set_configs()
+
+    data_dir = f"{_DATA_DIR}/data_release"
+    for det in (detectors or _DETECTORS):
+        print(f"\n{'='*60}")
+        print(f" Retrying {det} / {_RUN}")
+        print(f"{'='*60}")
+        retry_detector(det, _RUN, data_dir, num_workers=num_workers)
