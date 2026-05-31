@@ -157,6 +157,8 @@ source/baseline/data/psds/
 *.bin
 *docs/source/autoapi
 .nfs*
+runs/o3b_dummy_1
+runs/test
 
 # Do not ignore these files
 !requirements.txt
