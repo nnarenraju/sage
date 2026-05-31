@@ -855,34 +855,46 @@ class DataReleaseDownloader:
                     tqdm(total=len(segments)) as pbar:
                 pbar.set_description(f"GWOSC-FILE {det}")
 
-                futures = {
-                    executor.submit(
-                        DataReleaseDownloader._download_and_extract_file,
-                        url, tasks, self.dcfg, self.max_retries,
-                    ): url
-                    for url, tasks in file_tasks.items()
-                }
+                # Submit in bounded batches so completed-future results don't
+                # accumulate unboundedly in memory while the main thread saves.
+                _BATCH = self.num_workers * 4
+                file_items = list(file_tasks.items())
 
-                for future in as_completed(futures):
-                    for item in future.result():
-                        tag = item[0]
+                for batch_start in range(0, len(file_items), _BATCH):
+                    batch = file_items[batch_start: batch_start + _BATCH]
+                    futures = {
+                        executor.submit(
+                            DataReleaseDownloader._download_and_extract_file,
+                            url, tasks, self.dcfg, self.max_retries,
+                        ): url
+                        for url, tasks in batch
+                    }
 
-                        if tag == "done":
-                            _, n, data, meta = item
-                            _save_one(n, data, meta)
-                            pbar.update()
+                    for future in as_completed(futures):
+                        items = future.result()
+                        # Drop the reference immediately so GC can reclaim the
+                        # extracted arrays before moving to the next future.
+                        futures.pop(future, None)
 
-                        elif tag == "first":
-                            _, n, raw, sr, b0, b1 = item
-                            partials.setdefault(n, {})["first"] = (raw, sr, b0, b1)
-                            if "second" in partials[n]:
-                                _combine_and_save(n, partials.pop(n), pbar)
+                        for item in items:
+                            tag = item[0]
 
-                        elif tag == "second":
-                            _, n, raw, sr, b0, b1 = item
-                            partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
-                            if "first" in partials[n]:
-                                _combine_and_save(n, partials.pop(n), pbar)
+                            if tag == "done":
+                                _, n, data, meta = item
+                                _save_one(n, data, meta)
+                                pbar.update()
+
+                            elif tag == "first":
+                                _, n, raw, sr, b0, b1 = item
+                                partials.setdefault(n, {})["first"] = (raw, sr, b0, b1)
+                                if "second" in partials[n]:
+                                    _combine_and_save(n, partials.pop(n), pbar)
+
+                            elif tag == "second":
+                                _, n, raw, sr, b0, b1 = item
+                                partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
+                                if "first" in partials[n]:
+                                    _combine_and_save(n, partials.pop(n), pbar)
         else:
             with tqdm(total=len(segments)) as pbar:
                 pbar.set_description("DET_SCIENCE_DATA GWOSC")
@@ -1176,30 +1188,37 @@ class DataReleaseDownloader:
 
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor, \
                     tqdm(total=len(retry_segs), desc=f"RETRY {detector}") as pbar:
-                futures = {
-                    executor.submit(
-                        DataReleaseDownloader._download_and_extract_file,
-                        url, tasks, self.dcfg, self.max_retries,
-                    ): url
-                    for url, tasks in file_tasks.items()
-                }
-                for future in as_completed(futures):
-                    for item in future.result():
-                        tag = item[0]
-                        if tag == "done":
-                            _, n, data, meta = item
-                            _save_retry(n, data, meta)
-                            pbar.update()
-                        elif tag == "first":
-                            _, n, raw, sr, b0, b1 = item
-                            partials.setdefault(n, {})["first"] = (raw, sr, b0, b1)
-                            if "second" in partials[n]:
-                                _combine_retry(n, partials.pop(n), pbar)
-                        elif tag == "second":
-                            _, n, raw, sr, b0, b1 = item
-                            partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
-                            if "first" in partials[n]:
-                                _combine_retry(n, partials.pop(n), pbar)
+                _BATCH = self.num_workers * 4
+                file_items = list(file_tasks.items())
+
+                for batch_start in range(0, len(file_items), _BATCH):
+                    batch = file_items[batch_start: batch_start + _BATCH]
+                    futures = {
+                        executor.submit(
+                            DataReleaseDownloader._download_and_extract_file,
+                            url, tasks, self.dcfg, self.max_retries,
+                        ): url
+                        for url, tasks in batch
+                    }
+                    for future in as_completed(futures):
+                        items = future.result()
+                        futures.pop(future, None)
+                        for item in items:
+                            tag = item[0]
+                            if tag == "done":
+                                _, n, data, meta = item
+                                _save_retry(n, data, meta)
+                                pbar.update()
+                            elif tag == "first":
+                                _, n, raw, sr, b0, b1 = item
+                                partials.setdefault(n, {})["first"] = (raw, sr, b0, b1)
+                                if "second" in partials[n]:
+                                    _combine_retry(n, partials.pop(n), pbar)
+                            elif tag == "second":
+                                _, n, raw, sr, b0, b1 = item
+                                partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
+                                if "first" in partials[n]:
+                                    _combine_retry(n, partials.pop(n), pbar)
 
         # Persist updated metadata
         all_meta = existing_meta + new_meta
