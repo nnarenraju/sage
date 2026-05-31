@@ -30,6 +30,11 @@ from sage.data.primer.get_segments import (
     get_all_runnames,
 )
 from sage.data.primer.get_segments import TimelineQuery
+from sage.data.primer.retry import (
+    get_expected_segments,
+    find_missing_segments,
+    retry_detector,
+)
 
 from sage.data.psd.blackout import (
     NoBlackout,
