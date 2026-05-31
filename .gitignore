@@ -179,6 +179,7 @@ sage/data/waveform/multiband_*.py
 
 # New noise modules
 sage/data/noise/*_mining.py
+sage/factory/*_schedules.py
 
 # New pipeline components
 sage/core/pipeline.py
