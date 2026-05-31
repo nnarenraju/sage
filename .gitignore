@@ -157,8 +157,6 @@ source/baseline/data/psds/
 *.bin
 *docs/source/autoapi
 .nfs*
-runs/o3b_dummy_1
-runs/test
 
 # Do not ignore these files
 !requirements.txt
@@ -170,7 +168,8 @@ sage/benchmark/evomcts
 sage/data/waveform/lalsim_src
 
 # Experimental runs
-runs/
+runs/o3b_dummy_1
+runs/test
 
 # New network modules
 sage/architecture/network/attentive_*.py
