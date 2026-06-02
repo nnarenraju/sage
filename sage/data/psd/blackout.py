@@ -50,7 +50,7 @@ class BlackoutPolicy:
         Indices of frequency bins that were modified.
     """
 
-    def apply(self, median_psd, psds):
+    def apply(self, median_psd, max_psd):
         """
         Apply the blackout policy to the median PSD.
 
@@ -58,8 +58,10 @@ class BlackoutPolicy:
         ----------
         median_psd : numpy.ndarray, shape ``(F,)``
             Median PSD computed across all available noise segments.
-        psds : numpy.ndarray, shape ``(N, F)``
-            Per-segment PSDs used to detect outlier bins.
+        max_psd : numpy.ndarray, shape ``(F,)``
+            Per-bin maximum PSD across all sampled segments, used to detect
+            outlier bins. (Every policy needs only this reduction, not the full
+            per-segment stack, so it can be accumulated incrementally.)
 
         Returns
         -------
@@ -90,9 +92,8 @@ class HardRatioBlackout(BlackoutPolicy):
     def __init__(self, max_ratio):
         self.max_ratio = max_ratio
 
-    def apply(self, median_psd, psds):
+    def apply(self, median_psd, max_psd):
         """Hard-zero bins where max/median exceeds :attr:`max_ratio` (set to 1e12)."""
-        max_psd = np.max(psds, axis=0)
         ratio = max_psd / median_psd
         idxs = np.where(ratio > self.max_ratio)[0]
 
@@ -139,9 +140,8 @@ class SoftRatioBlackout(BlackoutPolicy):
         self.beta = beta
         self.max_scale = max_scale
 
-    def apply(self, median_psd, psds):
+    def apply(self, median_psd, max_psd):
         """Apply power-law soft suppression to elevated PSD bins."""
-        max_psd = np.max(psds, axis=0)
         ratio = max_psd / median_psd
 
         scale = np.ones_like(median_psd)
@@ -182,7 +182,7 @@ class GaussianSoftNotchBlackout(BlackoutPolicy):
         self.widths = widths
         self.depth = depth
 
-    def apply(self, median_psd, psds):
+    def apply(self, median_psd, max_psd):
         """Inflate the PSD at known spectral lines via Gaussian notch bumps."""
         scale = np.ones_like(median_psd)
 
@@ -223,9 +223,8 @@ class LogSoftRatioBlackout(BlackoutPolicy):
         self.alpha = alpha
         self.max_scale = max_scale
 
-    def apply(self, median_psd, psds):
+    def apply(self, median_psd, max_psd):
         """Apply logarithmic soft suppression to elevated PSD bins."""
-        max_psd = np.max(psds, axis=0)
         ratio = max_psd / median_psd
 
         scale = np.ones_like(median_psd)
@@ -265,9 +264,9 @@ class SqrtSoftRatioBlackout(BlackoutPolicy):
         self.alpha = alpha
         self.max_scale = max_scale
 
-    def apply(self, median_psd, psds):
+    def apply(self, median_psd, max_psd):
         """Apply square-root soft suppression to elevated PSD bins."""
-        ratio = np.max(psds, axis=0) / median_psd
+        ratio = max_psd / median_psd
         scale = np.ones_like(median_psd)
 
         mask = ratio > self.max_ratio
@@ -288,6 +287,6 @@ class NoBlackout(BlackoutPolicy):
     gets a consistent interface regardless of whether blackout is enabled.
     """
 
-    def apply(self, median_psd, psds):
+    def apply(self, median_psd, max_psd):
         """Return the median PSD unmodified with an empty blackout index array."""
         return median_psd, np.empty(0, dtype=np.int64)

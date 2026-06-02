@@ -202,68 +202,109 @@ class EstimatePSD:
         os.makedirs(fiducial_dir, exist_ok=True)
         os.makedirs(recolour_dir, exist_ok=True)
 
-        psds = []
+        n = self.num_samples
 
-        for _ in tqdm(
-            range(self.num_samples),
-            desc=f"Estimating recolour PSDs for {self.detector}",
-        ):
-            # Sample noise sample given duration
-            noise = noise_sampler(duration)
+        # We stream every PSD straight to disk instead of accumulating the
+        # whole (num_samples, F) bank in RAM. The recolour bank is written one
+        # row at a time; the fiducial median is computed afterwards by reading
+        # the bank back in chunks; and the per-bin maximum that the blackout
+        # policies need is tracked incrementally during the sweep.
+        bin_path = os.path.join(recolour_dir, f"raw_{self.detector}_psds.bin")
 
-            # Compute PSD using the Welch method
-            pxx = self.psd_method(noise)
-            pxx = torch.sqrt(pxx).to(dtype=torch.float32)
-            freqs = self.psd_method.freqs
-            delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
+        # If the bank is not meant to be kept, stream to a scratch file that we
+        # delete once the median has been computed.
+        keep_bin = self.store_psds_as_bin
+        stream_path = (
+            bin_path
+            if keep_bin
+            else os.path.join(recolour_dir, f".raw_{self.detector}_psds.tmp.bin")
+        )
 
-            if self.apply_ist:
-                raise NotImplementedError("Inverse spectrum truncation removed")
-                psd_t = torch.from_numpy(pxx).to(torch.float64)
-                psd_t = inverse_spectrum_truncation_single(
-                    psd=psd_t,
-                    max_filter_len=self.max_filter_len,
-                    low_frequency_cutoff=self.low_frequency_cutoff,
-                    delta_f=delta_f,
-                    trunc_method=self.trunc_method,
-                )
-                pxx = psd_t.cpu().numpy()
+        freqs = None
+        num_freq = None
+        delta_f = None
+        max_psd = None
 
-            # Interpolate if requested
-            if self.interpolate_psd:
-                pxx, delta_f, freqs = EstimatePSD._interpolate(
-                    psd=pxx,
-                    delta_f_psd=delta_f,
-                    sample_length=self.training_sample_length,
-                    sample_rate=sample_rate,
-                )
+        with open(stream_path, "wb") as fh:
+            for _ in tqdm(
+                range(n),
+                desc=f"Estimating recolour PSDs for {self.detector}",
+            ):
+                # Sample noise sample given duration
+                noise = noise_sampler(duration)
 
-            # Spline smooth the PSD before saving
-            if self.psd_smoothener is not None:
-                pxx = self.psd_smoothener.smooth(
-                    freqs, pxx, smooth_factor=0.025 * len(freqs)
-                )
+                # Compute PSD using the Welch method
+                pxx = self.psd_method(noise)
+                pxx = torch.sqrt(pxx).to(dtype=torch.float32)
+                pxx_freqs = self.psd_method.freqs
+                pxx_delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
 
-            # DO NOT do the following although its tempting
-            # Kill all values below low frequency cutoff
-            # pxx[freqs < self.low_frequency_cutoff] = 1e30
-            # This introduces long lasting ringing effects in TD
-            # Instead we make a slow taper
-            pxx = self.taper(freqs, pxx)
+                if self.apply_ist:
+                    raise NotImplementedError("Inverse spectrum truncation removed")
 
-            # To save each PSD if requested
-            psds.append(pxx)
+                # Interpolate if requested
+                if self.interpolate_psd:
+                    pxx, pxx_delta_f, pxx_freqs = EstimatePSD._interpolate(
+                        psd=pxx,
+                        delta_f_psd=pxx_delta_f,
+                        sample_length=self.training_sample_length,
+                        sample_rate=sample_rate,
+                    )
 
-        # Put all PSDs together into one unit
-        psds = np.stack(psds, axis=0)
+                # Spline smooth the PSD before saving
+                if self.psd_smoothener is not None:
+                    pxx = self.psd_smoothener.smooth(
+                        pxx_freqs, pxx, smooth_factor=0.025 * len(pxx_freqs)
+                    )
 
-        # Store each raw PSD for recolouring module
-        if self.store_psds_as_bin or self.store_psds_as_hdf5:
-            self._save_raw_psds(psds, freqs, recolour_dir, sample_rate)
+                # DO NOT do the following although its tempting
+                # Kill all values below low frequency cutoff
+                # pxx[freqs < self.low_frequency_cutoff] = 1e30
+                # This introduces long lasting ringing effects in TD
+                # Instead we make a slow taper
+                pxx = self.taper(pxx_freqs, pxx)
 
-        # Compute median PSD, blackout difficult regions
-        median_psd = self._aggregate_psds(psds)
-        fiducial_psd, blackout_idxs = self.blackout_policy.apply(median_psd, psds)
+                # Stream this PSD straight to disk (row-major, float32)
+                pxx = np.ascontiguousarray(pxx, dtype=np.float32)
+                fh.write(pxx.tobytes())
+
+                # Track the per-bin maximum (exact and order-independent) for
+                # the blackout policy, and capture the frequency grid once (it
+                # is identical on every sweep).
+                if max_psd is None:
+                    max_psd = pxx.copy()
+                    freqs = np.asarray(pxx_freqs, dtype=np.float64)
+                    num_freq = pxx.shape[0]
+                    delta_f = float(pxx_delta_f)
+                else:
+                    np.maximum(max_psd, pxx, out=max_psd)
+
+        # Sidecar metadata for the recolour bank (consumed by recolour.py)
+        if self.store_psds_as_bin:
+            self._write_recolour_bank_meta(
+                recolour_dir, n, num_freq, freqs, sample_rate
+            )
+
+        # Optional gzip-HDF5 archival of the bank (chunked, low memory)
+        if self.store_psds_as_hdf5:
+            self._save_raw_psds_hdf5(
+                stream_path, recolour_dir, n, num_freq, freqs, sample_rate
+            )
+
+        # Compute the median PSD by streaming the on-disk bank in chunks, so the
+        # full (num_samples, F) array is never resident in memory.
+        bank = np.memmap(
+            stream_path, dtype=np.float32, mode="r", shape=(n, num_freq)
+        )
+        median_psd = self._aggregate_psds(bank)
+        del bank
+
+        # Drop the scratch bank if we were not asked to keep it
+        if not keep_bin:
+            os.remove(stream_path)
+
+        # Compute fiducial PSD; blackout policies need only the per-bin maximum
+        fiducial_psd, blackout_idxs = self.blackout_policy.apply(median_psd, max_psd)
 
         # Saving fiducial PSD in export_dir of run
         self._save_fiducial_psd(
@@ -277,10 +318,16 @@ class EstimatePSD:
         if return_fiducial:
             return freqs, fiducial_psd
 
-    def _aggregate_psds(self, psds):
-        # Median of medians is memory efficient
-        chunks = np.array_split(psds, max(1, psds.shape[0] // 10_000))
-        medians = [np.median(chunk, axis=0) for chunk in chunks]
+    def _aggregate_psds(self, bank):
+        # Median of medians, reading the on-disk bank one chunk at a time so the
+        # full (num_samples, F) array is never resident in memory. ``bank`` is
+        # any row-sliceable array (np.memmap / h5py dataset).
+        num_psds = bank.shape[0]
+        chunks = np.array_split(np.arange(num_psds), max(1, num_psds // 10_000))
+        medians = [
+            np.median(np.asarray(bank[idx[0] : idx[-1] + 1]), axis=0)
+            for idx in chunks
+        ]
 
         median_psd = np.median(medians, axis=0)
         return median_psd
@@ -291,47 +338,54 @@ class EstimatePSD:
             return float(x.item())
         return float(x)
 
-    def _save_raw_psds(self, psds, freqs, save_dir, sample_rate):
-        # Save all raw PSDs into one file
-        if self.store_psds_as_hdf5:
-            hdf5_path = os.path.join(save_dir, f"raw_{self.detector}_psds.h5")
+    def _write_recolour_bank_meta(self, save_dir, num_psds, num_freq, freqs, sample_rate):
+        # The bank .bin is streamed to disk during estimate_raw_psds; here we
+        # only emit the sidecar JSON the recolour module reads.
+        meta_path = os.path.join(save_dir, f"raw_{self.detector}_psds.json")
+        meta = {
+            "detector": self.detector,
+            "num_psds": num_psds,
+            "num_freq_bins": num_freq,
+            "dtype": "float32",
+            "byte_order": "little",
+            "layout": "row-major",
+            "sample_rate": sample_rate,
+            "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
+            "freq_start": EstimatePSD._to_float(freqs[0]),
+            "freq_end": EstimatePSD._to_float(freqs[-1]),
+            "psd_method": self.psd_method.__class__.__name__,
+            "apply_inverse_spectrum_truncation": self.apply_ist,
+            "low_frequency_cutoff": self.low_frequency_cutoff,
+            "max_filter_len": self.max_filter_len,
+        }
 
-            with h5py.File(hdf5_path, "w") as hf:
-                hf.create_dataset(
-                    "psds",
-                    data=psds,
-                    compression="gzip",
-                    compression_opts=9,
-                    shuffle=True,
-                )
-                hf.create_dataset("freqs", data=freqs)
-                hf.attrs["sample_rate"] = sample_rate
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
 
-        elif self.store_psds_as_bin:
-            bin_path = os.path.join(save_dir, f"raw_{self.detector}_psds.bin")
-            psds.astype(np.float32).tofile(bin_path)
-
-            # Add metadata
-            meta_path = os.path.join(save_dir, f"raw_{self.detector}_psds.json")
-            meta = {
-                "detector": self.detector,
-                "num_psds": psds.shape[0],
-                "num_freq_bins": psds.shape[1],
-                "dtype": "float32",
-                "byte_order": "little",
-                "layout": "row-major",
-                "sample_rate": sample_rate,
-                "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
-                "freq_start": EstimatePSD._to_float(freqs[0]),
-                "freq_end": EstimatePSD._to_float(freqs[-1]),
-                "psd_method": self.psd_method.__class__.__name__,
-                "apply_inverse_spectrum_truncation": self.apply_ist,
-                "low_frequency_cutoff": self.low_frequency_cutoff,
-                "max_filter_len": self.max_filter_len,
-            }
-
-            with open(meta_path, "w") as f:
-                json.dump(meta, f, indent=2)
+    def _save_raw_psds_hdf5(self, bin_path, save_dir, num_psds, num_freq, freqs, sample_rate):
+        # Archive the streamed bank as a gzip-compressed HDF5 dataset, copied in
+        # chunks so the full bank is never held in memory at once.
+        hdf5_path = os.path.join(save_dir, f"raw_{self.detector}_psds.h5")
+        bank = np.memmap(
+            bin_path, dtype=np.float32, mode="r", shape=(num_psds, num_freq)
+        )
+        step = 1000
+        with h5py.File(hdf5_path, "w") as hf:
+            dset = hf.create_dataset(
+                "psds",
+                shape=(num_psds, num_freq),
+                dtype="float32",
+                chunks=(min(step, num_psds), num_freq),
+                compression="gzip",
+                compression_opts=9,
+                shuffle=True,
+            )
+            for start in range(0, num_psds, step):
+                end = min(start + step, num_psds)
+                dset[start:end] = np.asarray(bank[start:end])
+            hf.create_dataset("freqs", data=freqs)
+            hf.attrs["sample_rate"] = sample_rate
+        del bank
 
     def _save_fiducial_psd(
         self,
@@ -435,8 +489,11 @@ class EstimatePSD:
         dt = np.dtype(seg_meta[0]["dtype"]).newbyteorder(seg_meta[0]["endianness"])
         mm = np.memmap(noise_segments_file, dtype=dt, mode="r")
 
-        psd_bin_path = output_dir / f"{noise_segments_file.stem}_psds.bin"
-        psd_meta_path = output_dir / f"{noise_segments_file.stem}_psds_segments.json"
+        # NOTE: filename is detector-based (no run label) to match the
+        # consumer in sage/data/noise/recolour.py, which loads segment ASDs as
+        # ``data_{det}_psds.bin``. Per-run separation is provided by data_dir.
+        psd_bin_path = output_dir / f"data_{self.detector}_psds.bin"
+        psd_meta_path = output_dir / f"data_{self.detector}_psds_segments.json"
 
         psd_meta = []
         psd_cursor = 0

@@ -40,13 +40,16 @@ from .lowfar_noise import (
     MAPElitesMiner,
     CEMRareEventMiner,
 )
-from .qd_mining import (
-    NoiseSVDProjector,
-    SharedHardNoiseBank,
-    CMAMEMiner,
-    CMAMEGAMiner,
-    make_miner_preprocessor,
-)
+# NOTE: qd_mining is gitignored and not present on this machine. Commented out
+# until it is synced here (the QD hard-mining symbols are not used by the PSD
+# or training pipelines). Re-enable once sage/data/noise/qd_mining.py exists.
+# from .qd_mining import (
+#     NoiseSVDProjector,
+#     SharedHardNoiseBank,
+#     CMAMEMiner,
+#     CMAMEGAMiner,
+#     make_miner_preprocessor,
+# )
 
 __all__ = [
     "HDF5SingleNoiseSampler",
@@ -62,9 +65,10 @@ __all__ = [
     "BruteForceMiner",
     "MAPElitesMiner",
     "CEMRareEventMiner",
-    "NoiseSVDProjector",
-    "SharedHardNoiseBank",
-    "CMAMEMiner",
-    "CMAMEGAMiner",
-    "make_miner_preprocessor",
+    # qd_mining symbols (commented out until qd_mining.py is synced here):
+    # "NoiseSVDProjector",
+    # "SharedHardNoiseBank",
+    # "CMAMEMiner",
+    # "CMAMEGAMiner",
+    # "make_miner_preprocessor",
 ]
