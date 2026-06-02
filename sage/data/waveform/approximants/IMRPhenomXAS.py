@@ -85,9 +85,14 @@ class IMRPhenomXAS(PhenomConstants):
         )
 
         self.f      = f
-        self.df     = f[0, 1] - f[0, 0]
+        # Use endpoint formula to avoid catastrophic cancellation.
+        # f[0,1] - f[0,0] = (f_l + del_f) - f_l loses precision when
+        # f_l >> del_f (e.g. f_l=20 Hz, del_f=1/295 Hz → 41 ms tc error).
+        # (f[-1] - f[0]) / (n-1) uses exact endpoints, same accuracy as 1/T.
+        _n = f.shape[1]
+        self.df     = (f[0, -1] - f[0, 0]) / (_n - 1)
         self.sample_length_in_s = 1.0 / self.df
-        self.f_numel = f.shape[1]
+        self.f_numel = _n
         self.f_ref  = f_ref
         self.B      = f.shape[0]
 

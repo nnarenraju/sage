@@ -65,9 +65,11 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
         # Fixed frequency grid
         self.f = f
-        self.df = f[0][1] - f[0][0]
+        # Endpoint formula: avoids catastrophic cancellation when f_l >> del_f.
+        _n = self.f[0].numel()
+        self.df = (f[0, -1] - f[0, 0]) / (_n - 1)
         self.sample_length_in_s = 1.0 / self.df
-        self.f_numel = self.f[0].numel()
+        self.f_numel = _n
         self.f_ref = f_ref
         # Batch size
         self.B = f.shape[0]

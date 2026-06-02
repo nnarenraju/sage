@@ -206,16 +206,12 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             self.cfg.device,
             self.cfg.dtype,
         )
-        # df = base uniform spacing (= padded_delta_f = 1/padded_length_in_s).
-        # Stored now before self.f is potentially replaced so normalisation is
-        # always relative to the base grid, not to any coarse spacing.
-        self.df = f[0][1] - f[0][0]
-        self.sample_length_in_s = 1.0 / self.df
         self.f_ref = f_ref
 
         # Initialise the BBH backbone with the full-resolution grid.
-        # IMRPhenomXAS stores internal coefficient tables that don't depend on
-        # the frequency array itself, so this is always correct.
+        # IMRPhenomXAS.__init__ sets self.df via the endpoint formula
+        # (f[-1]-f[0])/(n-1), which is exact for the production grid —
+        # same pattern as IMRPhenomD does for IMRPhenomPv2.
         IMRPhenomXAS.__init__(self, f, f_ref)
         self.B = f.shape[0]
 

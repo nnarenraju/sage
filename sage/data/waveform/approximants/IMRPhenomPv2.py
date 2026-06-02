@@ -83,8 +83,11 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             self.cfg.dtype,
         )
         self.f = f
-        self.df = f[0][1] - f[0][0]
-        self.sample_length_in_s = 1.0 / self.df
+        # Use padded_length_in_s directly — same source used by get_freqs,
+        # avoids catastrophic cancellation from f[0][1] - f[0][0].
+        _T = float(self.data_cfg.padded_length_in_s)
+        self.df = torch.tensor(1.0 / _T, device=self.cfg.device, dtype=self.cfg.dtype)
+        self.sample_length_in_s = _T
         self.f_numel = self.f[0].numel()
         self.f_ref = f_ref
 
