@@ -5,6 +5,7 @@
 </p>
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20375078-blue)](https://doi.org/10.5281/zenodo.20375078)
+<a href="https://ascl.net/2605.004"><img src="https://img.shields.io/badge/ascl-2605.004-blue.svg?colorB=262255" alt="ascl:2605.004" /></a>
 [![CI](https://github.com/nnarenraju/sage/actions/workflows/ci.yml/badge.svg)](https://github.com/nnarenraju/sage/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/nnarenraju/sage/branch/main/graph/badge.svg?token=RLAAMEZEZ6)](https://codecov.io/github/nnarenraju/sage)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
