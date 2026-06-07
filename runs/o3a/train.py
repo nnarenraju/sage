@@ -52,8 +52,8 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 # SageGraph
 from sage.core.graph import Preprocessor
-from sage.factory.training import SageUncompiledTraining
-from sage.factory.validation import SageUncompiledValidation
+from sage.factory.training import SageVanillaTraining
+from sage.factory.validation import SageVanillaValidation
 
 # Configs
 from config import O3aCFG, O3aDataCFG
@@ -150,7 +150,7 @@ def run():
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
     scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=1, eta_min=1e-6)
 
-    train_sage = SageUncompiledTraining(
+    train_sage = SageVanillaTraining(
         training_signal_sampler,
         training_noise_sampler,
         processor,
@@ -158,11 +158,12 @@ def run():
         loss_function,
         optimiser,
         scheduler,
+        scaler=None,
         num_iterations=cfg.training_iterations,
         num_epochs=cfg.num_epochs,
     )
 
-    validate_sage = SageUncompiledValidation(
+    validate_sage = SageVanillaValidation(
         validation_signal_sampler,
         validation_noise_sampler,
         processor,
