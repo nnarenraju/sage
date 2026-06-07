@@ -163,7 +163,7 @@ source/baseline/data/psds/
 !docs/_static/display_picture.jpg
 
 # Automatically added files
-sage/architectures/zoo/mamba.py
+sage/architectures/zoo/*ba.py
 sage/benchmark/evomcts
 sage/data/waveform/lalsim_src
 
@@ -189,3 +189,4 @@ sage/factory/curriculum.py
 
 # New integration tests
 tests/test_*_pipeline.py
+tests/*_complex.py
