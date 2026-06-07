@@ -720,12 +720,20 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
     #    Source: XLALSimNRTunedTidesFDTidalPhaseFrequencySeries
     #            (NRTidalv3_V branch), LALSimNRTunedTides.c lines 827-853
     #
-    #    Procedure (mirrors LALSim):
+    #    LAL procedure (exactly replicated here):
     #      a) Evaluate raw NRTidalv3 Pade phase at every frequency.
-    #      b) From 0.9 * fmerger onward, freeze the phase at its running
-    #         minimum (torch.cummin handles this exactly).
+    #      b) From 0.9 * fmerger onward, find the FIRST frequency at which
+    #         phi_raw[i] >= phi_raw[i-1] (i.e. the first non-decrease).
+    #         Freeze phi at phi_raw[indexmin] = phi_raw[i-1] for all bins
+    #         from that index onward.
     #      c) Smoothly transition to 7.5PN tidal phase in the post-merger
     #         Planck window [1.15 * fmerger, 1.35 * fmerger].
+    #
+    #    NOTE: torch.cummin is NOT used because it picks up the globally
+    #    minimum value, which can be a post-Pade-singularity artefact
+    #    (phi_raw → ±∞ at a Pade pole for heavy BNS with asymmetric
+    #    Lambda).  LAL's sequential first-increase check fires before the
+    #    singularity, correctly freezing at the last decreasing value.
     # ----------------------------------------------------------------
     def _tidal_phase_full(self, Mf, PN, tc, Mfmerger):
         """
@@ -746,16 +754,66 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         kappaB = tc['kappaB']
 
         # (a) Raw NRTidalv3 Pade phase
-        phi_raw    = self._phi_tidal_nrt(Mf, PN, tc)          # (B, F)
+        phi_raw = self._phi_tidal_nrt(Mf, PN, tc)             # (B, F)
 
-        # (b) Minimum-clamping via running minimum
-        #     torch.cummin gives min(phi_raw[0..k]) at each index k.
-        #     phi_raw is monotonically decreasing in the inspiral, so cummin
-        #     tracks phi_raw exactly until the phase minimum, then stays
-        #     constant — exactly the "freeze at minimum" behavior in LALSim.
-        check_mask = (Mf >= 0.9 * Mfmerger)                   # (B, F)
-        phi_cummin = torch.cummin(phi_raw, dim=-1).values       # (B, F)
-        phi_clipped = torch.where(check_mask, phi_cummin, phi_raw)
+        # (b) LAL-equivalent minimum-clamping.
+        #
+        #     LAL iterates bins sequentially and breaks at the FIRST bin i
+        #     (with f[i] >= 0.9*fmerger) where phi[i] >= phi[i-1], then
+        #     freezes at phi[i-1] = phi[indexmin].  This naturally stops
+        #     before any Pade singularity (where the raw phase shoots to
+        #     +/-inf) because the phase starts increasing toward the pole.
+        #
+        #     Vectorised equivalent:
+        #       1. Compute finite-difference increments phi_raw[k+1] - phi_raw[k].
+        #       2. Within the check region (f >= 0.9*fmerger), mark the FIRST
+        #          non-negative increment.
+        #       3. "Freeze" flag: True for every bin at or after that first
+        #          non-decrease.
+        #       4. Freeze value = phi_raw[first_non_decrease_index] (the last
+        #          decreasing value, i.e. the minimum before the singularity).
+        #
+        check_region = (Mf >= 0.9 * Mfmerger)                 # (B, F)  bool
+
+        # Finite differences: shape (B, F-1)
+        # diff[k] = phi_raw[k+1] - phi_raw[k]  (positive = increasing)
+        phi_diff = phi_raw[:, 1:] - phi_raw[:, :-1]           # (B, F-1)
+
+        # A "triggering" step: non-decreasing increment inside the check region.
+        # check_region[:, 1:] aligns with the step from k → k+1.
+        trigger = (phi_diff >= 0) & check_region[:, 1:]        # (B, F-1) bool
+
+        # Once triggered, the freeze flag stays True for all later bins.
+        # cumsum > 0 means "trigger has been seen at or before this step".
+        freeze_flag_diff = (trigger.to(phi_raw.dtype).cumsum(dim=-1) > 0)  # (B, F-1)
+
+        # Extend to full-F shape: bin 0 is never frozen; freeze_flag[k] = flag for k.
+        freeze_flag = torch.zeros_like(check_region)           # (B, F)
+        freeze_flag[:, 1:] = freeze_flag_diff
+
+        # Freeze value: phi_raw at the first non-decrease index.
+        # For each batch element, find the first True in trigger within
+        # the check region; the freeze value = phi_raw at that index
+        # (= last decreasing value before the singularity).
+        #
+        # If no trigger is found, freeze_idx stays at the last valid bin
+        # (the running minimum equals phi_raw throughout, so no clamping
+        # is applied — freeze_flag remains False everywhere).
+        trigger_any = trigger.any(dim=-1)                      # (B,) bool
+        # argmax on the int cast returns the first True position.
+        trigger_idx = (trigger.long().argmax(dim=-1)           # (B,) — diff index
+                       .clamp(max=phi_raw.shape[-1] - 2))
+
+        freeze_vals = phi_raw.gather(                          # (B, 1)
+            -1, trigger_idx.unsqueeze(-1))
+
+        # Where no trigger was found keep phi_raw (no clamping needed).
+        freeze_vals = torch.where(
+            trigger_any.unsqueeze(-1), freeze_vals,
+            phi_raw[:, -1:])                                   # (B, 1)
+
+        # Apply clamping: frozen bins use freeze_vals, others use phi_raw.
+        phi_clipped = torch.where(freeze_flag, freeze_vals, phi_raw)  # (B, F)
 
         # (c) Smooth post-merger transition to 7.5PN tidal phase
         Mf_t1  = 1.15 * Mfmerger                              # (B, 1)
