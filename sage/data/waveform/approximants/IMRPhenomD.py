@@ -1221,7 +1221,7 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         # Derivative of the merger-ringdown amplitude
         v3 = IMRPhenomD.get_IIb_Amp(fx_Ms[:, 4:5], fx_Ms, coeffs)
-        d3 = IMRPhenomD.DAmpMRDAnsatz(fx_Ms[:, 4:5], fx_Ms, coeffs)
+        d3 = IMRPhenomD.DAmpMRDAnsatz(fx_Ms[:, 4:5], coeffs, fx_Ms)
 
         # Here we need the delta solutions
         delta0 = IMRPhenomD.get_delta0(
