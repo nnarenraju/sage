@@ -49,14 +49,14 @@ class O3aCFG:
 
 class O3aDataCFG:
 
-    data_dir = "/data/wiay/nnarenraju/data_dir"
+    data_dir = "/data/wiay/nnarenraju/data_release/o3a_dataset/data_dir"
     training_noise_files = [
-        "/data/wiay/nnarenraju/data_release/data_H1_O3a.bin",
-        "/data/wiay/nnarenraju/data_release/data_L1_O3a.bin",
+        "/data/wiay/nnarenraju/data_release/o3a_dataset/data_H1_O3a.bin",
+        "/data/wiay/nnarenraju/data_release/o3a_dataset/data_L1_O3a.bin",
     ]
     validation_noise_files = [
-        "/data/wiay/nnarenraju/data_release/data_H1_O3b.bin",
-        "/data/wiay/nnarenraju/data_release/data_L1_O3b.bin",
+        "/data/wiay/nnarenraju/data_release/o3b_dataset/data_H1_O3b.bin",
+        "/data/wiay/nnarenraju/data_release/o3b_dataset/data_L1_O3b.bin",
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz

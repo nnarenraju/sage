@@ -40,6 +40,9 @@ from sage.data.psd import smoothing
 from sage.core.config import get_cfg, get_data_cfg
 from config import set_configs
 
+# The O3b noise .bin files and their *_segments.json sidecars live here
+_DATASET_DIR = "/data/wiay/nnarenraju/data_release/o3b_dataset"
+
 
 def _get_timeline(data_cfg):
 
@@ -153,14 +156,14 @@ def _make_psds(detector, data_cfg):
 
     # This is used for whitening with the exact segment PSD before recolouring
     epsd.estimate_segment_psds(
-        noise_segments_file=f"/home/nnarenraju/Research/sage/runs/o3b/data_release/data_{detector}_O3b.bin"
+        noise_segments_file=f"{_DATASET_DIR}/data_{detector}_O3b.bin"
     )
 
     # With this we make num_samples random PSDs from the given data
     # We use this for recolouring augmentation
     # We also do blackout and aggregate the PSDs to produce the fiducial PSD
     noise_sampler = MemmapSingleNoiseSampler(
-        f"/home/nnarenraju/Research/sage/runs/o3b/data_release/data_{detector}_O3b.bin",
+        f"{_DATASET_DIR}/data_{detector}_O3b.bin",
         return_tensor=True,
     )
     epsd.estimate_raw_psds(
@@ -178,5 +181,30 @@ def make_dataset():
     # Make datasets
     tq = _get_timeline(data_cfg)
     _download_data_release(tq, data_cfg)
-    for det in ["L1", "V1"]:
+    for det in ["H1", "L1", "V1"]:
         _make_psds(det, data_cfg)
+
+
+def make_psds_only():
+    """Generate fiducial / recolour / segment PSDs for all detectors.
+
+    Assumes the noise .bin files are already downloaded. Does NOT re-download.
+    Run from this directory so the relative ``export_dir`` (./run_export)
+    resolves to runs/o3b/run_export for the fiducial PSDs.
+    """
+    set_configs()
+    _, data_cfg = get_cfg(), get_data_cfg()
+    for det in ["H1", "L1", "V1"]:
+        _make_psds(det, data_cfg)
+
+
+def make_psds_single(detector):
+    """Generate PSDs for a single detector in its own process.
+
+    Each detector writes detector-specific filenames into shared dirs, so
+    several of these can run concurrently (one process per detector) without
+    colliding. Run from this directory for the relative ``export_dir``.
+    """
+    set_configs()
+    _, data_cfg = get_cfg(), get_data_cfg()
+    _make_psds(detector, data_cfg)
