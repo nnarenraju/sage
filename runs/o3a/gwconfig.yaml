@@ -1,0 +1,107 @@
+variable_params:
+  - mass1
+  - mass2
+  - ra
+  - dec
+  - inclination
+  - coa_phase
+  - polarization
+  - chirp_distance
+  - spin1_a
+  - spin1_azimuthal
+  - spin1_polar
+  - spin2_a
+  - spin2_azimuthal
+  - spin2_polar
+  - injection_time
+  - tc
+
+priors:
+
+  injection_time:
+    name: uniform
+    min: 1238166018
+    max: 1253977218
+
+  tc:
+    name: uniform
+    min: 11.0
+    max: 11.2
+
+  mass1:
+    name: uniform
+    min: 7.0
+    max: 50.0
+
+  mass2:
+    name: uniform
+    min: 7.0
+    max: 50.0
+
+  spin1_a:
+    name: uniform
+    min: 0.0
+    max: 0.99
+
+  spin1_orientation:
+    name: uniform_solidangle
+    polar-angle: spin1_polar
+    azimuthal-angle: spin1_azimuthal
+
+  spin2_a:
+    name: uniform
+    min: 0.0
+    max: 0.99
+
+  spin2_orientation:
+    name: uniform_solidangle
+    polar-angle: spin2_polar
+    azimuthal-angle: spin2_azimuthal
+
+  sky:
+    name: uniform_sky
+    ra: ra
+    dec: dec
+
+  inclination:
+    name: sin_angle
+
+  coa_phase:
+    name: uniform_angle
+
+  polarization:
+    name: uniform_angle
+
+  chirp_distance:
+    name: uniform_radius
+    min: 130.0
+    max: 350.0
+
+constraints:
+  - name: mass_order
+
+waveform_transforms:
+
+  spin1_cartesian:
+    name: spherical_to_cartesian
+    x: spin1x
+    y: spin1y
+    z: spin1z
+    radial: spin1_a
+    polar: spin1_polar
+    azimuthal: spin1_azimuthal
+
+  spin2_cartesian:
+    name: spherical_to_cartesian
+    x: spin2x
+    y: spin2y
+    z: spin2z
+    radial: spin2_a
+    polar: spin2_polar
+    azimuthal: spin2_azimuthal
+
+  mass_params:
+    name: mass1_mass2_to_mchirp_q
+
+  distance:
+    name: chirp_distance_to_distance
