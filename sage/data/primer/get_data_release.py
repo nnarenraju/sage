@@ -781,7 +781,12 @@ class DataReleaseDownloader:
                         return
                     nsamp, nbytes, dt, checksum = self._save_segment_bin(bin_fh, data)
                     seg_meta = {
-                        "segment_index": int(n),
+                        # Position in the saved metadata, not the GWOSC enumeration
+                        # index `n`. Segments are saved in parallel-completion order
+                        # and some `n` fail, so labelling by slot keeps the index a
+                        # dense 0..N-1 regardless of order. Downstream (recolour /
+                        # segment PSDs) treats segment_index as a positional key.
+                        "segment_index": len(self._bin_metadata),
                         "detector": det,
                         "observing_run": run,
                         "gps_start": metadata["gps_start"],
@@ -907,7 +912,9 @@ class DataReleaseDownloader:
                             continue
                         nsamp, nbytes, dt, checksum = self._save_segment_bin(bin_fh, data)
                         seg_meta = {
-                            "segment_index": int(n),
+                            # Position-based index (see _save_one) — slot in the
+                            # saved metadata, so order/failures never leave gaps.
+                            "segment_index": len(self._bin_metadata),
                             "detector": det,
                             "observing_run": run,
                             "gps_start": metadata["gps_start"],
@@ -1068,7 +1075,9 @@ class DataReleaseDownloader:
             last = max(existing_meta, key=lambda m: m["byte_offset"])
             byte_cursor = last["byte_offset"] + last["byte_length"]
             sample_cursor = last["sample_start_idx"] + last["nsamples"]
-            next_seg_idx = max(m["segment_index"] for m in existing_meta) + 1
+            # Continue the dense 0..N-1 sequence by count (not max+1) so appended
+            # retries stay positional regardless of order or prior gaps.
+            next_seg_idx = len(existing_meta)
         else:
             byte_cursor = 0
             sample_cursor = 0
