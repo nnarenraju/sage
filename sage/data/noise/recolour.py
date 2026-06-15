@@ -117,18 +117,19 @@ class RecolourPostprocess(torch.nn.Module):
 
     def _load_segment_asds(self):
         """
-        Lazily memory-map the per-segment ASD banks (one per detector). Rows are
-        gathered on demand in :meth:`forward` (see :meth:`_gather`) so the full
-        banks are never resident — only the rows a batch touches are read.
+        Load the per-segment ASD banks into RAM (one array per detector). They
+        are gathered every batch in :meth:`forward`; on the NFS data mount a
+        random per-batch gather costs ~600 ms (vs microseconds from RAM), which
+        starves the GPU — so the banks (a few GB total) are kept resident.
 
-        No rectangular padding is needed: each detector is indexed into its own
-        bank, and after the dense ``segment_index`` renumbering the sampler emits
-        per-detector positional ids in ``[0, N_seg_d)``.
+        Each detector is read into its own array (no rectangular padding): after
+        the dense ``segment_index`` renumbering the sampler emits per-detector
+        positional ids in ``[0, N_seg_d)``.
 
         Result:
-            self._segment_mm: list[np.memmap]  per detector, shape (N_seg_d, F)
+            self._segment_banks: list[np.ndarray]  per detector, (N_seg_d, F)
         """
-        self._segment_mm = []
+        self._segment_banks = []
 
         for det in self.detectors:
             # Segment ASDs should be from the noise used for training
@@ -149,20 +150,29 @@ class RecolourPostprocess(torch.nn.Module):
                     f"{expected} ({n_seg} x {n_freq} float32) — non-uniform psd_len?"
                 )
 
-            mm = np.memmap(bin_path, dtype=np.float32, mode="r", shape=(n_seg, n_freq))
-            self._segment_mm.append(mm)
+            # Read straight into a pre-allocated buffer (no intermediate copy).
+            bank = np.empty((n_seg, n_freq), dtype=np.float32)
+            with open(bin_path, "rb") as fh:
+                nread = fh.readinto(memoryview(bank).cast("B"))
+            if nread != expected:
+                raise ValueError(
+                    f"segment ASD bank {bin_path}: read {nread} of {expected} bytes"
+                )
+            self._segment_banks.append(bank)
 
     def _load_recolour_asds(self):
         """
-        Lazily memory-map the recolour ASD bank (one per detector). Rows are
-        gathered on demand in :meth:`forward`; the ~16 GB/detector banks never
-        need to be resident.
+        Load the recolour ASD bank into RAM (one array per detector). Each
+        detector is read straight into its own pre-allocated buffer — no
+        ``list + np.stack`` (which would transiently double the ~16 GB/detector
+        banks). Kept resident because a per-batch random gather on the NFS mount
+        is ~600 ms and would bottleneck training.
 
         Result:
-            self._recolour_mm: list[np.memmap]  per detector, shape (N_asd, F)
+            self._recolour_banks: list[np.ndarray]  per detector, (N_asd, F)
             self.n_recolour_asd: int
         """
-        self._recolour_mm = []
+        self._recolour_banks = []
         self.n_recolour_asd = None
 
         for det in self.detectors:
@@ -185,8 +195,14 @@ class RecolourPostprocess(torch.nn.Module):
                     f"{expected} ({n_asd} x {n_freq} float32)"
                 )
 
-            mm = np.memmap(bin_path, dtype=np.float32, mode="r", shape=(n_asd, n_freq))
-            self._recolour_mm.append(mm)
+            bank = np.empty((n_asd, n_freq), dtype=np.float32)
+            with open(bin_path, "rb") as fh:
+                nread = fh.readinto(memoryview(bank).cast("B"))
+            if nread != expected:
+                raise ValueError(
+                    f"recolour ASD bank {bin_path}: read {nread} of {expected} bytes"
+                )
+            self._recolour_banks.append(bank)
 
             if self.n_recolour_asd is None:
                 self.n_recolour_asd = n_asd
@@ -208,9 +224,9 @@ class RecolourPostprocess(torch.nn.Module):
         mask_cpu = torch.rand(self.B, self.D, 1) < self.p_recolour
         mask = mask_cpu.to(X.device, non_blocking=True)
 
-        # Whitening PSD: each window's own segment ASD, gathered lazily per det
+        # Whitening PSD: each window's own segment ASD, gathered per detector
         seg_idx = segment_ids.detach().cpu().numpy()
-        gathered_seg_asd = self._gather(self._segment_mm, seg_idx)
+        gathered_seg_asd = self._gather(self._segment_banks, seg_idx)
         gathered_seg_asd = gathered_seg_asd.to(X.device, non_blocking=True)
 
         X = torch.where(
@@ -219,9 +235,9 @@ class RecolourPostprocess(torch.nn.Module):
             X,
         )
 
-        # Recolour PSD: a random ASD from the target-epoch bank (lazy gather)
+        # Recolour PSD: a random ASD from the target-epoch bank
         recol_idx = torch.randint(0, self.n_recolour_asd, (self.B, self.D)).numpy()
-        gathered_recol_asd = self._gather(self._recolour_mm, recol_idx)
+        gathered_recol_asd = self._gather(self._recolour_banks, recol_idx)
         gathered_recol_asd = gathered_recol_asd.to(X.device)
 
         recol_gain = gathered_recol_asd + self.eps
@@ -230,15 +246,15 @@ class RecolourPostprocess(torch.nn.Module):
 
         return X
 
-    def _gather(self, mmaps, idx):
-        """Gather a (B, D, F) ASD tensor from per-detector memmaps.
+    def _gather(self, banks, idx):
+        """Gather a (B, D, F) ASD tensor from the per-detector in-RAM banks.
 
-        Only the rows named in ``idx`` (shape (B, D), integer) are read from each
-        detector's bank, so the full banks stay on disk / in the OS page cache
-        instead of resident in this process.
+        ``idx`` is an integer array of shape (B, D); row ``idx[b, d]`` is picked
+        from detector ``d``'s bank. Fancy indexing on the resident arrays is a
+        RAM-speed copy (the NFS-memmap variant cost ~600 ms/gather).
         """
-        F = mmaps[0].shape[1]
+        F = banks[0].shape[1]
         out = np.empty((self.B, self.D, F), dtype=np.float32)
         for d in range(self.D):
-            out[:, d, :] = mmaps[d][idx[:, d]]
+            out[:, d, :] = banks[d][idx[:, d]]
         return torch.from_numpy(out)
