@@ -91,7 +91,7 @@ def make_training_graph():
     # Make the noise sampler
     recolour = RecolourPostprocess(
         p_recolour=0.37,
-        recolour_dataset_dir="/data/wiay/nnarenraju/data_release/o3a_dataset",
+        recolour_dataset_dir="/local/scratch/igr/nnarenraju/data_release/o3a_dataset",
     )
     training_noise_sampler = MemmapNoiseSampler(
         postprocess_fn=recolour, prefetch=8, seed=150914
