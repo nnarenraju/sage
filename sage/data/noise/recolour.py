@@ -117,15 +117,18 @@ class RecolourPostprocess(torch.nn.Module):
 
     def _load_segment_asds(self):
         """
-        Loads pre-interpolated per-segment ASDs.
-        We need to pad the bank to a rectangular format
-        This supports tensor ops downstream
+        Lazily memory-map the per-segment ASD banks (one per detector). Rows are
+        gathered on demand in :meth:`forward` (see :meth:`_gather`) so the full
+        banks are never resident — only the rows a batch touches are read.
+
+        No rectangular padding is needed: each detector is indexed into its own
+        bank, and after the dense ``segment_index`` renumbering the sampler emits
+        per-detector positional ids in ``[0, N_seg_d)``.
 
         Result:
-            self.segment_asds: (D, N_seg_max, F) float32
+            self._segment_mm: list[np.memmap]  per detector, shape (N_seg_d, F)
         """
-        asds_per_det = []
-        max_nseg = 0
+        self._segment_mm = []
 
         for det in self.detectors:
             # Segment ASDs should be from the noise used for training
@@ -136,39 +139,31 @@ class RecolourPostprocess(torch.nn.Module):
             with open(meta_path, "r") as f:
                 meta = json.load(f)
 
-            raw = np.fromfile(bin_path, dtype=np.float32)
+            n_seg = len(meta)
+            n_freq = int(meta[0]["psd_len"])  # interpolated to a fixed F
+            expected = n_seg * n_freq * 4
+            actual = os.path.getsize(bin_path)
+            if actual != expected:
+                raise ValueError(
+                    f"segment ASD bank {bin_path}: size {actual} != expected "
+                    f"{expected} ({n_seg} x {n_freq} float32) — non-uniform psd_len?"
+                )
 
-            asds = []
-            cursor = 0
-            for m in meta:
-                n = m["psd_len"]  # should already be == F
-                asds.append(raw[cursor : cursor + n])
-                cursor += n
-
-            asds = np.stack(asds, axis=0)  # (N_seg, F)
-            asds_per_det.append(asds)
-            max_nseg = max(max_nseg, asds.shape[0])
-
-        # Pad to rectangular (D, N_seg_max, F)
-        padded = []
-        for asds in asds_per_det:
-            pad = max_nseg - asds.shape[0]
-            if pad > 0:
-                asds = np.pad(asds, ((0, pad), (0, 0)), constant_values=1.0)
-            padded.append(asds)
-
-        self.segment_asds = torch.from_numpy(np.stack(padded, axis=0))
+            mm = np.memmap(bin_path, dtype=np.float32, mode="r", shape=(n_seg, n_freq))
+            self._segment_mm.append(mm)
 
     def _load_recolour_asds(self):
         """
-        Loads recolour ASD bank (already interpolated).
-        Bank size should be the same for all dets;
-        So we don't need to pad this to form a rectangular tensor
+        Lazily memory-map the recolour ASD bank (one per detector). Rows are
+        gathered on demand in :meth:`forward`; the ~16 GB/detector banks never
+        need to be resident.
 
         Result:
-            self.recolour_asds: (D, N_asd, F) float32
+            self._recolour_mm: list[np.memmap]  per detector, shape (N_asd, F)
+            self.n_recolour_asd: int
         """
-        asds_all = []
+        self._recolour_mm = []
+        self.n_recolour_asd = None
 
         for det in self.detectors:
             # Recolour ASDs can be different from that for training
@@ -180,14 +175,21 @@ class RecolourPostprocess(torch.nn.Module):
             with open(meta_path, "r") as f:
                 meta = json.load(f)
 
-            n_asd = meta["num_psds"]
-            n_freq = meta["num_freq_bins"]  # should == F
+            n_asd = int(meta["num_psds"])
+            n_freq = int(meta["num_freq_bins"])  # should == F
+            expected = n_asd * n_freq * 4
+            actual = os.path.getsize(bin_path)
+            if actual != expected:
+                raise ValueError(
+                    f"recolour ASD bank {bin_path}: size {actual} != expected "
+                    f"{expected} ({n_asd} x {n_freq} float32)"
+                )
 
-            asds = np.fromfile(bin_path, dtype=np.float32).reshape(n_asd, n_freq)
-            asds_all.append(asds)
+            mm = np.memmap(bin_path, dtype=np.float32, mode="r", shape=(n_asd, n_freq))
+            self._recolour_mm.append(mm)
 
-        self.recolour_asds = torch.from_numpy(np.stack(asds_all, axis=0))
-        self.n_recolour_asd = self.recolour_asds.shape[1]
+            if self.n_recolour_asd is None:
+                self.n_recolour_asd = n_asd
 
     @torch.no_grad()
     def forward(
@@ -203,15 +205,12 @@ class RecolourPostprocess(torch.nn.Module):
         X = torch.fft.rfft(batch_td, dim=-1, norm="forward")
 
         # Bernoulli recolour mask (B, D, 1)
-        # RuntimeError: Offset increment outside graph capture encountered unexpectedly.
-        # mask = torch.rand(self.B, self.D, 1, device=X.device) < self.p_recolour
-
         mask_cpu = torch.rand(self.B, self.D, 1) < self.p_recolour
         mask = mask_cpu.to(X.device, non_blocking=True)
 
-        # Whitening PSD (only where mask == True, else ones)
-        det_idx = torch.arange(self.D).view(1, self.D).expand(self.B, self.D)
-        gathered_seg_asd = self.segment_asds[det_idx, segment_ids]
+        # Whitening PSD: each window's own segment ASD, gathered lazily per det
+        seg_idx = segment_ids.detach().cpu().numpy()
+        gathered_seg_asd = self._gather(self._segment_mm, seg_idx)
         gathered_seg_asd = gathered_seg_asd.to(X.device, non_blocking=True)
 
         X = torch.where(
@@ -220,9 +219,9 @@ class RecolourPostprocess(torch.nn.Module):
             X,
         )
 
-        # Recolour PSD (only where mask == True)
-        recol_idx = torch.randint(0, self.n_recolour_asd, (self.B, self.D))
-        gathered_recol_asd = self.recolour_asds[det_idx, recol_idx]
+        # Recolour PSD: a random ASD from the target-epoch bank (lazy gather)
+        recol_idx = torch.randint(0, self.n_recolour_asd, (self.B, self.D)).numpy()
+        gathered_recol_asd = self._gather(self._recolour_mm, recol_idx)
         gathered_recol_asd = gathered_recol_asd.to(X.device)
 
         recol_gain = gathered_recol_asd + self.eps
@@ -230,3 +229,16 @@ class RecolourPostprocess(torch.nn.Module):
         X = torch.where(mask, X * recol_gain, X)
 
         return X
+
+    def _gather(self, mmaps, idx):
+        """Gather a (B, D, F) ASD tensor from per-detector memmaps.
+
+        Only the rows named in ``idx`` (shape (B, D), integer) are read from each
+        detector's bank, so the full banks stay on disk / in the OS page cache
+        instead of resident in this process.
+        """
+        F = mmaps[0].shape[1]
+        out = np.empty((self.B, self.D, F), dtype=np.float32)
+        for d in range(self.D):
+            out[:, d, :] = mmaps[d][idx[:, d]]
+        return torch.from_numpy(out)
