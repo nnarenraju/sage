@@ -274,6 +274,50 @@ def _probe_pipeline_shapes(cfg, signal_sampler, noise_sampler, processor, model,
         print(f"    num_components={loss_function.num_components}  values={loss.detach().tolist()}")
 
 
+def _profile_steps(cfg, signal_sampler, noise_sampler, processor, model,
+                   loss_function, optimiser, scaler, n_iters=20):
+    """Per-component per-iter timing: signal / noise / combine / processor /
+    model fwd+bwd. cuda.synchronize between stages serialises the (normally
+    overlapped) prefetch, so the printed total is an upper bound — read it for
+    the *relative* split that localises any bottleneck."""
+    from sage.core.pipeline import GWBatch, Grid, ProcessingState
+
+    B = cfg.batch_size
+    S = int(B * cfg.class_balance)
+    npe = len(cfg.do_point_estimate)
+    nt = npe + 1
+    dev = cfg.device
+    init_state = getattr(signal_sampler, "output_state", ProcessingState(Grid.FD_UNIFORM))
+    sync = torch.cuda.synchronize
+    agg = dict(signal=0.0, noise=0.0, combine=0.0, processor=0.0, model=0.0, total=0.0)
+
+    for _ in range(n_iters):
+        sync(); a = time.time()
+        sd, st = signal_sampler(); sync(); b = time.time()
+        nd, ntg = noise_sampler(); sync(); c = time.time()
+        ntg = torch.cat((torch.zeros(ntg.shape[0], npe, device=dev, dtype=ntg.dtype), ntg), 1)
+        idx = torch.randperm(B, device=dev)[:S]
+        sp = torch.zeros_like(nd)
+        tp = torch.zeros(B, nt, device=dev, dtype=st.dtype)
+        sp[idx] = sd; tp[idx] = st
+        x = nd + sp; tg = ntg + tp; sync(); d = time.time()
+        batch = GWBatch(x, state=init_state, freqs=None, coarse_indices=None)
+        batch = processor(batch); ni = batch.to_network_input(); sync(); e = time.time()
+        optimiser.zero_grad(set_to_none=True)
+        with (torch.autocast(device_type="cuda", dtype=torch.float16)
+              if cfg.autocast else nullcontext()):
+            out = model(ni); loss = loss_function(out, tg)
+        scaler.scale(loss[0]).backward(); scaler.unscale_(optimiser)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.clip_norm)
+        scaler.step(optimiser); scaler.update(); sync(); f = time.time()
+        agg['signal'] += b - a; agg['noise'] += c - b; agg['combine'] += d - c
+        agg['processor'] += e - d; agg['model'] += f - e; agg['total'] += f - a
+
+    print(f"  per-iter breakdown over {n_iters} iters (serialised; total is an upper bound):")
+    for k in ("signal", "noise", "combine", "processor", "model", "total"):
+        print(f"    {k:10s} {agg[k]/n_iters*1000:7.1f} ms  ({100*agg[k]/agg['total']:.0f}%)")
+
+
 @requires_run_env
 def test_o3b_pipeline_compiled_longrun(o3b_run):
     """Production-faithful longer run: COMPILED model (fullgraph + dynamic),
@@ -342,6 +386,10 @@ def test_o3b_pipeline_compiled_longrun(o3b_run):
           f"({cfg.batch_size*N_LONG_TRAIN_ITERS/dt:.0f} samples/s)")
     print(f"  train loss = {tl.tolist()}")
     assert torch.isfinite(tl).all(), f"non-finite train loss: {tl}"
+
+    _stage("PER-COMPONENT PROFILE (localise where each iter's time goes)")
+    _profile_steps(cfg, train_signal, train_noise, processor, model,
+                   loss_function, optimiser, scaler, n_iters=20)
 
     _stage(f"LONG VALIDATION — {N_LONG_VAL_ITERS} iters (writes validation_data.h5)")
     validate_sage = SageVanillaValidation(
