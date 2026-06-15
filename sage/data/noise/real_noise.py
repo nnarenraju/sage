@@ -36,6 +36,8 @@ from pathlib import Path
 from typing import Dict, List, Union, Optional
 from pycbc import DYN_RANGE_FAC
 
+import atexit
+import weakref
 import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
@@ -493,10 +495,25 @@ class MemmapNoiseSampler(torch.nn.Module):
         # Prefetch queue
         self.queue = Queue(maxsize=self.prefetch)
         self._stop_event = threading.Event()
+        self._closed = False
         self._prefetch_thread = threading.Thread(
             target=self._prefetch_loop, daemon=True
         )
         self._prefetch_thread.start()
+
+        # Stop the daemon prefetch thread cleanly at interpreter exit. Without
+        # this it keeps running into finalization and can try to schedule work
+        # (or touch CUDA / pinned memory) on a tearing-down interpreter, which
+        # aborts the process. weakref so the registration can't keep the sampler
+        # alive on its own.
+        _ref = weakref.ref(self)
+
+        def _stop_at_exit(_ref=_ref):
+            obj = _ref()
+            if obj is not None:
+                obj.shutdown()
+
+        atexit.register(_stop_at_exit)
 
     def set_hard_dataset(
         self,
@@ -698,12 +715,20 @@ class MemmapNoiseSampler(torch.nn.Module):
 
     def _prefetch_loop(self):
         while not self._stop_event.is_set():
-            if not self.queue.full():
-                batch_tensor = self._read_batch(self.batch_size)
-                self.queue.put(batch_tensor)
-            else:
-                # sleep briefly to yield CPU
-                self._stop_event.wait(0.01)
+            try:
+                if not self.queue.full():
+                    batch_tensor = self._read_batch(self.batch_size)
+                    self.queue.put(batch_tensor)
+                else:
+                    # sleep briefly to yield CPU
+                    self._stop_event.wait(0.01)
+            except RuntimeError as exc:
+                # At interpreter shutdown a fresh ThreadPoolExecutor can no
+                # longer schedule work; stop quietly instead of aborting the
+                # daemon thread with a traceback.
+                if self._stop_event.is_set() or "interpreter shutdown" in str(exc):
+                    break
+                raise
 
     def sample_batch(self):
         """
@@ -718,8 +743,24 @@ class MemmapNoiseSampler(torch.nn.Module):
         return self.sample_batch(), self.noise_target
 
     def shutdown(self):
-        """Stop prefetch thread"""
+        """Stop the prefetch thread and release memmaps.
+
+        Idempotent and safe to call explicitly, from atexit, or twice.
+        """
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         self._stop_event.set()
-        self._prefetch_thread.join()
-        for mm in self.mmaps:
+        # Drain the queue so a thread parked in queue.put() can finish its
+        # current iteration and observe the stop flag.
+        try:
+            while not self.queue.empty():
+                self.queue.get_nowait()
+        except Exception:
+            pass
+        t = getattr(self, "_prefetch_thread", None)
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=5.0)
+        for mm in getattr(self, "mmaps", []):
             del mm
+        self.mmaps = []
