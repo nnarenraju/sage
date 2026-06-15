@@ -63,7 +63,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
     GRAPH_READY = True
 
-    def __init__(self, param_sampler=None, waveform_project=None, augment=None):
+    def __init__(
+        self,
+        param_sampler=None,
+        waveform_project=None,
+        augment=None,
+        append_per_det_tc=False,
+    ):
 
         torch.nn.Module.__init__(self)
 
@@ -112,6 +118,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.waveform_project = waveform_project
         self.augment = augment
 
+        # When True, append per-detector coalescence times (physical, within-
+        # window seconds) to the target AFTER the class column:
+        # [pe..., class, tc_det0, tc_det1, ...]. Consumed by the multi-detector
+        # consistency heads. Off by default so the standard [pe..., class]
+        # target (and everything that reads targets[:, -1] / [:, :-1]) is
+        # unchanged.
+        self.append_per_det_tc = bool(append_per_det_tc)
+
         # param names needed for Pv2
         self.param_names = [
             "mass1",
@@ -144,6 +158,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # self.param_names[8], so req_idx[8] gives its all_theta column.
         self.dist_col = int(self.req_idx[8].item())
 
+        # Column of geocentric "tc" in the full all_theta tensor, used to build
+        # per-detector arrival times (tc_det = tc_geocentric + projection delay).
+        self.tc_col = int(self.param_sampler.param_index["tc"])
+
         # Target handling
         self.param_sampler.req_idx = self.req_idx
         self.param_sampler._compile_batch_normaliser()
@@ -160,13 +178,18 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
         hp, hc = self.get_hphc(req_theta)
 
-        hf = self.waveform_project(
+        proj = self.waveform_project(
             hp,
             hc,
             ra=req_theta[:, -2],
             dec=req_theta[:, -1],
             polarization=req_theta[:, -3],
+            return_delay=self.append_per_det_tc,
         )
+        if self.append_per_det_tc:
+            hf, dt = proj  # dt: (B, D) per-detector geocentre delay (seconds)
+        else:
+            hf = proj
 
         if self.augment:
             # augment returns (hf_scaled, scale) where hf_new = hf_old * scale.
@@ -181,6 +204,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )
+
+        # Per-detector coalescence times appended AFTER the class column, so the
+        # standard [pe..., class] view (targets[:, : num_pe + 1]) is unchanged.
+        # tc_det = geocentric tc + projection delay, in physical within-window
+        # seconds (amplitude rescaling above does not affect timing).
+        if self.append_per_det_tc:
+            per_det_tc = all_theta[:, self.tc_col].unsqueeze(1) + dt
+            targets = torch.cat([targets, per_det_tc], dim=1)
 
         if return_theta:
             return hf, targets, all_theta
