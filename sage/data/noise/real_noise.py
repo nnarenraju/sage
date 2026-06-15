@@ -384,6 +384,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         hard_dataset_path=None,
         hard_dataset_dir=None,
         hard_bias_prob: float = 0.0,
+        num_read_workers: int = 16,
     ):
         super().__init__()
 
@@ -491,6 +492,13 @@ class MemmapNoiseSampler(torch.nn.Module):
                 f"bias_prob={self._hard_bias_prob:.0%}"
             )
         # -----------------------------------------------------------------------
+
+        # Worker pool that reads the batch's per-window noise slices in
+        # parallel. NFS random reads are latency-bound, so reading a detector's
+        # 128 windows serially costs ~1 s and starves the GPU; a wide pool
+        # overlaps the read latency (~100x faster on the data mount).
+        self.num_read_workers = int(num_read_workers)
+        self._read_pool = ThreadPoolExecutor(max_workers=self.num_read_workers)
 
         # Prefetch queue
         self.queue = Queue(maxsize=self.prefetch)
@@ -675,25 +683,24 @@ class MemmapNoiseSampler(torch.nn.Module):
             (B, D, seq_len), dtype=torch.float32, device=self.device
         )
 
-        def read_detector(d):
-            """Read a batch of segments for detector index ``d`` from the memmap."""
-            mm = self.mmaps[d]
-            starts = start_indices[d]
-            arr = np.empty((B, seq_len), dtype=np.float32)
+        # Read every (detector, window) slice in parallel on the shared pool.
+        # NFS reads are latency-bound, so a wide pool overlaps the waits: a
+        # detector's 128 windows cost ~1 s read serially, ~10 ms in parallel.
+        arrs = [np.empty((B, seq_len), dtype=np.float32) for _ in range(D)]
+        mmaps = self.mmaps
 
-            for i, s in enumerate(starts):
-                arr[i] = mm[s : s + seq_len]
+        def _read_window(job):
+            d, i = job
+            s = start_indices[d][i]
+            arrs[d][i] = mmaps[d][s : s + seq_len]
 
-            # Get the original scale back
-            arr /= DYN_RANGE_FAC
+        list(self._read_pool.map(
+            _read_window, [(d, i) for d in range(D) for i in range(B)]
+        ))
 
-            return arr
-
-        with ThreadPoolExecutor(max_workers=D) as executor:
-            results = list(executor.map(read_detector, range(D)))
-
-        for d, arr in enumerate(results):
-            cpu_tensor = torch.from_numpy(arr).pin_memory()
+        for d in range(D):
+            arrs[d] /= DYN_RANGE_FAC  # restore original scale
+            cpu_tensor = torch.from_numpy(arrs[d]).pin_memory()
             batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=True)
 
         # convert segment indices to a CPU tensor
@@ -761,6 +768,9 @@ class MemmapNoiseSampler(torch.nn.Module):
         t = getattr(self, "_prefetch_thread", None)
         if t is not None and t.is_alive() and t is not threading.current_thread():
             t.join(timeout=5.0)
+        pool = getattr(self, "_read_pool", None)
+        if pool is not None:
+            pool.shutdown(wait=False)
         for mm in getattr(self, "mmaps", []):
             del mm
         self.mmaps = []
