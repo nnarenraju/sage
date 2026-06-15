@@ -46,7 +46,13 @@ def save_validation(nepoch, output, target, params, signal_idx, savepath):
         Path to the HDF5 output file.
     """
     with h5py.File(savepath, "a") as f:
-        grp = f.create_group(f"epoch_{nepoch:04d}")
+        name = f"epoch_{nepoch:04d}"
+        if name in f:
+            # Overwrite a re-validated / restarted epoch rather than crashing on
+            # a pre-existing validation_data.h5 (e.g. a fresh run reusing an
+            # export dir, or re-running the same epoch).
+            del f[name]
+        grp = f.create_group(name)
         grp.create_dataset("network_output", data=output.numpy(), compression="gzip")
         grp.create_dataset("network_target", data=target.numpy(), compression="gzip")
         grp.create_dataset("signal_params",  data=params.numpy(),  compression="gzip")
