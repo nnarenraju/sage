@@ -120,7 +120,7 @@ def make_validation_graph():
 
     # Make the noise sampler
     validation_noise_sampler = MemmapNoiseSampler(
-        postprocess_fn=None, prefetch=8, seed=170817
+        postprocess_fn=None, prefetch=8, seed=170817, training=False
     )
 
     return validation_signal_sampler, validation_noise_sampler
