@@ -176,17 +176,5 @@ runs/*s
 sage/architecture/network/attentive_*.py
 sage/architecture/network/[!_]*/
 
-# New waveform modules
-sage/data/waveform/multiband_*.py
-
-# New noise modules
-sage/data/noise/*_mining.py
-sage/factory/*_schedules.py
-
-# New pipeline components
-sage/core/pipeline.py
-sage/factory/curriculum.py
-
 # New integration tests
-tests/test_*_pipeline.py
 tests/*_complex.py
