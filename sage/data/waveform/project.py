@@ -353,11 +353,16 @@ class ConstantProjection(torch.nn.Module):
         # Detector.time_delay_from_location (pycbc/detector/ground.py:449).
         return torch.einsum("bi,di->bd", ehat, self.dx) / C
 
-    def forward(self, hp, hc, ra, dec, polarization, freqs=None):
+    def forward(self, hp, hc, ra, dec, polarization, freqs=None, return_delay=False):
         """Return the strain of a waveform as measured by all detectors.
         Apply the time shift for all given detectors relative to the assumed
         geocentric frame and apply the antenna patterns to the plus and cross
         polarizations.
+
+        When ``return_delay=True`` also return the per-detector time delay
+        ``dt`` of shape ``(B, D)`` (seconds, relative to the geocentre) that was
+        applied. This is the quantity that converts a geocentric coalescence
+        time into the per-detector arrival time: ``tc_det = tc_geocentric + dt``.
 
         Parameters
         ----------
@@ -399,4 +404,6 @@ class ConstantProjection(torch.nn.Module):
         # hf is (B, N_ifo, seq_len) and phase is (B, 1, seq_len)
         hf *= phase
 
+        if return_delay:
+            return hf, dt
         return hf
