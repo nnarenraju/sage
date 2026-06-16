@@ -416,8 +416,13 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
             persistent=False,
         )
 
-        # Ranking head now also consumes the 8 corroboration features.
-        self.get_ranking_statistic = nn.Linear(512 + 8, 1)
+        # Ranking head now also consumes the 8 corroboration features. The raw
+        # corroboration features sit ~8x above the backbone-feature scale, so a
+        # BatchNorm centres/scales each of the 8 to ~unit variance before the
+        # concat — otherwise they dominate the ranking logit at init.
+        self.n_corr = 8
+        self.corr_norm = nn.BatchNorm1d(self.n_corr)
+        self.get_ranking_statistic = nn.Linear(512 + self.n_corr, 1)
 
         num_point_estimates = len(cfg.do_point_estimate)
         self.point_estimate_layers = nn.ModuleList(
@@ -459,8 +464,10 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         features = self.flatten(self.avg_pool_1d(self.backend(cnn_output)))  # (B, 512)
 
         # Ranking statistic from merged features + corroboration block. The
-        # corroboration block is computed in float32 (statistic stability); cast
-        # it to the backbone dtype (fp16 under autocast) for the concatenation.
+        # corroboration block is computed in float32 (statistic stability) and
+        # BatchNorm-normalised to the backbone-feature scale; cast to the backbone
+        # dtype (fp16 under autocast) for the concatenation.
+        corr = self.corr_norm(corr)
         ranking_stat = self.get_ranking_statistic(
             torch.cat([features, corr.to(features.dtype)], dim=1)
         )
