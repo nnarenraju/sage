@@ -14,14 +14,23 @@ and the objective is the sum of two *separate* losses:
   * the per-detector :class:`ConsistencyNLLLoss` on the per-detector
     ``tc`` / ``mchirp`` heads.
 
-The signal sampler MUST be built with ``append_per_det_tc=True`` so the targets
-carry the per-detector arrival times after the class column:
-``[pe..., class, tc_det0, tc_det1, ...]``.
+The signal sampler MUST be built with ``append_per_det_targets=True`` so the
+targets carry the per-detector arrival times *and* chirp masses after the class
+column: ``[pe..., class, tc_det0..tc_det{D-1}, mc_det0..mc_det{D-1}]``.
 
-Supervision masks (per detector) are, for now, derived from the class label —
-i.e. the 2-class regime: matched-coherent signals are supervised on both
-detectors, pure noise on neither. The 4-class mismatch / time-slide scheme is a
-planned extension that will supply explicit per-detector masks here instead.
+The batch is assembled as four classes. The signal sampler yields ``S`` coherent
+injections plus an ``extra_batch`` pool; an optional
+:class:`~sage.data.non_astrophysical.NonAstrophysicalMasker` turns the pool into
+non-astrophysical (decoherent) pairs that are dropped into *noise* slots, so:
+
+  - signal + signal   (coherent)        -> class 1, both detectors supervised
+  - signal + noise     (non-astro)      -> class 0, signal detector supervised
+  - signal + signal'   (non-astro)      -> class 0, both (each own truth)
+  - noise  + noise     (pure noise)     -> class 0, neither supervised
+
+The non-astrophysical pairs eat the noise budget (never the class-1 signal
+budget) so the class balance is preserved. With no masker / ``extra_batch=0``
+this reduces to the 2-class (coherent-signal vs noise) regime. TRAINING ONLY.
 """
 
 import torch
@@ -83,9 +92,9 @@ class SageConsistencyTraining(torch.nn.Module):
         self.num_detectors = len(self.cfg.detectors)
         self.B = self.cfg.batch_size
         self.S = int(self.cfg.batch_size * self.cfg.class_balance)
-        # target layout: [pe..., class | tc_det0..tc_det{D-1}]
+        # target layout: [pe..., class | tc_det0..tc_det{D-1} | mc_det0..mc_det{D-1}]
         self.merged_width = self.num_point_estimate + 1
-        self.full_width = self.merged_width + self.num_detectors
+        self.full_width = self.merged_width + 2 * self.num_detectors
 
         # Auto-multiband config (inert unless the signal sampler exposes one).
         self._initial_state = getattr(
@@ -111,57 +120,67 @@ class SageConsistencyTraining(torch.nn.Module):
         num_pe = self.num_point_estimate
         D = self.num_detectors
         B = self.B
+        S = self.S
+        mw = self.merged_width                  # num_pe + 1
+        fw = self.full_width                    # mw + 2*D
+        tc0, mc0 = mw, mw + D                    # per-detector tc / mc column offsets
 
         for nbatch in tqdm(range(self.num_iterations)):
 
             # ── 1. Sample ──────────────────────────────────────────────────
-            signal_data, signal_targets = self.signal_sampler()   # (S, full_width)
-            noise_data, noise_targets = self.noise_sampler()      # noise tgt (B, 1)
+            # Signal sampler yields S coherent signals + `extra` pool signals.
+            signal_data, signal_targets = self.signal_sampler()   # (S+extra, D, F)
+            noise_data, noise_targets = self.noise_sampler()      # (B, D, F), (B, 1)
 
             if self._selector is not None:
                 noise_data = self._selector(noise_data)
 
-            S = signal_data.shape[0]
-            per_det_tc = signal_targets[:, self.merged_width :].clone()  # (S, D)
+            coh_data = signal_data[:S]
+            coh_tgt = signal_targets[:S]                          # class 1, full width
+            coh_mask = torch.ones(S, D, device=device, dtype=signal_targets.dtype)
 
-            # ── 1b. Optionally decohere a fraction into non-astrophysical pairs.
-            if self.masker is not None:
-                signal_data, per_det_tc, signal_mask_S, is_coherent = self.masker(
-                    signal_data, per_det_tc
+            # ── 1b. Non-astrophysical pool -> class-0 injections (training only).
+            # The extra pool signals are decohered and dropped into noise slots,
+            # so they eat the noise budget, never the class-1 signal budget.
+            extra = 0
+            if self.masker is not None and signal_data.shape[0] > S:
+                pool_data = signal_data[S:]
+                pool_tc = signal_targets[S:, tc0:mc0]            # (extra, D)
+                pool_mc = signal_targets[S:, mc0 : mc0 + D]      # (extra, D)
+                na_data, na_tc, na_mc, na_mask = self.masker(
+                    pool_data, pool_tc, pool_mc
                 )
-                signal_targets = signal_targets.clone()
-                signal_targets[:, num_pe] = is_coherent              # class 0 if decohered
-                signal_targets[:, self.merged_width :] = per_det_tc  # updated per-det tc
-            else:
-                signal_mask_S = torch.ones(
-                    S, D, device=device, dtype=signal_targets.dtype
-                )
+                extra = na_data.shape[0]
+                na_tgt = torch.zeros(
+                    extra, fw, device=device, dtype=signal_targets.dtype
+                )                                                # class col 0 (noise)
+                na_tgt[:, tc0:mc0] = na_tc
+                na_tgt[:, mc0 : mc0 + D] = na_mc
 
-            # ── 2. Pad noise targets to the full width ─────────────────────
-            # [0..0 (num_pe) | class | 0..0 (D per-detector tc)]
-            noise_full = torch.zeros(
-                B, self.full_width, device=device, dtype=noise_targets.dtype
-            )
-            noise_full[:, num_pe : num_pe + 1] = noise_targets
+            # ── 2. Assemble B slots: S coherent (cls 1), `extra` non-astro
+            #        (cls 0), the rest pure noise. ───────────────────────────
+            perm = torch.randperm(B, device=device)
+            coh_slots = perm[:S]
+            na_slots = perm[S : S + extra]
 
-            # ── 3. Random signal injection ─────────────────────────────────
-            idx = torch.randperm(B, device=device)[: self.S]
-            signal_pad = torch.zeros_like(noise_data)
-            target_pad = torch.zeros(
-                B, self.full_width, device=device, dtype=signal_targets.dtype
-            )
-            signal_pad[idx] = signal_data
-            target_pad[idx] = signal_targets
+            inj = torch.zeros_like(noise_data)
+            targets = torch.zeros(B, fw, device=device, dtype=signal_targets.dtype)
+            per_det_mask = torch.zeros(B, D, device=device, dtype=coh_mask.dtype)
 
-            # Per-detector supervision mask (B, D): signal slots carry their
-            # per-detector mask; pure-noise slots stay 0.
-            per_det_mask = torch.zeros(
-                B, D, device=device, dtype=signal_mask_S.dtype
-            )
-            per_det_mask[idx] = signal_mask_S
+            # pure-noise class label for every slot first (0), then overwrite the
+            # injected slots with their own full-width targets.
+            targets[:, num_pe : num_pe + 1] = noise_targets
 
-            x = noise_data + signal_pad
-            targets = noise_full + target_pad
+            inj[coh_slots] = coh_data
+            targets[coh_slots] = coh_tgt
+            per_det_mask[coh_slots] = coh_mask
+
+            if extra > 0:
+                inj[na_slots] = na_data
+                targets[na_slots] = na_tgt
+                per_det_mask[na_slots] = na_mask
+
+            x = noise_data + inj
 
             # ── 4. Preprocess ──────────────────────────────────────────────
             batch = GWBatch(
@@ -186,12 +205,12 @@ class SageConsistencyTraining(torch.nn.Module):
                 # Existing classification + merged-PE loss (unchanged contract).
                 merged = self.merged_loss(
                     (out.ranking_stat, out.point_estimates),
-                    targets[:, : self.merged_width],
+                    targets[:, :mw],
                 )
 
                 # Per-detector consistency NLL (per-detector supervision mask).
-                tc_target = targets[:, self.merged_width :]            # (B, D) seconds
-                mc_target = targets[:, 1]                              # (B,) std mchirp
+                tc_target = targets[:, tc0:mc0]                  # (B, D) seconds
+                mc_target = targets[:, mc0 : mc0 + D]            # (B, D) std mchirp
                 cons = self.consistency_loss(
                     out.mu_tc, out.log_sigma_tc, out.mu_mc, out.log_sigma_mc,
                     tc_target, mc_target, per_det_mask,
