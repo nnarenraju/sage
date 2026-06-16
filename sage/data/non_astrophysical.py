@@ -170,6 +170,24 @@ class NonAstrophysicalMasker:
         )                                                    # (N, D, F) complex
         na_data = na_data * phase.to(na_data.dtype)
 
+        # ── zero the circular-shift wraparound ────────────────────────────────
+        # The FD phase shift is a *circular* shift in time: content pushed past
+        # one window edge reappears at the other. We want a LINEAR shift — a
+        # re-timed signal whose tail is simply cut off at the window edge, exactly
+        # like a real time-domain search window catching a partial signal. We know
+        # dt exactly, so we know which samples wrapped: a right shift (dt>0) wraps
+        # the leading ``dt`` samples to the front, a left shift the trailing
+        # ``|dt|`` to the back. Zero that band in the time domain. The merger lands
+        # at ``new_tc``, always on the opposite side from the wrap, so it's never
+        # touched.
+        nsamples = 2 * (F - 1)
+        td = torch.fft.irfft(na_data, n=nsamples, dim=-1)        # (N, D, nsamples)
+        dt_samp = torch.round(dt * (nsamples * float(self.delta_f))).long()  # (N, D)
+        idx = torch.arange(nsamples, device=device)
+        ds = dt_samp.unsqueeze(-1)                               # (N, D, 1)
+        keep = torch.where(ds > 0, idx >= ds, idx < nsamples + ds)  # (N, D, nsamples)
+        na_data = torch.fft.rfft(td * keep, dim=-1).to(na_data.dtype)  # (N, D, F)
+
         na_tc = new_tc
         na_mc = src_mc
         na_mask = torch.ones(N, D, device=device, dtype=pool_tc.dtype)

@@ -68,12 +68,22 @@ def test_signal_signal_keeps_both_and_mc_differs():
     assert float(differ) > 0.9
 
 
-def test_retiming_preserves_magnitude():
-    # The FD phase shift has unit modulus, so |strain| is unchanged; detector 0
-    # keeps its own event (src index identity), only its phase moves.
+def test_retiming_zeros_wraparound():
+    # The re-time is a LINEAR shift (cut at the edge), not circular: the band that
+    # would have wrapped must be exactly zero in the time domain. Detector 0 keeps
+    # its own event (src index = identity), so its shift is dt = na_tc - tc.
     data, tc, mc = _pool(4)
-    d, _, _, _ = _masker(p_signal_noise=0.0, seed=4)(data, tc, mc)
-    assert torch.allclose(d[:, 0].abs(), data[:, 0].abs(), atol=1e-4)
+    d, na_tc, _, _ = _masker(p_signal_noise=0.0, seed=4)(data, tc, mc)
+    nsamples = 2 * (F - 1)
+    sample_rate = nsamples * DELTA_F
+    td = torch.fft.irfft(d, n=nsamples, dim=-1)              # (N, D, nsamples)
+    ds = torch.round((na_tc[:, 0] - tc[:, 0]) * sample_rate).long()
+    for i in range(N):
+        k = int(ds[i])
+        if k > 0:        # right shift -> leading k samples wrapped -> zeroed
+            assert torch.allclose(td[i, 0, :k], torch.zeros(k), atol=1e-3)
+        elif k < 0:      # left shift -> trailing |k| wrapped -> zeroed
+            assert torch.allclose(td[i, 0, k:], torch.zeros(-k), atol=1e-3)
 
 
 def test_empty_pool_is_safe():
