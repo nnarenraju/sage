@@ -34,13 +34,16 @@ import torch.nn as nn
 
 from pathlib import Path
 from typing import Dict, List, Union, Optional
-from pycbc import DYN_RANGE_FAC
 
 import atexit
 import weakref
 import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
+
+# pycbc is an optional dependency; pull its dynamic-range constant lazily so the
+# noise package imports without pycbc (see ._pycbc_lazy).
+from ._pycbc_lazy import dyn_range_fac
 
 # ---------------------------------------------------------------------------
 # Dataset versioning helpers
@@ -170,7 +173,7 @@ class HDF5SingleNoiseSampler:
                 dtype=np.float64,
             )
 
-            noise /= DYN_RANGE_FAC
+            noise /= dyn_range_fac()
 
             if not np.any(np.isnan(noise)):
                 return noise
@@ -311,7 +314,7 @@ class MemmapSingleNoiseSampler:
             )
 
             # Undo dynamic range scaling
-            noise /= DYN_RANGE_FAC
+            noise /= dyn_range_fac()
 
             if not np.any(np.isnan(noise)):
                 if self.return_tensor:
@@ -699,7 +702,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         ))
 
         for d in range(D):
-            arrs[d] /= DYN_RANGE_FAC  # restore original scale
+            arrs[d] /= dyn_range_fac()  # restore original scale
             cpu_tensor = torch.from_numpy(arrs[d]).pin_memory()
             batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=True)
 
