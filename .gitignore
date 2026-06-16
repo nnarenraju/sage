@@ -157,6 +157,7 @@ source/baseline/data/psds/
 *.bin
 *docs/source/autoapi
 .nfs*
+*.npz
 
 # Do not ignore these files
 !requirements.txt
@@ -171,6 +172,7 @@ sage/data/waveform/lalsim_src
 runs/o3b_dummy_1
 runs/test
 runs/*s
+runs/o3b/*_smoke
 
 # New network modules
 sage/architecture/network/attentive_*.py
