@@ -68,7 +68,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         param_sampler=None,
         waveform_project=None,
         augment=None,
-        append_per_det_tc=False,
+        append_per_det_targets=False,
+        extra_batch=0,
     ):
 
         torch.nn.Module.__init__(self)
@@ -77,7 +78,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.cfg = get_cfg()
         self.data_cfg = get_data_cfg()
 
-        self.signal_batch_size = int(self.cfg.batch_size * self.cfg.class_balance)
+        # Base signal count = class_balance * batch_size. ``extra_batch`` adds
+        # more signals beyond that — used by the consistency loop to build
+        # non-astrophysical (class-0) samples without eating into the coherent
+        # (class-1) signal budget.
+        self.signal_batch_size = (
+            int(self.cfg.batch_size * self.cfg.class_balance) + int(extra_batch)
+        )
 
         # Fixed frequency grid
         f, f_ref = waveform_utils.get_freqs(
@@ -118,13 +125,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.waveform_project = waveform_project
         self.augment = augment
 
-        # When True, append per-detector coalescence times (physical, within-
-        # window seconds) to the target AFTER the class column:
-        # [pe..., class, tc_det0, tc_det1, ...]. Consumed by the multi-detector
-        # consistency heads. Off by default so the standard [pe..., class]
-        # target (and everything that reads targets[:, -1] / [:, :-1]) is
-        # unchanged.
-        self.append_per_det_tc = bool(append_per_det_tc)
+        # When True, append per-detector targets AFTER the class column:
+        # [pe..., class, tc_det0.. (physical s), mc_det0.. (standardised)].
+        # Consumed by the multi-detector consistency heads. Off by default so
+        # the standard [pe..., class] target (and everything that reads
+        # targets[:, -1] / [:, :-1]) is unchanged.
+        self.append_per_det_targets = bool(append_per_det_targets)
+        # Index of mchirp within do_point_estimate (its standardised column).
+        self.mc_pe_idx = list(self.cfg.do_point_estimate).index("mchirp")
 
         # param names needed for Pv2
         self.param_names = [
@@ -184,9 +192,9 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             ra=req_theta[:, -2],
             dec=req_theta[:, -1],
             polarization=req_theta[:, -3],
-            return_delay=self.append_per_det_tc,
+            return_delay=self.append_per_det_targets,
         )
-        if self.append_per_det_tc:
+        if self.append_per_det_targets:
             hf, dt = proj  # dt: (B, D) per-detector geocentre delay (seconds)
         else:
             hf = proj
@@ -205,13 +213,21 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )
 
-        # Per-detector coalescence times appended AFTER the class column, so the
-        # standard [pe..., class] view (targets[:, : num_pe + 1]) is unchanged.
-        # tc_det = geocentric tc + projection delay, in physical within-window
-        # seconds (amplitude rescaling above does not affect timing).
-        if self.append_per_det_tc:
-            per_det_tc = all_theta[:, self.tc_col].unsqueeze(1) + dt
-            targets = torch.cat([targets, per_det_tc], dim=1)
+        # Per-detector targets appended AFTER the class column, so the standard
+        # [pe..., class] view (targets[:, : num_pe + 1]) is unchanged. Layout:
+        # [pe..., class, tc_det0..tc_det{D-1}, mc_det0..mc_det{D-1}].
+        #   - tc_det = geocentric tc + projection delay, physical within-window
+        #     seconds (amplitude rescaling above does not affect timing);
+        #   - mc_det = the standardised mchirp, identical across detectors for a
+        #     real coherent injection (broadcast). The masker overwrites these
+        #     for non-astrophysical pairs (per-detector independent mchirp).
+        if self.append_per_det_targets:
+            D = dt.shape[1]
+            per_det_tc = all_theta[:, self.tc_col].unsqueeze(1) + dt   # (B, D)
+            per_det_mc = normed_targets[:, self.mc_pe_idx : self.mc_pe_idx + 1].expand(
+                -1, D
+            )                                                          # (B, D)
+            targets = torch.cat([targets, per_det_tc, per_det_mc], dim=1)
 
         if return_theta:
             return hf, targets, all_theta
