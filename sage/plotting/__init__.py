@@ -41,6 +41,7 @@ from .output_trajectory import plot_output_trajectory_over_epochs
 from .output_uncertainty import plot_output_vs_uncertainty
 from .param_distribution import plot_outputbin_param_distribution
 from .parameter_recovery import plot_param_recovery_heatmap
+from .pp_calibration import plot_pp_calibration
 from .paramfrac_above_thresh import plot_paramfrac_detected_above_thresh
 from .perturbation_sensitivity import plot_perturbation_sensitivity
 from .prediction_probability import plot_prediction_probability
