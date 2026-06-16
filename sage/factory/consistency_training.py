@@ -38,7 +38,7 @@ import torch
 from tqdm import tqdm
 from contextlib import nullcontext
 
-from sage.core.config import get_cfg
+from sage.core.config import get_cfg, get_data_cfg
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
 from .schedulers import ManageScheduler
 
@@ -92,6 +92,9 @@ class SageConsistencyTraining(torch.nn.Module):
         self.num_detectors = len(self.cfg.detectors)
         self.B = self.cfg.batch_size
         self.S = int(self.cfg.batch_size * self.cfg.class_balance)
+        # Window length (s) used to normalise the per-detector tc target to match
+        # the model's window-normalised mu_tc.
+        self.tc_scale = float(get_data_cfg().sample_length_in_s)
         # target layout: [pe..., class | tc_det0..tc_det{D-1} | mc_det0..mc_det{D-1}]
         self.merged_width = self.num_point_estimate + 1
         self.full_width = self.merged_width + 2 * self.num_detectors
@@ -209,14 +212,23 @@ class SageConsistencyTraining(torch.nn.Module):
                 )
 
                 # Per-detector consistency NLL (per-detector supervision mask).
-                tc_target = targets[:, tc0:mc0]                  # (B, D) seconds
+                # tc is window-normalised to match the model's normalised mu_tc
+                # (and put it on the same ~unit scale as the standardised mc).
+                tc_target = targets[:, tc0:mc0] / self.tc_scale  # (B, D) in [0, 1]
                 mc_target = targets[:, mc0 : mc0 + D]            # (B, D) std mchirp
                 cons = self.consistency_loss(
-                    out.mu_tc, out.log_sigma_tc, out.mu_mc, out.log_sigma_mc,
+                    out.mu_tc, out.sigma_tc, out.mu_mc, out.sigma_mc,
                     tc_target, mc_target, per_det_mask,
                 )
 
-                total = merged[0] + self.consistency_weight * cons[0]
+                # Warm up the consistency term linearly over the first epoch so
+                # the classifier and PE heads settle before the coherence loss
+                # engages (avoids early heteroscedastic spikes dominating).
+                if nepoch == 0:
+                    cons_w = self.consistency_weight * (nbatch + 1) / self.num_iterations
+                else:
+                    cons_w = self.consistency_weight
+                total = merged[0] + cons_w * cons[0]
 
             # ── 6. Backward + step ─────────────────────────────────────────
             if self.scaler is not None:
