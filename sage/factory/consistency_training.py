@@ -33,7 +33,17 @@ budget) so the class balance is preserved. With no masker / ``extra_batch=0``
 this reduces to the 2-class (coherent-signal vs noise) regime. TRAINING ONLY.
 """
 
+import math
+
 import torch
+import torch._functorch.config
+
+# The gradient-norm balancer calibrates by measuring per-loss gradients with
+# extra backward(retain_graph=True) passes over the model's graph. torch.compile's
+# donated-buffer optimisation frees/reuses those buffers and is incompatible with
+# retain_graph, so a compiled model raises at the first calibration. Disabling it
+# (small memory cost, no speed cost) keeps retain_graph working under compile.
+torch._functorch.config.donated_buffer = False
 
 from tqdm import tqdm
 from contextlib import nullcontext
@@ -62,6 +72,7 @@ class SageConsistencyTraining(torch.nn.Module):
         consistency_weight: float = 1.0,
         masker=None,
         scheduler_mode: str = "batch",
+        aux_weights=None,
         balance_target: float = 0.33,
         balance_every: int = 250,
         balance_decay: float = 0.7,
@@ -124,7 +135,16 @@ class SageConsistencyTraining(torch.nn.Module):
         self._ema_bce = None
         self._gbce_char = None                      # settled BCE-gradient scale
         self._ema_aux = [None] * n_aux
-        self._weights = [0.0] * n_aux               # current per-aux weights
+        # ``aux_weights`` (predefined, measured offline) -> FIXED-weight mode: no
+        # live gradient calibration, so nothing is measured through the compiled
+        # model. This is the production path. None -> live calibration (used by
+        # the offline eager measurement that *derives* these weights).
+        self._fixed = aux_weights is not None
+        if self._fixed:
+            assert len(aux_weights) == n_aux, "aux_weights must have one per aux loss"
+            self._weights = [float(w) for w in aux_weights]
+        else:
+            self._weights = [0.0] * n_aux           # set by live calibration
         self._last_weights = list(self._weights)    # for inspection/logging
 
         self.num_point_estimate = len(self.cfg.do_point_estimate)
@@ -165,29 +185,49 @@ class SageConsistencyTraining(torch.nn.Module):
         ]
         return float(torch.sqrt(torch.stack(sq).sum())) if sq else 0.0
 
+    @staticmethod
+    def _grad_norm_of(grads):
+        """L2 norm of a tuple of gradients (some entries may be None)."""
+        sq = [(g.detach() ** 2).sum() for g in grads if g is not None]
+        return float(torch.sqrt(torch.stack(sq).sum())) if sq else 0.0
+
     def _ema(self, prev, new):
         d = self.balance_decay
         return new if prev is None else d * prev + (1.0 - d) * new
 
-    def _calibrate_weights(self, bce_term, aux_terms):
-        """Recompute the per-aux weights from measured gradient norms.
+    def _calibrate_weights(self, net_input, recompute):
+        """Recompute the per-aux weights from per-loss gradient norms.
 
-        ``len(aux_terms) + 1`` extra unscaled backward passes over the *same*
-        graph (retain_graph=True so the real step backward still runs) measure
-        ‖g_bce‖ and each ‖g_i‖. EMAs of all norms + the BCE peak give a
-        saturation-proof budget ``B_ref`` and per-aux denominator floors; the
-        weights then equalise the aux gradient norms within a budget of
-        ``balance_target * B_ref`` (split n ways).
+        The norms are measured on a clean EAGER forward of the underlying module
+        (``model._orig_mod`` when compiled): measuring through the *compiled*
+        graph's retain_graph multi-backward is unreliable (donated buffers, fp16
+        underflow, zero gradients). ``net_input`` is reused, so the only extra
+        cost is one small forward + ``n+1`` ``autograd.grad`` calls every
+        ``balance_every`` steps. Any non-finite measurement is skipped so it can
+        never poison the running EMAs.
         """
-        self.optimiser.zero_grad(set_to_none=True)
-        bce_term.backward(retain_graph=True)
-        g_bce = self._grad_norm()
-        aux_norms = []
-        for t in aux_terms:
-            self.optimiser.zero_grad(set_to_none=True)
-            t.backward(retain_graph=True)
-            aux_norms.append(self._grad_norm())
-        self.optimiser.zero_grad(set_to_none=True)
+        eager = getattr(self.model, "_orig_mod", self.model)
+        params = [p for p in eager.parameters() if p.requires_grad]
+        with (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if self.cfg.autocast
+            else nullcontext()
+        ):
+            out = eager(net_input)
+            bce_term, aux_terms = recompute(out)
+        g_bce = self._grad_norm_of(
+            torch.autograd.grad(bce_term, params, retain_graph=True, allow_unused=True)
+        )
+        aux_norms = [
+            self._grad_norm_of(
+                torch.autograd.grad(t, params, retain_graph=True, allow_unused=True)
+            )
+            for t in aux_terms
+        ]
+
+        # don't let a non-finite measurement poison the EMAs / weights.
+        if not (math.isfinite(g_bce) and all(math.isfinite(x) for x in aux_norms)):
+            return
 
         # budget reference: tracks BCE (EMA), floored at a fraction of the
         # settled BCE-gradient scale (captured once at the first calibration) so
@@ -322,10 +362,24 @@ class SageConsistencyTraining(torch.nn.Module):
             bce = merged[1]
             aux = [merged[2], merged[3], cons[1], cons[2]]
 
-            if self.balance_target > 0.0:
-                if (self._gstep >= self.balance_settle
-                        and self._gstep % self.balance_every == 0):
-                    self._calibrate_weights(bce, aux)
+            if self._fixed or self.balance_target > 0.0:
+                # Live-calibration mode only (the offline measurement): recompute
+                # per-loss gradient norms on a clean eager forward. Fixed-weight
+                # mode (production) never measures gradients -> compile-safe.
+                if not self._fixed and (
+                    self._gstep >= self.balance_settle
+                    and self._gstep % self.balance_every == 0
+                ):
+                    def _recompute(o):
+                        m = self.merged_loss(
+                            (o.ranking_stat, o.point_estimates), targets[:, :mw]
+                        )
+                        c = self.consistency_loss(
+                            o.mu_tc, o.sigma_tc, o.mu_mc, o.sigma_mc,
+                            tc_target, mc_target, per_det_mask,
+                        )
+                        return m[1], [m[2], m[3], c[1], c[2]]
+                    self._calibrate_weights(net_input, _recompute)
                 # Warm up over the first epoch so BCE/PE settle before the aux
                 # losses fully engage.
                 warmup = (nbatch + 1) / self.num_iterations if nepoch == 0 else 1.0
