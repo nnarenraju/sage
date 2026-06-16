@@ -27,6 +27,7 @@ from .calibration_curve import plot_calibration_curve
 from .correllation_matrix import plot_correlation_matrix
 from .cumulative_volume import plot_cumulative_volume
 from .density2d import plot_2d_param_density
+from .consistency_diagnostics import plot_consistency_diagnostics
 from .diagonal_compare import plot_diagonal_compare
 from .efficiency_curves import plot_efficiency_curves
 from .efficiency2d import plot_2d_efficiency
@@ -53,6 +54,7 @@ from .manager import ValidationPlotManager
 
 __all__ = [
     "ValidationPlotManager",
+    "plot_consistency_diagnostics",
     "plot_calibration_curve",
     "plot_correlation_matrix",
     "plot_cumulative_volume",
