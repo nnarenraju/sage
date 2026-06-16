@@ -104,7 +104,13 @@ def run_consistency_sage():
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
 
     print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
-    model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=True)
+    # max-autotune-no-cudagraphs (not plain max-autotune): the consistency model's
+    # graph partitions on non-GPU / DeviceCopy ops, and capturing that partitioned
+    # graph into cudagraph trees segfaults. Drop cudagraphs (keep Triton kernel
+    # autotuning); the per-iter CPU-launch overhead is negligible at this size.
+    model = torch.compile(
+        model, mode="max-autotune-no-cudagraphs", fullgraph=True, dynamic=True
+    )
     print("Model compiled with torch.compile!")
 
     merged_loss = BCEWithPEsigmaLoss(regression_weight=0.005, coupling_weight=0.005)
