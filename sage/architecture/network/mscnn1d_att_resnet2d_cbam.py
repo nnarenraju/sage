@@ -416,12 +416,20 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
             persistent=False,
         )
 
-        # Ranking head now also consumes the 8 corroboration features. The raw
-        # corroboration features sit ~8x above the backbone-feature scale, so a
-        # BatchNorm centres/scales each of the 8 to ~unit variance before the
-        # concat — otherwise they dominate the ranking logit at init.
+        # Ranking head consumes the backbone features (512, left RAW — they are
+        # the primary signal) + 8 corroboration features. The corroboration block
+        # is a coherence *refinement* and must stay subordinate to the backbone.
+        # It is LayerNorm'd (NOT BatchNorm): the s statistics are heavy-tailed
+        # (chi-square-like) and the number of incoherent high-s samples varies
+        # per batch with p_non_astrophysical, so batch statistics jump around —
+        # LayerNorm is per-sample and immune to that, and tames the per-sample
+        # tail without clipping it (the high-s tail is the discriminating signal).
+        # The s features are already log1p-compressed upstream; LayerNorm then
+        # equalises the block, and a small affine gain (corr_gain_init) starts it
+        # at/below the backbone scale (~0.27). The gain is learnable.
         self.n_corr = 8
-        self.corr_norm = nn.BatchNorm1d(self.n_corr)
+        self.corr_gain_init = 0.25
+        self.corr_norm = nn.LayerNorm(self.n_corr)
         self.get_ranking_statistic = nn.Linear(512 + self.n_corr, 1)
 
         num_point_estimates = len(cfg.do_point_estimate)
@@ -439,6 +447,10 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
             nn.init.zeros_(layer.bias)
         for det in self.frontend:
             _initialize_frontend_weights(det)
+        # Start the corroboration block subordinate to the raw backbone: a small
+        # LayerNorm gain so it enters the logit at/below the backbone scale.
+        nn.init.constant_(self.corr_norm.weight, self.corr_gain_init)
+        nn.init.zeros_(self.corr_norm.bias)
 
     def forward(self, x) -> ConsistencyOutput:
         x = self.norm(x)
@@ -463,13 +475,13 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         cnn_output = torch.cat(cnn_outputs, dim=1)          # (B, D, C, T)
         features = self.flatten(self.avg_pool_1d(self.backend(cnn_output)))  # (B, 512)
 
-        # Ranking statistic from merged features + corroboration block. The
-        # corroboration block is computed in float32 (statistic stability) and
-        # BatchNorm-normalised to the backbone-feature scale; cast to the backbone
-        # dtype (fp16 under autocast) for the concatenation.
-        corr = self.corr_norm(corr)
+        # Ranking statistic from raw backbone features + the LayerNorm'd, gain-
+        # scaled corroboration block (kept subordinate to the backbone). corr is
+        # float32 (statistic stability); LayerNorm it there, then cast to the
+        # backbone dtype (fp16 under autocast) for the concat.
+        corr = self.corr_norm(corr).to(features.dtype)
         ranking_stat = self.get_ranking_statistic(
-            torch.cat([features, corr.to(features.dtype)], dim=1)
+            torch.cat([features, corr], dim=1)
         )
 
         # Merged heteroscedastic PE (blocked [mu..., log_var...]).
