@@ -47,7 +47,9 @@ from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from tqdm import tqdm
-from pycbc import DYN_RANGE_FAC
+
+# pycbc is optional; pull DYN_RANGE_FAC lazily (see ._pycbc_lazy).
+from ._pycbc_lazy import dyn_range_fac
 
 from sage.core.config import get_cfg
 
@@ -330,7 +332,7 @@ class _MiningReader:
             for i in range(B):
                 s = int(starts[i, d])
                 arr[i] = mm[s : s + self.seq_len].astype(np.float32)
-            arr /= DYN_RANGE_FAC
+            arr /= dyn_range_fac()
             return arr
 
         with ThreadPoolExecutor(max_workers=D) as pool:
@@ -1073,7 +1075,7 @@ class StartTimeNoiseSampler(nn.Module):
             for i in range(B):
                 s = int(starts[i, d])
                 arr[i] = mm[s : s + self.seq_len].astype(np.float32)
-            arr /= DYN_RANGE_FAC
+            arr /= dyn_range_fac()
             return arr
 
         with ThreadPoolExecutor(max_workers=self.n_detectors) as pool:
