@@ -56,10 +56,12 @@ class NonAstrophysicalMasker:
 
     Parameters
     ----------
-    freqs : torch.Tensor, shape ``(F,)``
-        The (real, positive) frequency grid the pool's frequency-domain strain
-        lives on — used for the re-timing phase shift. Take it from the signal
-        sampler (``signal_sampler.f[0]``).
+    delta_f : float
+        Frequency resolution (Hz) of the pool's frequency-domain strain. The
+        strain lives on a uniform real-FFT grid starting at DC, so the re-timing
+        phase uses ``f[k] = k * delta_f`` over the data's own bin count — this is
+        exactly the grid the projection applies its own delay on. Take it from
+        the signal sampler (``signal_sampler.df``).
     tc_bounds : tuple(float, float)
         The real ``tc`` prior band ``(lo, hi)`` (derived from the parameter
         sampler). Re-drawn arrival times are weighted to favour this band.
@@ -80,7 +82,7 @@ class NonAstrophysicalMasker:
 
     def __init__(
         self,
-        freqs,
+        delta_f,
         tc_bounds,
         analysis_length_s,
         p_signal_noise: float = 0.5,
@@ -88,8 +90,7 @@ class NonAstrophysicalMasker:
         edge_margin_s: float = 0.1,
         seed=None,
     ):
-        self._freqs = torch.as_tensor(freqs).reshape(-1).float()
-        self._freqs_dev = None  # cached device copy
+        self.delta_f = float(delta_f)
         self.tc_lo, self.tc_hi = float(tc_bounds[0]), float(tc_bounds[1])
         self.full_lo = float(edge_margin_s)
         self.full_hi = float(analysis_length_s) - float(edge_margin_s)
@@ -103,11 +104,6 @@ class NonAstrophysicalMasker:
             self._gen = torch.Generator(device=device)
             self._gen.manual_seed(int(self._seed))
         return self._gen
-
-    def _freqs_on(self, device):
-        if self._freqs_dev is None or self._freqs_dev.device != device:
-            self._freqs_dev = self._freqs.to(device)
-        return self._freqs_dev
 
     def _sample_tc(self, n, device, dtype, g):
         """Mixture: ``w_in_band`` uniform in the real band, else uniform window."""
@@ -145,7 +141,9 @@ class NonAstrophysicalMasker:
             return pool_data, pool_tc.clone(), pool_mc.clone(), empty_mask
 
         g = self._generator(device)
-        f = self._freqs_on(device)
+        # Real-FFT grid the strain lives on: f[k] = k * delta_f, DC-first, the
+        # data's own bin count (matches the projection's delay grid exactly).
+        f = self.delta_f * torch.arange(F, device=device, dtype=torch.float32)
         rows = torch.arange(N, device=device)
 
         # ── signal+signal': each detector a *different* event ──────────────────
