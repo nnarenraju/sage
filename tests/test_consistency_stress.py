@@ -238,16 +238,26 @@ def _long_run(b):
 
 
 def _sweep():
-    _stage("4. p_non_astrophysical SWEEP {0.0, 0.5} (eager), dropout=0.05")
-    for p in (0.0, 0.5):
+    # p is the fraction of the NOISE budget (B - S) made non-astrophysical, so it
+    # is valid over the full [0, 1]: 0.0 = pure 2-class (no non-astro), 1.0 = the
+    # entire noise class is non-astro (zero pure-noise samples). Sweep both
+    # extremes plus the midpoint.
+    _stage("4. p_non_astrophysical SWEEP {0.0, 0.5, 1.0} (eager), dropout=0.05")
+    for p in (0.0, 0.5, 1.0):
         b = _build(p_non_astro=p, dropout=0.05, compile_model=False)
-        extra = b["signal"].signal_batch_size - int(
-            b["cfg"].batch_size * b["cfg"].class_balance)
+        S = int(b["cfg"].batch_size * b["cfg"].class_balance)
+        n_noise = b["cfg"].batch_size - S
+        extra = b["signal"].signal_batch_size - S
         trainer = _make_trainer(b, N_SWEEP_ITERS)
         trainer(nepoch=0)
         comps = trainer.loss_components[0]
-        print(f"  p={p:<4} extra={extra:<3} loss={comps.tolist()}")
+        pure_noise = n_noise - extra
+        print(f"  p={p:<4} extra={extra:<3} pure_noise={pure_noise:<3} "
+              f"loss={comps.tolist()}")
         assert torch.isfinite(comps).all(), f"non-finite loss at p={p}: {comps}"
+        if p == 1.0:
+            assert extra == n_noise and pure_noise == 0, \
+                "p=1.0 must turn the entire noise budget non-astrophysical"
 
 
 def _mc_dropout():
