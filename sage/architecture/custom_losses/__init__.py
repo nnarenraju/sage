@@ -24,8 +24,10 @@ Documentation: NULL
 """
 
 from .loss_functions import BCEWithPEregLoss, BCEWithPEsigmaLoss
+from .consistency_loss import ConsistencyNLLLoss
 
 __all__ = [
     "BCEWithPEregLoss",
     "BCEWithPEsigmaLoss",
+    "ConsistencyNLLLoss",
 ]

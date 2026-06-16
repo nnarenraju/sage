@@ -187,3 +187,67 @@ class PerDetHead(nn.Module):
             entropy_tc=entropy_tc,
             entropy_mc=entropy_mc,
         )
+
+
+def consistency_statistic(
+    out_a: PerDetOutput,
+    out_b: PerDetOutput,
+    light_travel_time: torch.Tensor,
+    eps: float = 1e-8,
+):
+    """Uncertainty-weighted inter-detector consistency statistics for a pair.
+
+    ``s_tc`` is the chi-square-like arrival-time disagreement *in excess of* the
+    light-travel time, scaled by the combined per-detector variance — so it is
+    tolerant of a faint (large-sigma) detector but strict when both are
+    confident. ``s_mc`` is the analogous statistic for chirp mass (no
+    light-travel allowance: a real signal shares mchirp exactly).
+
+    Parameters
+    ----------
+    out_a, out_b : PerDetOutput
+        Per-detector head outputs for detectors A and B.
+    light_travel_time : torch.Tensor
+        Scalar light-travel time (seconds) between the two detectors.
+    eps : float
+        Denominator stabiliser.
+
+    Returns
+    -------
+    s_tc, s_mc : torch.Tensor, each ``(B,)``
+    """
+    var_tc = torch.exp(2.0 * out_a.log_sigma_tc) + torch.exp(2.0 * out_b.log_sigma_tc)
+    var_mc = torch.exp(2.0 * out_a.log_sigma_mc) + torch.exp(2.0 * out_b.log_sigma_mc)
+    d_tc = torch.relu((out_a.mu_tc - out_b.mu_tc).abs() - light_travel_time)
+    s_tc = d_tc**2 / (var_tc + eps)
+    s_mc = (out_a.mu_mc - out_b.mu_mc) ** 2 / (var_mc + eps)
+    return s_tc, s_mc
+
+
+def corroboration_features(
+    out_a: PerDetOutput,
+    out_b: PerDetOutput,
+    s_tc: torch.Tensor,
+    s_mc: torch.Tensor,
+) -> torch.Tensor:
+    """Build the ``(B, 8)`` corroboration feature block for the ranking head.
+
+    ``[s_tc, s_mc, sigma_tc_A, sigma_tc_B, sigma_mc_A, sigma_mc_B,
+       entropy_tc_A, entropy_tc_B]`` — the disagreement statistics together with
+    the per-detector uncertainties and attention entropies, so the learned
+    combiner can require small disagreement AND small sigma AND peaked (low
+    entropy) attention on both detectors, rather than a hard gate on ``s``.
+    """
+    return torch.stack(
+        [
+            s_tc,
+            s_mc,
+            torch.exp(out_a.log_sigma_tc),
+            torch.exp(out_b.log_sigma_tc),
+            torch.exp(out_a.log_sigma_mc),
+            torch.exp(out_b.log_sigma_mc),
+            out_a.entropy_tc,
+            out_b.entropy_tc,
+        ],
+        dim=1,
+    )
