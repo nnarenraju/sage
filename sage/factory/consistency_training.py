@@ -62,6 +62,12 @@ class SageConsistencyTraining(torch.nn.Module):
         consistency_weight: float = 1.0,
         masker=None,
         scheduler_mode: str = "batch",
+        balance_target: float = 0.33,
+        balance_every: int = 250,
+        balance_decay: float = 0.7,
+        balance_floor_frac: float = 0.1,
+        balance_denom_floor: float = 0.1,
+        balance_settle: int = 500,
     ):
         super().__init__()
 
@@ -87,6 +93,39 @@ class SageConsistencyTraining(torch.nn.Module):
         self.num_iterations = num_iterations
         self.num_epochs = num_epochs
         self.consistency_weight = float(consistency_weight)
+
+        # ── Gradient-norm budget balancer ─────────────────────────────────
+        # Every ``balance_every`` steps (after a ``balance_settle`` warm-up that
+        # skips the huge step-0 gradient) we measure ‖g_bce‖ and each auxiliary
+        # loss's ‖g_i‖, then set per-aux weights so that (a) the aux gradient
+        # norms are EQUALISED among themselves and (b) their combined norm is
+        # <= balance_target * BCE's gradient scale. The budget mostly *tracks*
+        # BCE (aux saturates with it), with two small guards:
+        #   * budget floor  B_ref = max(EMA(‖g_bce‖), floor_frac * g_bce_char)
+        #     where g_bce_char is the settled scale captured at the first
+        #     calibration — keeps aux from fully vanishing if BCE flattens,
+        #     without the brittle peak-tracking;
+        #   * per-aux denom floor g_i_eff = max(‖g_i‖, denom_floor * EMA(‖g_i‖))
+        #     — a converged aux's weight saturates at a finite ceiling instead
+        #       of 1/‖g_i‖ -> infinity.
+        # w_i = (balance_target / n) * B_ref / g_i_eff.
+        # balance_target <= 0 disables balancing (fixed consistency_weight path).
+        self.balance_target = float(balance_target)
+        self.balance_every = int(balance_every)
+        self.balance_decay = float(balance_decay)        # EMA decay per calibration
+        self.balance_floor_frac = float(balance_floor_frac)   # floor as frac of g_bce_char
+        self.balance_denom_floor = float(balance_denom_floor)  # mu
+        self.balance_settle = int(balance_settle)        # skip the init transient
+        # Auxiliary loss layout in the (merged, cons) component vectors:
+        #   merged = [total, bce, pe_reg, coupling];  cons = [total, tc, mc]
+        self._aux_names = ["pe_reg", "coupling", "cons_tc", "cons_mc"]
+        n_aux = len(self._aux_names)
+        self._gstep = 0                             # global step (across epochs)
+        self._ema_bce = None
+        self._gbce_char = None                      # settled BCE-gradient scale
+        self._ema_aux = [None] * n_aux
+        self._weights = [0.0] * n_aux               # current per-aux weights
+        self._last_weights = list(self._weights)    # for inspection/logging
 
         self.num_point_estimate = len(self.cfg.do_point_estimate)
         self.num_detectors = len(self.cfg.detectors)
@@ -116,6 +155,60 @@ class SageConsistencyTraining(torch.nn.Module):
             device=self.cfg.device,
             dtype=self.cfg.dtype,
         )
+
+    def _grad_norm(self):
+        """Global L2 norm of the gradients currently on the model parameters."""
+        sq = [
+            (p.grad.detach() ** 2).sum()
+            for p in self.model.parameters()
+            if p.grad is not None
+        ]
+        return float(torch.sqrt(torch.stack(sq).sum())) if sq else 0.0
+
+    def _ema(self, prev, new):
+        d = self.balance_decay
+        return new if prev is None else d * prev + (1.0 - d) * new
+
+    def _calibrate_weights(self, bce_term, aux_terms):
+        """Recompute the per-aux weights from measured gradient norms.
+
+        ``len(aux_terms) + 1`` extra unscaled backward passes over the *same*
+        graph (retain_graph=True so the real step backward still runs) measure
+        ‖g_bce‖ and each ‖g_i‖. EMAs of all norms + the BCE peak give a
+        saturation-proof budget ``B_ref`` and per-aux denominator floors; the
+        weights then equalise the aux gradient norms within a budget of
+        ``balance_target * B_ref`` (split n ways).
+        """
+        self.optimiser.zero_grad(set_to_none=True)
+        bce_term.backward(retain_graph=True)
+        g_bce = self._grad_norm()
+        aux_norms = []
+        for t in aux_terms:
+            self.optimiser.zero_grad(set_to_none=True)
+            t.backward(retain_graph=True)
+            aux_norms.append(self._grad_norm())
+        self.optimiser.zero_grad(set_to_none=True)
+
+        # budget reference: tracks BCE (EMA), floored at a fraction of the
+        # settled BCE-gradient scale (captured once at the first calibration) so
+        # aux doesn't fully vanish if BCE flattens — no brittle peak-tracking.
+        self._ema_bce = self._ema(self._ema_bce, g_bce)
+        if self._gbce_char is None:
+            self._gbce_char = g_bce
+        B_ref = max(self._ema_bce, self.balance_floor_frac * self._gbce_char)
+
+        n = len(aux_terms)
+        for i, g_i in enumerate(aux_norms):
+            self._ema_aux[i] = self._ema(self._ema_aux[i], g_i)
+            # denominator floor: a converged aux (g_i -> 0) gets a finite ceiling
+            # weight instead of 1/g_i -> infinity.
+            g_eff = max(g_i, self.balance_denom_floor * self._ema_aux[i])
+            self._weights[i] = (self.balance_target / n) * B_ref / (g_eff + 1e-12)
+
+        # inspection (last calibration): raw norms, budget, weighted aux norms.
+        self._last_g_bce = g_bce
+        self._last_aux_norms = list(aux_norms)
+        self._last_B_ref = float(B_ref)
 
     def forward(self, nepoch):
         self.model.train()
@@ -221,14 +314,28 @@ class SageConsistencyTraining(torch.nn.Module):
                     tc_target, mc_target, per_det_mask,
                 )
 
-                # Warm up the consistency term linearly over the first epoch so
-                # the classifier and PE heads settle before the coherence loss
-                # engages (avoids early heteroscedastic spikes dominating).
-                if nepoch == 0:
-                    cons_w = self.consistency_weight * (nbatch + 1) / self.num_iterations
-                else:
-                    cons_w = self.consistency_weight
-                total = merged[0] + cons_w * cons[0]
+            # ── 5b. Combine: BCE + gradient-balanced auxiliary losses. ─────
+            # Auxiliary terms (raw, pre-weight): pe_reg, coupling, cons_tc,
+            # cons_mc. The balancer's per-aux weights (recomputed every
+            # `balance_every` steps) equalise their gradient norms within a
+            # budget of balance_target * BCE's characteristic scale.
+            bce = merged[1]
+            aux = [merged[2], merged[3], cons[1], cons[2]]
+
+            if self.balance_target > 0.0:
+                if (self._gstep >= self.balance_settle
+                        and self._gstep % self.balance_every == 0):
+                    self._calibrate_weights(bce, aux)
+                # Warm up over the first epoch so BCE/PE settle before the aux
+                # losses fully engage.
+                warmup = (nbatch + 1) / self.num_iterations if nepoch == 0 else 1.0
+                weights = [warmup * w for w in self._weights]
+                self._last_weights = weights
+                total = bce + sum(w * t for w, t in zip(weights, aux))
+            else:
+                # Balancing disabled: fall back to merged-loss internal weights
+                # plus a fixed consistency weight.
+                total = merged[0] + self.consistency_weight * cons[0]
 
             # ── 6. Backward + step ─────────────────────────────────────────
             if self.scaler is not None:
@@ -248,8 +355,11 @@ class SageConsistencyTraining(torch.nn.Module):
                 self.optimiser.step()
 
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
+            self._gstep += 1
+            # Log [total, BCE, consistency-total] — BCE is the primary term and
+            # the reference the aux losses are balanced against.
             self.loss_components[nepoch] += torch.stack(
-                [total.detach(), merged[0].detach(), cons[0].detach()]
+                [total.detach(), bce.detach(), cons[0].detach()]
             )
 
         self.loss_components[nepoch] /= self.num_iterations
