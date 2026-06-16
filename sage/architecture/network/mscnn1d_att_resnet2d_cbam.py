@@ -67,7 +67,7 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         frontend_filters: int = 32,
         frontend_kernel: int = 64,
         backend_resnet_size: int = 50,
-        norm_type: str = "instancenorm",
+        norm_type: str = "groupnorm",
         dropout: float = 0.0,
     ):
         super().__init__()
@@ -84,6 +84,10 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
             "batchnorm": nn.BatchNorm1d(self.num_detectors),
             "layernorm": nn.LayerNorm(self.num_detectors),
             "instancenorm": nn.InstanceNorm1d(self.num_detectors, affine=True),
+            # One group over all detector channels: normalises the detectors
+            # jointly, preserving their RELATIVE scale (unlike instancenorm,
+            # which unit-normalises each detector independently).
+            "groupnorm": nn.GroupNorm(1, self.num_detectors),
         }
         self.norm = norm_layers[norm_type]
 
@@ -180,7 +184,7 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         frontend_filters: int = 32,
         frontend_kernel: int = 64,
         backend_resnet_size: int = 50,
-        norm_type: str = "instancenorm",
+        norm_type: str = "groupnorm",
         dropout: float = 0.0,
     ):
         super().__init__()
@@ -195,6 +199,10 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
             "batchnorm": nn.BatchNorm1d(self.num_detectors),
             "layernorm": nn.LayerNorm(self.num_detectors),
             "instancenorm": nn.InstanceNorm1d(self.num_detectors, affine=True),
+            # One group over all detector channels: normalises the detectors
+            # jointly, preserving their RELATIVE scale (unlike instancenorm,
+            # which unit-normalises each detector independently).
+            "groupnorm": nn.GroupNorm(1, self.num_detectors),
         }
         self.norm = norm_layers[norm_type]
 
@@ -334,7 +342,7 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         frontend_filters: int = 32,
         frontend_kernel: int = 64,
         backend_resnet_size: int = 50,
-        norm_type: str = "instancenorm",
+        norm_type: str = "groupnorm",
         head_hidden: int = 128,
         dropout: float = 0.0,
     ):
@@ -349,6 +357,10 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
             "batchnorm": nn.BatchNorm1d(self.num_detectors),
             "layernorm": nn.LayerNorm(self.num_detectors),
             "instancenorm": nn.InstanceNorm1d(self.num_detectors, affine=True),
+            # One group over all detector channels: normalises the detectors
+            # jointly, preserving their RELATIVE scale (unlike instancenorm,
+            # which unit-normalises each detector independently).
+            "groupnorm": nn.GroupNorm(1, self.num_detectors),
         }
         self.norm = norm_layers[norm_type]
 

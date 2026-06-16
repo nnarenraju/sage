@@ -42,6 +42,7 @@ class O3bCFG:
     autocast = True
     class_balance = 0.5
     clip_norm = 1.0
+    dropout = 0.0  # set >0 (e.g. 0.05) to enable dropout + MC-dropout uncertainty
     num_epochs = 80
     training_iterations = int(2_000_000 / batch_size)
     validation_iterations = int(200_000 / batch_size)

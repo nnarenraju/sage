@@ -151,7 +151,8 @@ def run_sage():
         frontend_filters=32,
         frontend_kernel=64,
         backend_resnet_size=50,
-        norm_type="instancenorm",
+        norm_type="groupnorm",
+        dropout=cfg.dropout,
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
 
     total_params = sum(p.numel() for p in model.parameters())
