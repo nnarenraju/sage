@@ -214,7 +214,7 @@ def _one_assembled_forward(b, sig, sig_t, nd, nt, S, D, num_pe, mw):
         out = b["model"](net_input)
         _shp("ConsistencyOutput", out)
         merged = b["merged"]((out.ranking_stat, out.point_estimates), targets[:, :mw])
-        cons = b["cons"](out.mu_tc, out.log_sigma_tc, out.mu_mc, out.log_sigma_mc,
+        cons = b["cons"](out.mu_tc, out.sigma_tc, out.mu_mc, out.sigma_mc,
                          targets[:, tc0:mc0], targets[:, mc0:mc0 + D], mask)
     c1 = int((targets[:, num_pe] == 1).sum())
     return dict(c1=c1, na=na_n, noise=B - S - na_n,
