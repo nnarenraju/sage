@@ -302,10 +302,10 @@ class ConsistencyOutput(NamedTuple):
 
     ranking_stat: torch.Tensor       # (B, 1)  classification logit
     point_estimates: torch.Tensor    # (B, 2*num_pe)  merged heteroscedastic PE
-    mu_tc: torch.Tensor              # (B, D)  per-detector tc means (seconds)
-    log_sigma_tc: torch.Tensor       # (B, D)
+    mu_tc: torch.Tensor              # (B, D)  per-detector tc means (window-norm)
+    sigma_tc: torch.Tensor           # (B, D)  per-detector tc std (>0)
     mu_mc: torch.Tensor              # (B, D)  per-detector mchirp means
-    log_sigma_mc: torch.Tensor       # (B, D)
+    sigma_mc: torch.Tensor           # (B, D)  per-detector mchirp std (>0)
     s_tc: torch.Tensor               # (B,)    arrival-time consistency statistic
     s_mc: torch.Tensor               # (B,)    chirp-mass consistency statistic
 
@@ -394,15 +394,23 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
             self.frontend[0].train()
         feat_ch, feat_T = int(feat.shape[2]), int(feat.shape[3])
 
-        # Shared per-detector head + the physical time of each of its T steps.
+        # Shared per-detector head + the time of each of its T steps. tc is
+        # window-NORMALISED (divided by the analysis-window length) so it lives
+        # on the same ~unit scale as the standardised per-detector mchirp — a
+        # single (sigma_min, sigma_max) then fits both, and the two NLL terms are
+        # balanced. The soft-argmax sums over the normalised grid, so mu_tc and
+        # the light-travel time are normalised consistently and the tc target
+        # (normalised the same way in the training loop) matches.
         self.per_det_head = PerDetHead(feat_ch, hidden=head_hidden, dropout=dropout)
+        self.tc_scale = float(get_data_cfg().sample_length_in_s)
         t_position = F.adaptive_avg_pool1d(
             t_grid.to(torch.float32).view(1, 1, -1), feat_T
-        ).view(-1)
+        ).view(-1) / self.tc_scale
         self.register_buffer("t_position", t_position, persistent=False)
 
-        # Light-travel time of the (first) detector pair, exact from geometry.
-        ltt = float(pairwise_light_travel_times(cfg.detectors)[0, 1])
+        # Light-travel time of the (first) detector pair, exact from geometry,
+        # normalised by the same window length as tc.
+        ltt = float(pairwise_light_travel_times(cfg.detectors)[0, 1]) / self.tc_scale
         self.register_buffer(
             "light_travel_time", torch.tensor(ltt, dtype=torch.float32),
             persistent=False,
@@ -450,9 +458,11 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         cnn_output = torch.cat(cnn_outputs, dim=1)          # (B, D, C, T)
         features = self.flatten(self.avg_pool_1d(self.backend(cnn_output)))  # (B, 512)
 
-        # Ranking statistic from merged features + corroboration block.
+        # Ranking statistic from merged features + corroboration block. The
+        # corroboration block is computed in float32 (statistic stability); cast
+        # it to the backbone dtype (fp16 under autocast) for the concatenation.
         ranking_stat = self.get_ranking_statistic(
-            torch.cat([features, corr], dim=1)
+            torch.cat([features, corr.to(features.dtype)], dim=1)
         )
 
         # Merged heteroscedastic PE (blocked [mu..., log_var...]).
@@ -463,17 +473,17 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
 
         # Stack per-detector outputs to (B, D) for the consistency loss.
         mu_tc = torch.stack([o.mu_tc for o in per_det], dim=1)
-        log_sigma_tc = torch.stack([o.log_sigma_tc for o in per_det], dim=1)
+        sigma_tc = torch.stack([o.sigma_tc for o in per_det], dim=1)
         mu_mc = torch.stack([o.mu_mc for o in per_det], dim=1)
-        log_sigma_mc = torch.stack([o.log_sigma_mc for o in per_det], dim=1)
+        sigma_mc = torch.stack([o.sigma_mc for o in per_det], dim=1)
 
         return ConsistencyOutput(
             ranking_stat=ranking_stat,
             point_estimates=point_estimates,
             mu_tc=mu_tc,
-            log_sigma_tc=log_sigma_tc,
+            sigma_tc=sigma_tc,
             mu_mc=mu_mc,
-            log_sigma_mc=log_sigma_mc,
+            sigma_mc=sigma_mc,
             s_tc=s_tc,
             s_mc=s_mc,
         )
