@@ -43,6 +43,10 @@ class O3bCFG:
     class_balance = 0.5
     clip_norm = 1.0
     dropout = 0.0  # set >0 (e.g. 0.05) to enable dropout + MC-dropout uncertainty
+    # Small probability that an injected signal is decohered into a
+    # non-astrophysical pair (signal+noise / signal+signal') to train the
+    # consistency heads to reject incoherent coincidences. TRAINING ONLY.
+    p_non_astrophysical = 0.0
     num_epochs = 80
     training_iterations = int(2_000_000 / batch_size)
     validation_iterations = int(200_000 / batch_size)

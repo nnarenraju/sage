@@ -25,6 +25,7 @@ from sage.core.config import get_cfg, get_data_cfg
 from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2, HalfNorm
 from sage.data.waveform.snr import OptimalSNRRescaler
 from sage.data.noise import MemmapNoiseSampler, RecolourPostprocess
+from sage.data.non_astrophysical import NonAstrophysicalMasker
 
 from sage.dsp.whiten import FiducialWhitening
 from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
@@ -100,6 +101,9 @@ def run_consistency_sage():
     scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
+    # Non-astrophysical (decoherent) sample generator — training only.
+    masker = NonAstrophysicalMasker(p_non_astro=cfg.p_non_astrophysical, seed=150914)
+
     train_sage = SageConsistencyTraining(
         signal_sampler,
         noise_sampler,
@@ -113,6 +117,7 @@ def run_consistency_sage():
         num_iterations=cfg.training_iterations,
         num_epochs=cfg.num_epochs,
         consistency_weight=0.1,
+        masker=masker,
     )
 
     ckpt_mgr = CheckpointManager(

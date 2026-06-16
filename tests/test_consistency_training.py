@@ -39,6 +39,7 @@ def _run():
     from sage.architecture.network import MSCNN1D_2DResNetCBAM_Consistency, ConsistencyOutput
     from sage.architecture.custom_losses import BCEWithPEsigmaLoss, ConsistencyNLLLoss
     from sage.factory import SageConsistencyTraining
+    from sage.data.non_astrophysical import NonAstrophysicalMasker
     import torch.optim as optim
     from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
@@ -56,10 +57,11 @@ def _run():
     sched = CosineAnnealingWarmRestarts(opt, T_0=5, T_mult=2, eta_min=1e-6)
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
+    masker = NonAstrophysicalMasker(p_non_astro=0.3, seed=1)  # exercise the 4-class path
     train_sage = SageConsistencyTraining(
         signal_sampler, noise_sampler, processor, model, merged, cons,
         opt, sched, scaler, num_iterations=N_ITERS, num_epochs=1,
-        consistency_weight=0.1,
+        consistency_weight=0.1, masker=masker,
     )
     train_sage(nepoch=0)
     comps = train_sage.loss_components[0]

@@ -51,11 +51,15 @@ class SageConsistencyTraining(torch.nn.Module):
         num_iterations,
         num_epochs,
         consistency_weight: float = 1.0,
+        masker=None,
         scheduler_mode: str = "batch",
     ):
         super().__init__()
 
         self.cfg = get_cfg()
+        # Optional non-astrophysical (decoherent) sample generator (training
+        # only). None -> all injections stay coherent (2-class regime).
+        self.masker = masker
 
         self.signal_sampler = signal_sampler
         self.noise_sampler = noise_sampler
@@ -117,6 +121,22 @@ class SageConsistencyTraining(torch.nn.Module):
             if self._selector is not None:
                 noise_data = self._selector(noise_data)
 
+            S = signal_data.shape[0]
+            per_det_tc = signal_targets[:, self.merged_width :].clone()  # (S, D)
+
+            # ── 1b. Optionally decohere a fraction into non-astrophysical pairs.
+            if self.masker is not None:
+                signal_data, per_det_tc, signal_mask_S, is_coherent = self.masker(
+                    signal_data, per_det_tc
+                )
+                signal_targets = signal_targets.clone()
+                signal_targets[:, num_pe] = is_coherent              # class 0 if decohered
+                signal_targets[:, self.merged_width :] = per_det_tc  # updated per-det tc
+            else:
+                signal_mask_S = torch.ones(
+                    S, D, device=device, dtype=signal_targets.dtype
+                )
+
             # ── 2. Pad noise targets to the full width ─────────────────────
             # [0..0 (num_pe) | class | 0..0 (D per-detector tc)]
             noise_full = torch.zeros(
@@ -132,6 +152,13 @@ class SageConsistencyTraining(torch.nn.Module):
             )
             signal_pad[idx] = signal_data
             target_pad[idx] = signal_targets
+
+            # Per-detector supervision mask (B, D): signal slots carry their
+            # per-detector mask; pure-noise slots stay 0.
+            per_det_mask = torch.zeros(
+                B, D, device=device, dtype=signal_mask_S.dtype
+            )
+            per_det_mask[idx] = signal_mask_S
 
             x = noise_data + signal_pad
             targets = noise_full + target_pad
@@ -162,13 +189,12 @@ class SageConsistencyTraining(torch.nn.Module):
                     targets[:, : self.merged_width],
                 )
 
-                # Per-detector consistency NLL.
+                # Per-detector consistency NLL (per-detector supervision mask).
                 tc_target = targets[:, self.merged_width :]            # (B, D) seconds
                 mc_target = targets[:, 1]                              # (B,) std mchirp
-                mask = targets[:, num_pe].unsqueeze(1).expand(B, D)    # (B, D) class
                 cons = self.consistency_loss(
                     out.mu_tc, out.log_sigma_tc, out.mu_mc, out.log_sigma_mc,
-                    tc_target, mc_target, mask,
+                    tc_target, mc_target, per_det_mask,
                 )
 
                 total = merged[0] + self.consistency_weight * cons[0]
