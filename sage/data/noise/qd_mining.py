@@ -181,7 +181,6 @@ from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
-from pycbc import DYN_RANGE_FAC
 
 from sage.core.config import get_cfg
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
