@@ -52,7 +52,11 @@ def make_training_graph():
     # turns into non-astrophysical class-0 pairs (dropped into noise slots), so
     # they never eat the coherent (class-1) signal budget.
     cfg = get_cfg()
-    extra_batch = round(cfg.p_non_astrophysical * cfg.batch_size)
+    # Non-astro samples eat the noise budget only, so cap the pool at the number
+    # of noise slots (B - S); they can never displace coherent (class-1) signals.
+    n_signal = int(cfg.batch_size * cfg.class_balance)
+    n_noise = cfg.batch_size - n_signal
+    extra_batch = min(round(cfg.p_non_astrophysical * cfg.batch_size), n_noise)
 
     param_sampler = read_from_config("./gwconfig.yaml", seed=150914)
     snrscaler = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=150914))
@@ -112,7 +116,7 @@ def run_consistency_sage():
     # in the frequency domain on the sampler's grid; tc band derived from the
     # prior, full window from the data config. Inert when extra_batch == 0.
     masker = NonAstrophysicalMasker(
-        freqs=signal_sampler.f[0],
+        delta_f=signal_sampler.df,
         tc_bounds=bounds["tc"],
         analysis_length_s=data_cfg.sample_length_in_s,
         seed=150914,
