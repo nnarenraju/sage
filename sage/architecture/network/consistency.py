@@ -126,6 +126,7 @@ class PerDetHead(nn.Module):
         log_sigma_clamp=(-7.0, 3.0),
         ensemble_tc: bool = False,
         eps: float = 1e-8,
+        dropout: float = 0.0,
     ):
         super().__init__()
         self.eps = eps
@@ -136,7 +137,7 @@ class PerDetHead(nn.Module):
         self.tc_saliency = nn.Conv1d(in_ch, 1, kernel_size=1)   # soft-argmax map
         self.tc_attn = AttentionPool1d(in_ch, eps)              # drives sigma
         self.tc_log_sigma = nn.Sequential(
-            nn.Linear(in_ch + 1, hidden), nn.SiLU(),
+            nn.Linear(in_ch + 1, hidden), nn.SiLU(), nn.Dropout(dropout),
             nn.Linear(hidden, 1),
         )
 
@@ -145,11 +146,11 @@ class PerDetHead(nn.Module):
         self.mc_pool = GlobalAvgMaxPool1d()
         mc_feat_dim = in_ch + 2 * in_ch  # attn pooled (C) + avg/max (2C)
         self.mc_mu = nn.Sequential(
-            nn.Linear(mc_feat_dim, hidden), nn.SiLU(),
+            nn.Linear(mc_feat_dim, hidden), nn.SiLU(), nn.Dropout(dropout),
             nn.Linear(hidden, 1),
         )
         self.mc_log_sigma = nn.Sequential(
-            nn.Linear(mc_feat_dim + 1, hidden), nn.SiLU(),
+            nn.Linear(mc_feat_dim + 1, hidden), nn.SiLU(), nn.Dropout(dropout),
             nn.Linear(hidden, 1),
         )
 

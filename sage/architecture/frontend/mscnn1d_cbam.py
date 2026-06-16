@@ -309,8 +309,15 @@ class ConvBlock(nn.Module):
         Number of input channels (default ``1`` for a single detector).
     """
 
-    def __init__(self, filters_start=32, kernel_start=64, in_channels=1):
+    def __init__(self, filters_start=32, kernel_start=64, in_channels=1, dropout=0.0):
         super().__init__()
+
+        # Channel (spatial) dropout after each stage. ``Dropout1d`` zeroes whole
+        # feature channels (better for conv features than element-wise). p=0 is a
+        # no-op, so the default leaves the frontend unchanged.
+        self.drop1 = nn.Dropout1d(dropout)
+        self.drop2 = nn.Dropout1d(dropout)
+        self.drop3 = nn.Dropout1d(dropout)
 
         k1 = kernel_start
         k2 = kernel_start // 2 + 1
@@ -347,14 +354,17 @@ class ConvBlock(nn.Module):
         x = self.conv1(x)
         x = self.ca1(x)
         x = self.ta1(x)
+        x = self.drop1(x)
 
         x = self.conv2(x)
         x = self.ca2(x)
         x = self.ta2(x)
+        x = self.drop2(x)
 
         x = self.conv3(x)
         x = self.ca3(x)
         x = self.ta3(x)
+        x = self.drop3(x)
 
         x = x.unsqueeze(1)
         return x

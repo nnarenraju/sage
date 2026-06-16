@@ -142,7 +142,7 @@ class BasicBlock(nn.Module):
 
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, dropout=0.0):
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -152,6 +152,9 @@ class BasicBlock(nn.Module):
 
         self.ca = ChannelAttention(planes)
         self.sa = SpatialAttention()
+        # Spatial (channel) dropout on the block output before the residual add.
+        # p=0 is a no-op, so default leaves the block unchanged.
+        self.drop = nn.Dropout2d(dropout)
 
         self.downsample = downsample
         self.stride = stride
@@ -168,6 +171,7 @@ class BasicBlock(nn.Module):
 
         out = self.ca(out) * out
         out = self.sa(out) * out
+        out = self.drop(out)
 
         if self.downsample is not None:
             residual = self.downsample(x)
@@ -200,7 +204,7 @@ class Bottleneck(nn.Module):
 
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, dropout=0.0):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -214,6 +218,9 @@ class Bottleneck(nn.Module):
 
         self.ca = ChannelAttention(planes * 4)
         self.sa = SpatialAttention()
+        # Spatial (channel) dropout on the block output before the residual add.
+        # p=0 is a no-op, so default leaves the block unchanged.
+        self.drop = nn.Dropout2d(dropout)
 
         self.downsample = downsample
         self.stride = stride
@@ -234,6 +241,7 @@ class Bottleneck(nn.Module):
 
         out = self.ca(out) * out
         out = self.sa(out) * out
+        out = self.drop(out)
 
         if self.downsample is not None:
             residual = self.downsample(x)
@@ -272,7 +280,7 @@ class ResNet(nn.Module):
         Number of input channels (default 2 for dual-detector).
     """
 
-    def __init__(self, block, layers, num_classes=512, in_channels=2):
+    def __init__(self, block, layers, num_classes=512, in_channels=2, dropout=0.0):
         self.inplanes = 64
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(
@@ -281,10 +289,10 @@ class ResNet(nn.Module):
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.layer1 = self._make_layer(block, 64, layers[0], dropout=dropout)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dropout=dropout)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dropout=dropout)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dropout=dropout)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
@@ -299,7 +307,7 @@ class ResNet(nn.Module):
         nn.init.normal_(self.fc.weight, 0, 0.01)
         nn.init.zeros_(self.fc.bias)
 
-    def _make_layer(self, block, planes, blocks, stride=1):
+    def _make_layer(self, block, planes, blocks, stride=1, dropout=0.0):
         """Build one ResNet stage as a sequential stack of residual blocks.
 
         Parameters
@@ -333,10 +341,10 @@ class ResNet(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
+        layers.append(block(self.inplanes, planes, stride, downsample, dropout=dropout))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+            layers.append(block(self.inplanes, planes, dropout=dropout))
 
         return nn.Sequential(*layers)
 

@@ -26,15 +26,22 @@ Documentation: NULL
 from .mscnn1d_att_resnet2d_cbam import (
     MSCNN1D_2DResNetCBAM,
     MSCNN1D_2DResNetCBAM_Heteroscedastic,
+    MSCNN1D_2DResNetCBAM_Consistency,
+    ConsistencyOutput,
 )
 from .mscnn1d_att_resnet3d_cbam import MSCNN1Datt_3DResNetCBAM
 from .mscnn1d_catt_resnet2d_cbam import MSCNN1D_catt_2DResNetCBAM
+from .mc_dropout import enable_mc_dropout, mc_predict
 
 __all__ = [
     "MSCNN1D_2DResNetCBAM",
     "MSCNN1Datt_3DResNetCBAM",
     "MSCNN1D_catt_2DResNetCBAM",
     "MSCNN1D_2DResNetCBAM_Heteroscedastic",
+    "MSCNN1D_2DResNetCBAM_Consistency",
+    "ConsistencyOutput",
+    "enable_mc_dropout",
+    "mc_predict",
 ]
 
 # Mamba3 models are optional: the mamba_ssm extension and attentive_mamba

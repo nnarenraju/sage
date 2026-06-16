@@ -68,6 +68,7 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         frontend_kernel: int = 64,
         backend_resnet_size: int = 50,
         norm_type: str = "instancenorm",
+        dropout: float = 0.0,
     ):
         super().__init__()
 
@@ -89,7 +90,7 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         # CNN Frontend per detector
         self.frontend = nn.ModuleList(
             [
-                ConvBlock(frontend_filters, frontend_kernel)
+                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout)
                 for _ in range(self.num_detectors)
             ]
         )
@@ -105,7 +106,9 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
 
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
-        self.backend = resnet_factories[backend_resnet_size](pretrained=False)
+        self.backend = resnet_factories[backend_resnet_size](
+            pretrained=False, dropout=dropout
+        )
 
         # Feature pooling
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
@@ -178,6 +181,7 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         frontend_kernel: int = 64,
         backend_resnet_size: int = 50,
         norm_type: str = "instancenorm",
+        dropout: float = 0.0,
     ):
         super().__init__()
 
@@ -197,7 +201,7 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         # CNN Frontend per detector
         self.frontend = nn.ModuleList(
             [
-                ConvBlock(frontend_filters, frontend_kernel)
+                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout)
                 for _ in range(self.num_detectors)
             ]
         )
@@ -212,7 +216,9 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         }
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
-        self.backend = resnet_factories[backend_resnet_size](pretrained=False)
+        self.backend = resnet_factories[backend_resnet_size](
+            pretrained=False, dropout=dropout
+        )
 
         # Feature pooling
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
@@ -330,6 +336,7 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         backend_resnet_size: int = 50,
         norm_type: str = "instancenorm",
         head_hidden: int = 128,
+        dropout: float = 0.0,
     ):
         super().__init__()
 
@@ -347,7 +354,7 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
 
         self.frontend = nn.ModuleList(
             [
-                ConvBlock(frontend_filters, frontend_kernel)
+                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout)
                 for _ in range(self.num_detectors)
             ]
         )
@@ -358,7 +365,9 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         }
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
-        self.backend = resnet_factories[backend_resnet_size](pretrained=False)
+        self.backend = resnet_factories[backend_resnet_size](
+            pretrained=False, dropout=dropout
+        )
 
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
         self.flatten = nn.Flatten(start_dim=1)
@@ -374,7 +383,7 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         feat_ch, feat_T = int(feat.shape[2]), int(feat.shape[3])
 
         # Shared per-detector head + the physical time of each of its T steps.
-        self.per_det_head = PerDetHead(feat_ch, hidden=head_hidden)
+        self.per_det_head = PerDetHead(feat_ch, hidden=head_hidden, dropout=dropout)
         t_position = F.adaptive_avg_pool1d(
             t_grid.to(torch.float32).view(1, 1, -1), feat_T
         ).view(-1)
