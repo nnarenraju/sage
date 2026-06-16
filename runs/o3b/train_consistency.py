@@ -52,11 +52,13 @@ def make_training_graph():
     # turns into non-astrophysical class-0 pairs (dropped into noise slots), so
     # they never eat the coherent (class-1) signal budget.
     cfg = get_cfg()
-    # Non-astro samples eat the noise budget only, so cap the pool at the number
-    # of noise slots (B - S); they can never displace coherent (class-1) signals.
+    # `p_non_astrophysical` is the fraction of the *noise* budget (B - S, i.e.
+    # half the batch at class_balance=0.5) that becomes non-astrophysical. These
+    # eat noise slots only — never the coherent (class-1) signal budget — so the
+    # class balance is preserved. Capped at the noise budget for safety.
     n_signal = int(cfg.batch_size * cfg.class_balance)
     n_noise = cfg.batch_size - n_signal
-    extra_batch = min(round(cfg.p_non_astrophysical * cfg.batch_size), n_noise)
+    extra_batch = min(round(cfg.p_non_astrophysical * n_noise), n_noise)
 
     param_sampler = read_from_config("./gwconfig.yaml", seed=150914)
     snrscaler = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=150914))
