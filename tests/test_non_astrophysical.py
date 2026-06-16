@@ -5,7 +5,7 @@ import torch
 from sage.data.non_astrophysical import NonAstrophysicalMasker
 
 F, N, D = 64, 64, 2
-FREQS = torch.linspace(20.0, 1024.0, F)
+DELTA_F = 1.0 / 16.0
 TC_BOUNDS = (11.0, 11.2)
 LEN_S = 12.0
 MARGIN = 0.1
@@ -28,7 +28,7 @@ def _pool(seed=0):
 
 def _masker(**kw):
     return NonAstrophysicalMasker(
-        FREQS, TC_BOUNDS, LEN_S, seed=kw.pop("seed", 0), **kw
+        DELTA_F, TC_BOUNDS, LEN_S, seed=kw.pop("seed", 0), **kw
     )
 
 
