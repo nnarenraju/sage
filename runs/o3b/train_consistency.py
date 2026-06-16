@@ -5,8 +5,8 @@
 o3b run script for the multi-detector consistency model.
 
 Same data/preprocessing as ``train.py`` but:
-  - the signal sampler is built with ``append_per_det_tc=True`` so the targets
-    carry per-detector arrival times,
+  - the signal sampler is built with ``append_per_det_targets=True`` so the
+    targets carry per-detector arrival times and chirp masses,
   - the model is :class:`MSCNN1D_2DResNetCBAM_Consistency` (fed the multirate
     ``t_grid``),
   - training uses :class:`SageConsistencyTraining` = BCE + merged-PE loss
@@ -47,14 +47,21 @@ _RECOLOUR_DIR = "/local/scratch/igr/nnarenraju/data_release/o3a_dataset"
 
 
 def make_training_graph():
-    # Signal sampler — append_per_det_tc=True so targets carry per-detector tc.
+    # Signal sampler — append_per_det_targets=True so targets carry per-detector
+    # tc and mchirp. `extra_batch` adds a pool of injections that the masker
+    # turns into non-astrophysical class-0 pairs (dropped into noise slots), so
+    # they never eat the coherent (class-1) signal budget.
+    cfg = get_cfg()
+    extra_batch = round(cfg.p_non_astrophysical * cfg.batch_size)
+
     param_sampler = read_from_config("./gwconfig.yaml", seed=150914)
     snrscaler = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=150914))
     signal_sampler = IMRPhenomPv2(
         param_sampler,
         ConstantProjection(),
         augment=snrscaler,
-        append_per_det_tc=True,
+        append_per_det_targets=True,
+        extra_batch=extra_batch,
     )
 
     recolour = RecolourPostprocess(p_recolour=0.37, recolour_dataset_dir=_RECOLOUR_DIR)
@@ -101,8 +108,15 @@ def run_consistency_sage():
     scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
-    # Non-astrophysical (decoherent) sample generator — training only.
-    masker = NonAstrophysicalMasker(p_non_astro=cfg.p_non_astrophysical, seed=150914)
+    # Non-astrophysical (decoherent) sample generator — training only. Re-times
+    # in the frequency domain on the sampler's grid; tc band derived from the
+    # prior, full window from the data config. Inert when extra_batch == 0.
+    masker = NonAstrophysicalMasker(
+        freqs=signal_sampler.f[0],
+        tc_bounds=bounds["tc"],
+        analysis_length_s=data_cfg.sample_length_in_s,
+        seed=150914,
+    )
 
     train_sage = SageConsistencyTraining(
         signal_sampler,
