@@ -12,8 +12,6 @@ bound the physically-allowed inter-detector arrival-time difference.
 
 import numpy as np
 
-from pycbc.detector import Detector
-
 
 def light_travel_time(det_a: str, det_b: str) -> float:
     """Exact light-travel time (seconds) between two detectors.
@@ -34,6 +32,11 @@ def light_travel_time(det_a: str, det_b: str) -> float:
     """
     if det_a == det_b:
         return 0.0
+    # pycbc is an optional dependency (declared under the `lal` extra); import it
+    # lazily so importing this module / the consistency network does not require
+    # it — only computing a light-travel time does.
+    from pycbc.detector import Detector
+
     return float(Detector(det_a).light_travel_time_to_detector(Detector(det_b)))
 
 
