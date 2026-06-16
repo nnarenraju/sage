@@ -59,7 +59,7 @@ def _run():
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
     masker = NonAstrophysicalMasker(
-        freqs=signal_sampler.f[0],
+        delta_f=signal_sampler.df,
         tc_bounds=bounds["tc"],
         analysis_length_s=data_cfg.sample_length_in_s,
         seed=1,
