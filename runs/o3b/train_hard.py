@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-O3b BBH hard-noise curriculum training.
+O3b BBH hard negative mining training.
 
 Pipeline
 --------
@@ -76,10 +76,10 @@ from sage.core.logger import HDF5LossLogger
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-# Training / validation / curriculum
+# Training / validation / hard mining
 from sage.factory.training import SageVanillaTraining
 from sage.factory.validation import SageVanillaValidation
-from sage.factory.curriculum import SageCurriculumTraining
+from sage.factory.hard_mining import SageHardMiningTraining
 from sage.factory.miner_schedules import LinearThresholdSchedule
 from sage.utils.checkpoint import CheckpointManager
 
@@ -249,9 +249,9 @@ def run_hard():
 
     explorer, refiner = make_miners(K=K)
 
-    # ── Curriculum ───────────────────────────────────────────────────────────
+    # ── Hard negative mining ─────────────────────────────────────────────────
     warmup_epochs = 10
-    curriculum = SageCurriculumTraining(
+    hard_mining = SageHardMiningTraining(
         vanilla_training   = vanilla_train,
         vanilla_validation = vanilla_val,
         noise_sampler      = tr_noise,
@@ -280,7 +280,7 @@ def run_hard():
         start_epoch = ckpt_mgr.load_latest(map_location=cfg.device)
         print(f"Resuming from epoch {start_epoch}")
 
-    curriculum.run(start_epoch=start_epoch)
+    hard_mining.run(start_epoch=start_epoch)
 
 
 if __name__ == "__main__":

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 """
-Curriculum training with hard-noise mining.
+Hard negative mining training.
 
-SageCurriculumTraining
+SageHardMiningTraining
     Wraps SageVanillaTraining and adds periodic mining passes using
     CMAMEMiner (GPS explorer) and CMAMEGAMiner (pattern refiner).
     Both miners write to a SharedHardNoiseBank that grows across all runs.
@@ -25,7 +25,7 @@ SageCurriculumTraining
             MemmapNoiseSampler, SharedHardNoiseBank,
             CMAMEMiner, CMAMEGAMiner,
         )
-        from sage.factory import SageCurriculumTraining
+        from sage.factory import SageHardMiningTraining
         from sage.factory.training import SageVanillaTraining
         from sage.factory.validation import SageVanillaValidation
 
@@ -41,7 +41,7 @@ SageCurriculumTraining
         vanilla_train = SageVanillaTraining(signal, noise_sampler, proc, model, ...)
         vanilla_val   = SageVanillaValidation(signal_val, noise_val, proc, model, ...)
 
-        curriculum = SageCurriculumTraining(
+        hard_mining = SageHardMiningTraining(
             vanilla_training   = vanilla_train,
             vanilla_validation = vanilla_val,
             noise_sampler      = noise_sampler,
@@ -59,7 +59,7 @@ SageCurriculumTraining
             mine_refine_every  = 1,
             validate_every     = 5,
         )
-        curriculum.run()
+        hard_mining.run()
 """
 
 import os
@@ -75,9 +75,9 @@ from sage.data.noise.real_noise import _find_latest_hard_dataset
 from sage.data.noise.lowfar_noise import StartTimeDataset
 
 
-class SageCurriculumTraining:
+class SageHardMiningTraining:
     """
-    Curriculum training with hard-noise mining.
+    Hard negative mining training.
 
     This class does not re-implement the training or validation loops —
     it calls ``vanilla_training(nepoch)`` and ``vanilla_validation(nepoch)``
@@ -211,7 +211,7 @@ class SageCurriculumTraining:
         if _latest is not None:
             self._accumulated: StartTimeDataset | None = StartTimeDataset.load(_latest)
             print(
-                f"[Curriculum] Loaded accumulated dataset: "
+                f"[HardMining] Loaded accumulated dataset: "
                 f"{len(self._accumulated):,} windows from {_latest.name}"
             )
         else:
@@ -280,7 +280,7 @@ class SageCurriculumTraining:
 
         pcts = np.percentile(self._accumulated.scores, [50, 75, 90, 99])
         print(
-            f"[Curriculum] Accumulated: {len(self._accumulated):,} hard windows "
+            f"[HardMining] Accumulated: {len(self._accumulated):,} hard windows "
             f"(threshold≥{threshold:.2f}) | "
             f"score p50/p75/p90/p99 = "
             f"{pcts[0]:.2f}/{pcts[1]:.2f}/{pcts[2]:.2f}/{pcts[3]:.2f}"
@@ -318,7 +318,7 @@ class SageCurriculumTraining:
         if explore_thresh is not None:
             self.explorer.threshold = explore_thresh
         print(
-            f"\n[Curriculum] Epoch {epoch}: Running GPS explorer "
+            f"\n[HardMining] Epoch {epoch}: Running GPS explorer "
             f"(CMAMEMiner, threshold={self.explorer.threshold:.2f}) …"
         )
         dataset = self.explorer.mine(
@@ -334,7 +334,7 @@ class SageCurriculumTraining:
         self.shared_bank.save(self.bank_path)
         acc_n = len(self._accumulated) if self._accumulated is not None else 0
         print(
-            f"[Curriculum] Explorer done: {len(dataset):,} new | "
+            f"[HardMining] Explorer done: {len(dataset):,} new | "
             f"bank: {len(self.shared_bank):,} | "
             f"total accumulated: {acc_n:,}"
         )
@@ -346,7 +346,7 @@ class SageCurriculumTraining:
         if refine_thresh is not None:
             self.refiner.threshold = refine_thresh
         print(
-            f"\n[Curriculum] Epoch {epoch}: Running pattern refiner "
+            f"\n[HardMining] Epoch {epoch}: Running pattern refiner "
             f"(CMAMEGAMiner, threshold={self.refiner.threshold:.2f}) …"
         )
         dataset = self.refiner.mine(
@@ -362,7 +362,7 @@ class SageCurriculumTraining:
         self.shared_bank.save(self.bank_path)
         acc_n = len(self._accumulated) if self._accumulated is not None else 0
         print(
-            f"[Curriculum] Refiner done: {len(dataset):,} new | "
+            f"[HardMining] Refiner done: {len(dataset):,} new | "
             f"bank: {len(self.shared_bank):,} | "
             f"total accumulated: {acc_n:,}"
         )
@@ -390,7 +390,7 @@ class SageCurriculumTraining:
                 self._run_refiner(epoch)
 
             # Training
-            print(f"[Curriculum] Epoch {epoch}: Training …")
+            print(f"[HardMining] Epoch {epoch}: Training …")
             self.vanilla_training(nepoch=epoch)
 
             if self.logger is not None:
@@ -401,7 +401,7 @@ class SageCurriculumTraining:
 
             # Validation + checkpoint
             if self._should_validate(epoch):
-                print(f"[Curriculum] Epoch {epoch}: Validating …")
+                print(f"[HardMining] Epoch {epoch}: Validating …")
                 self.vanilla_validation(nepoch=epoch)
 
                 if self.logger is not None:
@@ -411,7 +411,7 @@ class SageCurriculumTraining:
                     )
 
                 val_loss = self.vanilla_validation.loss_components[epoch][0].item()
-                print(f"[Curriculum] Epoch {epoch}: val_loss = {val_loss:.6f}")
+                print(f"[HardMining] Epoch {epoch}: val_loss = {val_loss:.6f}")
 
                 if self.ckpt_mgr is not None:
                     self.ckpt_mgr.save(epoch=epoch, val_loss=val_loss)

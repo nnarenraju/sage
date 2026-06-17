@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Threshold schedules for SageCurriculumTraining hard-noise miners.
+Threshold schedules for SageHardMiningTraining hard-noise miners.
 
 All schedules are callable objects::
 
     schedule(epoch) -> (explore_threshold, refine_threshold)
 
-Pass one to ``SageCurriculumTraining(threshold_schedule=...)``.
+Pass one to ``SageHardMiningTraining(threshold_schedule=...)``.
 Passing ``None`` (the default) keeps each miner's threshold constant.
 
 Available schedules

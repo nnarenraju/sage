@@ -1,5 +1,5 @@
 from .training import SageVanillaTraining
-from .curriculum import SageCurriculumTraining
+from .hard_mining import SageHardMiningTraining
 from .consistency_training import SageConsistencyTraining
 from .validation import SageVanillaValidation
 from .miner_schedules import (
@@ -10,7 +10,7 @@ from .miner_schedules import (
 
 __all__ = [
     "SageVanillaTraining",
-    "SageCurriculumTraining",
+    "SageHardMiningTraining",
     "SageConsistencyTraining",
     "SageVanillaValidation",
     "LinearThresholdSchedule",
