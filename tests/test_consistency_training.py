@@ -3,8 +3,10 @@ Smoke test for the consistency training integration (eager, a few iterations).
 
 Builds the real o3b consistency graph (signal sampler with per-detector tc,
 recoloured noise, multirate processor), the consistency model + the combined
-loss, and runs a handful of SageConsistencyTraining iterations, asserting the
-loss stays finite. Skipped where CUDA / data / fiducial PSDs are absent.
+loss, and runs a handful of SageVanillaTraining iterations wired the consistency
+way (MergedLossAdapter + ConsistencyLossAdapter + GradientNormBalancer +
+MaskingCallback), asserting the loss stays finite. Skipped where CUDA / data /
+fiducial PSDs are absent.
 """
 
 import os
@@ -38,8 +40,12 @@ def _run():
 
     from sage.core.config import get_cfg, get_data_cfg
     from sage.architecture.network import MSCNN1D_2DResNetCBAM_Consistency, ConsistencyOutput
-    from sage.architecture.custom_losses import BCEWithPEsigmaLoss, ConsistencyNLLLoss
-    from sage.factory import SageConsistencyTraining
+    from sage.architecture.custom_losses import (
+        BCEWithPEsigmaLoss, ConsistencyNLLLoss, GradientNormBalancer,
+    )
+    from sage.factory import (
+        SageVanillaTraining, MergedLossAdapter, ConsistencyLossAdapter, MaskingCallback,
+    )
     from sage.data.non_astrophysical import NonAstrophysicalMasker
     import torch.optim as optim
     from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
@@ -64,10 +70,14 @@ def _run():
         analysis_length_s=data_cfg.sample_length_in_s,
         seed=1,
     )
-    train_sage = SageConsistencyTraining(
-        signal_sampler, noise_sampler, processor, model, merged, cons,
+    train_sage = SageVanillaTraining(
+        signal_sampler, noise_sampler, processor, model,
+        MergedLossAdapter(merged),
         opt, sched, scaler, num_iterations=N_ITERS, num_epochs=1,
-        consistency_weight=0.1, masker=masker,
+        aux_losses=[ConsistencyLossAdapter(cons)],
+        balancer=GradientNormBalancer(n_aux=4, balance_target=0.33,
+                                      autocast=cfg.autocast),
+        callbacks=[MaskingCallback(masker)],
     )
     train_sage(nepoch=0)
     comps = train_sage.loss_components[0]
