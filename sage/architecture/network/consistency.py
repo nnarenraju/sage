@@ -25,7 +25,7 @@ All tensors follow the ``(B, C, T)`` convention of the Sage frontend output
 data-dependent control flow; config flags are static Python booleans).
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import torch
 import torch.nn as nn
@@ -90,6 +90,10 @@ class PerDetOutput(NamedTuple):
     sigma_mc: torch.Tensor
     entropy_tc: torch.Tensor
     entropy_mc: torch.Tensor
+    # Opt-in: only populated when PerDetHead.forward(..., return_embedding=True).
+    # Default None so the standard output (and every loss that reads it) is
+    # unchanged; the miner is the only caller that asks for it.
+    embedding: Optional[torch.Tensor] = None
 
 
 class PerDetHead(nn.Module):
@@ -180,7 +184,10 @@ class PerDetHead(nn.Module):
         """
         return (F.softplus(raw) + self.sigma_min).clamp(self.sigma_min, self.sigma_max)
 
-    def forward(self, x: torch.Tensor, t_position: torch.Tensor) -> PerDetOutput:
+    def forward(
+        self, x: torch.Tensor, t_position: torch.Tensor,
+        return_embedding: bool = False,
+    ) -> PerDetOutput:
         # x: (B, C, T);  t_position: (T,) physical (or window-normalised) time
         # --- tc: soft-argmax over physical time ---
         saliency = self.tc_saliency(x).squeeze(1)            # (B, T)
@@ -213,6 +220,9 @@ class PerDetHead(nn.Module):
             sigma_mc=sigma_mc,
             entropy_tc=entropy_tc,
             entropy_mc=entropy_mc,
+            # attn_feat_tc is already computed (it drives sigma_tc), so returning
+            # it is free; gate on the flag so it's opt-in.
+            embedding=attn_feat_tc if return_embedding else None,
         )
 
 
