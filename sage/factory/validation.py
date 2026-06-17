@@ -14,6 +14,7 @@ SageVanillaValidation
 import os
 import h5py
 import torch
+import torch.nn.functional as F
 
 from tqdm import tqdm
 from contextlib import nullcontext
@@ -69,7 +70,8 @@ class SageVanillaValidation(torch.nn.Module):
     * Calls ``signal_sampler(return_theta=True)`` to obtain raw waveform
       parameters for parameter-recovery diagnostics.
     * Unstandardises predicted means back to physical units.
-    * Converts log-variance to sigma (``σ = exp(0.5 * log_var)``).
+    * Converts the raw sigma params to sigma via softplus (matching the loss's
+      ``_sigma``), then un-standardises to physical units.
     * Writes per-epoch results to ``{export_dir}/validation_data.h5``.
 
     Auto-multibanding and GWBatch tracking work identically to the training
@@ -204,16 +206,23 @@ class SageVanillaValidation(torch.nn.Module):
                 # ── 7. Diagnostics ────────────────────────────────────────
                 network_output = torch.cat([*out], dim=1)
 
-                ranking = network_output[:, 0:1]
-                mu_std  = network_output[:, 1 : 1 + self.num_point_estimate]
-                log_var = network_output[
+                ranking   = network_output[:, 0:1]
+                mu_std    = network_output[:, 1 : 1 + self.num_point_estimate]
+                sigma_raw = network_output[
                     :, 1 + self.num_point_estimate : 1 + 2 * self.num_point_estimate
                 ]
 
                 mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
                     mu_std
                 )
-                sigma_std  = torch.exp(0.5 * log_var)
+                # Map the raw sigma params to a std the *same* way the loss does
+                # (softplus, not exp(0.5*log_var)) so exported sigma matches the
+                # trained parameterisation. Reuse the loss's own _sigma when present.
+                _sigma = getattr(self.loss_function, "_sigma", None)
+                if callable(_sigma):
+                    sigma_std = _sigma(sigma_raw)
+                else:
+                    sigma_std = F.softplus(sigma_raw) + 1e-3
                 std_prior  = self.signal_sampler.param_sampler._std_stds.to(
                     sigma_std.device
                 )
