@@ -194,20 +194,23 @@ class SageVanillaTraining(torch.nn.Module):
     def _collect(self, out, targets, ctx):
         """Run the main + aux loss adapters (multi-loss mode).
 
-        Returns ``(primary, aux_terms, adapter_totals)``: the single primary
+        Returns ``(primary, aux_terms, aux_totals)``: the single primary
         (reference / BCE) term, the flat list of auxiliary terms to balance, and
-        each adapter's own total (for logging).
+        the per-aux-adapter totals (logged alongside the primary, so the tracked
+        components are ``[total, primary, *aux_totals]`` — e.g. for consistency
+        ``[total, bce, cons_total]``).
         """
         primary = None
         aux_terms = []
-        totals = []
+        aux_totals = []
         for adapter in [self.loss_function, *self.aux_losses]:
             comps = adapter(out, targets, ctx)
-            totals.append(comps[0])
             if adapter.primary_index is not None:
                 primary = comps[adapter.primary_index]
+            else:
+                aux_totals.append(comps[0])
             aux_terms += [comps[i] for i in adapter.aux_indices]
-        return primary, aux_terms, totals
+        return primary, aux_terms, aux_totals
 
     def forward(self, nepoch):
 
@@ -319,9 +322,10 @@ class SageVanillaTraining(torch.nn.Module):
 
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
             if self._multiloss:
-                # [total, main_total, *aux_adapter_totals]
+                # [total, primary (bce), *aux_adapter_totals (e.g. cons_total)]
                 self.loss_components[nepoch] += torch.stack(
-                    [total.detach()] + [t.detach() for t in log_terms]
+                    [total.detach(), primary.detach()]
+                    + [t.detach() for t in log_terms]
                 )
             else:
                 self.loss_components[nepoch] += loss.detach()
