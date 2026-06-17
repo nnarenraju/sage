@@ -261,8 +261,10 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         Returns:
             ranking_statistic: (B, 1)
             point_estimates: (B, 2*num_pe)
-                Blocked format: [mu_0, mu_1, ..., log_var_0, log_var_1, ...]
-                (all predicted means first, then all log-variances).
+                Blocked format: [mu_0, mu_1, ..., sraw_0, sraw_1, ...]
+                (all predicted means first, then all raw sigma params).
+                The raw sigma params are mapped to a strictly-positive std via
+                softplus inside BCEWithPEsigmaLoss (no exp(log_var) collapse).
                 This matches the layout expected by BCEWithPEsigmaLoss and
                 SageUncompiledValidation, which split at [:num_pe] / [num_pe:].
         """
@@ -283,16 +285,16 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         ranking_statistic = self.get_ranking_statistic(features)
 
         # Heteroscedastic PE predictions.
-        # Each layer outputs (B, 2): [mu_k, log_var_k].
-        # We collect all mus first and all log_vars second so the concatenated
-        # tensor has the blocked layout [mu_0, ..., mu_K, log_var_0, ..., log_var_K]
-        # rather than the interleaved layout [mu_0, log_var_0, mu_1, log_var_1, ...].
-        # BCEWithPEsigmaLoss splits at [:num_pe] for mu and [num_pe:] for log_var,
-        # so interleaved would silently mix mu/log_var for num_pe > 1.
+        # Each layer outputs (B, 2): [mu_k, sigma_raw_k].
+        # We collect all mus first and all sigma params second so the concatenated
+        # tensor has the blocked layout [mu_0, ..., mu_K, sraw_0, ..., sraw_K]
+        # rather than the interleaved layout [mu_0, sraw_0, mu_1, sraw_1, ...].
+        # BCEWithPEsigmaLoss splits at [:num_pe] for mu and [num_pe:] for sigma,
+        # so interleaved would silently mix mu/sigma for num_pe > 1.
         raw = [layer(features) for layer in self.point_estimate_layers]
-        mus = torch.cat([r[:, :1] for r in raw], dim=1)       # (B, num_pe)
-        log_vars = torch.cat([r[:, 1:] for r in raw], dim=1)  # (B, num_pe)
-        point_estimates = torch.cat([mus, log_vars], dim=1)    # (B, 2*num_pe)
+        mus = torch.cat([r[:, :1] for r in raw], dim=1)        # (B, num_pe)
+        sigma_raw = torch.cat([r[:, 1:] for r in raw], dim=1)  # (B, num_pe)
+        point_estimates = torch.cat([mus, sigma_raw], dim=1)   # (B, 2*num_pe)
 
         return ranking_statistic, point_estimates
 
@@ -484,11 +486,12 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
             torch.cat([features, corr], dim=1)
         )
 
-        # Merged heteroscedastic PE (blocked [mu..., log_var...]).
+        # Merged heteroscedastic PE (blocked [mu..., sigma_raw...]); the raw sigma
+        # params become a softplus std inside BCEWithPEsigmaLoss (no exp collapse).
         raw = [layer(features) for layer in self.point_estimate_layers]
         mus = torch.cat([r[:, :1] for r in raw], dim=1)
-        log_vars = torch.cat([r[:, 1:] for r in raw], dim=1)
-        point_estimates = torch.cat([mus, log_vars], dim=1)
+        sigma_raw = torch.cat([r[:, 1:] for r in raw], dim=1)
+        point_estimates = torch.cat([mus, sigma_raw], dim=1)
 
         # Stack per-detector outputs to (B, D) for the consistency loss.
         mu_tc = torch.stack([o.mu_tc for o in per_det], dim=1)
