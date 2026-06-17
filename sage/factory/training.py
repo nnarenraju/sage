@@ -101,6 +101,8 @@ class SageVanillaTraining(torch.nn.Module):
         num_epochs,
         scheduler_mode="batch",
         callbacks=None,
+        aux_losses=None,
+        balancer=None,
     ):
         super().__init__()
 
@@ -110,9 +112,20 @@ class SageVanillaTraining(torch.nn.Module):
         self.noise_sampler  = noise_sampler
         self.processor      = processor
         self.model          = model.to(device=self.cfg.device, dtype=self.cfg.dtype)
-        self.loss_function  = loss_function.to(
-            device=self.cfg.device, dtype=self.cfg.dtype
-        )
+
+        # Multi-loss mode (aux_losses and/or a balancer given): loss_function is a
+        # LossAdapter and the trainer combines main + aux, optionally
+        # gradient-balanced. Otherwise plain vanilla: a raw loss called as
+        # loss_function(out, targets).
+        self.aux_losses = list(aux_losses) if aux_losses else []
+        self.balancer   = balancer
+        self._multiloss = bool(self.aux_losses) or (balancer is not None)
+        if self._multiloss:
+            self.loss_function = loss_function          # a LossAdapter instance
+        else:
+            self.loss_function = loss_function.to(
+                device=self.cfg.device, dtype=self.cfg.dtype
+            )
         self.optimiser  = optimiser
         self.scheduler  = ManageScheduler(scheduler, scheduler_mode)
         self.scaler     = scaler
@@ -145,11 +158,35 @@ class SageVanillaTraining(torch.nn.Module):
             self._coarse_indices = self._selector.coarse_indices
 
         # ── Loss tracking ─────────────────────────────────────────────────
+        # vanilla: the loss's own components; multi-loss: [total, main_total,
+        # *aux_adapter_totals].
+        n_components = (
+            2 + len(self.aux_losses) if self._multiloss
+            else self.loss_function.num_components
+        )
         self.loss_components = torch.zeros(
-            (num_epochs, self.loss_function.num_components),
+            (num_epochs, n_components),
             device=self.cfg.device,
             dtype=self.cfg.dtype,
         )
+
+    def _collect(self, out, targets, ctx):
+        """Run the main + aux loss adapters (multi-loss mode).
+
+        Returns ``(primary, aux_terms, adapter_totals)``: the single primary
+        (reference / BCE) term, the flat list of auxiliary terms to balance, and
+        each adapter's own total (for logging).
+        """
+        primary = None
+        aux_terms = []
+        totals = []
+        for adapter in [self.loss_function, *self.aux_losses]:
+            comps = adapter(out, targets, ctx)
+            totals.append(comps[0])
+            if adapter.primary_index is not None:
+                primary = comps[adapter.primary_index]
+            aux_terms += [comps[i] for i in adapter.aux_indices]
+        return primary, aux_terms, totals
 
     def forward(self, nepoch):
 
@@ -189,10 +226,12 @@ class SageVanillaTraining(torch.nn.Module):
             targets = noise_targets + target_pad
 
             # ── 4b. Per-batch callback hook (e.g. non-astro injection) ────
-            # ctx is threaded to on_sample; callbacks mutate ctx['x'] /
-            # ctx['targets'] and may add extras (e.g. per_det_mask). No
-            # callbacks -> skipped, x / targets unchanged (pure vanilla).
-            if self.callbacks:
+            # ctx is threaded to on_sample (callbacks mutate ctx['x'] /
+            # ctx['targets'] and add extras like per_det_mask) and to the loss
+            # adapters in multi-loss mode. Pure vanilla (no callbacks, no
+            # multi-loss) -> ctx is None and x / targets are unchanged.
+            ctx = None
+            if self.callbacks or self._multiloss:
                 ctx = {
                     "x": x, "targets": targets,
                     "signal_data": signal_data, "signal_targets": signal_targets,
@@ -223,14 +262,37 @@ class SageVanillaTraining(torch.nn.Module):
                 if self.cfg.autocast
                 else nullcontext()
             ):
-                out  = self.model(net_input)
-                loss = self.loss_function(out, targets)
+                out = self.model(net_input)
+                if self._multiloss:
+                    primary, aux_terms, log_terms = self._collect(out, targets, ctx)
+                else:
+                    loss = self.loss_function(out, targets)
+
+            # Combine the total OUTSIDE autocast (the balancer's calibration runs
+            # its own forward); mirrors the consistency training loop.
+            if self._multiloss:
+                if self.balancer is not None:
+                    warmup = (
+                        (nbatch + 1) / self.num_iterations if nepoch == 0 else 1.0
+                    )
+
+                    def _recompute(o):
+                        p, a, _ = self._collect(o, targets, ctx)
+                        return p, a
+
+                    total = self.balancer.combine(
+                        primary, aux_terms, self.model, net_input, _recompute, warmup
+                    )
+                else:
+                    total = primary + sum(aux_terms)
+            else:
+                total = loss[0]
 
             if self.scaler is not None:
-                self.scaler.scale(loss[0]).backward()
+                self.scaler.scale(total).backward()
                 self.scaler.unscale_(self.optimiser)
             else:
-                loss[0].backward()
+                total.backward()
 
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(), max_norm=self.cfg.clip_norm,
@@ -243,7 +305,13 @@ class SageVanillaTraining(torch.nn.Module):
                 self.optimiser.step()
 
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
-            self.loss_components[nepoch] += loss.detach()
+            if self._multiloss:
+                # [total, main_total, *aux_adapter_totals]
+                self.loss_components[nepoch] += torch.stack(
+                    [total.detach()] + [t.detach() for t in log_terms]
+                )
+            else:
+                self.loss_components[nepoch] += loss.detach()
 
         # ── End-of-epoch callback hook (e.g. hard-noise mining) ───────────
         for cb in self.callbacks:
