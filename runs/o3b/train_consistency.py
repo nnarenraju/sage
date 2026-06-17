@@ -9,8 +9,10 @@ Same data/preprocessing as ``train.py`` but:
     targets carry per-detector arrival times and chirp masses,
   - the model is :class:`MSCNN1D_2DResNetCBAM_Consistency` (fed the multirate
     ``t_grid``),
-  - training uses :class:`SageConsistencyTraining` = BCE + merged-PE loss
-    (``BCEWithPEsigmaLoss``) plus the separate per-detector ``ConsistencyNLLLoss``.
+  - training is plain :class:`SageVanillaTraining` with the merged-PE loss
+    (``BCEWithPEsigmaLoss``) as the main loss, the per-detector
+    ``ConsistencyNLLLoss`` as an aux loss under a ``GradientNormBalancer``, and a
+    ``MaskingCallback`` for the 4-class non-astrophysical batch assembly.
 
 Launch with ``python3 -c "from train_consistency import run_consistency_sage; run_consistency_sage()"``.
 """
@@ -32,13 +34,17 @@ from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 from sage.core.graph import Preprocessor
 
 from sage.architecture.network import MSCNN1D_2DResNetCBAM_Consistency
-from sage.architecture.custom_losses import BCEWithPEsigmaLoss, ConsistencyNLLLoss
+from sage.architecture.custom_losses import (
+    BCEWithPEsigmaLoss, ConsistencyNLLLoss, GradientNormBalancer,
+)
 from sage.core.logger import HDF5LossLogger
 
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-from sage.factory import SageConsistencyTraining
+from sage.factory import (
+    SageVanillaTraining, MergedLossAdapter, ConsistencyLossAdapter, MaskingCallback,
+)
 
 from config import set_configs
 from sage.utils.checkpoint import CheckpointManager
@@ -130,20 +136,25 @@ def run_consistency_sage():
         seed=150914,
     )
 
-    train_sage = SageConsistencyTraining(
+    # Consistency = plain vanilla training + a per-detector aux loss + the
+    # gradient-norm balancer + a non-astro masking callback. No bespoke trainer.
+    train_sage = SageVanillaTraining(
         signal_sampler,
         noise_sampler,
         processor,
         model,
-        merged_loss,
-        consistency_loss,
+        MergedLossAdapter(merged_loss),            # main: BCE + merged-PE
         optimiser,
         scheduler,
         scaler,
         num_iterations=cfg.training_iterations,
         num_epochs=cfg.num_epochs,
-        consistency_weight=0.1,
-        masker=masker,
+        aux_losses=[ConsistencyLossAdapter(consistency_loss)],   # per-det tc/mc NLL
+        balancer=GradientNormBalancer(
+            n_aux=4, balance_target=0.33, autocast=cfg.autocast,
+            aux_names=["pe_reg", "coupling", "cons_tc", "cons_mc"],
+        ),
+        callbacks=[MaskingCallback(masker)],       # 4-class non-astro assembly
     )
 
     ckpt_mgr = CheckpointManager(
@@ -154,7 +165,7 @@ def run_consistency_sage():
     logger = HDF5LossLogger(
         path=os.path.join(cfg.export_dir, "losses.h5"),
         num_epochs=cfg.num_epochs,
-        num_components=train_sage.num_components,
+        num_components=train_sage.loss_components.shape[1],
     )
 
     for nepoch in range(cfg.num_epochs):
