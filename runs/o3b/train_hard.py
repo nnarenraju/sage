@@ -13,17 +13,14 @@ Preproc : FiducialWhitening → MultirateSampler (TD_MULTIRATE)
 Network : MSCNN1D_2DResNetCBAM_Heteroscedastic (torch.compiled)
 Loss    : BCEWithPEsigmaLoss
 
-Mining schedule
----------------
-Every mine_explore_every epochs: CMAMEMiner
-    GPS explorer — finds new GPS time regions in O3b data.
-    70% budget = random exploration, 30% = re-validate known hard GPS positions.
-
-Every mine_refine_every epochs: CMAMEGAMiner
-    Pattern refiner — re-evaluates bank templates, gradient-refines stale ones,
-    then mines millions more using the updated bank as a pre-filter.
-
-Both miners share a SharedHardNoiseBank that grows across all runs.
+Hard-negative mining
+--------------------
+After each epoch's training (past ``warmup_epochs``), CMA-MAE (pyribs) mines
+per-detector start times for hard noise windows, keeping diverse hard windows
+(diversity measured in the model's own embedding).  Every window above
+``keep_threshold`` is accumulated and replayed via the noise sampler with
+probability ``hard_bias_prob``.  This is a drop-in swap for SageVanillaTraining
+-- see :class:`sage.factory.SageHardMiningTraining`.
 
 Usage
 -----
@@ -60,7 +57,6 @@ from sage.data.waveform.snr import OptimalSNRRescaler
 
 # Noise
 from sage.data.noise import MemmapNoiseSampler, RecolourPostprocess
-from sage.data.noise import SharedHardNoiseBank, CMAMEMiner, CMAMEGAMiner
 
 # Preprocessing
 from sage.core.graph import Preprocessor
@@ -80,7 +76,6 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from sage.factory.training import SageVanillaTraining
 from sage.factory.validation import SageVanillaValidation
 from sage.factory.hard_mining import SageHardMiningTraining
-from sage.factory.miner_schedules import LinearThresholdSchedule
 from sage.utils.checkpoint import CheckpointManager
 
 # ---------------------------------------------------------------------------
@@ -88,7 +83,6 @@ from sage.utils.checkpoint import CheckpointManager
 # ---------------------------------------------------------------------------
 
 DATASET_DIR = Path("./hard_noise_datasets/")
-BANK_PATH   = DATASET_DIR / "bank.npz"
 
 
 # ---------------------------------------------------------------------------
@@ -135,44 +129,6 @@ def make_processor(bounds):
     return Preprocessor([whitener, mrsampler])
 
 
-def make_miners(K: int = 32):
-    """Build explorer and refiner miners."""
-
-    explorer = CMAMEMiner(
-        n_svd_components = K,
-        n_init_batches   = 400,
-        n_iterations     = 10_000,
-        batch_size       = 128,
-        sigma_g          = 0.5,
-        explore_fraction = 0.7,
-        threshold        = 3.0,         # initial; overridden each epoch by schedule
-        max_samples      = 10_000_000,
-        grid_size        = 32,
-        autocast         = True,
-    )
-
-    refiner = CMAMEGAMiner(
-        n_svd_components  = K,
-        n_init_batches    = 400,
-        n_iterations      = 30_000,
-        scan_batch_size   = 512,
-        model_batch_size  = 128,
-        exploit_fraction  = 0.3,
-        pure_explore_frac = 0.1,
-        sigma_g_gps       = 0.5,
-        svd_distance_pct  = 10.0,
-        refine_lr         = 1.0,
-        n_rescore         = 10_000,
-        threshold         = 5.0,        # initial; overridden each epoch by schedule
-        target_samples    = 5_000_000,
-        max_samples       = 10_000_000,
-        max_bank_size     = 500_000,
-        autocast          = True,
-    )
-
-    return explorer, refiner
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -212,12 +168,22 @@ def run_hard():
     scheduler     = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
     scaler        = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
-    # ── Training + validation loops ──────────────────────────────────────────
-    vanilla_train = SageVanillaTraining(
+    # ── Training (hard-mining) + validation ──────────────────────────────────
+    # SageHardMiningTraining is a drop-in for SageVanillaTraining: same loop plus
+    # a per-epoch CMA-MAE mining pass.  Swap the class to SageVanillaTraining to
+    # disable hard mining entirely (no pyribs, random noise only).
+    trainer = SageHardMiningTraining(
         tr_sig, tr_noise, processor, model, loss_function,
         optimiser, scheduler, scaler,
-        num_iterations = cfg.training_iterations,
-        num_epochs     = cfg.num_epochs,
+        num_iterations    = cfg.training_iterations,
+        num_epochs        = cfg.num_epochs,
+        hard_bias_prob    = 0.6,
+        keep_threshold    = 5.0,
+        warmup_epochs     = 10,
+        mine_iters        = 200,
+        hard_dataset_dir  = str(DATASET_DIR),
+        max_total_samples = 30_000_000,
+        mine_seed         = 150914,
     )
 
     vanilla_val = SageVanillaValidation(
@@ -231,56 +197,26 @@ def run_hard():
         cfg=cfg, data_cfg=data_cfg, model=model,
         optimizer=optimiser, scheduler=scheduler, scaler=scaler,
     )
-
     logger = HDF5LossLogger(
         path           = os.path.join(cfg.export_dir, "losses.h5"),
         num_epochs     = cfg.num_epochs,
-        num_components = vanilla_train.loss_function.num_components,
+        num_components = loss_function.num_components,
     )
 
-    # ── Shared bank + miners ─────────────────────────────────────────────────
-    K = 32
-    bank = (
-        SharedHardNoiseBank.load(BANK_PATH)
-        if BANK_PATH.exists()
-        else SharedHardNoiseBank(K=K)
-    )
-    print(f"SharedHardNoiseBank: {len(bank):,} templates loaded")
-
-    explorer, refiner = make_miners(K=K)
-
-    # ── Hard negative mining ─────────────────────────────────────────────────
-    warmup_epochs = 10
-    hard_mining = SageHardMiningTraining(
-        vanilla_training   = vanilla_train,
-        vanilla_validation = vanilla_val,
-        noise_sampler      = tr_noise,
-        signal_sampler     = tr_sig,
-        processor          = processor,
-        model              = model,
-        explorer           = explorer,
-        refiner            = refiner,
-        shared_bank        = bank,
-        dataset_dir        = DATASET_DIR,
-        bank_path          = BANK_PATH,
-        total_epochs       = cfg.num_epochs,
-        warmup_epochs      = warmup_epochs,
-        mine_explore_every = 5,
-        mine_refine_every  = 1,
-        validate_every     = 5,
-        logger             = logger,
-        ckpt_mgr           = ckpt_mgr,
-        threshold_schedule = LinearThresholdSchedule(cfg.num_epochs, warmup_epochs),
-        accumulate         = True,
-        max_total_samples  = 30_000_000,
-    )
-
+    # ── Epoch loop (train + mine, validate every 5) ───────────────────────────
     start_epoch = 0
     if os.path.exists(ckpt_mgr.latest_path):
         start_epoch = ckpt_mgr.load_latest(map_location=cfg.device)
         print(f"Resuming from epoch {start_epoch}")
 
-    hard_mining.run(start_epoch=start_epoch)
+    for epoch in range(start_epoch, cfg.num_epochs):
+        trainer(nepoch=epoch)
+        logger.log(trainer.loss_components, epoch, split="training")
+        if epoch % 5 == 0 or epoch == cfg.num_epochs - 1:
+            vanilla_val(nepoch=epoch)
+            logger.log(vanilla_val.loss_components, epoch, split="validation")
+        ckpt_mgr.save(epoch=epoch,
+                      val_loss=float(trainer.loss_components[epoch][0].item()))
 
 
 if __name__ == "__main__":
