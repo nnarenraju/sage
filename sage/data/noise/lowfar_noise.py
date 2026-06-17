@@ -17,8 +17,8 @@ This module provides the two shared primitives for that workflow:
   _MiningReader     — reads noise windows at given per-detector start times from
                       the memmap noise sampler, for (re)scoring by the model.
 
-The mining algorithms that produce these datasets live in
-:mod:`sage.data.noise.qd_mining` (CMA-ME and CMA-MEGA).
+The mining algorithm that produces these datasets lives in
+:mod:`sage.data.noise.cma_mae_mining` (CMA-MAE, via pyribs).
 """
 
 import json
