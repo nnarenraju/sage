@@ -220,8 +220,13 @@ class RecolourPostprocess(torch.nn.Module):
         # TD to FD (B, D, F)
         X = torch.fft.rfft(batch_td, dim=-1, norm="forward")
 
+        # Actual batch size from the input — may differ from the configured
+        # training batch ``self.B`` (e.g. the hard-noise miner reads variable
+        # batches), so everything below is sized off ``B``, not ``self.B``.
+        B = batch_td.shape[0]
+
         # Bernoulli recolour mask (B, D, 1)
-        mask_cpu = torch.rand(self.B, self.D, 1) < self.p_recolour
+        mask_cpu = torch.rand(B, self.D, 1) < self.p_recolour
         mask = mask_cpu.to(X.device, non_blocking=True)
 
         # Whitening PSD: each window's own segment ASD, gathered per detector
@@ -236,7 +241,7 @@ class RecolourPostprocess(torch.nn.Module):
         )
 
         # Recolour PSD: a random ASD from the target-epoch bank
-        recol_idx = torch.randint(0, self.n_recolour_asd, (self.B, self.D)).numpy()
+        recol_idx = torch.randint(0, self.n_recolour_asd, (B, self.D)).numpy()
         gathered_recol_asd = self._gather(self._recolour_banks, recol_idx)
         gathered_recol_asd = gathered_recol_asd.to(X.device)
 
@@ -254,7 +259,7 @@ class RecolourPostprocess(torch.nn.Module):
         RAM-speed copy (the NFS-memmap variant cost ~600 ms/gather).
         """
         F = banks[0].shape[1]
-        out = np.empty((self.B, self.D, F), dtype=np.float32)
+        out = np.empty((idx.shape[0], self.D, F), dtype=np.float32)
         for d in range(self.D):
             out[:, d, :] = banks[d][idx[:, d]]
         return torch.from_numpy(out)
