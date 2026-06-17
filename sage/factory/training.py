@@ -100,6 +100,7 @@ class SageVanillaTraining(torch.nn.Module):
         num_iterations,
         num_epochs,
         scheduler_mode="batch",
+        callbacks=None,
     ):
         super().__init__()
 
@@ -118,6 +119,9 @@ class SageVanillaTraining(torch.nn.Module):
 
         self.num_iterations = num_iterations
         self.num_epochs     = num_epochs
+
+        # Training callbacks (loop hooks). Empty -> plain vanilla training.
+        self.callbacks = list(callbacks) if callbacks else []
 
         self.num_point_estimate = len(self.cfg.do_point_estimate)
         self.num_targets        = self.num_point_estimate + 1
@@ -184,6 +188,20 @@ class SageVanillaTraining(torch.nn.Module):
             x       = noise_data + signal_pad
             targets = noise_targets + target_pad
 
+            # ── 4b. Per-batch callback hook (e.g. non-astro injection) ────
+            # ctx is threaded to on_sample; callbacks mutate ctx['x'] /
+            # ctx['targets'] and may add extras (e.g. per_det_mask). No
+            # callbacks -> skipped, x / targets unchanged (pure vanilla).
+            if self.callbacks:
+                ctx = {
+                    "x": x, "targets": targets,
+                    "signal_data": signal_data, "signal_targets": signal_targets,
+                    "noise_data": noise_data, "noise_targets": noise_targets,
+                }
+                for cb in self.callbacks:
+                    cb.on_sample(ctx, self)
+                x, targets = ctx["x"], ctx["targets"]
+
             # ── 5. Wrap in GWBatch and preprocess ─────────────────────────
             batch = GWBatch(
                 x,
@@ -226,5 +244,9 @@ class SageVanillaTraining(torch.nn.Module):
 
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
             self.loss_components[nepoch] += loss.detach()
+
+        # ── End-of-epoch callback hook (e.g. hard-noise mining) ───────────
+        for cb in self.callbacks:
+            cb.on_epoch_end(nepoch, self)
 
         self.loss_components[nepoch] /= self.num_iterations
