@@ -25,9 +25,11 @@ Documentation: NULL
 
 from .loss_functions import BCEWithPEregLoss, BCEWithPEsigmaLoss
 from .consistency_loss import ConsistencyNLLLoss
+from .gradient_balancer import GradientNormBalancer
 
 __all__ = [
     "BCEWithPEregLoss",
     "BCEWithPEsigmaLoss",
     "ConsistencyNLLLoss",
+    "GradientNormBalancer",
 ]
