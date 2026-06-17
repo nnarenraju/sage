@@ -170,6 +170,27 @@ class SageVanillaTraining(torch.nn.Module):
             dtype=self.cfg.dtype,
         )
 
+    def _default_assembly(self, signal_data, signal_targets, noise_data,
+                          noise_targets, device):
+        """Vanilla batch assembly: pad noise targets + inject ``S`` signals at
+        random positions. Returns ``(x, targets)``. Skipped when an on_sample
+        callback assembles the batch itself (e.g. the non-astro masker)."""
+        pad = torch.zeros(
+            noise_targets.shape[0], self.num_point_estimate,
+            device=device, dtype=noise_targets.dtype,
+        )
+        noise_targets = torch.cat((pad, noise_targets), dim=1)
+
+        idx        = torch.randperm(self.B, device=device)[: self.S]
+        signal_pad = torch.zeros_like(noise_data)
+        target_pad = torch.zeros(
+            self.B, self.num_targets, device=device, dtype=signal_targets.dtype,
+        )
+        signal_pad[idx] = signal_data
+        target_pad[idx] = signal_targets
+
+        return noise_data + signal_pad, noise_targets + target_pad
+
     def _collect(self, out, targets, ctx):
         """Run the main + aux loss adapters (multi-loss mode).
 
@@ -206,40 +227,32 @@ class SageVanillaTraining(torch.nn.Module):
             if self._selector is not None:
                 noise_data = self._selector(noise_data)
 
-            # ── 3. Pad noise targets ──────────────────────────────────────
-            pad = torch.zeros(
-                noise_targets.shape[0], self.num_point_estimate,
-                device=device, dtype=noise_targets.dtype,
-            )
-            noise_targets = torch.cat((pad, noise_targets), dim=1)
-
-            # ── 4. Random signal injection ────────────────────────────────
-            idx        = torch.randperm(self.B, device=device)[: self.S]
-            signal_pad = torch.zeros_like(noise_data)
-            target_pad = torch.zeros(
-                self.B, self.num_targets, device=device, dtype=signal_targets.dtype,
-            )
-            signal_pad[idx] = signal_data
-            target_pad[idx] = signal_targets
-
-            x       = noise_data + signal_pad
-            targets = noise_targets + target_pad
-
-            # ── 4b. Per-batch callback hook (e.g. non-astro injection) ────
-            # ctx is threaded to on_sample (callbacks mutate ctx['x'] /
-            # ctx['targets'] and add extras like per_det_mask) and to the loss
-            # adapters in multi-loss mode. Pure vanilla (no callbacks, no
-            # multi-loss) -> ctx is None and x / targets are unchanged.
+            # ── 3. Per-batch context + on_sample callbacks ────────────────
+            # A callback may *assemble* the batch (e.g. the non-astro masker
+            # builds the 4-class batch + a per_det_mask). The raw samples are
+            # exposed in ctx; a callback that assembles sets ctx['x'] /
+            # ctx['targets'] (and extras like per_det_mask). ctx is also read by
+            # the loss adapters in multi-loss mode. Pure vanilla -> ctx is None.
             ctx = None
             if self.callbacks or self._multiloss:
                 ctx = {
-                    "x": x, "targets": targets,
                     "signal_data": signal_data, "signal_targets": signal_targets,
                     "noise_data": noise_data, "noise_targets": noise_targets,
+                    "x": None, "targets": None,
                 }
                 for cb in self.callbacks:
                     cb.on_sample(ctx, self)
+
+            # ── 4. Default assembly (random signal injection) unless a
+            #        callback already produced ctx['x'] / ctx['targets']. ────
+            if ctx is not None and ctx.get("x") is not None:
                 x, targets = ctx["x"], ctx["targets"]
+            else:
+                x, targets = self._default_assembly(
+                    signal_data, signal_targets, noise_data, noise_targets, device
+                )
+                if ctx is not None:
+                    ctx["x"], ctx["targets"] = x, targets
 
             # ── 5. Wrap in GWBatch and preprocess ─────────────────────────
             batch = GWBatch(
