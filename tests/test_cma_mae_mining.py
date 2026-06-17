@@ -8,6 +8,9 @@ windows, and that mining covers more than one bump (QD diversity, no collapse).
 """
 
 import numpy as np
+import pytest
+
+pytest.importorskip("ribs", reason="pyribs required for the CMA-MAE miner")
 
 from sage.data.noise.cma_mae_mining import CMAMAEMiner, _StartTimeCodec
 
