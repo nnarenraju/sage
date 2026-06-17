@@ -33,13 +33,11 @@ from .white_noise import WhiteGaussianNoiseSampler
 from .recolour import RecolourPostprocess
 from .glitch_sampler import GlitchOversampledNoiseSampler
 from .lowfar_noise import StartTimeDataset
-from .qd_mining import (
-    NoiseSVDProjector,
-    SharedHardNoiseBank,
-    CMAMEMiner,
-    CMAMEGAMiner,
-    make_miner_preprocessor,
-)
+
+# NOTE: the hard-negative miner lives in ``sage.data.noise.cma_mae_mining`` and
+# is imported directly by the hard-mining trainer (it pulls in pyribs).  It is
+# deliberately NOT re-exported here so that importing this package — and the
+# default training path — never requires pyribs.
 
 __all__ = [
     "HDF5SingleNoiseSampler",
@@ -49,9 +47,4 @@ __all__ = [
     "RecolourPostprocess",
     "GlitchOversampledNoiseSampler",
     "StartTimeDataset",
-    "NoiseSVDProjector",
-    "SharedHardNoiseBank",
-    "CMAMEMiner",
-    "CMAMEGAMiner",
-    "make_miner_preprocessor",
 ]
