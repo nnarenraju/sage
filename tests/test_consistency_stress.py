@@ -80,7 +80,6 @@ def _build(p_non_astro, dropout, compile_model):
     from sage.architecture.network import MSCNN1D_2DResNetCBAM_Consistency
     from sage.architecture.custom_losses import BCEWithPEsigmaLoss, ConsistencyNLLLoss
     from sage.data.non_astrophysical import NonAstrophysicalMasker
-    from sage.factory import SageConsistencyTraining
     import torch.optim as optim
     from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
@@ -113,13 +112,20 @@ def _build(p_non_astro, dropout, compile_model):
 
 
 def _make_trainer(b, n_iters):
-    from sage.factory import SageConsistencyTraining
+    from sage.factory import (
+        SageVanillaTraining, MergedLossAdapter, ConsistencyLossAdapter, MaskingCallback,
+    )
+    from sage.architecture.custom_losses import GradientNormBalancer
 
-    return SageConsistencyTraining(
-        b["signal"], b["noise"], b["processor"], b["model"], b["merged"],
-        b["cons"], b["opt"], b["sched"], b["scaler"],
+    return SageVanillaTraining(
+        b["signal"], b["noise"], b["processor"], b["model"],
+        MergedLossAdapter(b["merged"]),
+        b["opt"], b["sched"], b["scaler"],
         num_iterations=n_iters, num_epochs=1,
-        consistency_weight=0.1, masker=b["masker"],
+        aux_losses=[ConsistencyLossAdapter(b["cons"])],
+        balancer=GradientNormBalancer(n_aux=4, balance_target=0.33,
+                                      autocast=b["cfg"].autocast),
+        callbacks=[MaskingCallback(b["masker"])],
     )
 
 
@@ -169,7 +175,7 @@ def _probe(b):
 
 
 def _one_assembled_forward(b, sig, sig_t, nd, nt, S, D, num_pe, mw):
-    """Mirror SageConsistencyTraining batch assembly for one step and run the
+    """Mirror the MaskingCallback batch assembly for one step and run the
     compiled model + both losses; return composition counts + loss values."""
     from contextlib import nullcontext
     from sage.core.pipeline import GWBatch, Grid, ProcessingState
