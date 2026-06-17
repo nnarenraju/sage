@@ -140,14 +140,34 @@ class BCEWithPEsigmaLoss(nn.Module):
         self,
         regression_weight: float = 1.0,
         coupling_weight: float = 1.0,
+        beta: float = 0.5,
+        sigma_min: float = 1e-3,
+        sigma_max: float = 10.0,
         eps: float = 1e-6,
     ):
         super().__init__()
         cfg = get_cfg()  # grab config
         self.regression_weight = regression_weight
         self.coupling_weight = coupling_weight
+        # beta-NLL exponent (Seitzer et al. 2022); softplus sigma bounds. These
+        # mirror PerDetHead / ConsistencyNLLLoss so the merged head is NaN-proofed
+        # the same way: no exp(log_var) blow-up, no overconfident sigma collapse.
+        self.beta = float(beta)
+        self.sigma_min = float(sigma_min)
+        self.sigma_max = float(sigma_max)
         self.num_components = len(cfg.do_point_estimate) + 2
         self.eps = eps  # stability for variance
+
+    def _sigma(self, raw):
+        """Softplus-parameterised std (same as PerDetHead._sigma): strictly
+        positive, floored at ``sigma_min``, capped at ``sigma_max``. No ``exp`` so
+        a momentarily large logit cannot collapse sigma toward zero and blow up
+        the ``(mu - y)^2 / sigma^2`` term."""
+        import torch.nn.functional as F
+
+        return torch.clamp(
+            F.softplus(raw) + self.sigma_min, self.sigma_min, self.sigma_max
+        )
 
     def forward(self, outputs, targets):
         """
@@ -159,8 +179,9 @@ class BCEWithPEsigmaLoss(nn.Module):
             ``(ranking_stat, point_estimates)``
             ``ranking_stat``: shape ``(B,)`` — raw classification logits.
             ``point_estimates``: shape ``(B, 2 * num_pe)`` — concatenation
-            of predicted means ``μ`` (first ``num_pe`` columns) and
-            predicted log-variances ``log σ²`` (last ``num_pe`` columns).
+            of predicted means ``μ`` (first ``num_pe`` columns) and raw
+            ``σ`` parameters (last ``num_pe`` columns), the latter mapped to a
+            strictly-positive std via softplus (:meth:`_sigma`).
         targets : torch.Tensor, shape ``(B, num_pe + 1)``
             Last column is the binary class label; preceding columns are
             the physical regression targets.
@@ -191,43 +212,41 @@ class BCEWithPEsigmaLoss(nn.Module):
 
         num_pe = pe_targets.shape[1]
 
-        mu = point_estimates[:, :num_pe]
-        log_var = point_estimates[:, num_pe:]
+        # float32 throughout: 1/sigma^2 can exceed fp16 range under autocast.
+        mu = point_estimates[:, :num_pe].float()
+        sigma = self._sigma(point_estimates[:, num_pe:].float())  # softplus std > 0
+        y = pe_targets.float()
+        var = sigma * sigma
 
-        # Bound uncertainty head
-        log_var = torch.clamp(log_var, -10.0, 6.0)
+        # Heteroscedastic Gaussian NLL (softplus sigma, no exp -> no collapse).
+        nll = 0.5 * (mu - y) ** 2 / var + torch.log(sigma)
 
-        var = torch.exp(log_var) + self.eps
+        # beta-NLL (Seitzer et al. 2022): scale each term by stop_grad(sigma^2beta).
+        # Tempers the ~1/sigma^2 gradient that lets a briefly-overconfident head
+        # explode, without biasing the optimum. Same treatment as the consistency
+        # loss; this is the fix that stops pe_reg diverging.
+        if self.beta > 0.0:
+            nll = nll * (var**self.beta).detach()
 
-        # Gaussian NLL
-        nll = 0.5 * (log_var + (pe_targets - mu) ** 2 / var)
+        # Softened confidence curriculum: learn PE where the net believes it is a
+        # signal. First power (was squared) -> gentler gate.
+        p_signal = torch.sigmoid(ranking_stat).float().detach().unsqueeze(1)
 
-        # Confidence curriculum
-        p_signal = torch.sigmoid(ranking_stat).detach().unsqueeze(1)
-        p_signal = p_signal**2
+        # Apply masks; normalise by the signal count (curriculum re-weights within).
+        nll = nll * signal_mask.float() * p_signal
+        num_signal = signal_mask.float().sum().clamp_min(1.0)
 
-        # Apply masks
-        nll = nll * signal_mask * p_signal
-
-        # Variance regularisation (prevents sigma explosion)
-        variance_reg = var * signal_mask * p_signal
-
-        num_signal = signal_mask.sum().clamp_min(1.0)
-
-        nll_loss = nll.sum() / num_signal
-        variance_reg_loss = variance_reg.sum() / num_signal
-
-        # Strength of variance regulariser
-        lambda_var = 1e-3
-
-        reg_loss = nll_loss + lambda_var * variance_reg_loss
+        # No variance regulariser: the old `lambda_var * var` term pushed sigma
+        # *down*, driving the overconfident collapse. softplus + beta-NLL make it
+        # unnecessary (and harmful), so it is removed.
+        reg_loss = nll.sum() / num_signal
 
         # ----------------------
         # Coupling loss
         # ----------------------
-        mean_sigma = torch.sqrt(var.mean(dim=1))
+        mean_sigma = sigma.mean(dim=1)
 
-        sigmoid_rank = torch.sigmoid(ranking_stat)
+        sigmoid_rank = torch.sigmoid(ranking_stat).float()
 
         coupling_loss = mean_sigma * sigmoid_rank
         coupling_loss = coupling_loss.mean()
@@ -235,6 +254,8 @@ class BCEWithPEsigmaLoss(nn.Module):
         # ----------------------
         # Total loss
         # ----------------------
+        # fp32 throughout (PE terms are fp32); cast bce so the stack is uniform.
+        bce_loss = bce_loss.float()
         total_loss = (
             bce_loss
             + (self.regression_weight * reg_loss)
