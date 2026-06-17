@@ -65,6 +65,8 @@ def test_perdethead_shapes_and_sigma_clamp():
     t_pos = torch.linspace(0.0, 12.0, T)
     out = head(torch.randn(B, C, T), t_pos)
     for field in out._fields:
+        if field == "embedding":            # opt-in, default None (checked below)
+            continue
         assert getattr(out, field).shape == (B,), field
     # softplus parameterisation: sigma is a positive std within [sigma_min, sigma_max]
     for s in (out.sigma_tc, out.sigma_mc):
@@ -72,6 +74,15 @@ def test_perdethead_shapes_and_sigma_clamp():
     # soft-argmax mu_tc must lie inside the physical-time window
     assert (out.mu_tc >= t_pos.min() - 1e-3).all()
     assert (out.mu_tc <= t_pos.max() + 1e-3).all()
+
+
+def test_perdethead_embedding_is_opt_in():
+    head = PerDetHead(C)
+    t_pos = torch.linspace(0.0, 12.0, T)
+    x = torch.randn(B, C, T)
+    assert head(x, t_pos).embedding is None                       # default: not returned
+    emb = head(x, t_pos, return_embedding=True).embedding         # opt-in: pooled feature
+    assert emb is not None and emb.shape == (B, C)
 
 
 def test_perdethead_soft_argmax_localises():
