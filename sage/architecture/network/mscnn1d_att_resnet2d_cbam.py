@@ -454,7 +454,12 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         nn.init.constant_(self.corr_norm.weight, self.corr_gain_init)
         nn.init.zeros_(self.corr_norm.bias)
 
-    def forward(self, x) -> ConsistencyOutput:
+    def forward(self, x, return_embedding: bool = False):
+        """Returns a :class:`ConsistencyOutput`.  When ``return_embedding`` is
+        True, returns ``(ConsistencyOutput, embedding)`` instead, where
+        ``embedding`` is the per-detector attention-pooled frontend feature,
+        shape ``(B, D, C)`` -- used by the hard-noise miner as its QD diversity
+        descriptor.  Default False keeps the standard output untouched."""
         x = self.norm(x)
 
         # Per-detector frontends; (B, 1, C, T) each.
@@ -464,7 +469,9 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
 
         # Per-detector heads on the (B, C, T) features (drop the singleton dim).
         per_det = [
-            self.per_det_head(co.squeeze(1), self.t_position) for co in cnn_outputs
+            self.per_det_head(co.squeeze(1), self.t_position,
+                              return_embedding=return_embedding)
+            for co in cnn_outputs
         ]
 
         # Uncertainty-weighted consistency statistic for the first detector pair.
@@ -499,7 +506,7 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
         mu_mc = torch.stack([o.mu_mc for o in per_det], dim=1)
         sigma_mc = torch.stack([o.sigma_mc for o in per_det], dim=1)
 
-        return ConsistencyOutput(
+        out = ConsistencyOutput(
             ranking_stat=ranking_stat,
             point_estimates=point_estimates,
             mu_tc=mu_tc,
@@ -509,3 +516,8 @@ class MSCNN1D_2DResNetCBAM_Consistency(nn.Module):
             s_tc=s_tc,
             s_mc=s_mc,
         )
+        if return_embedding:
+            # (B, D, C) per-detector attention-pooled frontend embedding
+            embedding = torch.stack([o.embedding for o in per_det], dim=1)
+            return out, embedding
+        return out
