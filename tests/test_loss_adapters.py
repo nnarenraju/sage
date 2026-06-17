@@ -42,18 +42,18 @@ def _r(xs):
 
 def test_collect_pulls_primary_aux_and_totals():
     t = _bare_trainer(_MainAdapter(), [_AuxAdapter()])
-    primary, aux_terms, totals = t._collect(None, None, {})
-    assert round(float(primary), 4) == 1.0                # the BCE term
-    assert _r(aux_terms) == [2.0, 3.0, 0.5, 0.6]          # in adapter order
-    assert _r(totals) == [10.0, 5.0]                      # main, aux totals
+    primary, aux_terms, aux_totals = t._collect(None, None, {})
+    assert round(float(primary), 4) == 1.0               # bce (the primary)
+    assert _r(aux_terms) == [2.0, 3.0, 0.5, 0.6]         # pe_reg, coupling, cons_tc, cons_mc
+    assert _r(aux_totals) == [5.0]                       # only the aux adapter's total
 
 
 def test_collect_main_only():
     t = _bare_trainer(_MainAdapter(), [])
-    primary, aux_terms, totals = t._collect(None, None, {})
+    primary, aux_terms, aux_totals = t._collect(None, None, {})
     assert round(float(primary), 4) == 1.0
     assert _r(aux_terms) == [2.0, 3.0]
-    assert _r(totals) == [10.0]
+    assert _r(aux_totals) == []                          # main carries the primary
 
 
 def test_adapter_is_callable():
