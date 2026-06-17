@@ -19,8 +19,8 @@ After each epoch's training (past ``warmup_epochs``), CMA-MAE (pyribs) mines
 per-detector start times for hard noise windows, keeping diverse hard windows
 (diversity measured in the model's own embedding).  Every window above
 ``keep_threshold`` is accumulated and replayed via the noise sampler with
-probability ``hard_bias_prob``.  This is a drop-in swap for SageVanillaTraining
--- see :class:`sage.factory.SageHardMiningTraining`.
+probability ``hard_bias_prob``.  Mining is a callback on plain
+SageVanillaTraining -- see :class:`sage.factory.HardMiningCallback`.
 
 Usage
 -----
@@ -75,7 +75,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 # Training / validation / hard mining
 from sage.factory.training import SageVanillaTraining
 from sage.factory.validation import SageVanillaValidation
-from sage.factory.hard_mining import SageHardMiningTraining
+from sage.factory.callbacks import HardMiningCallback
 from sage.utils.checkpoint import CheckpointManager
 
 # ---------------------------------------------------------------------------
@@ -168,22 +168,25 @@ def run_hard():
     scheduler     = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
     scaler        = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
-    # ── Training (hard-mining) + validation ──────────────────────────────────
-    # SageHardMiningTraining is a drop-in for SageVanillaTraining: same loop plus
-    # a per-epoch CMA-MAE mining pass.  Swap the class to SageVanillaTraining to
-    # disable hard mining entirely (no pyribs, random noise only).
-    trainer = SageHardMiningTraining(
+    # ── Training (vanilla + hard-mining callback) + validation ───────────────
+    # Hard mining is a callback on plain SageVanillaTraining. Drop the
+    # callbacks=[...] to disable mining entirely (no pyribs, random noise only).
+    trainer = SageVanillaTraining(
         tr_sig, tr_noise, processor, model, loss_function,
         optimiser, scheduler, scaler,
-        num_iterations    = cfg.training_iterations,
-        num_epochs        = cfg.num_epochs,
-        hard_bias_prob    = 0.6,
-        keep_threshold    = 5.0,
-        warmup_epochs     = 10,
-        mine_iters        = 200,
-        hard_dataset_dir  = str(DATASET_DIR),
-        max_total_samples = 30_000_000,
-        mine_seed         = 150914,
+        num_iterations = cfg.training_iterations,
+        num_epochs     = cfg.num_epochs,
+        callbacks      = [
+            HardMiningCallback(
+                hard_bias_prob    = 0.6,
+                keep_threshold    = 5.0,
+                warmup_epochs     = 10,
+                mine_iters        = 200,
+                hard_dataset_dir  = str(DATASET_DIR),
+                max_total_samples = 30_000_000,
+                mine_seed         = 150914,
+            ),
+        ],
     )
 
     vanilla_val = SageVanillaValidation(
