@@ -162,6 +162,35 @@ class StartTimeDataset:
             seq_len=self.seq_len,
         )
 
+    def dedup(self):
+        """Return a new dataset with unique per-detector start-time rows.
+
+        A sample's identity is its ``start_indices`` row — two samples with the
+        same per-detector start indices are the *same physical window*. The
+        hard-noise miner re-finds already-saved windows every epoch (replayed
+        hard noise sits in the score tail by construction and re-clears the
+        keep threshold), so without deduplication the accumulated dataset would
+        grow with exact duplicates of the same few windows. The highest-scoring
+        occurrence of each unique row is kept.
+        """
+        if len(self) <= 1:
+            return self
+        # Score-descending order so np.unique's first-occurrence-per-row keeps
+        # the strongest score for each window.
+        order = np.argsort(-self.scores, kind="stable")
+        _, first = np.unique(self.start_indices[order], axis=0, return_index=True)
+        keep = np.sort(order[first])            # original order; unique; best score
+        return StartTimeDataset(
+            detectors=self.detectors,
+            start_indices=self.start_indices[keep],
+            segment_indices=self.segment_indices[keep],
+            gps_times=self.gps_times[keep],
+            scores=self.scores[keep],
+            bin_files=self.bin_files,
+            sample_rate=self.sample_rate,
+            seq_len=self.seq_len,
+        )
+
     def __len__(self):
         return len(self.scores)
 
