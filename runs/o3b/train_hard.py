@@ -179,7 +179,13 @@ def run_hard():
         callbacks      = [
             HardMiningCallback(
                 hard_bias_prob    = 0.6,
-                keep_threshold    = 5.0,
+                # Keep noise scoring >= logit 2.0 (~88% signal probability — a
+                # confident false positive). Use keep_threshold_sigmoided=<p> to
+                # set the same bar as a probability instead (raw wins if both are
+                # given). logit 5.0 (~0.993) keeps almost nothing until the model
+                # is well trained -- measured on a 1-epoch model the hardest mined
+                # noise peaks near logit ~6, p99 ~3.
+                keep_threshold_raw = 2.0,
                 warmup_epochs     = 10,
                 mine_iters        = 200,
                 hard_dataset_dir  = str(DATASET_DIR),
