@@ -166,8 +166,13 @@ class CMAMAEMiner:
         Window length in samples.
     bin_files, sample_rate :
         Passed through to the emitted :class:`StartTimeDataset`.
-    keep_threshold : float
-        Windows scoring ``>=`` this are saved to the dataset (what we mine).
+    keep_threshold : float or None
+        Windows scoring ``>=`` this are saved to the dataset (what we mine), in
+        the *raw score units* that ``evaluate_fn`` returns — for Sage that is the
+        detection logit. ``None`` (the default) means ``-inf`` → keep every mined
+        window. The user-facing :class:`~sage.factory.HardMiningCallback` exposes
+        this as either a raw or a sigmoided (probability) threshold and resolves
+        it to the raw value passed here.
     descriptor_dim : int
         PCA-reduced embedding dimension used as the QD measure space.
     n_cells : int
@@ -192,7 +197,7 @@ class CMAMAEMiner:
         seq_len,
         bin_files,
         sample_rate,
-        keep_threshold=5.0,
+        keep_threshold=None,
         descriptor_dim=8,
         n_cells=1024,
         learning_rate=0.1,
@@ -210,7 +215,13 @@ class CMAMAEMiner:
         self.bin_files = list(bin_files)
         self.sample_rate = float(sample_rate)
 
-        self.keep_threshold = float(keep_threshold)
+        # None -> -inf keeps every mined window. The user-facing
+        # HardMiningCallback resolves its raw/sigmoided thresholds to a concrete
+        # raw value before constructing us, so this default is only hit by direct
+        # miner use.
+        self.keep_threshold = (
+            float("-inf") if keep_threshold is None else float(keep_threshold)
+        )
         self.descriptor_dim = int(descriptor_dim)
         self.n_cells = int(n_cells)
         self.learning_rate = float(learning_rate)
