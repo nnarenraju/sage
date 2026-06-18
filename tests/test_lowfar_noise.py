@@ -64,10 +64,14 @@ from sage.data.noise.lowfar_noise import (  # noqa: E402
 # Retrieve the already-loaded module object without walking the sage.data chain.
 _lnm = sys.modules["sage.data.noise.lowfar_noise"]
 
-# Remove the temporary stub now that lowfar_noise has bound DYN_RANGE_FAC into
-# its own namespace.  Leaving a hollow pycbc stub in sys.modules would prevent
-# pytest.importorskip("pycbc") from skipping tests that genuinely need pycbc.
+# lowfar_noise reaches DYN_RANGE_FAC *lazily* (sage.data.noise._pycbc_lazy),
+# importing pycbc only on the first dyn_range_fac() call — which happens inside
+# read_batch(), well after this point.  Prime that cache from the live stub
+# (=1.0) before removing it, otherwise the first read_batch() would trigger a
+# `from pycbc import ...` against the now-absent stub.  Removing the hollow stub
+# afterwards keeps pytest.importorskip("pycbc") skipping tests that need real pycbc.
 if _pycbc_stubbed:
+    _lnm.dyn_range_fac()             # cache DYN_RANGE_FAC (=1.0) while the stub is live
     del sys.modules["pycbc"]
 
 # pin_memory() requires an NVIDIA driver even for CPU tensors.  Replace it
@@ -300,6 +304,51 @@ class TestStartTimeDataset:
         )
         with pytest.raises(AssertionError):
             ds1.merge(ds2)
+
+    def _dup_ds(self, rows, scores):
+        rows = np.asarray(rows, dtype=np.int64)
+        return StartTimeDataset(
+            detectors=_DETECTORS,
+            start_indices=rows,
+            segment_indices=np.zeros_like(rows),
+            gps_times=np.arange(len(rows), dtype=np.float64),
+            scores=np.asarray(scores, dtype=np.float32),
+            bin_files=["/fake/H1.bin", "/fake/L1.bin"],
+            sample_rate=_SR,
+            seq_len=_SEQ_LEN,
+        )
+
+    def test_dedup_keeps_unique_start_rows(self):
+        # rows 0 and 2 are identical (same window); 1 and 3 are distinct.
+        ds = self._dup_ds(
+            rows=[[10, 20], [30, 40], [10, 20], [50, 60]],
+            scores=[1.0, 2.0, 5.0, 3.0],
+        )
+        out = ds.dedup()
+        assert len(out) == 3                              # one duplicate removed
+        uniq = {tuple(r) for r in out.start_indices.tolist()}
+        assert uniq == {(10, 20), (30, 40), (50, 60)}
+
+    def test_dedup_keeps_highest_score_of_duplicates(self):
+        ds = self._dup_ds(
+            rows=[[10, 20], [10, 20], [10, 20]],
+            scores=[1.0, 9.0, 4.0],
+        )
+        out = ds.dedup()
+        assert len(out) == 1
+        assert out.scores[0] == 9.0                       # strongest occurrence kept
+
+    def test_dedup_accumulation_does_not_grow_on_repeat(self):
+        # Re-mining the same tail windows every epoch must not grow the set.
+        ds = self._dup_ds(rows=[[1, 2], [3, 4]], scores=[7.0, 8.0])
+        acc = ds
+        for _ in range(5):
+            acc = acc.merge(ds).dedup()                   # same windows re-found
+        assert len(acc) == 2
+
+    def test_dedup_noop_when_all_unique(self):
+        ds = self._make(6)                                # all start rows distinct
+        assert len(ds.dedup()) == 6
 
 
 # ---------------------------------------------------------------------------
