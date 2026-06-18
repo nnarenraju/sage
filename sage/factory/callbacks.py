@@ -133,6 +133,11 @@ class HardMiningCallback(Callback):
     Requires a noise sampler with ``set_hard_dataset`` and a model exposing the
     opt-in embedding (consistency model) or ``get_ranking_statistic``.
 
+    The "how hard is hard enough to keep" bar is set with either
+    ``keep_threshold_raw`` (a raw detection logit) or ``keep_threshold_sigmoided``
+    (the same bar as a probability in ``(0, 1)``); the raw value wins if both are
+    given, and if neither is set every mined window is kept.
+
     pyribs / the miner are imported lazily on first use, so merely importing this
     module — and pure vanilla training — never requires pyribs. The miner is
     built lazily from the trainer's graph on the first mining pass.
@@ -140,8 +145,9 @@ class HardMiningCallback(Callback):
 
     def __init__(
         self,
+        keep_threshold_raw=None,
+        keep_threshold_sigmoided=None,
         hard_bias_prob=0.5,
-        keep_threshold=5.0,
         warmup_epochs=1,
         mine_iters=200,
         hard_dataset_dir=None,
@@ -154,8 +160,28 @@ class HardMiningCallback(Callback):
         n_warmup=2048,
         mine_seed=None,
     ):
+        # How signal-like a noise window must look to count as "hard". Two ways
+        # to set the same bar:
+        #   keep_threshold_raw       -- the model's raw detection LOGIT.
+        #   keep_threshold_sigmoided -- the same bar as a probability in (0, 1),
+        #                               easier to reason about.
+        # The RAW value overrides the sigmoided one when both are given. If
+        # neither is set, the bar is -inf -> every mined window is kept.
+        self.keep_threshold_raw = keep_threshold_raw
+        self.keep_threshold_sigmoided = keep_threshold_sigmoided
+        if keep_threshold_raw is not None:
+            self.keep_threshold = float(keep_threshold_raw)
+        elif keep_threshold_sigmoided is not None:
+            p = float(keep_threshold_sigmoided)
+            if not 0.0 < p < 1.0:
+                raise ValueError(
+                    "keep_threshold_sigmoided must be a detection probability in "
+                    f"(0, 1); got {keep_threshold_sigmoided!r}"
+                )
+            self.keep_threshold = float(np.log(p / (1.0 - p)))
+        else:
+            self.keep_threshold = float("-inf")     # keep every mined window
         self.hard_bias_prob = float(hard_bias_prob)
-        self.keep_threshold = float(keep_threshold)
         self.warmup_epochs = int(warmup_epochs)
         self.mine_iters = int(mine_iters)
         self.hard_dataset_dir = hard_dataset_dir
@@ -281,9 +307,11 @@ class HardMiningCallback(Callback):
             if handle is not None:                    # consistency model uses no hook
                 handle.remove()
 
-        self._accumulated = (
-            fresh if self._accumulated is None else self._accumulated.merge(fresh)
-        )
+        # Accumulate across epochs, but keep only UNIQUE start-time windows:
+        # replayed hard noise re-clears the keep threshold every epoch, so a
+        # plain concat would pile up exact duplicates of the same few windows.
+        merged = fresh if self._accumulated is None else self._accumulated.merge(fresh)
+        self._accumulated = merged.dedup()
         if len(self._accumulated) > self.max_total_samples:
             keep = np.argsort(-self._accumulated.scores)[: self.max_total_samples]
             self._accumulated = self._accumulated.filter(
