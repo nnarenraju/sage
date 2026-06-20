@@ -1,40 +1,54 @@
 #!/bin/bash
+# ===========================================================================
+# runs/o3b/submit.sh -- thin per-run launcher.
+#
+# All the heavy lifting (paths, conda python, SLURM flags) lives in
+# sage/utils/run_base.sh, driven by the server registry in
+# sage/utils/servers.py. Here we only:
+#   1. pick the server (one line), and
+#   2. choose which task to launch.
+#
+# Run it from this directory:   ./submit.sh download
+# ===========================================================================
 
-#SBATCH --job-name=niamh-ref
-#SBATCH --partition=gpu
-#SBATCH --qos=normal
-#SBATCH --chdir=/work/nagarajan
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=48G
-#SBATCH --gres=gpu:h100_80gb:1
-#SBATCH --time=2-00:00
-#SBATCH --output=%x-%j.out
-#SBATCH --mail-type=ALL
-#SBATCH --mail-user=nagarajan@uni-potsdam.de
+# --- 1. pick the server -----------------------------------------------------
+# Leave unset to auto-detect from the hostname; set explicitly to override.
+# export SAGE_SERVER=jarvis
 
-# cu126 torch bundles its own CUDA 12.6 runtime; no module load needed.
-# Expose all pip-installed NVIDIA shared libs so cuequivariance can find libnvrtc.so.12 etc.
-PROJECT_DIR="$HOME/research/niamh"
-PYTHON="$PROJECT_DIR/.conda/bin/python"
-NVIDIA_SITE="$PROJECT_DIR/.conda/lib/python3.11/site-packages/nvidia"
-export LD_LIBRARY_PATH="$(find "$NVIDIA_SITE" -maxdepth 2 -name 'lib' -type d | tr '\n' ':')${LD_LIBRARY_PATH:-}"
+# --- load the shared launch library ----------------------------------------
+REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+source "$REPO_ROOT/sage/utils/run_base.sh"
 
-# Redirect all model/compile caches to /work so nothing large lands in /home.
-export MACE_CACHE_DIR=/work/nagarajan/cache/mace
-export TORCH_HOME=/work/nagarajan/cache/torch
-export TRITON_CACHE_DIR=/work/nagarajan/cache/triton
-export HF_HOME=/work/nagarajan/cache/huggingface
-mkdir -p "$MACE_CACHE_DIR" "$TORCH_HOME" "$TRITON_CACHE_DIR" "$HF_HOME"
+# --- 2. choose the task -----------------------------------------------------
+TASK="${1:-download}"   # download | retry | psds | train
 
-cd "$PROJECT_DIR" || exit 1
+# Data tasks are network/CPU-bound (GWOSC download + PSD estimation runs on
+# CPU), so they go to the cpu partition with no GPU -- not the GPU node the
+# registry defaults to for training.
+CPU_OPTS=(--partition cpu --qos "" --gres none --cpus 16 --mem 64G --time 2-00:00)
 
-echo "Job:     $SLURM_JOB_ID"
-echo "Node:    $SLURMD_NODENAME"
-echo "GPU:     $CUDA_VISIBLE_DEVICES"
-echo "Started: $(date)"
-
-"$PYTHON" -u runs/reference_materials/run_reference_analysis.py "$@"
-
-echo "Finished: $(date)"
+case "$TASK" in
+    download)
+        # Full O3b download (H1, L1, V1) + PSD generation.
+        sage_submit "${CPU_OPTS[@]}" --job o3b-download \
+            "python -c 'from dataset import make_dataset; make_dataset()'"
+        ;;
+    retry)
+        # Re-fetch any missing/failed segments (retry lives in the downloader).
+        sage_submit "${CPU_OPTS[@]}" --job o3b-retry \
+            "python -c 'from dataset import retry_dataset; retry_dataset(num_workers=8)'"
+        ;;
+    psds)
+        # Regenerate PSDs only (assumes .bin files already downloaded).
+        sage_submit "${CPU_OPTS[@]}" --job o3b-psds \
+            "python -c 'from dataset import make_psds_only; make_psds_only()'"
+        ;;
+    train)
+        sage_submit --job o3b-train \
+            "python -c 'from train import run_sage; run_sage()'"
+        ;;
+    *)
+        echo "Unknown task '$TASK'. Use: download | retry | psds | train" >&2
+        exit 2
+        ;;
+esac
