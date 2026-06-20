@@ -252,6 +252,7 @@ class DataReleaseDownloader:
         make_monolithic_file: bool = True,
         save_bin: bool = False,
         sample_rate: float = 2048.0,
+        release_dirname: str = "data_release",
     ):
 
         # Timeseries params
@@ -269,6 +270,10 @@ class DataReleaseDownloader:
 
         # Save params
         self.save_parent_dir = save_parent_dir
+        # Name of the release sub-folder created under save_parent_dir. Override
+        # (e.g. "data_release_o3a") to keep concurrent runs in fully separate
+        # directories so they can never touch each other's files.
+        self.release_dirname = release_dirname
         self.monolithic = make_monolithic_file
         # if not self.monolithic:
         #    logger.warning("N segment files not accepted for training Sage")
@@ -735,14 +740,14 @@ class DataReleaseDownloader:
         # Setup monolithic file
         if self.monolithic and not self.save_bin:
             # Make save dir
-            self._savepath_handling(f"data_release")
+            self._savepath_handling(self.release_dirname)
             # Make save file
             hf = self._h5py_mkfile(f"data_{det}_{run}.h5")
             # Store full metadata ONCE for the full dataset
             self._save_metadata(hf, "metadata", self.full_metadata)
 
         elif self.monolithic and self.save_bin:
-            self._savepath_handling("data_release")
+            self._savepath_handling(self.release_dirname)
             bin_fh = self._bin_open(f"data_{det}_{run}.bin")
             # reset cursors
             self._bin_metadata = []
