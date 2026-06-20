@@ -41,6 +41,7 @@ torch._dynamo.reset()
 
 # LOCAL
 from sage.core.config import get_cfg, get_data_cfg
+from sage.utils.servers import get_server
 
 # Signal Sampler
 from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
@@ -92,7 +93,7 @@ def make_training_graph():
     # O3a trains on O3a noise and recolours toward the O3b epoch
     recolour = RecolourPostprocess(
         p_recolour=0.37,
-        recolour_dataset_dir="/data/wiay/nnarenraju/data_release/o3b_dataset",
+        recolour_dataset_dir=get_server().dataset_dir("O3b"),
     )
     training_noise_sampler = MemmapNoiseSampler(
         postprocess_fn=recolour, prefetch=8, seed=150914

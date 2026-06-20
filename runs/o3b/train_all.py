@@ -53,7 +53,8 @@ from config import set_configs
 from sage.utils.checkpoint import CheckpointManager
 from pathlib import Path
 
-_RECOLOUR_DIR = "/local/scratch/igr/nnarenraju/data_release/o3a_dataset"
+from sage.utils.servers import get_server
+_RECOLOUR_DIR = get_server().dataset_dir("O3a")
 DATASET_DIR = Path("./hard_noise_datasets_all/")
 
 

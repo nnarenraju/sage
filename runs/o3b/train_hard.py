@@ -49,6 +49,7 @@ os.chdir(RUN_DIR)
 
 from config import set_configs
 from sage.core.config import get_cfg, get_data_cfg
+from sage.utils.servers import get_server
 
 # Signal
 from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
@@ -98,7 +99,7 @@ def make_training_graph():
 
     recolour = RecolourPostprocess(
         p_recolour          = 0.37,
-        recolour_dataset_dir= "/work/nagarajan/sage/o3a",
+        recolour_dataset_dir= get_server().dataset_dir("O3a"),
     )
     noise_sampler = MemmapNoiseSampler(
         postprocess_fn   = recolour,

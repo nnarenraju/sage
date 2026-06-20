@@ -49,7 +49,8 @@ from sage.factory import (
 from config import set_configs
 from sage.utils.checkpoint import CheckpointManager
 
-_RECOLOUR_DIR = "/local/scratch/igr/nnarenraju/data_release/o3a_dataset"
+from sage.utils.servers import get_server
+_RECOLOUR_DIR = get_server().dataset_dir("O3a")
 
 
 def make_training_graph():

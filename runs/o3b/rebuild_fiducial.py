@@ -18,8 +18,9 @@ import json
 
 import numpy as np
 
-RECOLOUR_DIR = "/data/wiay/nnarenraju/data_release/o3b_dataset/data_dir/recolour_psds"
-FIDUCIAL_DIR = "/home/nnarenraju/Research/sage/runs/o3b/run_export/fiducial_psds"
+from sage.utils.servers import get_server
+RECOLOUR_DIR = os.path.join(get_server().data_dir("O3b"), "recolour_psds")
+FIDUCIAL_DIR = os.path.join(os.path.dirname(__file__), "run_export", "fiducial_psds")
 
 DETECTORS = ["H1", "L1", "V1"]
 
