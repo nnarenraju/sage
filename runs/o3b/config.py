@@ -30,6 +30,10 @@ import torch
 from sage.core.config import register_configs
 from sage.core.base_classes import BaseConfig, BaseDataConfig
 
+# Server-specific paths (one switch: SAGE_SERVER). See sage/utils/servers.py.
+from sage.utils.servers import get_server
+_SRV = get_server()
+
 
 class O3bCFG:
 
@@ -55,14 +59,14 @@ class O3bCFG:
 
 class O3bDataCFG:
 
-    data_dir = "/local/scratch/igr/nnarenraju/data_release/o3b_dataset/data_dir"
+    data_dir = _SRV.data_dir("O3b")
     training_noise_files = [
-        "/local/scratch/igr/nnarenraju/data_release/o3b_dataset/data_H1_O3b.bin",
-        "/local/scratch/igr/nnarenraju/data_release/o3b_dataset/data_L1_O3b.bin",
+        _SRV.noise_bin("H1", "O3b"),
+        _SRV.noise_bin("L1", "O3b"),
     ]
     validation_noise_files = [
-        "/local/scratch/igr/nnarenraju/data_release/o3a_dataset/data_H1_O3a.bin",
-        "/local/scratch/igr/nnarenraju/data_release/o3a_dataset/data_L1_O3a.bin",
+        _SRV.noise_bin("H1", "O3a"),
+        _SRV.noise_bin("L1", "O3a"),
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz

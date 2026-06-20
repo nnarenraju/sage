@@ -38,16 +38,28 @@ from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.psd import smoothing
 
 from sage.core.config import get_cfg, get_data_cfg
+from sage.data.primer.retry import retry_detector
+from sage.utils.servers import get_server
 from config import set_configs
 
+_RUN = "O3b"
+_DETECTORS = ["H1", "L1", "V1"]
+
+# Server-specific paths come from the single registry in sage/utils/servers.py.
+# Switch machines with the SAGE_SERVER env var (or hostname auto-detect).
+_SRV = get_server()
+
+# Data root — all downloaded files land under this directory
+_DATA_DIR = _SRV.data_root
+
 # The O3b noise .bin files and their *_segments.json sidecars live here
-_DATASET_DIR = "/data/wiay/nnarenraju/data_release/o3b_dataset"
+_DATASET_DIR = _SRV.dataset_dir(_RUN)
 
 
 def _get_timeline(data_cfg):
 
     tq = TimelineQuery(
-        detector=["L1", "V1"],
+        detector=["H1", "L1", "V1"],
         observing_run=["O3b"],
         auto_clean_empty_timelines=True,
     )
@@ -55,7 +67,7 @@ def _get_timeline(data_cfg):
     tq.download_segments()
 
     # Fail loudly if any detector came back empty (e.g. proxy dropped mid-query)
-    expected = ["L1", "V1"]
+    expected = ["H1", "L1", "V1"]
     for record in tq.timeline:
         det = record["detector"]
         segs = record["segments"]
@@ -102,7 +114,7 @@ def _download_data_release(tq, data_cfg):
 
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
-        save_parent_dir="/home/nnarenraju/Research/sage/runs/o3b/",
+        save_parent_dir=_DATA_DIR,
         noise_low_freq_cutoff=15.0,
         minimum_segment_duration=22.0,
         corrupt_trim_length=buffer,
@@ -181,7 +193,7 @@ def make_dataset():
     # Make datasets
     tq = _get_timeline(data_cfg)
     _download_data_release(tq, data_cfg)
-    for det in ["H1", "L1", "V1"]:
+    for det in _DETECTORS:
         _make_psds(det, data_cfg)
 
 
@@ -194,7 +206,7 @@ def make_psds_only():
     """
     set_configs()
     _, data_cfg = get_cfg(), get_data_cfg()
-    for det in ["H1", "L1", "V1"]:
+    for det in _DETECTORS:
         _make_psds(det, data_cfg)
 
 
@@ -208,3 +220,17 @@ def make_psds_single(detector):
     set_configs()
     _, data_cfg = get_cfg(), get_data_cfg()
     _make_psds(detector, data_cfg)
+
+
+def retry_dataset(detectors=None, num_workers=8):
+    """Re-download any missing / failed segments per detector.
+
+    The retry logic itself lives in ``sage.data.primer.retry.retry_detector``;
+    this just loops it over the run's detectors. Safe to re-run.
+    """
+    set_configs()
+    for det in (detectors or _DETECTORS):
+        print(f"\n{'='*60}")
+        print(f" Retrying {det} / {_RUN}")
+        print(f"{'='*60}")
+        retry_detector(det, _RUN, _SRV.data_release_root, num_workers=num_workers)

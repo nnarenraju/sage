@@ -26,21 +26,26 @@ Documentation: NULL
 # Packages
 import math
 
-# Data root — all downloaded files land under this directory
-_DATA_DIR = "/data/wiay/nnarenraju"
-
-# The O3a noise .bin files and their *_segments.json sidecars live here
-_DATASET_DIR = f"{_DATA_DIR}/data_release/o3a_dataset"
-
 # LOCAL
 from sage.data.primer import DataReleaseDownloader
 from sage.data.primer import TimelineQuery
 from sage.core.config import get_cfg, get_data_cfg
 from sage.data.primer.retry import retry_detector
+from sage.utils.servers import get_server
 from config import set_configs
 
 _RUN = "O3a"
 _DETECTORS = ["H1", "L1", "V1"]
+
+# Server-specific paths come from the single registry in sage/utils/servers.py.
+# Switch machines with the SAGE_SERVER env var (or hostname auto-detect).
+_SRV = get_server()
+
+# Data root — all downloaded files land under this directory
+_DATA_DIR = _SRV.data_root
+
+# The O3a noise .bin files and their *_segments.json sidecars live here
+_DATASET_DIR = _SRV.dataset_dir(_RUN)
 
 
 def _get_timeline(data_cfg):
