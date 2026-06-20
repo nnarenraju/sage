@@ -10,7 +10,7 @@
 # ===========================================================================
 
 # --- 1. pick the server (unset = auto-detect from hostname) -----------------
-# export SAGE_SERVER=potsdam
+# export SAGE_SERVER=jarvis
 
 REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 source "$REPO_ROOT/sage/utils/run_base.sh"
@@ -18,17 +18,20 @@ source "$REPO_ROOT/sage/utils/run_base.sh"
 # --- 2. choose the task -----------------------------------------------------
 TASK="${1:-download}"   # download | retry | psds | train
 
+# Data tasks are network/CPU-bound -> cpu partition, no GPU (see o3b/submit.sh).
+CPU_OPTS=(--partition cpu --qos "" --gres none --cpus 16 --mem 64G --time 2-00:00)
+
 case "$TASK" in
     download)
-        sage_submit --job o3a-download \
+        sage_submit "${CPU_OPTS[@]}" --job o3a-download \
             "python -c 'from dataset import make_dataset; make_dataset()'"
         ;;
     retry)
-        sage_submit --job o3a-retry \
+        sage_submit "${CPU_OPTS[@]}" --job o3a-retry \
             "python -c 'from dataset import retry_dataset; retry_dataset(num_workers=8)'"
         ;;
     psds)
-        sage_submit --job o3a-psds \
+        sage_submit "${CPU_OPTS[@]}" --job o3a-psds \
             "python -c 'from dataset import make_psds_only; make_psds_only()'"
         ;;
     train)

@@ -44,8 +44,12 @@ _SRV = get_server()
 # Data root — all downloaded files land under this directory
 _DATA_DIR = _SRV.data_root
 
+# Keep O3a in its OWN release sub-folder, completely separate from O3b's
+# "data_release", so two concurrent downloads can never touch each other.
+_RELEASE_DIRNAME = "data_release_o3a"
+
 # The O3a noise .bin files and their *_segments.json sidecars live here
-_DATASET_DIR = _SRV.dataset_dir(_RUN)
+_DATASET_DIR = f"{_DATA_DIR}/{_RELEASE_DIRNAME}"
 
 
 def _get_timeline(data_cfg):
@@ -107,6 +111,7 @@ def _download_data_release(tq, data_cfg):
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
         save_parent_dir=_DATA_DIR,
+        release_dirname=_RELEASE_DIRNAME,
         noise_low_freq_cutoff=15.0,
         minimum_segment_duration=22.0,
         corrupt_trim_length=buffer,
@@ -214,6 +219,7 @@ def download_single_detector(detector, num_workers=8):
     drd = DataReleaseDownloader(
         segments_metadata=tq.timeline,
         save_parent_dir=_DATA_DIR,
+        release_dirname=_RELEASE_DIRNAME,
         noise_low_freq_cutoff=15.0,
         minimum_segment_duration=22.0,
         corrupt_trim_length=buffer,
@@ -272,7 +278,7 @@ def retry_dataset(detectors=None, num_workers=8):
 
     set_configs()
 
-    data_dir = f"{_DATA_DIR}/data_release"
+    data_dir = _DATASET_DIR
     for det in (detectors or _DETECTORS):
         print(f"\n{'='*60}")
         print(f" Retrying {det} / {_RUN}")
