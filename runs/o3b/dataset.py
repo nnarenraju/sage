@@ -52,8 +52,10 @@ _SRV = get_server()
 # Data root — all downloaded files land under this directory
 _DATA_DIR = _SRV.data_root
 
-# The O3b noise .bin files and their *_segments.json sidecars live here
-_DATASET_DIR = _SRV.dataset_dir(_RUN)
+# The O3b noise .bin files and their *_segments.json sidecars live here.
+# O3b was downloaded with the default "data_release" release dir (flat layout,
+# run encoded in the filename), so the .bin reads come straight from there.
+_DATASET_DIR = _SRV.data_release_root
 
 
 def _get_timeline(data_cfg):
