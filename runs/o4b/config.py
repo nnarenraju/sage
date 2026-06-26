@@ -39,7 +39,6 @@ class O4bCFG:
     class_balance = 0.5
     clip_norm = 1.0
     dropout = 0.0
-    p_non_astrophysical = 0.0
     num_epochs = 80
     training_iterations = int(2_000_000 / batch_size)
     validation_iterations = int(200_000 / batch_size)

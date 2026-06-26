@@ -25,7 +25,6 @@ Documentation: NULL
 
 # Packages
 import os
-import re
 import h5py
 import json
 import torch
@@ -44,29 +43,6 @@ from concurrent.futures import ThreadPoolExecutor
 # pycbc is an optional dependency; pull its dynamic-range constant lazily so the
 # noise package imports without pycbc (see ._pycbc_lazy).
 from ._pycbc_lazy import dyn_range_fac
-
-# ---------------------------------------------------------------------------
-# Dataset versioning helpers
-# ---------------------------------------------------------------------------
-
-_EPOCH_PATTERN = re.compile(r'^hard_noise_epoch_(\d+)\.npz$')
-
-
-def _find_latest_hard_dataset(directory: str | Path) -> Path | None:
-    """
-    Scan *directory* for ``hard_noise_epoch_NNNN.npz`` files and return
-    the path of the one with the highest epoch number, or ``None`` if none
-    exist.
-    """
-    d = Path(directory)
-    if not d.exists():
-        return None
-    best_epoch, best_path = -1, None
-    for p in d.glob("hard_noise_epoch_*.npz"):
-        m = _EPOCH_PATTERN.match(p.name)
-        if m and int(m.group(1)) > best_epoch:
-            best_epoch, best_path = int(m.group(1)), p
-    return best_path
 
 # LOCAL
 from sage.core.config import get_cfg, get_data_cfg
@@ -384,8 +360,6 @@ class MemmapNoiseSampler(torch.nn.Module):
         prefetch: int = 3,
         seed=None,
         training=True,
-        hard_dataset_path=None,
-        hard_dataset_dir=None,
         hard_bias_prob: float = 0.0,
         num_read_workers: int = 16,
     ):
@@ -465,35 +439,13 @@ class MemmapNoiseSampler(torch.nn.Module):
         self.rng = np.random.default_rng(seed)
 
         # Hard-noise biasing ---------------------------------------------------
-        # A StartTimeDataset of pre-mined hard windows.  The prefetch thread
+        # A StartTimeDataset of currently-hard windows.  The prefetch thread
         # draws from it with probability hard_bias_prob instead of sampling
-        # randomly.  Updated live via set_hard_dataset() between epochs.
-        #
-        # Two ways to supply the initial dataset:
-        #   hard_dataset_path  — load a specific .npz file
-        #   hard_dataset_dir   — scan the directory and load the latest
-        #                        hard_noise_epoch_NNNN.npz found there
+        # randomly.  Populated live by HardMiningCallback via set_hard_bank()
+        # (which calls set_hard_dataset) between epochs; starts empty.
         self._hard_dataset   = None
         self._hard_bias_prob = float(hard_bias_prob)
         self._hard_lock      = threading.Lock()
-
-        _load_path = None
-        if hard_dataset_path is not None:
-            p = Path(hard_dataset_path)
-            _load_path = p if p.suffix == ".npz" else p.with_suffix(".npz")
-        elif hard_dataset_dir is not None:
-            _load_path = _find_latest_hard_dataset(hard_dataset_dir)
-            if _load_path is not None:
-                print(f"[MemmapNoiseSampler] Loading latest hard dataset: {_load_path.name}")
-
-        if _load_path is not None and _load_path.exists():
-            from sage.data.noise.lowfar_noise import StartTimeDataset
-            self._hard_dataset = StartTimeDataset.load(_load_path)
-            print(
-                f"[MemmapNoiseSampler] Hard dataset loaded: "
-                f"{len(self._hard_dataset):,} windows, "
-                f"bias_prob={self._hard_bias_prob:.0%}"
-            )
         # -----------------------------------------------------------------------
 
         # Worker pool that reads the batch's per-window noise slices in
@@ -526,54 +478,23 @@ class MemmapNoiseSampler(torch.nn.Module):
 
         atexit.register(_stop_at_exit)
 
-    def set_hard_dataset(
-        self,
-        dataset,
-        hard_bias_prob: float | None = None,
-        epoch: int | None = None,
-        save_dir: str | Path | None = None,
-    ):
+    def set_hard_dataset(self, dataset, hard_bias_prob: float | None = None):
         """
-        Replace the hard-noise dataset and optionally persist it to disk.
+        Replace the in-RAM hard-noise dataset (the prefetch thread's bias pool).
 
         Thread-safe: can be called from the main thread while the prefetch
         daemon is running.  The change takes effect on the next batch the
-        prefetch thread starts reading.
-
-        Versioned saving
-        ----------------
-        When ``epoch`` and ``save_dir`` are both given, the dataset is saved
-        as ``{save_dir}/hard_noise_epoch_{epoch:04d}.npz``.  Files from
-        *earlier* epochs are left untouched.  If two miners both fire at the
-        same epoch (explorer then refiner), the second call overwrites the
-        first for that epoch number — only the refiner's file survives on
-        disk, though the explorer's GPS findings remain in the shared bank.
-        On the next training restart,
-        ``MemmapNoiseSampler(hard_dataset_dir=save_dir)`` automatically
-        picks up the latest epoch file.
+        prefetch thread starts reading.  Persistence of the hard windows is the
+        HDF5 bank's job (see :meth:`set_hard_bank`); this only swaps the live
+        snapshot the sampler draws from.
 
         Parameters
         ----------
         dataset : StartTimeDataset or None
-            A freshly mined dataset.  Pass ``None`` to disable biasing.
+            The hard windows to bias toward.  Pass ``None`` to disable biasing.
         hard_bias_prob : float or None
             New bias probability.  ``None`` keeps the existing value.
-        epoch : int or None
-            Training epoch at which this dataset was mined.  Used in the
-            filename when ``save_dir`` is also provided.
-        save_dir : str or Path or None
-            Directory in which to save the versioned file.
         """
-        if dataset is not None and epoch is not None and save_dir is not None:
-            save_dir = Path(save_dir)
-            save_dir.mkdir(parents=True, exist_ok=True)
-            out_path = save_dir / f"hard_noise_epoch_{epoch:04d}.npz"
-            dataset.save(out_path)
-            print(
-                f"[MemmapNoiseSampler] Saved hard dataset → {out_path.name} "
-                f"({len(dataset):,} windows)"
-            )
-
         with self._hard_lock:
             self._hard_dataset = dataset
             if hard_bias_prob is not None:
