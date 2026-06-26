@@ -97,9 +97,20 @@ class Server:
         """The per-run ``data_dir`` (recolour PSDs etc.)."""
         return os.path.join(self.dataset_dir(run), "data_dir")
 
-    def noise_bin(self, detector: str, run: str) -> str:
-        """Monolithic noise .bin for one detector / observing run."""
-        return os.path.join(self.dataset_dir(run), f"data_{detector}_{run}.bin")
+    def noise_bin(self, detector: str, run: str,
+                  release_dirname: str = "data_release") -> str:
+        """Monolithic noise .bin for one detector / observing run.
+
+        The downloader writes the .bin FLAT inside its release folder with the
+        run encoded in the filename -- there is NO ``<run>_dataset`` sub-folder
+        for the strain (that sub-folder only holds derived PSDs).
+        ``release_dirname`` is the folder the run was downloaded into:
+        ``"data_release"`` (the default/base run) or an isolated dir such as
+        ``"data_release_o3a"`` / ``"data_release_o4b"``.
+        """
+        return os.path.join(
+            self.data_root, release_dirname, f"data_{detector}_{run}.bin"
+        )
 
 
 # ----------------------------------------------------------------------------

@@ -10,7 +10,7 @@ Noise   : MemmapNoiseSampler (O3b H1 + L1) with hard_dataset_dir + hard_bias_pro
           + optional RecolourPostprocess for O3a → O3b spectral bridge
           → hard/random mixing is automatic inside the sampler
 Preproc : FiducialWhitening → MultirateSampler (TD_MULTIRATE)
-Network : MSCNN1D_2DResNetCBAM_Heteroscedastic (torch.compiled)
+Network : MSCNN1D_2DResNetCBAM_HardMining (heteroscedastic + frontend-embed tap, torch.compiled)
 Loss    : BCEWithPEsigmaLoss
 
 Hard-negative mining
@@ -65,7 +65,7 @@ from sage.dsp.whiten import FiducialWhitening
 from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 
 # Model and loss
-from sage.architecture.network import MSCNN1D_2DResNetCBAM_Heteroscedastic
+from sage.architecture.network import MSCNN1D_2DResNetCBAM_HardMining
 from sage.architecture.custom_losses import BCEWithPEsigmaLoss
 from sage.core.logger import HDF5LossLogger
 
@@ -81,11 +81,6 @@ from sage.utils.checkpoint import CheckpointManager
 
 # ---------------------------------------------------------------------------
 # Paths
-# ---------------------------------------------------------------------------
-
-DATASET_DIR = Path("./hard_noise_datasets/")
-
-
 # ---------------------------------------------------------------------------
 # Graph builders
 # ---------------------------------------------------------------------------
@@ -106,8 +101,10 @@ def make_training_graph():
         prefetch         = 8,
         seed             = 150914,
         training         = True,
-        hard_dataset_dir = str(DATASET_DIR),
-        hard_bias_prob   = 0.6,
+        # Hard biasing is driven entirely by HardMiningCallback via the HDF5
+        # bank (set_hard_bank); no .npz pre-loading and no bias until the first
+        # mining round writes some hard start-times.
+        hard_bias_prob   = 0.0,
     )
     return signal_sampler, noise_sampler, param_sampler.bounds
 
@@ -140,7 +137,6 @@ def run_hard():
     cfg, data_cfg = get_cfg(), get_data_cfg()
 
     os.makedirs(cfg.export_dir, exist_ok=True)
-    DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── Graphs ──────────────────────────────────────────────────────────────
     tr_sig, tr_noise, bounds = make_training_graph()
@@ -148,7 +144,7 @@ def run_hard():
     processor                = make_processor(bounds)
 
     # ── Model (compiled for max throughput) ──────────────────────────────────
-    model = MSCNN1D_2DResNetCBAM_Heteroscedastic(
+    model = MSCNN1D_2DResNetCBAM_HardMining(
         frontend_filters    = 32,
         frontend_kernel     = 64,
         backend_resnet_size = 50,
@@ -172,14 +168,14 @@ def run_hard():
     # ── Training (vanilla + hard-mining callback) + validation ───────────────
     # Hard mining is a callback on plain SageVanillaTraining. Drop the
     # callbacks=[...] to disable mining entirely (no pyribs, random noise only).
-    trainer = SageVanillaTraining(
-        tr_sig, tr_noise, processor, model, loss_function,
-        optimiser, scheduler, scaler,
-        num_iterations = cfg.training_iterations,
-        num_epochs     = cfg.num_epochs,
-        callbacks      = [
-            HardMiningCallback(
-                hard_bias_prob    = 0.6,
+    hard_cb = HardMiningCallback(
+                # File-resident HDF5 bank lives on /work; one file per
+                # (train_runs, detectors) -- see hardbank_<runs>_<dets>.h5.
+                bank_dir       = os.path.join(get_server().data_root, "hard_mining"),
+                # One arg, two forms: int N -> mine every N epochs; or a list of
+                # epoch indices (e.g. the cosine warm-restart cycle ends).
+                mine_schedule  = 5,
+                hard_bias_prob = 0.2,
                 # Keep noise scoring >= logit 2.0 (~88% signal probability — a
                 # confident false positive). Use keep_threshold_sigmoided=<p> to
                 # set the same bar as a probability instead (raw wins if both are
@@ -187,13 +183,21 @@ def run_hard():
                 # is well trained -- measured on a 1-epoch model the hardest mined
                 # noise peaks near logit ~6, p99 ~3.
                 keep_threshold_raw = 2.0,
-                warmup_epochs     = 10,
-                mine_iters        = 200,
-                hard_dataset_dir  = str(DATASET_DIR),
-                max_total_samples = 30_000_000,
-                mine_seed         = 150914,
-            ),
-        ],
+                mine_iters     = 200,
+                # Diverse embedding bank: keep only embeddings >= novelty_dist
+                # apart (distance-gated), capped for speed; novelty_weight steers
+                # the search toward uncovered (new-family) regions.
+                novelty_dist   = 0.1,
+                max_embeddings = 50_000,
+                novelty_weight = 1.0,
+                mine_seed      = 150914,
+    )
+    trainer = SageVanillaTraining(
+        tr_sig, tr_noise, processor, model, loss_function,
+        optimiser, scheduler, scaler,
+        num_iterations = cfg.training_iterations,
+        num_epochs     = cfg.num_epochs,
+        callbacks      = [hard_cb],
     )
 
     vanilla_val = SageVanillaValidation(
@@ -218,6 +222,9 @@ def run_hard():
     if os.path.exists(ckpt_mgr.latest_path):
         start_epoch = ckpt_mgr.load_latest(map_location=cfg.device)
         print(f"Resuming from epoch {start_epoch}")
+        # Re-bias the (freshly-built) sampler from the persisted hard bank so we
+        # don't train on purely random noise until the next scheduled mine epoch.
+        hard_cb.attach_for_resume(trainer)
 
     for epoch in range(start_epoch, cfg.num_epochs):
         trainer(nepoch=epoch)

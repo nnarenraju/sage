@@ -53,13 +53,15 @@ class O3aCFG:
 
 class O3aDataCFG:
 
+    # O3a noise was downloaded into the isolated "data_release_o3a"; O3b (used
+    # for validation) lives in the default "data_release".
     data_dir = _SRV.data_dir("O3a")
     training_noise_files = [
-        _SRV.noise_bin("H1", "O3a"),
-        _SRV.noise_bin("L1", "O3a"),
+        _SRV.noise_bin("H1", "O3a", "data_release_o3a"),
+        _SRV.noise_bin("L1", "O3a", "data_release_o3a"),
     ]
     validation_noise_files = [
-        _SRV.noise_bin("H1", "O3b"),
+        _SRV.noise_bin("H1", "O3b"),                       # default data_release/
         _SRV.noise_bin("L1", "O3b"),
     ]
     sample_rate = 2048.0  # Hz

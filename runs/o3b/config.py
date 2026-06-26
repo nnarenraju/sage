@@ -42,6 +42,10 @@ class O3bCFG:
     device = "cuda:0"
     dtype = torch.float32
     detectors = ["H1", "L1"]
+    # Observing run(s) whose noise this model trains on. Drives the hard-mining
+    # bank filename/metadata (hardbank_<runs>_<dets>.h5). For multi-run O4
+    # training this becomes e.g. ["O3a", "O3b", "O4a"].
+    train_runs = ["O3b"]
     do_point_estimate = ["tc", "mchirp"]
     autocast = True
     class_balance = 0.5
@@ -59,14 +63,17 @@ class O3bCFG:
 
 class O3bDataCFG:
 
+    # Derived PSDs (recolour/segment) live under the run's dataset dir; the raw
+    # noise .bin lives flat in its release dir (O3b = default "data_release";
+    # O3a was downloaded into the isolated "data_release_o3a").
     data_dir = _SRV.data_dir("O3b")
     training_noise_files = [
-        _SRV.noise_bin("H1", "O3b"),
+        _SRV.noise_bin("H1", "O3b"),                       # data_release/
         _SRV.noise_bin("L1", "O3b"),
     ]
     validation_noise_files = [
-        _SRV.noise_bin("H1", "O3a"),
-        _SRV.noise_bin("L1", "O3a"),
+        _SRV.noise_bin("H1", "O3a", "data_release_o3a"),   # isolated dir
+        _SRV.noise_bin("L1", "O3a", "data_release_o3a"),
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz
