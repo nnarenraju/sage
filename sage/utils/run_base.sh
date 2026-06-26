@@ -19,8 +19,11 @@
 # ===========================================================================
 
 # Resolve this file's location -> repo root (.../sage/sage/utils/run_base.sh).
-_SAGE_RUN_BASE="${BASH_SOURCE[0]}"
-_SAGE_UTILS_DIR="$(cd "$(dirname "$_SAGE_RUN_BASE")" && pwd)"
+_SAGE_UTILS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Re-anchor to an ABSOLUTE path: sage_submit embeds this into the sbatch --wrap
+# and the job re-sources it from the compute node's cwd, where a relative path
+# (e.g. when this file was sourced as "sage/utils/run_base.sh") would not exist.
+_SAGE_RUN_BASE="$_SAGE_UTILS_DIR/run_base.sh"
 SAGE_REPO_ROOT="${SAGE_REPO_ROOT:-$(cd "$_SAGE_UTILS_DIR/../.." && pwd)}"
 
 # Pick a python to drive the (stdlib-only) server registry bridge. Any python
