@@ -351,7 +351,12 @@ class _MiningReader:
             results = list(pool.map(read_det, range(D)))
 
         for d, arr in enumerate(results):
-            cpu_t = torch.from_numpy(arr).pin_memory()
+            cpu_t = torch.from_numpy(arr)
+            # Pinning host memory only helps (and only works) for async H2D
+            # transfer to a CUDA device; it raises without an NVIDIA driver, so
+            # gate it on CUDA availability (no-op cost on CPU-only nodes).
+            if torch.cuda.is_available():
+                cpu_t = cpu_t.pin_memory()
             batch_td[:, d, :].copy_(cpu_t, non_blocking=True)
 
         segment_ids = torch.from_numpy(segs.astype(np.int64))   # (B, D) CPU

@@ -2,63 +2,47 @@
 # -*- coding: utf-8 -*-
 
 """
-Simple hard-negative noise mining with CMA-MAE (pyribs).
+Hard-negative noise mining with CMA-MAE (pyribs), backed by a file-resident
+:class:`~sage.data.noise.hard_bank.HardMiningBank`.
 
-A single, package-backed Quality-Diversity miner that runs **once per epoch
-after validation**.  It searches per-detector start times for noise windows that
-fool the current model (high ranking statistic) and keeps as many *diverse* hard
-windows as possible -- diversity measured in the model's own attention embedding
-space, so it never collapses onto one glitch type.
+One miner, continuous across training:
 
-ALL of the CMA / archive / QD machinery is pyribs (Fontaine & Nikolaidis), the
-reference implementation of CMA-MAE + CVT archives -- nothing here is a
-hand-rolled optimiser:
+  * **Cold start (once):** random per-detector start times are scored by the
+    current model; a fresh IncrementalPCA + CVT centroids are fit from the
+    warmup embeddings; CMA-MAE explores; hard windows (ranking stat >= keep
+    threshold) and a diverse subset of their embeddings are written to the bank.
+  * **Every warm round:** the persisted IncrementalPCA and the start-time /
+    embedding banks are loaded from the file.  CMA-ES is seeded from known-hard
+    start times *and* the CVT centroids from the accumulated embedding bank; the
+    PCA is ``partial_fit`` (never refit from scratch); a **novelty bonus** drives
+    the search toward embedding regions the bank does not yet cover (new glitch
+    families) while the *keep* gate still requires a high raw ranking stat.
+  * **Re-evaluation:** every round, the entire start-time bank is re-scored with
+    the current model and the ranking stats are appended (tagged with the model
+    epoch), so a family's hardness trajectory across training is recoverable.
 
-  * ``ribs.archives.CVTArchive``        -- CVT archive over the embedding
-                                           (``learning_rate`` = alpha, with a
-                                           ``threshold_min`` floor => CMA-MAE).
-  * ``ribs.emitters.EvolutionStrategyEmitter`` (``ranker='2imp'`` default)
-                                        -- CMA-ES with improvement ranking.
-  * ``ribs.schedulers.Scheduler``       -- the ask / tell loop.
-
-What lives here is only the gravitational-wave glue:
-
-  * genotype (a bounded vector in ``[0, 1]^D``, D = number of detectors) ->
-    per-detector ``(start_index, segment_id)`` via the segment valid-position
-    table (clip, no logit map);
-  * a black-box ``evaluate_fn(starts, segs) -> (scores, embeddings)`` seam that
-    the training hook fills with "read noise -> preprocess -> model -> tap the
-    attention embedding"; unit tests pass a trivial stand-in;
-  * accumulation of every window scoring ``>= keep_threshold`` into a
-    :class:`~sage.data.noise.lowfar_noise.StartTimeDataset` (start times only,
-    not strain), which the noise sampler later replays with probability ``p``.
-
-The embedding is high-dimensional, so it is reduced with PCA (a handful of dims)
-before the CVT -- both the PCA and the CVT centroids are re-fit at the start of
-each ``mine`` call, which naturally tracks the model's drifting embedding across
-epochs (AURORA-style refresh).  Cross-epoch continuity comes from seeding the
-search at known-hard start times via ``seed_dataset``; the accumulated dataset is
-what persists and grows.
+ALL CMA / archive / QD machinery is pyribs (CMA-MAE + CVT archives).  What lives
+here is only the gravitational-wave glue: the bounded genotype <-> per-detector
+start-time codec, the black-box ``evaluate_fn`` seam, and the bank bookkeeping.
 """
 
 import numpy as np
 
 from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
+from sklearn.decomposition import IncrementalPCA
 
 from ribs.archives import CVTArchive
 from ribs.emitters import EvolutionStrategyEmitter
 from ribs.schedulers import Scheduler
 
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
-from .lowfar_noise import StartTimeDataset
 
 
 def make_miner_preprocessor(processor, signal_sampler=None):
     """Build ``preprocess_fn(noise_fd) -> net_input`` mirroring the training
-    noise pipeline (whitening -> IFFT -> multirate, or coarse-FD selection),
-    so the miner scores noise shaped exactly like what the model sees in
-    training.  ``signal_sampler`` (when given) supplies the multibanding state.
+    noise pipeline (whitening -> IFFT -> multirate, or coarse-FD selection), so
+    the miner scores noise shaped exactly like what the model sees in training.
+    ``signal_sampler`` (when given) supplies the multibanding state.
     """
     if signal_sampler is not None:
         initial_state = getattr(
@@ -88,14 +72,6 @@ class _StartTimeCodec:
     Each genotype component is a fraction in ``[0, 1]`` (the emitter is bounded,
     so we just clip -- no sigmoid/logit map).  The fraction indexes linearly into
     the detector's valid window-start positions, respecting segment boundaries.
-
-    Parameters
-    ----------
-    seg_index : list of structured np.ndarray
-        One per detector; fields ``['idx', 'start', 'end', 'nsamples']``.
-    seq_len : int
-        Window length in samples (a start is valid only if the whole window fits
-        inside its segment).
     """
 
     def __init__(self, seg_index, seq_len):
@@ -154,7 +130,7 @@ class _StartTimeCodec:
 
 
 class CMAMAEMiner:
-    """CMA-MAE hard-negative noise miner (pyribs); one ``mine`` call per epoch.
+    """Continuous CMA-MAE hard-negative miner backed by a :class:`HardMiningBank`.
 
     Parameters
     ----------
@@ -164,29 +140,21 @@ class CMAMAEMiner:
         Per-detector segment tables (fields ``idx/start/end/nsamples``).
     seq_len : int
         Window length in samples.
-    bin_files, sample_rate :
-        Passed through to the emitted :class:`StartTimeDataset`.
+    bank : HardMiningBank
+        The file-resident store (start-times, embeddings, PCA, re-eval history).
     keep_threshold : float or None
-        Windows scoring ``>=`` this are saved to the dataset (what we mine), in
-        the *raw score units* that ``evaluate_fn`` returns — for Sage that is the
-        detection logit. ``None`` (the default) means ``-inf`` → keep every mined
-        window. The user-facing :class:`~sage.factory.HardMiningCallback` exposes
-        this as either a raw or a sigmoided (probability) threshold and resolves
-        it to the raw value passed here.
+        Windows scoring ``>=`` this (in raw ``evaluate_fn`` units, i.e. the
+        detection logit) are kept.  ``None`` -> ``-inf`` (keep everything).
     descriptor_dim : int
-        PCA-reduced embedding dimension used as the QD measure space.
-    n_cells : int
-        Number of CVT cells (diversity niches).
-    learning_rate : float
-        CMA-MAE archive learning rate alpha (1.0 = CMA-ME, < 1 = CMA-MAE).
-    threshold_min : float
-        Archive floor for empty cells (drives cell-filling; keep below typical
-        scores so exploration can enter new niches).
-    n_emitters, emitter_batch_size, sigma0 :
-        CMA-ES emitter ensemble settings.
-    n_warmup : int
-        Random windows evaluated up front to fit the PCA + CVT centroids
-        (>= ``n_cells``).
+        PCA-reduced embedding width (must match the bank's ``P``).
+    n_cells, learning_rate, threshold_min, n_emitters, emitter_batch_size,
+    sigma0, n_warmup :
+        CMA-MAE / CVT / CMA-ES settings (see pyribs).  ``learning_rate`` < 1 =>
+        CMA-MAE; ``= 1`` => CMA-ME.
+    novelty_weight : float
+        Strength of the novelty bonus added to the optimisation objective in
+        warm rounds (pushes the search toward embedding regions the bank does
+        not yet cover).  The *keep* gate still uses the raw ranking stat only.
     seed : int or None
     """
 
@@ -195,8 +163,7 @@ class CMAMAEMiner:
         detectors,
         seg_index,
         seq_len,
-        bin_files,
-        sample_rate,
+        bank,
         keep_threshold=None,
         descriptor_dim=8,
         n_cells=1024,
@@ -206,19 +173,14 @@ class CMAMAEMiner:
         emitter_batch_size=36,
         sigma0=0.2,
         n_warmup=2048,
+        novelty_weight=1.0,
         seed=None,
     ):
         self.detectors = list(detectors)
         self.D = len(self.detectors)
         self.codec = _StartTimeCodec(seg_index, seq_len)
         self.seq_len = int(seq_len)
-        self.bin_files = list(bin_files)
-        self.sample_rate = float(sample_rate)
-
-        # None -> -inf keeps every mined window. The user-facing
-        # HardMiningCallback resolves its raw/sigmoided thresholds to a concrete
-        # raw value before constructing us, so this default is only hit by direct
-        # miner use.
+        self.bank = bank
         self.keep_threshold = (
             float("-inf") if keep_threshold is None else float(keep_threshold)
         )
@@ -230,126 +192,153 @@ class CMAMAEMiner:
         self.emitter_batch_size = int(emitter_batch_size)
         self.sigma0 = float(sigma0)
         self.n_warmup = max(int(n_warmup), self.n_cells)
+        self.novelty_weight = float(novelty_weight)
         self.seed = seed
         self._rng = np.random.default_rng(seed)
 
-    # ------------------------------------------------------------------
-    def _embed_measures(self, embeddings, fit=False):
-        """PCA-reduce raw embeddings to ``descriptor_dim`` measures."""
-        emb = np.asarray(embeddings, dtype=np.float64)
-        if fit:
-            dim = min(self.descriptor_dim, emb.shape[1], emb.shape[0])
-            self._pca = PCA(n_components=dim, random_state=0).fit(emb)
-        return self._pca.transform(emb)
-
-    def _seed_genotypes(self, n, seed_dataset):
-        """Mix random genotypes with ones encoded from known-hard start times."""
+    # ------------------------------------------------------------------ helpers
+    def _seed_genotypes(self, n):
+        """Random genotypes, half replaced (warm) by ones encoded from the
+        bank's known-hard start times so the search resumes near hard regions."""
         g = self._rng.random((n, self.D))
-        if seed_dataset is not None and len(seed_dataset) > 0:
-            k = min(n // 2, len(seed_dataset))
-            idx = self._rng.choice(len(seed_dataset), size=k, replace=False)
-            g[:k] = self.codec.encode(
-                seed_dataset.start_indices[idx], seed_dataset.segment_indices[idx]
-            )
+        if not self.bank.is_cold:
+            k = min(n // 2, self.bank.n_starts)
+            if k > 0:
+                starts, segs = self.bank.sample_starts(k, self._rng)
+                g[:k] = self.codec.encode(starts, segs)
         return g
 
-    # ------------------------------------------------------------------
-    def mine(self, evaluate_fn, n_iters, seed_dataset=None):
-        """Run one mining pass and return the hard windows as a StartTimeDataset.
+    @staticmethod
+    def _novelty(measures, covered):
+        """Min distance of each measure row to the ``covered`` set (0 if empty)."""
+        if covered is None or len(covered) == 0:
+            return np.zeros(len(measures), dtype=np.float64)
+        d2 = ((measures[:, None, :] - covered[None, :, :]) ** 2).sum(-1)
+        return np.sqrt(d2.min(1))
 
-        Parameters
-        ----------
-        evaluate_fn : callable
-            ``(starts (B, D) int64, segs (B, D) int64) -> (scores (B,) float,
-            embeddings (B, E) float)`` -- reads + preprocesses the noise windows,
-            runs the model, and returns the ranking statistic and the attention
-            embedding.  Pure black box: the miner never touches the model.
-        n_iters : int
-            Number of ask/tell generations after warmup.
-        seed_dataset : StartTimeDataset or None
-            Known-hard windows (e.g. last epoch's) to seed the search with.
+    # ------------------------------------------------------------------ mining
+    def mine(self, evaluate_fn, n_iters, epoch):
+        """Run one mining round and append results to the bank.
+
+        Returns a small stats dict for logging.
         """
-        kept_starts, kept_segs, kept_scores = [], [], []
+        # Continuous learning: load the persisted PCA + embedding bank if they
+        # exist (decoupled from whether any hard starts were kept yet), so a
+        # round that keeps zero starts never resets the PCA from scratch.
+        ipca = self.bank.load_pca()
+        cold = ipca is None
+        covered = (self.bank.read_embeddings()[0]
+                   if self.bank.n_embeddings > 0 else None)         # (M, P) or None
 
-        def _collect(starts, segs, scores):
+        kept_s, kept_g, kept_sc, kept_m = [], [], [], []
+
+        def _collect(starts, segs, scores, measures):
             m = scores >= self.keep_threshold
             if m.any():
-                kept_starts.append(starts[m]); kept_segs.append(segs[m])
-                kept_scores.append(scores[m])
+                kept_s.append(starts[m]); kept_g.append(segs[m])
+                kept_sc.append(scores[m]); kept_m.append(measures[m])
 
-        # ── Warmup: evaluate random/seeded windows to fit PCA + CVT centroids ──
-        g0 = self._seed_genotypes(self.n_warmup, seed_dataset)
+        # ── warmup: score random/seeded windows, (cold) fit / (warm) update PCA ─
+        g0 = self._seed_genotypes(self.n_warmup)
         s0, seg0 = self.codec.decode(g0)
         sc0, emb0 = evaluate_fn(s0, seg0)
-        sc0 = np.asarray(sc0, dtype=np.float64).reshape(-1)
-        _collect(s0, seg0, sc0)
+        sc0 = np.asarray(sc0, np.float64).reshape(-1)
+        emb0 = np.asarray(emb0, np.float64)
 
-        meas0 = self._embed_measures(emb0, fit=True)
-        dim = meas0.shape[1]
-        n_cells = min(self.n_cells, meas0.shape[0])
+        if ipca is None:
+            # bank storage width (P) is fixed at descriptor_dim, so the realized
+            # PCA must produce exactly that many components -- guard the model
+            # embedding width so add_embeddings can't silently reshape-corrupt.
+            assert emb0.shape[1] >= self.descriptor_dim, (
+                f"model embedding width {emb0.shape[1]} < descriptor_dim "
+                f"{self.descriptor_dim}; lower descriptor_dim"
+            )
+            ipca = IncrementalPCA(n_components=self.descriptor_dim)
+        ipca.partial_fit(emb0)                       # continuous, never from scratch
+        meas0 = ipca.transform(emb0)
+        _collect(s0, seg0, sc0, meas0)
+
+        # ── CVT centroids: cold from warmup; warm seeded by the bank's diversity ─
+        cset = meas0 if (covered is None or len(covered) == 0) else \
+            np.concatenate([covered[:, :meas0.shape[1]], meas0], 0)
+        n_cells = min(self.n_cells, len(cset))
         centroids = KMeans(n_clusters=n_cells, n_init=3, random_state=0).fit(
-            meas0
+            cset
         ).cluster_centers_
-        span = meas0.max(0) - meas0.min(0)
-        ranges = list(zip(meas0.min(0) - 0.1 * span - 1e-6,
-                          meas0.max(0) + 0.1 * span + 1e-6))
+        span = cset.max(0) - cset.min(0)
+        ranges = list(zip(cset.min(0) - 0.1 * span - 1e-6,
+                          cset.max(0) + 0.1 * span + 1e-6))
 
-        # ── pyribs CMA-MAE: CVT archive + CMA-ES emitters + scheduler ──────────
         archive = CVTArchive(
-            solution_dim=self.D,
-            centroids=centroids,
-            ranges=ranges,
-            learning_rate=self.learning_rate,
-            threshold_min=self.threshold_min,
+            solution_dim=self.D, centroids=centroids, ranges=ranges,
+            learning_rate=self.learning_rate, threshold_min=self.threshold_min,
             seed=self.seed,
         )
-        # seed each emitter at a strong warmup genotype for fast lock-on
         best = g0[int(np.argmax(sc0))]
         emitters = [
             EvolutionStrategyEmitter(
-                archive,
-                x0=best,
-                sigma0=self.sigma0,
-                bounds=[(0.0, 1.0)] * self.D,
-                batch_size=self.emitter_batch_size,
+                archive, x0=best, sigma0=self.sigma0,
+                bounds=[(0.0, 1.0)] * self.D, batch_size=self.emitter_batch_size,
                 seed=None if self.seed is None else self.seed + i,
             )
             for i in range(self.n_emitters)
         ]
         scheduler = Scheduler(archive, emitters)
 
+        # covered set for the novelty bonus = bank embeddings (fixed this round)
+        cov = None if (covered is None or len(covered) == 0) else \
+            covered[:, :meas0.shape[1]]
+
         # ── ask / evaluate / tell ──────────────────────────────────────────────
         for _ in range(int(n_iters)):
-            sols = scheduler.ask()                       # (n, D)
+            sols = scheduler.ask()
             starts, segs = self.codec.decode(sols)
             scores, emb = evaluate_fn(starts, segs)
-            scores = np.asarray(scores, dtype=np.float64).reshape(-1)
-            measures = self._embed_measures(emb, fit=False)
-            scheduler.tell(scores, measures)
-            _collect(starts, segs, scores)
+            scores = np.asarray(scores, np.float64).reshape(-1)
+            meas = ipca.transform(np.asarray(emb, np.float64))
+            # objective = hardness + novelty (drives search to hard AND new);
+            # keep gate below still uses the RAW score only.
+            obj = scores + self.novelty_weight * self._novelty(meas, cov)
+            scheduler.tell(obj, meas)
+            _collect(starts, segs, scores, meas)
 
-        return self._build_dataset(kept_starts, kept_segs, kept_scores)
+        # ── persist: PCA, hard start-times, diverse+hard embeddings ────────────
+        self.bank.save_pca(ipca)
+        n_starts = n_emb = 0
+        if kept_s:
+            starts = np.concatenate(kept_s, 0)
+            segs = np.concatenate(kept_g, 0)
+            scores = np.concatenate(kept_sc, 0)
+            meas = np.concatenate(kept_m, 0)
+            # de-dup identical (start, seg) windows, keep the highest score
+            key = np.concatenate([starts, segs], axis=1)
+            order = np.argsort(-scores)
+            _, uniq = np.unique(key[order], axis=0, return_index=True)
+            sel = order[uniq]
+            self.bank.append_starts(starts[sel], segs[sel], scores[sel], epoch)
+            n_starts = len(sel)
+            # embeddings: bank applies its own novelty (distance) + cap gate
+            n_emb = self.bank.add_embeddings(meas[sel], scores[sel], epoch)
+        return {"epoch": epoch, "cold": cold,
+                "kept_starts": int(n_starts), "kept_embeddings": int(n_emb),
+                "bank_starts": self.bank.n_starts,
+                "bank_embeddings": self.bank.n_embeddings}
 
-    # ------------------------------------------------------------------
-    def _build_dataset(self, starts_l, segs_l, scores_l):
-        if not starts_l:
-            empty = np.zeros((0, self.D), dtype=np.int64)
-            return StartTimeDataset(
-                self.detectors, empty, empty, np.zeros(0), np.zeros(0, np.float32),
-                self.bin_files, self.sample_rate, self.seq_len,
-            )
-        starts = np.concatenate(starts_l, 0)
-        segs = np.concatenate(segs_l, 0)
-        scores = np.concatenate(scores_l, 0).astype(np.float32)
-        # de-duplicate identical (start, seg) windows, keeping the highest score
-        key = np.concatenate([starts, segs], axis=1)
-        order = np.argsort(-scores)
-        _, uniq = np.unique(key[order], axis=0, return_index=True)
-        sel = order[uniq]
-        # gps_times is reference-only metadata (sampler keys off start/segment);
-        # store detector-0 start as seconds since the file origin.
-        gps = starts[sel, 0].astype(np.float64) / self.sample_rate
-        return StartTimeDataset(
-            self.detectors, starts[sel], segs[sel], gps, scores[sel],
-            self.bin_files, self.sample_rate, self.seq_len,
-        )
+    # ------------------------------------------------------------- re-evaluation
+    def reevaluate(self, evaluate_fn, model_epoch, batch_size=4096):
+        """Re-score the ENTIRE start-time bank with the current model and append
+        the ranking stats as a new ``eval_stats`` column (tagged ``model_epoch``).
+
+        Lets us track how each window's / family's hardness moves as training
+        progresses.  No-op on a cold (empty) bank.
+        """
+        N = self.bank.n_starts
+        if N == 0:
+            return {"reeval_n": 0}
+        stats = np.empty(N, dtype=np.float32)
+        for sl, starts, segs in self.bank.iter_starts(batch_size):
+            sc, _ = evaluate_fn(starts, segs)
+            stats[sl] = np.asarray(sc, np.float32).reshape(-1)
+        self.bank.append_eval(stats, model_epoch)
+        return {"reeval_n": int(N), "model_epoch": int(model_epoch),
+                "above_threshold": int((stats >= self.keep_threshold).sum())}

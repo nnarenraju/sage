@@ -579,6 +579,43 @@ class MemmapNoiseSampler(torch.nn.Module):
             if hard_bias_prob is not None:
                 self._hard_bias_prob = float(hard_bias_prob)
 
+    def set_hard_bank(self, bank, active_indices, hard_bias_prob: float | None = None):
+        """Augment random start-times with the *currently-hard* windows from a
+        :class:`~sage.data.noise.hard_bank.HardMiningBank`.
+
+        ``active_indices`` are the bank rows whose latest re-evaluation ranking
+        stat is above the keep threshold (computed by the mining callback after
+        re-eval).  Their start/segment indices are read **once** from the bank
+        file here -- between epochs, after the miner has finished writing and
+        while the prefetch thread only touches the in-RAM snapshot, so there is
+        never concurrent HDF5 access.  The compact active subset (start/segment
+        indices only) becomes the in-RAM hard dataset; the full bank (all
+        history, embeddings, re-eval matrix) stays on disk.
+
+        Nothing else in the hot path changes -- this simply swaps which windows
+        ``_sample_hard_starts`` draws from, via the existing thread-safe
+        :meth:`set_hard_dataset`.
+        """
+        from sage.data.noise.lowfar_noise import StartTimeDataset
+
+        ai = np.asarray(active_indices, dtype=np.int64)
+        if ai.size == 0:                                  # nothing currently hard
+            self.set_hard_dataset(None, hard_bias_prob=hard_bias_prob)
+            return
+        starts, segs = bank.read_starts(ai)               # (K, D), (K, D)
+        ds = StartTimeDataset(
+            detectors=bank.detectors,
+            start_indices=starts,
+            segment_indices=segs,
+            gps_times=np.zeros(ai.size, dtype=np.float64),     # unused by sampling
+            scores=np.zeros(ai.size, dtype=np.float32),        # unused by sampling
+            bin_files=bank.bin_files,
+            sample_rate=bank.sample_rate,
+            seq_len=bank.seq_len,
+        )
+        # epoch/save_dir omitted -> swap only, no .npz write (the bank persists).
+        self.set_hard_dataset(ds, hard_bias_prob=hard_bias_prob)
+
     def _sample_hard_starts(self, dataset, batch_size: int):
         """
         Draw ``batch_size`` start indices uniformly from ``dataset``.
