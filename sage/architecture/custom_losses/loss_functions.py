@@ -150,7 +150,7 @@ class BCEWithPEsigmaLoss(nn.Module):
         self.regression_weight = regression_weight
         self.coupling_weight = coupling_weight
         # beta-NLL exponent (Seitzer et al. 2022); softplus sigma bounds. These
-        # mirror PerDetHead / ConsistencyNLLLoss so the merged head is NaN-proofed
+        # NaN-proof the merged head (clamp before softplus)
         # the same way: no exp(log_var) blow-up, no overconfident sigma collapse.
         self.beta = float(beta)
         self.sigma_min = float(sigma_min)
@@ -159,7 +159,7 @@ class BCEWithPEsigmaLoss(nn.Module):
         self.eps = eps  # stability for variance
 
     def _sigma(self, raw):
-        """Softplus-parameterised std (same as PerDetHead._sigma): strictly
+        """Softplus-parameterised std: strictly
         positive, floored at ``sigma_min``, capped at ``sigma_max``. No ``exp`` so
         a momentarily large logit cannot collapse sigma toward zero and blow up
         the ``(mu - y)^2 / sigma^2`` term."""

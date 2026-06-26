@@ -26,8 +26,6 @@ Documentation: NULL
 from .mscnn1d_att_resnet2d_cbam import (
     MSCNN1D_2DResNetCBAM,
     MSCNN1D_2DResNetCBAM_Heteroscedastic,
-    MSCNN1D_2DResNetCBAM_Consistency,
-    ConsistencyOutput,
 )
 from .mscnn1d_att_resnet3d_cbam import MSCNN1Datt_3DResNetCBAM
 from .mscnn1d_catt_resnet2d_cbam import MSCNN1D_catt_2DResNetCBAM
@@ -39,9 +37,7 @@ __all__ = [
     "MSCNN1Datt_3DResNetCBAM",
     "MSCNN1D_catt_2DResNetCBAM",
     "MSCNN1D_2DResNetCBAM_Heteroscedastic",
-    "MSCNN1D_2DResNetCBAM_Consistency",
     "MSCNN1D_2DResNetCBAM_HardMining",
-    "ConsistencyOutput",
     "enable_mc_dropout",
     "mc_predict",
 ]
