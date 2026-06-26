@@ -14,10 +14,10 @@ therefore reveals miscalibration of the predicted uncertainties:
   - curve shallower than diagonal   -> over-confident (sigma too small)
   - curve steeper than diagonal     -> under-confident (sigma too large)
 
-This validates the sigma mechanism that the multi-detector consistency
-statistic relies on (it is uncertainty-weighted, so trustworthy sigmas matter),
-and works equally for the merged heteroscedastic heads. It complements
-``plot_calibration_curve`` (which calibrates the *classifier*).
+This validates the sigma mechanism of the heteroscedastic parameter heads:
+trustworthy predicted sigmas are what make the per-PE uncertainties usable
+downstream. It complements ``plot_calibration_curve`` (which calibrates the
+*classifier*).
 """
 
 import os

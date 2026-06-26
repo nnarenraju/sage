@@ -7,13 +7,12 @@ Monte-Carlo dropout inference utilities.
 At test time, keeping the dropout layers stochastic and averaging several
 forward passes turns the network into an approximate Bayesian model: the
 *spread* across passes is an estimate of **epistemic** uncertainty. With the
-heteroscedastic / consistency heads this complements the predicted (aleatoric)
-sigma — together they give a total predictive uncertainty.
+heteroscedastic head this complements the predicted (aleatoric) sigma —
+together they give a total predictive uncertainty.
 
 These helpers are model-agnostic: they work for any model whose forward returns
-a tensor, a tuple of tensors, or a NamedTuple of tensors (e.g. the consistency
-model's :class:`ConsistencyOutput`). They are provided for downstream use and
-are not wired into the training/validation loops.
+a tensor, a tuple of tensors, or a NamedTuple of tensors. They are provided for
+downstream use and are not wired into the training/validation loops.
 """
 
 import torch

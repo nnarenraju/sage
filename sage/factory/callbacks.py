@@ -4,15 +4,14 @@
 """
 Training callbacks — objects that hook into :class:`SageVanillaTraining`'s loop.
 
-A callback can transform the per-batch context (e.g. inject non-astrophysical
-samples) and/or run work at epoch boundaries (e.g. hard-noise mining). Every
-hook is a no-op by default, so a trainer constructed with no callbacks behaves
-exactly like plain vanilla training.
+A callback can transform the per-batch context and/or run work at epoch
+boundaries (e.g. hard-noise mining). Every hook is a no-op by default, so a
+trainer constructed with no callbacks behaves exactly like plain vanilla
+training.
 """
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from sage.core.config import get_data_cfg
 
@@ -26,8 +25,8 @@ class Callback:
         Called once per batch *after* the batch is assembled (post signal
         injection) and *before* preprocessing. ``ctx`` is a plain dict the
         trainer threads through the iteration — read/write its tensors
-        (``ctx['x']``, ``ctx['targets']`` and any extras a callback adds, e.g.
-        ``ctx['per_det_mask']``). Mutate ``ctx`` in place.
+        (``ctx['x']``, ``ctx['targets']``). Mutate ``ctx`` in place. No shipped
+        callback overrides this hook today; it is a generic extension point.
     on_epoch_end(nepoch, trainer)
         Called once after an epoch's training iterations complete (e.g. to mine
         hard noise and push it to the sampler).
@@ -219,8 +218,6 @@ class HardMiningCallback(Callback):
         toward the detection decision.
           * ``MSCNN1D_2DResNetCBAM_HardMining`` -> set ``return_frontend_embedding``
             and read ``model.frontend_embedding`` (compile-safe; no forward hook).
-          * consistency model -> ``model(x, return_embedding=True)`` returns the
-            per-detector attention-pooled frontend feature.
 
         Runs the eager (compile-free, no-grad) model in chunks.  Returns
         ``(evaluate_fn, cleanup_fn)``.
@@ -241,17 +238,10 @@ class HardMiningCallback(Callback):
                 out = eager(net_input)
                 score = (out[0] if isinstance(out, tuple) else out).reshape(-1).float()
                 return score, eager.frontend_embedding.float()   # (B, D*C), unit/det
-        elif hasattr(eager, "per_det_head"):
-            def run(net_input):
-                out, emb = eager(net_input, return_embedding=True)
-                score = out[0].reshape(-1).float()
-                emb = F.normalize(emb.float(), dim=-1).flatten(1)   # (B, D*C)
-                return score, emb
         else:
             raise TypeError(
                 "Hard mining needs a model exposing the FRONTEND embedding: "
-                "MSCNN1D_2DResNetCBAM_HardMining (return_frontend_embedding) or "
-                "the consistency model (per_det_head / return_embedding)."
+                "MSCNN1D_2DResNetCBAM_HardMining (return_frontend_embedding)."
             )
 
         def evaluate_fn(starts, segs):

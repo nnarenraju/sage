@@ -223,8 +223,8 @@ class BCEWithPEsigmaLoss(nn.Module):
 
         # beta-NLL (Seitzer et al. 2022): scale each term by stop_grad(sigma^2beta).
         # Tempers the ~1/sigma^2 gradient that lets a briefly-overconfident head
-        # explode, without biasing the optimum. Same treatment as the consistency
-        # loss; this is the fix that stops pe_reg diverging.
+        # explode, without biasing the optimum. This is the fix that stops pe_reg
+        # diverging.
         if self.beta > 0.0:
             nll = nll * (var**self.beta).detach()
 

@@ -56,11 +56,8 @@ from sage.dsp.whiten import FiducialWhitening
 from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 
 # Model and loss
-from sage.architecture.network import (
-    MSCNN1D_2DResNetCBAM,
-    MSCNN1D_2DResNetCBAM_Heteroscedastic,
-)
-from sage.architecture.custom_losses import BCEWithPEregLoss, BCEWithPEsigmaLoss
+from sage.architecture.network import MSCNN1D_2DResNetCBAM_Heteroscedastic
+from sage.architecture.custom_losses import BCEWithPEsigmaLoss
 from sage.core.logger import HDF5LossLogger
 
 # Optimiser and scheduler

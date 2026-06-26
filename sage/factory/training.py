@@ -159,7 +159,7 @@ class SageVanillaTraining(torch.nn.Module):
                           noise_targets, device):
         """Vanilla batch assembly: pad noise targets + inject ``S`` signals at
         random positions. Returns ``(x, targets)``. Skipped when an on_sample
-        callback assembles the batch itself (e.g. the non-astro masker)."""
+        callback assembles the batch itself (no shipped callback does)."""
         pad = torch.zeros(
             noise_targets.shape[0], self.num_point_estimate,
             device=device, dtype=noise_targets.dtype,
@@ -195,11 +195,11 @@ class SageVanillaTraining(torch.nn.Module):
                 noise_data = self._selector(noise_data)
 
             # ── 3. Per-batch context + on_sample callbacks ────────────────
-            # A callback may *assemble* the batch (e.g. the non-astro masker
-            # builds the 4-class batch + a per_det_mask). The raw samples are
-            # exposed in ctx; a callback that assembles sets ctx['x'] /
-            # ctx['targets'] (and extras like per_det_mask). ctx is also read by
-            # the loss adapters in multi-loss mode. Pure vanilla -> ctx is None.
+            # ctx is built only when callbacks are present and threaded to each
+            # callback's on_sample hook. A callback MAY assemble the batch by
+            # setting ctx['x'] / ctx['targets'] (a generic extension point — no
+            # shipped callback uses it). Pure vanilla / hard-mining -> both fall
+            # through to _default_assembly below; with no callbacks ctx is None.
             ctx = None
             if self.callbacks:
                 ctx = {

@@ -6,21 +6,22 @@ O3b BBH hard negative mining training.
 Pipeline
 --------
 Signal  : IMRPhenomPv2, time-domain multirate sampling
-Noise   : MemmapNoiseSampler (O3b H1 + L1) with hard_dataset_dir + hard_bias_prob
+Noise   : MemmapNoiseSampler (O3b H1 + L1)
           + optional RecolourPostprocess for O3a → O3b spectral bridge
-          → hard/random mixing is automatic inside the sampler
+          → hard start-times are pushed in by the mining callback (below)
 Preproc : FiducialWhitening → MultirateSampler (TD_MULTIRATE)
 Network : MSCNN1D_2DResNetCBAM_HardMining (heteroscedastic + frontend-embed tap, torch.compiled)
 Loss    : BCEWithPEsigmaLoss
 
 Hard-negative mining
 --------------------
-After each epoch's training (past ``warmup_epochs``), CMA-MAE (pyribs) mines
-per-detector start times for hard noise windows, keeping diverse hard windows
-(diversity measured in the model's own embedding).  Every window above
-``keep_threshold`` is accumulated and replayed via the noise sampler with
-probability ``hard_bias_prob``.  Mining is a callback on plain
-SageVanillaTraining -- see :class:`sage.factory.HardMiningCallback`.
+On scheduled epochs (``mine_schedule``), CMA-MAE (pyribs) mines per-detector
+start times for hard noise windows, keeping diverse hard windows (diversity
+measured in the model's **frontend** embedding). Hard windows are persisted to an
+HDF5 bank and the currently-above-threshold start-times are pushed into the noise
+sampler via ``set_hard_bank``, which replays them with probability
+``hard_bias_prob``. Mining is a callback on plain SageVanillaTraining -- see
+:class:`sage.factory.HardMiningCallback`.
 
 Usage
 -----
