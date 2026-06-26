@@ -42,6 +42,9 @@ class O3aCFG:
     device = "cuda:0"
     dtype = torch.float32
     detectors = ["H1", "L1"]
+    # Observing run(s) whose noise this model trains on. Drives the hard-mining
+    # bank filename/metadata (hardbank_<runs>_<dets>.h5).
+    train_runs = ["O3a"]
     do_point_estimate = ["tc", "mchirp"]
     autocast = True
     class_balance = 0.5

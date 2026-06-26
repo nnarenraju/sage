@@ -34,6 +34,10 @@ class O4aCFG:
     device = "cuda:0"
     dtype = torch.float32
     detectors = ["H1", "L1"]
+    # Observing run(s) whose noise this model trains on. Drives the hard-mining
+    # bank filename/metadata (hardbank_<runs>_<dets>.h5). For multi-run O4
+    # training this widens to e.g. ["O3a", "O3b", "O4a"].
+    train_runs = ["O4a"]
     do_point_estimate = ["tc", "mchirp"]
     autocast = True
     class_balance = 0.5
