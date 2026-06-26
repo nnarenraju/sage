@@ -269,9 +269,18 @@ class CMAMAEMiner:
         ranges = list(zip(cset.min(0) - 0.1 * span - 1e-6,
                           cset.max(0) + 0.1 * span + 1e-6))
 
+        # Floor the CMA-MAE cell threshold below the warmup score range so the
+        # archive always populates from the first generations -- even when the
+        # model scores low (early epochs / untrained). An empty archive crashes
+        # the CMA-ES restart (sample_elites). The KEEP gate (keep_threshold on
+        # the RAW score) is separate and unaffected by this.
+        thr_min = self.threshold_min
+        finite = sc0[np.isfinite(sc0)]
+        if finite.size:
+            thr_min = min(thr_min, float(finite.min()) - 1.0)
         archive = CVTArchive(
             solution_dim=self.D, centroids=centroids, ranges=ranges,
-            learning_rate=self.learning_rate, threshold_min=self.threshold_min,
+            learning_rate=self.learning_rate, threshold_min=thr_min,
             seed=self.seed,
         )
         best = g0[int(np.argmax(sc0))]
