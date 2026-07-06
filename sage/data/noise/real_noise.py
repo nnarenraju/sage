@@ -659,10 +659,15 @@ class MemmapNoiseSampler(torch.nn.Module):
             _read_window, [(d, i) for d in range(D) for i in range(B)]
         ))
 
+        # pin_memory + non_blocking only help the async host->CUDA copy; on a
+        # CPU-only node pin_memory raises (no driver), so gate on the target.
+        pin = torch.device(self.device).type == "cuda"
         for d in range(D):
             arrs[d] /= dyn_range_fac()  # restore original scale
-            cpu_tensor = torch.from_numpy(arrs[d]).pin_memory()
-            batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=True)
+            cpu_tensor = torch.from_numpy(arrs[d])
+            if pin:
+                cpu_tensor = cpu_tensor.pin_memory()
+            batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=pin)
 
         # convert segment indices to a CPU tensor
         # We deliberately place this in CPU (check postprocess)
