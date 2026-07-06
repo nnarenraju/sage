@@ -183,6 +183,12 @@ class CheckpointManager:
         # ---- latest ----
         torch.save(state, self.latest_path)
 
+        # Lightweight resume marker: lets a restarting process read the resume
+        # epoch (to seed the data samplers resume-aware) WITHOUT loading the
+        # full checkpoint. Written after latest.pt so it never points past it.
+        with open(os.path.join(self.ckpt_dir, "progress.json"), "w") as f:
+            json.dump({"epoch": epoch, "val_loss": val_loss}, f)
+
         # ---- epoch history ----
         if save_epoch_ckpt:
             torch.save(state, os.path.join(self.ckpt_dir, f"epoch_{epoch}.pt"))
@@ -212,9 +218,36 @@ class CheckpointManager:
             ...
         """
         print("Loading latest checkpoint")
-        ckpt = torch.load(self.latest_path, map_location=map_location)
+        # weights_only=False: our checkpoints intentionally carry non-tensor
+        # state (cfg/data_cfg objects + numpy/python RNG) and are self-produced
+        # and trusted; torch>=2.6 defaults weights_only=True which rejects them.
+        ckpt = torch.load(self.latest_path, map_location=map_location,
+                          weights_only=False)
         self._restore(ckpt)
         return ckpt["epoch"] + 1
+
+    @staticmethod
+    def peek_next_epoch(export_dir, map_location="cpu"):
+        """Resume epoch (last saved epoch + 1), read from the lightweight
+        ``progress.json`` marker WITHOUT loading the full checkpoint. Returns
+        ``0`` when no checkpoint exists yet.
+
+        This lets a restarting run seed its data samplers with a resume-aware
+        seed *before* they are built, so the resumed stream never replays the
+        pre-crash draws. Mirrors :meth:`load_latest`'s ``epoch + 1``.
+        """
+        ckpt_dir = os.path.join(export_dir, "CHECKPOINTS")
+        marker = os.path.join(ckpt_dir, "progress.json")
+        if os.path.exists(marker):
+            with open(marker) as f:
+                return int(json.load(f)["epoch"]) + 1
+        # Fallback for checkpoints written before progress.json existed: read the
+        # epoch out of latest.pt (heavier, but only hit on legacy resumes).
+        latest = os.path.join(ckpt_dir, "latest.pt")
+        if os.path.exists(latest):
+            ckpt = torch.load(latest, map_location=map_location, weights_only=False)
+            return int(ckpt["epoch"]) + 1
+        return 0
 
     def load_best(self, map_location="cpu"):
         """Load best snapshot for inference
@@ -230,7 +263,8 @@ class CheckpointManager:
             model.eval()
         """
         print("Loading best checkpoint")
-        ckpt = torch.load(self.best_path, map_location=map_location)
+        ckpt = torch.load(self.best_path, map_location=map_location,
+                          weights_only=False)
         self._restore(ckpt)
         return ckpt
 
@@ -252,7 +286,7 @@ class CheckpointManager:
         """
         path = os.path.join(self.ckpt_dir, f"epoch_{epoch}.pt")
         print(f"Loading checkpoint epoch {epoch}")
-        ckpt = torch.load(path, map_location=map_location)
+        ckpt = torch.load(path, map_location=map_location, weights_only=False)
         self._restore(ckpt)
         return ckpt["epoch"] + 1
 
