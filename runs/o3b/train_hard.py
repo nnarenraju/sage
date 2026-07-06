@@ -86,9 +86,11 @@ from sage.utils.checkpoint import CheckpointManager
 # Graph builders
 # ---------------------------------------------------------------------------
 
-def make_training_graph():
-    param_sampler  = read_from_config("./gwconfig.yaml", seed=150914)
-    snrscaler      = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=150914))
+def make_training_graph(seed):
+    # `seed` is resume-aware (derived from the resume epoch in run_hard) so the
+    # noise/parameter/SNR RNGs never replay their pre-crash draws on restart.
+    param_sampler  = read_from_config("./gwconfig.yaml", seed=seed)
+    snrscaler      = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=seed))
     signal_sampler = IMRPhenomPv2(
         param_sampler, ConstantProjection(), augment=snrscaler,
     )
@@ -100,7 +102,7 @@ def make_training_graph():
     noise_sampler = MemmapNoiseSampler(
         postprocess_fn   = recolour,
         prefetch         = 8,
-        seed             = 150914,
+        seed             = seed,
         training         = True,
         # Hard biasing is driven entirely by HardMiningCallback via the HDF5
         # bank (set_hard_bank); no .npz pre-loading and no bias until the first
@@ -139,8 +141,21 @@ def run_hard():
 
     os.makedirs(cfg.export_dir, exist_ok=True)
 
+    # ── Resume-aware seeding ─────────────────────────────────────────────────
+    # Peek the resume epoch BEFORE building the samplers (does NOT load the full
+    # checkpoint) so their RNGs are seeded resume-aware: a fresh run uses
+    # BASE_SEED; a run resuming at epoch K uses a distinct, deterministic seed,
+    # so the noise/parameter/SNR streams never replay the pre-crash draws. The
+    # model/optimiser/scheduler + global RNG and the mining bank are restored
+    # *exactly* further down -- only the sampler streams advance.
+    BASE_SEED, SEED_STRIDE = 150914, 1_000_003
+    start_epoch  = CheckpointManager.peek_next_epoch(cfg.export_dir)
+    sampler_seed = BASE_SEED + SEED_STRIDE * start_epoch
+    print(f"[train_hard] start_epoch={start_epoch}  sampler_seed={sampler_seed}",
+          flush=True)
+
     # ── Graphs ──────────────────────────────────────────────────────────────
-    tr_sig, tr_noise, bounds = make_training_graph()
+    tr_sig, tr_noise, bounds = make_training_graph(seed=sampler_seed)
     val_sig, val_noise       = make_validation_graph()
     processor                = make_processor(bounds)
 
@@ -218,15 +233,19 @@ def run_hard():
         num_components = loss_function.num_components,
     )
 
-    # ── Epoch loop (train + mine, validate every 5) ───────────────────────────
-    start_epoch = 0
-    if os.path.exists(ckpt_mgr.latest_path):
-        start_epoch = ckpt_mgr.load_latest(map_location=cfg.device)
+    # ── Restore model / optimiser / scheduler / global-RNG + miner (if resuming)
+    # Exact continuation of everything except the sampler streams (seeded above).
+    if start_epoch > 0:
+        loaded = ckpt_mgr.load_latest(map_location=cfg.device)
+        assert loaded == start_epoch, (
+            f"checkpoint epoch {loaded} != peeked {start_epoch}"
+        )
         print(f"Resuming from epoch {start_epoch}")
         # Re-bias the (freshly-built) sampler from the persisted hard bank so we
         # don't train on purely random noise until the next scheduled mine epoch.
         hard_cb.attach_for_resume(trainer)
 
+    # ── Epoch loop (train + mine, validate every 5) ───────────────────────────
     for epoch in range(start_epoch, cfg.num_epochs):
         trainer(nepoch=epoch)
         logger.log(trainer.loss_components, epoch, split="training")

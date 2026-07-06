@@ -222,6 +222,13 @@ class CMAMAEMiner:
 
         Returns a small stats dict for logging.
         """
+        # Per-round seed: each mine round (one per scheduled epoch) explores
+        # deterministically but differently, and re-mining the same epoch after a
+        # restart reproduces exactly. The bank state itself resumes via its HDF5
+        # file, independent of this seed.
+        round_seed = None if self.seed is None else self.seed + epoch * 100003
+        self._rng = np.random.default_rng(round_seed)
+
         # Continuous learning: load the persisted PCA + embedding bank if they
         # exist (decoupled from whether any hard starts were kept yet), so a
         # round that keeps zero starts never resets the PCA from scratch.
@@ -281,14 +288,14 @@ class CMAMAEMiner:
         archive = CVTArchive(
             solution_dim=self.D, centroids=centroids, ranges=ranges,
             learning_rate=self.learning_rate, threshold_min=thr_min,
-            seed=self.seed,
+            seed=round_seed,
         )
         best = g0[int(np.argmax(sc0))]
         emitters = [
             EvolutionStrategyEmitter(
                 archive, x0=best, sigma0=self.sigma0,
                 bounds=[(0.0, 1.0)] * self.D, batch_size=self.emitter_batch_size,
-                seed=None if self.seed is None else self.seed + i,
+                seed=None if round_seed is None else round_seed + i,
             )
             for i in range(self.n_emitters)
         ]
