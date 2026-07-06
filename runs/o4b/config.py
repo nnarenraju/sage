@@ -23,8 +23,8 @@ _SRV = get_server()
 
 # O4b lives in its own isolated release dir (see dataset.py _RELEASE_DIRNAME).
 _DSDIR = f"{_SRV.data_root}/data_release_o4b"
-# Cross-run validation noise (O4a) lives in its own isolated dir too.
-_DSDIR_VAL = f"{_SRV.data_root}/data_release_o4a"
+# O4a (pooled into training noise) lives in its own flat isolated dir.
+_O4A_DIR = f"{_SRV.data_root}/data_release_o4a"
 
 
 class O4bCFG:
@@ -34,10 +34,10 @@ class O4bCFG:
     device = "cuda:0"
     dtype = torch.float32
     detectors = ["H1", "L1", "V1"]
-    # Observing run(s) whose noise this model trains on. Drives the hard-mining
-    # bank filename/metadata (hardbank_<runs>_<dets>.h5). For multi-run O4
-    # training this widens to e.g. ["O3a", "O3b", "O4a", "O4b"].
-    train_runs = ["O4b"]
+    # Observing run(s) whose noise this model trains on (roadmap: O4b trains on
+    # pooled O3a + O3b + O4a noise, recoloured toward O4b). Also drives the
+    # hard-mining bank filename/metadata (hardbank_<runs>_<dets>.h5).
+    train_runs = ["O3a", "O3b", "O4a"]
     do_point_estimate = ["tc", "mchirp"]
     autocast = True
     class_balance = 0.5
@@ -51,14 +51,21 @@ class O4bCFG:
 class O4bDataCFG:
 
     data_dir = f"{_DSDIR}/data_dir"
-    training_noise_files = [
+    # Multi-run training noise: pool O3a + O3b + O4a, each read from its own
+    # release dir with its own derived-PSD data_dir. O4a uses the flat O4 layout
+    # (data_release_o4a/data_dir); O3a/O3b use the O3-style <run>_dataset dir.
+    # Recoloured toward O4b (the eval run) at train time.
+    training_noise = [
+        _SRV.run_noise("O3a", O4bCFG.detectors, "data_release_o3a"),
+        _SRV.run_noise("O3b", O4bCFG.detectors, "data_release"),
+        _SRV.run_noise("O4a", O4bCFG.detectors, "data_release_o4a",
+                       data_dir=f"{_O4A_DIR}/data_dir"),
+    ]
+    # Eval on the actual target run (O4b), read raw (no recolour).
+    validation_noise_files = [
         f"{_DSDIR}/data_H1_O4b.bin",
         f"{_DSDIR}/data_L1_O4b.bin",
         f"{_DSDIR}/data_V1_O4b.bin",
-    ]
-    validation_noise_files = [
-        f"{_DSDIR_VAL}/data_H1_O4a.bin",
-        f"{_DSDIR_VAL}/data_L1_O4a.bin",
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz

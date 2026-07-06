@@ -23,8 +23,6 @@ _SRV = get_server()
 
 # O4a lives in its own isolated release dir (see dataset.py _RELEASE_DIRNAME).
 _DSDIR = f"{_SRV.data_root}/data_release_o4a"
-# Cross-run validation noise (O4b) lives in its own isolated dir too.
-_DSDIR_VAL = f"{_SRV.data_root}/data_release_o4b"
 
 
 class O4aCFG:
@@ -34,10 +32,10 @@ class O4aCFG:
     device = "cuda:0"
     dtype = torch.float32
     detectors = ["H1", "L1"]
-    # Observing run(s) whose noise this model trains on. Drives the hard-mining
-    # bank filename/metadata (hardbank_<runs>_<dets>.h5). For multi-run O4
-    # training this widens to e.g. ["O3a", "O3b", "O4a"].
-    train_runs = ["O4a"]
+    # Observing run(s) whose noise this model trains on (roadmap: O4a trains on
+    # pooled O3a + O3b noise, recoloured toward O4a). Also drives the hard-mining
+    # bank filename/metadata (hardbank_<runs>_<dets>.h5).
+    train_runs = ["O3a", "O3b"]
     do_point_estimate = ["tc", "mchirp"]
     autocast = True
     class_balance = 0.5
@@ -51,13 +49,18 @@ class O4aCFG:
 class O4aDataCFG:
 
     data_dir = f"{_DSDIR}/data_dir"
-    training_noise_files = [
+    # Multi-run training noise: pool O3a + O3b. Each run is read from its own
+    # release dir and carries its own derived-PSD data_dir (for the per-run
+    # segment whitening PSDs the recolour step keys by (run, segment)). At train
+    # time these are recoloured toward O4a (the eval run).
+    training_noise = [
+        _SRV.run_noise("O3a", O4aCFG.detectors, "data_release_o3a"),
+        _SRV.run_noise("O3b", O4aCFG.detectors, "data_release"),
+    ]
+    # Eval on the actual target run (O4a), read raw (no recolour).
+    validation_noise_files = [
         f"{_DSDIR}/data_H1_O4a.bin",
         f"{_DSDIR}/data_L1_O4a.bin",
-    ]
-    validation_noise_files = [
-        f"{_DSDIR_VAL}/data_H1_O4b.bin",
-        f"{_DSDIR_VAL}/data_L1_O4b.bin",
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz
