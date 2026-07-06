@@ -112,6 +112,23 @@ class Server:
             self.data_root, release_dirname, f"data_{detector}_{run}.bin"
         )
 
+    def run_noise(self, run: str, detectors, release_dirname: str = "data_release",
+                  data_dir: str | None = None) -> dict:
+        """One run's entry for the multi-run noise sampler's ``training_noise``.
+
+        Bundles the per-detector strain ``.bin`` (from ``release_dirname``) with
+        the run's derived-PSD ``data_dir`` (holding the per-segment whitening
+        PSDs the recolour step needs). ``bins`` are ordered to match
+        ``detectors``. Pass ``data_dir`` explicitly for the flat O4 layout
+        (``data_release_<run>/data_dir``); it defaults to the O3-style
+        ``data_release/<run>_dataset/data_dir``.
+        """
+        return {
+            "run": run,
+            "data_dir": data_dir if data_dir is not None else self.data_dir(run),
+            "bins": [self.noise_bin(d, run, release_dirname) for d in detectors],
+        }
+
 
 # ----------------------------------------------------------------------------
 # Server registry -- add a machine here and nothing else needs to change.

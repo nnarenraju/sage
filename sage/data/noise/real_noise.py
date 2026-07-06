@@ -376,64 +376,78 @@ class MemmapNoiseSampler(torch.nn.Module):
         self.batch_size = cfg.batch_size
         self.postprocess_fn = postprocess_fn
 
-        # Set noise files
-        if training:
-            self.bin_files = [Path(f) for f in data_cfg.training_noise_files]
-        else:
-            self.bin_files = [Path(f) for f in data_cfg.validation_noise_files]
+        # ── Resolve the run set (multi-run pooling) ───────────────────────────
+        # New form: data_cfg.training_noise = [{run, data_dir, bins:[per det]}]
+        # pools several observing runs. Legacy form: the flat
+        # training/validation_noise_files list -> a single run. A run id is
+        # carried through every window so it can be read from the right run's
+        # mmap and recoloured with the right run's per-segment PSD.
+        runs = self._resolve_runs(cfg, data_cfg, training)
+        self.run_names = [r["run"] for r in runs]
+        self.run_data_dirs = [r["data_dir"] for r in runs]
+        self.n_runs = len(runs)
+        for r in runs:
+            if len(r["bins"]) != self.n_detectors:
+                raise ValueError(
+                    f"noise run {r['run']!r}: {len(r['bins'])} bins != "
+                    f"{self.n_detectors} detectors"
+                )
 
-        self.mmaps = []
-        self.seg_index = []
-        self.segment_probs = []
-        self.dtypes = []
+        self.mmaps = [[] for _ in range(self.n_detectors)]      # [d][run] -> memmap
+        self.seg_index = [None] * self.n_detectors              # [d] -> pooled struct
+        self.segment_probs = [None] * self.n_detectors          # [d] -> pooled probs
+        self.dtypes = [[] for _ in range(self.n_detectors)]     # [d][run] -> dtype
+        self.bin_files = []                                     # flat, for logging
 
         # Targets for noise batch
         self.noise_target = torch.zeros((self.batch_size, 1)).to(
             dtype=cfg.dtype, device=cfg.device
         )
 
-        # Load metadata and memmaps
-        for p in self.bin_files:
-            meta_path = p.parent / f"{p.stem}_segments.json"
-            if not meta_path.exists():
-                raise FileNotFoundError(f"Metadata {meta_path} not found")
-
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-
-            dtype = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
-            self.dtypes.append(dtype)
-
-            mm = np.memmap(p, dtype=dtype, mode="r")
-            self.mmaps.append(mm)
-
-            seg_idx_arr = np.array(
-                [
-                    (
-                        seg["segment_index"],
-                        seg["sample_start_idx"],
-                        seg["sample_start_idx"] + seg["nsamples"],
-                        seg["nsamples"],
-                    )
-                    for seg in meta
-                ],
-                dtype=[
-                    ("idx", "i8"),
-                    ("start", "i8"),
-                    ("end", "i8"),
-                    ("nsamples", "i8"),
-                ],
-            )
-            self.seg_index.append(seg_idx_arr)
-
-            usable = seg_idx_arr["nsamples"] - self.seq_len
-            usable[usable == 0] = 1
-            usable[usable < 0] = 0
+        # Segment table carries a run id so pooled runs never collide on the
+        # per-(detector,run) dense ``segment_index``.
+        _seg_dtype = [("run", "i8"), ("idx", "i8"), ("start", "i8"),
+                      ("end", "i8"), ("nsamples", "i8")]
+        for d in range(self.n_detectors):
+            seg_tables, usable_parts = [], []
+            for run_id, r in enumerate(runs):
+                p = Path(r["bins"][d])
+                self.bin_files.append(p)
+                meta_path = p.parent / f"{p.stem}_segments.json"
+                if not meta_path.exists():
+                    raise FileNotFoundError(f"Metadata {meta_path} not found")
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                dtype = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
+                self.dtypes[d].append(dtype)
+                self.mmaps[d].append(np.memmap(p, dtype=dtype, mode="r"))
+                seg_arr = np.array(
+                    [
+                        (
+                            run_id,
+                            seg["segment_index"],
+                            seg["sample_start_idx"],
+                            seg["sample_start_idx"] + seg["nsamples"],
+                            seg["nsamples"],
+                        )
+                        for seg in meta
+                    ],
+                    dtype=_seg_dtype,
+                )
+                seg_tables.append(seg_arr)
+                usable = seg_arr["nsamples"] - self.seq_len
+                usable[usable == 0] = 1
+                usable[usable < 0] = 0
+                usable_parts.append(usable)
+            pooled = (seg_tables[0] if len(seg_tables) == 1
+                      else np.concatenate(seg_tables))
+            usable = (usable_parts[0] if len(usable_parts) == 1
+                      else np.concatenate(usable_parts))
             total = usable.sum()
             if total == 0:
                 raise ValueError("seq_len exceeds all segments")
-            probs = usable / total
-            self.segment_probs.append(probs)
+            self.seg_index[d] = pooled
+            self.segment_probs[d] = usable / total
 
         # deterministic RNG for reproducible training
         self.rng = np.random.default_rng(seed)
@@ -478,6 +492,28 @@ class MemmapNoiseSampler(torch.nn.Module):
 
         atexit.register(_stop_at_exit)
 
+    @staticmethod
+    def _resolve_runs(cfg, data_cfg, training):
+        """Return the run set as ``[{run, data_dir, bins:[per detector]}]``.
+
+        Multi-run training reads ``data_cfg.training_noise`` (a list of such
+        dicts, one per observing run). Otherwise (validation, or single-run
+        training) the flat ``training/validation_noise_files`` list is wrapped as
+        a single run tagged with the config's run name + ``data_dir``.
+        """
+        if training and getattr(data_cfg, "training_noise", None):
+            return [
+                {"run": s["run"], "data_dir": s.get("data_dir"),
+                 "bins": list(s["bins"])}
+                for s in data_cfg.training_noise
+            ]
+        files = (data_cfg.training_noise_files if training
+                 else data_cfg.validation_noise_files)
+        run = (getattr(cfg, "train_runs", None)
+               or [getattr(cfg, "run", "unknown")])[0]
+        return [{"run": run, "data_dir": getattr(data_cfg, "data_dir", None),
+                 "bins": list(files)}]
+
     def set_hard_dataset(self, dataset, hard_bias_prob: float | None = None):
         """
         Replace the in-RAM hard-noise dataset (the prefetch thread's bias pool).
@@ -519,6 +555,17 @@ class MemmapNoiseSampler(torch.nn.Module):
         """
         from sage.data.noise.lowfar_noise import StartTimeDataset
 
+        # 5a scope: hard mining is single-run only. A hard window is an absolute
+        # start index into ONE run's mmap; with multiple pooled runs the bank
+        # must also store which run each window came from (5b). Refuse rather
+        # than silently read a start index from the wrong run's file.
+        if self.n_runs > 1:
+            raise NotImplementedError(
+                "hard-noise mining is not yet supported with multi-run noise "
+                f"(n_runs={self.n_runs}); the hard bank must store a run id per "
+                "window first (item 5b). Disable hard mining or use a single run."
+            )
+
         ai = np.asarray(active_indices, dtype=np.int64)
         if ai.size == 0:                                  # nothing currently hard
             self.set_hard_dataset(None, hard_bias_prob=hard_bias_prob)
@@ -549,7 +596,10 @@ class MemmapNoiseSampler(torch.nn.Module):
         idx = self.rng.integers(0, n, size=batch_size)
         start_indices   = [dataset.start_indices[idx, d]   for d in range(self.n_detectors)]
         segment_indices = [dataset.segment_indices[idx, d] for d in range(self.n_detectors)]
-        return start_indices, segment_indices
+        # Hard mining is single-run in 5a (guarded in set_hard_bank) -> run 0.
+        run_indices     = [np.zeros(batch_size, dtype=np.int64)
+                           for _ in range(self.n_detectors)]
+        return start_indices, segment_indices, run_indices
 
     def _sample_starts_batch(self, batch_size: int):
         """
@@ -576,9 +626,14 @@ class MemmapNoiseSampler(torch.nn.Module):
         segment_indices : list of np.ndarray
             Per-detector array of segment IDs (for PSD look-up), shape
             ``(batch_size,)``.
+        run_indices : list of np.ndarray
+            Per-detector array of run IDs (which pooled run each window came
+            from; indexes ``self.mmaps[d]`` and the recolour segment bank),
+            shape ``(batch_size,)``.
         """
         start_indices = []
         segment_indices = []
+        run_indices = []
 
         for d in range(self.n_detectors):
             seg_idx = self.seg_index[d]
@@ -587,17 +642,20 @@ class MemmapNoiseSampler(torch.nn.Module):
 
             starts = np.empty(batch_size, dtype=np.int64)
             seg_ids = np.empty(batch_size, dtype=np.int64)
+            run_ids = np.empty(batch_size, dtype=np.int64)
             for i, seg_i in enumerate(chosen_segments):
                 seg = seg_idx[seg_i]
                 max_offset = seg["nsamples"] - self.seq_len
                 offset = self.rng.integers(0, max_offset + 1) if max_offset > 0 else 0
                 starts[i] = seg["start"] + offset
                 seg_ids[i] = seg["idx"]
+                run_ids[i] = seg["run"]
 
             start_indices.append(starts)
             segment_indices.append(seg_ids)
+            run_indices.append(run_ids)
 
-        return start_indices, segment_indices
+        return start_indices, segment_indices, run_indices
 
     def _read_batch(self, batch_size: int):
         """
@@ -637,9 +695,11 @@ class MemmapNoiseSampler(torch.nn.Module):
         )
 
         if use_hard:
-            start_indices, segment_indices = self._sample_hard_starts(hard_ds, B)
+            start_indices, segment_indices, run_indices = \
+                self._sample_hard_starts(hard_ds, B)
         else:
-            start_indices, segment_indices = self._sample_starts_batch(B)
+            start_indices, segment_indices, run_indices = \
+                self._sample_starts_batch(B)
         batch_tensor = torch.empty(
             (B, D, seq_len), dtype=torch.float32, device=self.device
         )
@@ -653,7 +713,8 @@ class MemmapNoiseSampler(torch.nn.Module):
         def _read_window(job):
             d, i = job
             s = start_indices[d][i]
-            arrs[d][i] = mmaps[d][s : s + seq_len]
+            r = run_indices[d][i]                 # which run's mmap this came from
+            arrs[d][i] = mmaps[d][r][s : s + seq_len]
 
         list(self._read_pool.map(
             _read_window, [(d, i) for d in range(D) for i in range(B)]
@@ -669,17 +730,16 @@ class MemmapNoiseSampler(torch.nn.Module):
                 cpu_tensor = cpu_tensor.pin_memory()
             batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=pin)
 
-        # convert segment indices to a CPU tensor
-        # We deliberately place this in CPU (check postprocess)
+        # Segment + run ids as CPU tensors (B, D) -- recolour keys its per-run
+        # whitening PSD by (run_id, segment_index).
         segment_ids = torch.empty((B, D), dtype=torch.int64)
-
+        run_ids     = torch.empty((B, D), dtype=torch.int64)
         for d in range(D):
-            segment_ids[:, d].copy_(
-                torch.from_numpy(segment_indices[d]),
-            )
+            segment_ids[:, d].copy_(torch.from_numpy(segment_indices[d]))
+            run_ids[:, d].copy_(torch.from_numpy(run_indices[d]))
 
         if self.postprocess_fn is not None:
-            batch_tensor = self.postprocess_fn(batch_tensor, segment_ids)
+            batch_tensor = self.postprocess_fn(batch_tensor, segment_ids, run_ids)
         else:
             # default: TD to FD only
             batch_tensor = torch.fft.rfft(batch_tensor, dim=-1, norm="forward")

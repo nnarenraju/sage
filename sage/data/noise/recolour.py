@@ -95,7 +95,12 @@ class RecolourPostprocess(torch.nn.Module):
         cfg = get_cfg()
         data_cfg = get_data_cfg()
 
-        self.data_dir = Path(data_cfg.data_dir)
+        # Resolve the SAME run set (and ordering) the training noise sampler uses,
+        # so recolour's per-run segment banks line up with the run ids the
+        # sampler emits. Single-run training -> one run (id 0).
+        from sage.data.noise.real_noise import MemmapNoiseSampler
+        self._runs = MemmapNoiseSampler._resolve_runs(cfg, data_cfg, training=True)
+
         self.recolour_dataset_dir = Path(recolour_dataset_dir)
         self.detectors = cfg.detectors
         self.seq_len = data_cfg.padded_length_in_nsamples
@@ -117,48 +122,54 @@ class RecolourPostprocess(torch.nn.Module):
 
     def _load_segment_asds(self):
         """
-        Load the per-segment ASD banks into RAM (one array per detector). They
-        are gathered every batch in :meth:`forward`; on the NFS data mount a
+        Load the per-segment ASD banks into RAM, one array per (run, detector).
+        They are gathered every batch in :meth:`forward`; on the NFS data mount a
         random per-batch gather costs ~600 ms (vs microseconds from RAM), which
         starves the GPU — so the banks (a few GB total) are kept resident.
 
         Each detector is read into its own array (no rectangular padding): after
         the dense ``segment_index`` renumbering the sampler emits per-detector
-        positional ids in ``[0, N_seg_d)``.
+        positional ids in ``[0, N_seg_d)``, keyed within a run. With multiple
+        pooled runs the whitening PSD is keyed by (run_id, segment_index), so a
+        separate bank is kept per run.
 
         Result:
-            self._segment_banks: list[np.ndarray]  per detector, (N_seg_d, F)
+            self._segment_banks: list[list[np.ndarray]]  [run_id][d] -> (N_seg, F)
         """
         self._segment_banks = []
 
-        for det in self.detectors:
-            # Segment ASDs should be from the noise used for training
-            asd_dir = self.data_dir / "segment_psds"
-            bin_path = asd_dir / f"data_{det}_psds.bin"
-            meta_path = asd_dir / f"data_{det}_psds_segments.json"
+        for run in self._runs:
+            data_dir = Path(run["data_dir"])
+            det_banks = []
+            for det in self.detectors:
+                # Segment ASDs are from THIS run's training noise.
+                asd_dir = data_dir / "segment_psds"
+                bin_path = asd_dir / f"data_{det}_psds.bin"
+                meta_path = asd_dir / f"data_{det}_psds_segments.json"
 
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
 
-            n_seg = len(meta)
-            n_freq = int(meta[0]["psd_len"])  # interpolated to a fixed F
-            expected = n_seg * n_freq * 4
-            actual = os.path.getsize(bin_path)
-            if actual != expected:
-                raise ValueError(
-                    f"segment ASD bank {bin_path}: size {actual} != expected "
-                    f"{expected} ({n_seg} x {n_freq} float32) — non-uniform psd_len?"
-                )
+                n_seg = len(meta)
+                n_freq = int(meta[0]["psd_len"])  # interpolated to a fixed F
+                expected = n_seg * n_freq * 4
+                actual = os.path.getsize(bin_path)
+                if actual != expected:
+                    raise ValueError(
+                        f"segment ASD bank {bin_path}: size {actual} != expected "
+                        f"{expected} ({n_seg} x {n_freq} float32) — non-uniform psd_len?"
+                    )
 
-            # Read straight into a pre-allocated buffer (no intermediate copy).
-            bank = np.empty((n_seg, n_freq), dtype=np.float32)
-            with open(bin_path, "rb") as fh:
-                nread = fh.readinto(memoryview(bank).cast("B"))
-            if nread != expected:
-                raise ValueError(
-                    f"segment ASD bank {bin_path}: read {nread} of {expected} bytes"
-                )
-            self._segment_banks.append(bank)
+                # Read straight into a pre-allocated buffer (no intermediate copy).
+                bank = np.empty((n_seg, n_freq), dtype=np.float32)
+                with open(bin_path, "rb") as fh:
+                    nread = fh.readinto(memoryview(bank).cast("B"))
+                if nread != expected:
+                    raise ValueError(
+                        f"segment ASD bank {bin_path}: read {nread} of {expected} bytes"
+                    )
+                det_banks.append(bank)
+            self._segment_banks.append(det_banks)
 
     def _load_recolour_asds(self):
         """
@@ -212,9 +223,14 @@ class RecolourPostprocess(torch.nn.Module):
         self,
         batch_td: torch.Tensor,
         segment_ids: torch.Tensor,
+        run_ids: torch.Tensor = None,
     ) -> torch.Tensor:
         """
-        torch.compile-safe FD recolouring
+        torch.compile-safe FD recolouring.
+
+        ``run_ids`` (B, D) tags each window's source run so the whitening PSD is
+        keyed by (run_id, segment_index). ``None`` means single-run (all run 0) —
+        the case for single-run training and the hard-noise miner's reader.
         """
 
         # TD to FD (B, D, F)
@@ -229,9 +245,11 @@ class RecolourPostprocess(torch.nn.Module):
         mask_cpu = torch.rand(B, self.D, 1) < self.p_recolour
         mask = mask_cpu.to(X.device, non_blocking=True)
 
-        # Whitening PSD: each window's own segment ASD, gathered per detector
+        # Whitening PSD: each window's own segment ASD, keyed by (run, segment).
         seg_idx = segment_ids.detach().cpu().numpy()
-        gathered_seg_asd = self._gather(self._segment_banks, seg_idx)
+        run_idx = (np.zeros_like(seg_idx) if run_ids is None
+                   else run_ids.detach().cpu().numpy())
+        gathered_seg_asd = self._gather_segment(seg_idx, run_idx)
         gathered_seg_asd = gathered_seg_asd.to(X.device, non_blocking=True)
 
         X = torch.where(
@@ -262,4 +280,25 @@ class RecolourPostprocess(torch.nn.Module):
         out = np.empty((idx.shape[0], self.D, F), dtype=np.float32)
         for d in range(self.D):
             out[:, d, :] = banks[d][idx[:, d]]
+        return torch.from_numpy(out)
+
+    def _gather_segment(self, seg_idx, run_idx):
+        """Gather a (B, D, F) segment ASD keyed by (run_id, segment_index).
+
+        ``seg_idx`` / ``run_idx`` are (B, D) integer arrays. For each (detector,
+        run) it fancy-indexes that run's bank for the windows belonging to it, so
+        the cost matches the single-run gather (one fancy-index per detector when
+        ``n_runs == 1``).
+        """
+        F = self._segment_banks[0][0].shape[1]
+        out = np.empty((seg_idx.shape[0], self.D, F), dtype=np.float32)
+        n_runs = len(self._segment_banks)
+        for d in range(self.D):
+            if n_runs == 1:
+                out[:, d, :] = self._segment_banks[0][d][seg_idx[:, d]]
+                continue
+            for r in range(n_runs):
+                m = run_idx[:, d] == r
+                if m.any():
+                    out[m, d, :] = self._segment_banks[r][d][seg_idx[m, d]]
         return torch.from_numpy(out)

@@ -339,7 +339,7 @@ class _MiningReader:
         )
 
         def read_det(d):
-            mm = self.mmaps[d]
+            mm = self.mmaps[d][0]     # 5a: hard mining is single-run -> run 0
             arr = np.empty((B, self.seq_len), dtype=np.float32)
             for i in range(B):
                 s = int(starts[i, d])
