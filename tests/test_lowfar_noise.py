@@ -91,6 +91,7 @@ _D = len(_DETECTORS)
 _ENDIAN = "<" if sys.byteorder == "little" else ">"
 
 _SEG_DTYPE = np.dtype([
+    ("run", np.int64),
     ("idx", np.int64),
     ("start", np.int64),
     ("end", np.int64),
@@ -114,7 +115,8 @@ def _sidecar(gps_start=1_234_567_890.0):
 
 
 def _seg_arr():
-    return np.array([(0, 0, _N_SAMPLES, _N_SAMPLES)], dtype=_SEG_DTYPE)
+    # (run, idx, start, end, nsamples) -- single run 0
+    return np.array([(0, 0, 0, _N_SAMPLES, _N_SAMPLES)], dtype=_SEG_DTYPE)
 
 
 def _fake_cfg():
@@ -133,8 +135,9 @@ class _FakeSampler:
         seg = _seg_arr()
         self.seg_index = [seg] * self.n_detectors
         self.segment_probs = [np.array([1.0])] * self.n_detectors
+        # mmaps are nested [detector][run] (5a); this stub is single-run.
         self.mmaps = [
-            np.memmap(str(p), dtype=np.dtype(f"{_ENDIAN}f4"), mode="r")
+            [np.memmap(str(p), dtype=np.dtype(f"{_ENDIAN}f4"), mode="r")]
             for p in self.bin_files
         ]
 
