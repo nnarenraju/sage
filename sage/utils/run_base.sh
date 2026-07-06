@@ -100,6 +100,7 @@ sage_submit() {
 
     local job="sage" part="$SAGE_PARTITION" qos="$SAGE_QOS"
     local time="$SAGE_TIME" gres="$SAGE_GRES" mem="$SAGE_MEM" cpus="$SAGE_CPUS"
+    local dep="" parsable=""
     while [ "$#" -gt 1 ]; do
         case "$1" in
             --job)       job="$2";  shift 2 ;;
@@ -110,6 +111,11 @@ sage_submit() {
             --gres)      gres="$2"; [ "$gres" = "none" ] && gres=""; shift 2 ;;
             --mem)       mem="$2";  shift 2 ;;
             --cpus)      cpus="$2"; shift 2 ;;
+            # SLURM job dependency, e.g. "afterany:12345" (used by chaining).
+            --dependency) dep="$2"; shift 2 ;;
+            # Print ONLY the job id on stdout (for capturing in a chain driver);
+            # all human-readable log lines go to stderr.
+            --parsable)  parsable=1; shift ;;
             *) break ;;
         esac
     done
@@ -128,9 +134,12 @@ sage_submit() {
         [ -n "$gres" ]           && args+=(--gres="$gres")
         [ -n "$time" ]           && args+=(--time="$time")
         [ -n "$mem" ]            && args+=(--mem="$mem")
+        [ -n "$dep" ]            && args+=(--dependency="$dep")
+        [ -n "$parsable" ]       && args+=(--parsable)
         [ -n "$SAGE_ACCOUNT" ]   && args+=(--account="$SAGE_ACCOUNT")
         [ -n "$SAGE_MAIL" ]      && args+=(--mail-user="$SAGE_MAIL")
-        echo "[run_base] sbatch ${args[*]}"
+        # stderr, so `--parsable` leaves only the job id on stdout.
+        echo "[run_base] sbatch ${args[*]}" >&2
         sbatch "${args[@]}" --wrap "$wrap"
     else
         local log="$job-$(date +%Y%m%d-%H%M%S).out"
@@ -138,6 +147,31 @@ sage_submit() {
         nohup bash -c "$cmd" >"$log" 2>&1 &
         echo "[run_base] pid $! ; tail -f $log"
     fi
+}
+
+# Submit <n> copies of a command as an `afterany` dependency chain, so a long
+# run spans the scheduler's per-job wall limit as N back-to-back segments.
+#   sage_submit_chain 4 --time 2-00:00 --job o3b-hard "<cmd>"
+# Each segment starts only after the previous one ENDS (wall-kill or normal
+# exit) and resumes from its own checkpoint; once training completes, trailing
+# segments resume, find no epochs left, and exit in seconds. Only ONE segment
+# ever runs at a time (serial chain) -> holds at most one GPU. Echoes the last
+# segment's job id.
+sage_submit_chain() {
+    local n="$1"; shift
+    case "$n" in ''|*[!0-9]*) echo "[run_base] sage_submit_chain: first arg must be N>=1" >&2; return 2 ;; esac
+    [ "$n" -ge 1 ] || { echo "[run_base] sage_submit_chain: N must be >=1" >&2; return 2; }
+    local prev="" jid dep_arg
+    local i
+    for i in $(seq 1 "$n"); do
+        dep_arg=()
+        [ -n "$prev" ] && dep_arg=(--dependency "afterany:$prev")
+        jid="$(sage_submit --parsable "${dep_arg[@]}" "$@")" || return 1
+        jid="${jid%%;*}"        # strip ";cluster" if the site returns it
+        echo "[run_base] chain segment $i/$n -> job $jid${prev:+ (afterany:$prev)}" >&2
+        prev="$jid"
+    done
+    echo "$prev"
 }
 
 # Load the server now so sourcing scripts can read $SAGE_* immediately.
