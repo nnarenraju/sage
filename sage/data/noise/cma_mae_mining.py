@@ -77,24 +77,31 @@ class _StartTimeCodec:
     def __init__(self, seg_index, seq_len):
         self.D = len(seg_index)
         self.seq_len = int(seq_len)
-        self.cum_valid, self.abs_starts, self.seg_ids, self.valid_per_seg, self.N = (
-            [], [], [], [], []
-        )
+        (self.cum_valid, self.abs_starts, self.seg_ids, self.run_ids,
+         self.valid_per_seg, self.N) = ([], [], [], [], [], [])
         for seg_arr in seg_index:
             valid = np.maximum(0, seg_arr["nsamples"].astype(np.int64) - self.seq_len)
             cum = np.concatenate([[0], np.cumsum(valid)])
             self.cum_valid.append(cum)
             self.abs_starts.append(seg_arr["start"].astype(np.int64))
             self.seg_ids.append(seg_arr["idx"].astype(np.int64))
+            # Pooled segment tables carry a run id (5a); a window's identity is
+            # (run, segment, start) since segment ids collide across runs. Tolerate
+            # a legacy run-less table (all run 0).
+            self.run_ids.append(
+                seg_arr["run"].astype(np.int64) if "run" in seg_arr.dtype.names
+                else np.zeros(len(seg_arr), dtype=np.int64)
+            )
             self.valid_per_seg.append(valid)
             self.N.append(int(cum[-1]))
 
     def decode(self, genotypes):
-        """(B, D) fractions -> (starts (B, D) int64, segs (B, D) int64)."""
+        """(B, D) fractions -> (starts, segs, runs), each (B, D) int64."""
         g = np.clip(np.asarray(genotypes, dtype=np.float64), 0.0, 1.0)
         B = g.shape[0]
         starts = np.zeros((B, self.D), dtype=np.int64)
         segs = np.zeros((B, self.D), dtype=np.int64)
+        runs = np.zeros((B, self.D), dtype=np.int64)
         for d in range(self.D):
             if self.N[d] <= 0:                      # detector with no valid window
                 continue
@@ -107,19 +114,27 @@ class _StartTimeCodec:
                           np.maximum(0, self.valid_per_seg[d][arr] - 1))
             starts[:, d] = self.abs_starts[d][arr] + off
             segs[:, d] = self.seg_ids[d][arr]
-        return starts, segs
+            runs[:, d] = self.run_ids[d][arr]
+        return starts, segs, runs
 
-    def encode(self, starts, segs):
-        """(B, D) (starts, segs) -> (B, D) genotype fractions in [0, 1]."""
+    def encode(self, starts, segs, runs):
+        """(B, D) (starts, segs, runs) -> (B, D) genotype fractions in [0, 1]."""
         starts = np.asarray(starts, dtype=np.int64)
         segs = np.asarray(segs, dtype=np.int64)
+        runs = np.asarray(runs, dtype=np.int64)
         B = starts.shape[0]
         g = np.zeros((B, self.D), dtype=np.float64)
         for d in range(self.D):
             if self.N[d] <= 0:
                 continue
-            id_to_pos = {int(s): i for i, s in enumerate(self.seg_ids[d])}
-            arr = np.array([id_to_pos.get(int(s), 0) for s in segs[:, d]], dtype=np.int64)
+            # Key by (run, segment): segment ids alone collide across pooled runs.
+            key_to_pos = {(int(r), int(s)): i for i, (r, s)
+                          in enumerate(zip(self.run_ids[d], self.seg_ids[d]))}
+            arr = np.array(
+                [key_to_pos.get((int(runs[b, d]), int(segs[b, d])), 0)
+                 for b in range(B)],
+                dtype=np.int64,
+            )
             off = starts[:, d] - self.abs_starts[d][arr]
             lin = self.cum_valid[d][arr] + off
             # map to the *centre* of the linear bin so decode (which floors
@@ -204,8 +219,8 @@ class CMAMAEMiner:
         if not self.bank.is_cold:
             k = min(n // 2, self.bank.n_starts)
             if k > 0:
-                starts, segs = self.bank.sample_starts(k, self._rng)
-                g[:k] = self.codec.encode(starts, segs)
+                starts, segs, runs = self.bank.sample_starts(k, self._rng)
+                g[:k] = self.codec.encode(starts, segs, runs)
         return g
 
     @staticmethod
@@ -237,18 +252,18 @@ class CMAMAEMiner:
         covered = (self.bank.read_embeddings()[0]
                    if self.bank.n_embeddings > 0 else None)         # (M, P) or None
 
-        kept_s, kept_g, kept_sc, kept_m = [], [], [], []
+        kept_s, kept_g, kept_r, kept_sc, kept_m = [], [], [], [], []
 
-        def _collect(starts, segs, scores, measures):
+        def _collect(starts, segs, runs, scores, measures):
             m = scores >= self.keep_threshold
             if m.any():
-                kept_s.append(starts[m]); kept_g.append(segs[m])
+                kept_s.append(starts[m]); kept_g.append(segs[m]); kept_r.append(runs[m])
                 kept_sc.append(scores[m]); kept_m.append(measures[m])
 
         # ── warmup: score random/seeded windows, (cold) fit / (warm) update PCA ─
         g0 = self._seed_genotypes(self.n_warmup)
-        s0, seg0 = self.codec.decode(g0)
-        sc0, emb0 = evaluate_fn(s0, seg0)
+        s0, seg0, run0 = self.codec.decode(g0)
+        sc0, emb0 = evaluate_fn(s0, seg0, run0)
         sc0 = np.asarray(sc0, np.float64).reshape(-1)
         emb0 = np.asarray(emb0, np.float64)
 
@@ -263,7 +278,7 @@ class CMAMAEMiner:
             ipca = IncrementalPCA(n_components=self.descriptor_dim)
         ipca.partial_fit(emb0)                       # continuous, never from scratch
         meas0 = ipca.transform(emb0)
-        _collect(s0, seg0, sc0, meas0)
+        _collect(s0, seg0, run0, sc0, meas0)
 
         # ── CVT centroids: cold from warmup; warm seeded by the bank's diversity ─
         cset = meas0 if (covered is None or len(covered) == 0) else \
@@ -308,15 +323,15 @@ class CMAMAEMiner:
         # ── ask / evaluate / tell ──────────────────────────────────────────────
         for _ in range(int(n_iters)):
             sols = scheduler.ask()
-            starts, segs = self.codec.decode(sols)
-            scores, emb = evaluate_fn(starts, segs)
+            starts, segs, runs = self.codec.decode(sols)
+            scores, emb = evaluate_fn(starts, segs, runs)
             scores = np.asarray(scores, np.float64).reshape(-1)
             meas = ipca.transform(np.asarray(emb, np.float64))
             # objective = hardness + novelty (drives search to hard AND new);
             # keep gate below still uses the RAW score only.
             obj = scores + self.novelty_weight * self._novelty(meas, cov)
             scheduler.tell(obj, meas)
-            _collect(starts, segs, scores, meas)
+            _collect(starts, segs, runs, scores, meas)
 
         # ── persist: PCA, hard start-times, diverse+hard embeddings ────────────
         self.bank.save_pca(ipca)
@@ -324,14 +339,15 @@ class CMAMAEMiner:
         if kept_s:
             starts = np.concatenate(kept_s, 0)
             segs = np.concatenate(kept_g, 0)
+            runs = np.concatenate(kept_r, 0)
             scores = np.concatenate(kept_sc, 0)
             meas = np.concatenate(kept_m, 0)
-            # de-dup identical (start, seg) windows, keep the highest score
-            key = np.concatenate([starts, segs], axis=1)
+            # de-dup identical (run, seg, start) windows, keep the highest score
+            key = np.concatenate([runs, segs, starts], axis=1)
             order = np.argsort(-scores)
             _, uniq = np.unique(key[order], axis=0, return_index=True)
             sel = order[uniq]
-            self.bank.append_starts(starts[sel], segs[sel], scores[sel], epoch)
+            self.bank.append_starts(starts[sel], segs[sel], runs[sel], scores[sel], epoch)
             n_starts = len(sel)
             # embeddings: bank applies its own novelty (distance) + cap gate
             n_emb = self.bank.add_embeddings(meas[sel], scores[sel], epoch)
@@ -352,8 +368,8 @@ class CMAMAEMiner:
         if N == 0:
             return {"reeval_n": 0}
         stats = np.empty(N, dtype=np.float32)
-        for sl, starts, segs in self.bank.iter_starts(batch_size):
-            sc, _ = evaluate_fn(starts, segs)
+        for sl, starts, segs, runs in self.bank.iter_starts(batch_size):
+            sc, _ = evaluate_fn(starts, segs, runs)
             stats[sl] = np.asarray(sc, np.float32).reshape(-1)
         self.bank.append_eval(stats, model_epoch)
         return {"reeval_n": int(N), "model_epoch": int(model_epoch),

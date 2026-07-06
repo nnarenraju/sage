@@ -555,26 +555,18 @@ class MemmapNoiseSampler(torch.nn.Module):
         """
         from sage.data.noise.lowfar_noise import StartTimeDataset
 
-        # 5a scope: hard mining is single-run only. A hard window is an absolute
-        # start index into ONE run's mmap; with multiple pooled runs the bank
-        # must also store which run each window came from (5b). Refuse rather
-        # than silently read a start index from the wrong run's file.
-        if self.n_runs > 1:
-            raise NotImplementedError(
-                "hard-noise mining is not yet supported with multi-run noise "
-                f"(n_runs={self.n_runs}); the hard bank must store a run id per "
-                "window first (item 5b). Disable hard mining or use a single run."
-            )
-
         ai = np.asarray(active_indices, dtype=np.int64)
         if ai.size == 0:                                  # nothing currently hard
             self.set_hard_dataset(None, hard_bias_prob=hard_bias_prob)
             return
-        starts, segs = bank.read_starts(ai)               # (K, D), (K, D)
+        # (start, segment, run) per detector -- the run tells the reader which
+        # pooled file's mmap to read this hard window from.
+        starts, segs, runs = bank.read_starts(ai)         # (K, D) each
         ds = StartTimeDataset(
             detectors=bank.detectors,
             start_indices=starts,
             segment_indices=segs,
+            run_indices=runs,
             gps_times=np.zeros(ai.size, dtype=np.float64),     # unused by sampling
             scores=np.zeros(ai.size, dtype=np.float32),        # unused by sampling
             bin_files=bank.bin_files,
@@ -596,9 +588,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         idx = self.rng.integers(0, n, size=batch_size)
         start_indices   = [dataset.start_indices[idx, d]   for d in range(self.n_detectors)]
         segment_indices = [dataset.segment_indices[idx, d] for d in range(self.n_detectors)]
-        # Hard mining is single-run in 5a (guarded in set_hard_bank) -> run 0.
-        run_indices     = [np.zeros(batch_size, dtype=np.int64)
-                           for _ in range(self.n_detectors)]
+        run_indices     = [dataset.run_indices[idx, d]     for d in range(self.n_detectors)]
         return start_indices, segment_indices, run_indices
 
     def _sample_starts_batch(self, batch_size: int):

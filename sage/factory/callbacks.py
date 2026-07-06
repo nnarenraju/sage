@@ -244,11 +244,12 @@ class HardMiningCallback(Callback):
                 "MSCNN1D_2DResNetCBAM_HardMining (return_frontend_embedding)."
             )
 
-        def evaluate_fn(starts, segs):
+        def evaluate_fn(starts, segs, runs):
             scores, embs = [], []
             for i in range(0, len(starts), chunk):
                 net_input = self._preprocess(
-                    self._reader.read_batch(starts[i:i + chunk], segs[i:i + chunk])
+                    self._reader.read_batch(starts[i:i + chunk], segs[i:i + chunk],
+                                            runs[i:i + chunk])
                 )
                 score, emb = run(net_input)
                 scores.append(score.cpu().numpy())

@@ -84,10 +84,15 @@ class StartTimeDataset:
         bin_files,
         sample_rate,
         seq_len,
+        run_indices=None,
     ):
         self.detectors = list(detectors)
         self.start_indices = np.asarray(start_indices, dtype=np.int64)
         self.segment_indices = np.asarray(segment_indices, dtype=np.int64)
+        # Which pooled run each window came from (multi-run). None -> all run 0
+        # (single-run), matching the old single-file behaviour.
+        self.run_indices = (np.zeros_like(self.start_indices) if run_indices is None
+                            else np.asarray(run_indices, dtype=np.int64))
         self.gps_times = np.asarray(gps_times, dtype=np.float64)
         self.scores = np.asarray(scores, dtype=np.float32)
         self.bin_files = [str(f) for f in bin_files]
@@ -104,6 +109,7 @@ class StartTimeDataset:
             str(path),
             start_indices=self.start_indices,
             segment_indices=self.segment_indices,
+            run_indices=self.run_indices,
             gps_times=self.gps_times,
             scores=self.scores,
             sample_rate=np.array([self.sample_rate]),
@@ -126,6 +132,7 @@ class StartTimeDataset:
             detectors=meta["detectors"],
             start_indices=d["start_indices"],
             segment_indices=d["segment_indices"],
+            run_indices=d["run_indices"] if "run_indices" in d else None,
             gps_times=d["gps_times"],
             scores=d["scores"],
             bin_files=meta["bin_files"],
@@ -141,6 +148,7 @@ class StartTimeDataset:
             detectors=self.detectors,
             start_indices=self.start_indices[mask],
             segment_indices=self.segment_indices[mask],
+            run_indices=self.run_indices[mask],
             gps_times=self.gps_times[mask],
             scores=self.scores[mask],
             bin_files=self.bin_files,
@@ -155,6 +163,7 @@ class StartTimeDataset:
             detectors=self.detectors,
             start_indices=np.concatenate([self.start_indices, other.start_indices], axis=0),
             segment_indices=np.concatenate([self.segment_indices, other.segment_indices], axis=0),
+            run_indices=np.concatenate([self.run_indices, other.run_indices], axis=0),
             gps_times=np.concatenate([self.gps_times, other.gps_times]),
             scores=np.concatenate([self.scores, other.scores]),
             bin_files=self.bin_files,
@@ -176,14 +185,17 @@ class StartTimeDataset:
         if len(self) <= 1:
             return self
         # Score-descending order so np.unique's first-occurrence-per-row keeps
-        # the strongest score for each window.
+        # the strongest score for each window. Identity is (run, start): the same
+        # absolute start index in two different runs' mmaps is a DIFFERENT window.
         order = np.argsort(-self.scores, kind="stable")
-        _, first = np.unique(self.start_indices[order], axis=0, return_index=True)
+        key = np.concatenate([self.run_indices, self.start_indices], axis=1)
+        _, first = np.unique(key[order], axis=0, return_index=True)
         keep = np.sort(order[first])            # original order; unique; best score
         return StartTimeDataset(
             detectors=self.detectors,
             start_indices=self.start_indices[keep],
             segment_indices=self.segment_indices[keep],
+            run_indices=self.run_indices[keep],
             gps_times=self.gps_times[keep],
             scores=self.scores[keep],
             bin_files=self.bin_files,
@@ -223,18 +235,25 @@ class _MiningReader:
     """
 
     def __init__(self, noise_sampler, seed=None):
-        self.mmaps = noise_sampler.mmaps
-        self.seg_index = noise_sampler.seg_index        # list of structured arrays per detector
+        self.mmaps = noise_sampler.mmaps                # nested [d][run] (5a)
+        self.seg_index = noise_sampler.seg_index        # pooled struct arr per detector
         self.segment_probs = noise_sampler.segment_probs
         self.seq_len = noise_sampler.seq_len
         self.n_detectors = noise_sampler.n_detectors
+        self.n_runs = len(self.mmaps[0]) if self.mmaps else 1
         self.device = noise_sampler.device
         self.postprocess_fn = noise_sampler.postprocess_fn
         self.rng = np.random.default_rng(seed)
 
-        # Load GPS metadata from sidecar JSON files
-        self.gps_meta = []   # per det: {segment_index -> {gps_start, sample_start_idx, sample_rate}}
-        for p in noise_sampler.bin_files:
+        # The GPS/segment lookups below feed ONLY the legacy single-run helpers
+        # (random_starts / mutate_starts / gps_from_starts); the production
+        # read_batch does not use them. Build them RUN-0-SCOPED so a pooled
+        # multi-run segment table (whose segment ids collide across runs) neither
+        # overwrites positions nor KeyErrors here. bin_files is d-major
+        # (detector d, run r at index d*n_runs + r).
+        self.gps_meta = []   # per det (run 0): {segment_index -> {...}}
+        for d in range(self.n_detectors):
+            p = noise_sampler.bin_files[d * self.n_runs]     # detector d, run 0
             meta_path = p.parent / f"{p.stem}_segments.json"
             with open(meta_path) as f:
                 raw = json.load(f)
@@ -250,11 +269,12 @@ class _MiningReader:
         first_meta = next(iter(self.gps_meta[0].values()))
         self.sample_rate = first_meta["sample_rate"]
 
-        # Vectorised lookup arrays (one per detector)
+        # Vectorised lookup arrays (one per detector, run 0 only)
         self._gps_lookup = []    # for gps_from_starts
         self._seg_bounds = []    # for mutate_starts
         for d in range(self.n_detectors):
             seg_arr = self.seg_index[d]
+            seg_arr = seg_arr[seg_arr["run"] == 0]      # run-0 segments only
             seg_ids = seg_arr["idx"].astype(np.int64)
             max_id = int(seg_ids.max())
             id_to_pos = np.full(max_id + 1, -1, dtype=np.int64)
@@ -319,7 +339,7 @@ class _MiningReader:
         return starts, segs
 
     # ------------------------------------------------------------------
-    def read_batch(self, starts, segs):
+    def read_batch(self, starts, segs, runs=None):
         """
         Read noise windows and convert to frequency domain.
 
@@ -327,6 +347,9 @@ class _MiningReader:
         ----------
         starts : (B, D) int64
         segs   : (B, D) int64
+        runs   : (B, D) int64 or None
+            Which pooled run each window came from (indexes ``mmaps[d][run]``).
+            ``None`` -> all run 0 (single-run).
 
         Returns
         -------
@@ -334,16 +357,18 @@ class _MiningReader:
         """
         B = len(starts)
         D = self.n_detectors
+        runs = np.zeros_like(np.asarray(starts)) if runs is None \
+            else np.asarray(runs)
         batch_td = torch.empty(
             (B, D, self.seq_len), dtype=torch.float32, device=self.device
         )
 
         def read_det(d):
-            mm = self.mmaps[d][0]     # 5a: hard mining is single-run -> run 0
             arr = np.empty((B, self.seq_len), dtype=np.float32)
             for i in range(B):
+                r = int(runs[i, d])          # read from THIS window's run mmap
                 s = int(starts[i, d])
-                arr[i] = mm[s : s + self.seq_len].astype(np.float32)
+                arr[i] = self.mmaps[d][r][s : s + self.seq_len].astype(np.float32)
             arr /= dyn_range_fac()
             return arr
 
@@ -360,9 +385,11 @@ class _MiningReader:
             batch_td[:, d, :].copy_(cpu_t, non_blocking=True)
 
         segment_ids = torch.from_numpy(segs.astype(np.int64))   # (B, D) CPU
+        run_ids = torch.from_numpy(runs.astype(np.int64))       # (B, D) CPU
 
         if self.postprocess_fn is not None:
-            return self.postprocess_fn(batch_td, segment_ids)
+            # recolour keys its per-run segment PSD by (run_id, segment_index).
+            return self.postprocess_fn(batch_td, segment_ids, run_ids)
         return torch.fft.rfft(batch_td, dim=-1, norm="forward")
 
     # ------------------------------------------------------------------

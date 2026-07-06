@@ -20,6 +20,7 @@ Layout (see ``_ensure_file``)::
     attrs: detectors, runs, sample_rate, seq_len, descriptor_dim, cold_epoch
     start_times       (N, D) int64   append-only, stable row index
     start_segments    (N, D) int64
+    start_runs        (N, D) int64    which pooled run each window came from
     start_found_epoch (N,)   int32
     start_found_score (N,)   f32
     embeddings        (M, P) f32      diverse subset (distance-gated, PCA-reduced)
@@ -112,6 +113,14 @@ class HardMiningBank:
         with h5py.File(self.path, "a") as f:
             if "start_times" in f:
                 self._validate_existing(f)     # fail fast on incompatible reopen
+                # Backfill start_runs on a pre-multi-run bank (all run 0) so an
+                # older single-run bank keeps working after the schema change.
+                if "start_runs" not in f:
+                    n = f["start_times"].shape[0]
+                    ds = f.create_dataset("start_runs", (n, self.D), dtype="i8",
+                                          maxshape=(None, self.D), chunks=True)
+                    if n:
+                        ds[:] = 0
                 return
             f.attrs["detectors"] = detectors_tag(self.detectors)
             f.attrs["runs"] = self.runs
@@ -124,6 +133,7 @@ class HardMiningBank:
                                  chunks=True)
             f.create_dataset("start_times", (0, self.D), dtype="i8", **ck(None, self.D))
             f.create_dataset("start_segments", (0, self.D), dtype="i8", **ck(None, self.D))
+            f.create_dataset("start_runs", (0, self.D), dtype="i8", **ck(None, self.D))
             f.create_dataset("start_found_epoch", (0,), dtype="i4", **ck(None))
             f.create_dataset("start_found_score", (0,), dtype="f4", **ck(None))
             f.create_dataset("embeddings", (0, self.P), dtype="f4", **ck(None, self.P))
@@ -187,16 +197,22 @@ class HardMiningBank:
         ds[n0:] = rows
         return n0
 
-    def append_starts(self, starts, segs, scores, epoch):
-        """Append newly-mined hard start-times (append-only, stable index)."""
+    def append_starts(self, starts, segs, runs, scores, epoch):
+        """Append newly-mined hard start-times (append-only, stable index).
+
+        ``runs`` (N, D) records which pooled run each window came from, so it is
+        later read from the correct file's mmap.
+        """
         starts = np.asarray(starts, dtype=np.int64).reshape(-1, self.D)
         segs = np.asarray(segs, dtype=np.int64).reshape(-1, self.D)
+        runs = np.asarray(runs, dtype=np.int64).reshape(-1, self.D)
         scores = np.asarray(scores, dtype=np.float32).reshape(-1)
         if len(starts) == 0:
             return
         with h5py.File(self.path, "a") as f:
             i0 = self._append(f["start_times"], starts)
             self._append(f["start_segments"], segs)
+            self._append(f["start_runs"], runs)
             self._append(f["start_found_epoch"],
                          np.full(len(starts), int(epoch), np.int32))
             self._append(f["start_found_score"], scores)
@@ -205,36 +221,38 @@ class HardMiningBank:
             return i0
 
     def sample_starts(self, n, rng):
-        """Random ``n`` (start, seg) rows from the bank for genotype seeding."""
+        """Random ``n`` (start, seg, run) rows from the bank for genotype seeding."""
         with h5py.File(self.path, "r") as f:
             N = f["start_times"].shape[0]
             if N == 0:
                 empty = np.zeros((0, self.D), np.int64)
-                return empty, empty
+                return empty, empty, empty
             idx = np.sort(rng.choice(N, size=min(n, N), replace=False))
-            return f["start_times"][idx], f["start_segments"][idx]
+            return f["start_times"][idx], f["start_segments"][idx], f["start_runs"][idx]
 
     def iter_starts(self, batch_size):
-        """Yield ``(sl, starts, segs)`` over the whole bank for re-evaluation."""
+        """Yield ``(sl, starts, segs, runs)`` over the whole bank for re-eval."""
         with h5py.File(self.path, "r") as f:
             N = f["start_times"].shape[0]
             for i in range(0, N, batch_size):
                 sl = slice(i, min(i + batch_size, N))
-                yield sl, f["start_times"][sl], f["start_segments"][sl]
+                yield sl, f["start_times"][sl], f["start_segments"][sl], f["start_runs"][sl]
 
     def read_starts(self, indices):
         """Read specific rows (used by the sampler's hot path).
 
         Robust to unordered and duplicate indices: h5py point selection needs
         strictly-increasing indices, so we read the sorted-unique set and map
-        back to the caller's order (preserving duplicates).
+        back to the caller's order (preserving duplicates). Returns
+        ``(starts, segs, runs)``.
         """
         indices = np.asarray(indices, dtype=np.int64)
         uniq, inv = np.unique(indices, return_inverse=True)   # sorted, unique
         with h5py.File(self.path, "r") as f:
             s = f["start_times"][uniq]
             g = f["start_segments"][uniq]
-        return s[inv], g[inv]
+            r = f["start_runs"][uniq]
+        return s[inv], g[inv], r[inv]
 
     # ----------------------------------------------------------- embeddings io
     def _distances_to_bank(self, cand, bank):
