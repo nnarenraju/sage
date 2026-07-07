@@ -55,9 +55,15 @@ def get_fiducial_psds():
     # Configs
     cfg = get_cfg()
 
+    # Fiducial PSDs are per-detector and shared across a run's detector-set
+    # networks (HL/LV/HV/HLV), so a config may point ``fiducial_dir`` at a shared
+    # location instead of the per-network ``export_dir``. Defaults to the old
+    # ``{export_dir}/fiducial_psds`` when unset.
+    psd_dir = Path(getattr(cfg, "fiducial_dir", None)
+                   or (Path(cfg.export_dir) / "fiducial_psds"))
+
     psds_all = []
     for det in cfg.detectors:
-        psd_dir = Path(cfg.export_dir) / "fiducial_psds"
         bin_path = psd_dir / f"fiducial_{det}_psd.bin"
         meta_path = psd_dir / f"fiducial_{det}_psd.json"
 

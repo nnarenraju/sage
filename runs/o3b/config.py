@@ -37,14 +37,20 @@ _SRV = get_server()
 
 class O3bCFG:
 
-    export_dir = "./run_export"
+    # One detector-set network per config. For LV / HV / HLV, copy this config
+    # and change `detectors` + `export_dir` together (e.g. detectors=["L1","V1"]
+    # + export_dir="./run_export_LV"); everything else (noise files, model,
+    # recolour, hard-mining bank) follows from `detectors` automatically.
+    export_dir = "./run_export_HL"
+    # Fiducial PSDs are per-detector and shared across a run's networks, so they
+    # live in one place regardless of which detector set this config trains.
+    fiducial_dir = "./run_export/fiducial_psds"
     batch_size = 128
     device = "cuda:0"
     dtype = torch.float32
-    detectors = ["H1", "L1"]
+    detectors = ["H1", "L1"]          # HL network
     # Observing run(s) whose noise this model trains on. Drives the hard-mining
-    # bank filename/metadata (hardbank_<runs>_<dets>.h5). For multi-run O4
-    # training this becomes e.g. ["O3a", "O3b", "O4a"].
+    # bank filename/metadata (hardbank_<runs>_<dets>.h5).
     train_runs = ["O3b"]
     do_point_estimate = ["tc", "mchirp"]
     autocast = True
@@ -61,14 +67,14 @@ class O3bDataCFG:
     # Derived PSDs (recolour/segment) live under the run's dataset dir; the raw
     # noise .bin lives flat in its release dir (O3b = default "data_release";
     # O3a was downloaded into the isolated "data_release_o3a").
+    # Noise files follow O3bCFG.detectors, so switching the network only needs
+    # the CFG edit above (detectors + export_dir).
     data_dir = _SRV.data_dir("O3b")
     training_noise_files = [
-        _SRV.noise_bin("H1", "O3b"),                       # data_release/
-        _SRV.noise_bin("L1", "O3b"),
+        _SRV.noise_bin(d, "O3b") for d in O3bCFG.detectors            # data_release/
     ]
     validation_noise_files = [
-        _SRV.noise_bin("H1", "O3a", "data_release_o3a"),   # isolated dir
-        _SRV.noise_bin("L1", "O3a", "data_release_o3a"),
+        _SRV.noise_bin(d, "O3a", "data_release_o3a") for d in O3bCFG.detectors
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz

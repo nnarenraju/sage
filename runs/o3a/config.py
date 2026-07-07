@@ -37,11 +37,18 @@ _SRV = get_server()
 
 class O3aCFG:
 
-    export_dir = "./run_export"
+    # One detector-set network per config. For LV / HV / HLV, copy this config
+    # and change `detectors` + `export_dir` together (e.g. detectors=["L1","V1"]
+    # + export_dir="./run_export_LV"); everything else (noise files, model,
+    # recolour, hard-mining bank) follows from `detectors` automatically.
+    export_dir = "./run_export_HL"
+    # Fiducial PSDs are per-detector and shared across a run's networks, so they
+    # live in one place regardless of which detector set this config trains.
+    fiducial_dir = "./run_export/fiducial_psds"
     batch_size = 128
     device = "cuda:0"
     dtype = torch.float32
-    detectors = ["H1", "L1"]
+    detectors = ["H1", "L1"]          # HL network
     # Observing run(s) whose noise this model trains on. Drives the hard-mining
     # bank filename/metadata (hardbank_<runs>_<dets>.h5).
     train_runs = ["O3a"]
@@ -57,15 +64,14 @@ class O3aCFG:
 class O3aDataCFG:
 
     # O3a noise was downloaded into the isolated "data_release_o3a"; O3b (used
-    # for validation) lives in the default "data_release".
+    # for validation) lives in the default "data_release". Noise files follow
+    # O3aCFG.detectors, so switching the network only needs the CFG edit above.
     data_dir = _SRV.data_dir("O3a")
     training_noise_files = [
-        _SRV.noise_bin("H1", "O3a", "data_release_o3a"),
-        _SRV.noise_bin("L1", "O3a", "data_release_o3a"),
+        _SRV.noise_bin(d, "O3a", "data_release_o3a") for d in O3aCFG.detectors
     ]
     validation_noise_files = [
-        _SRV.noise_bin("H1", "O3b"),                       # default data_release/
-        _SRV.noise_bin("L1", "O3b"),
+        _SRV.noise_bin(d, "O3b") for d in O3aCFG.detectors   # default data_release/
     ]
     sample_rate = 2048.0  # Hz
     noise_low_frequency_cutoff = 15.0  # Hz
