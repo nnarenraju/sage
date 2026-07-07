@@ -20,7 +20,7 @@ case "$TASK" in
     download) sage_run "python -c 'from dataset import make_dataset; make_dataset()'" ;;
     retry)    sage_run "python -c 'from dataset import retry_dataset; retry_dataset(num_workers=8)'" ;;
     psds)     sage_run "python -c 'from dataset import make_psds_only; make_psds_only()'" ;;
-    train)      sage_run "python -c 'from train import run_sage; run_sage()'" ;;
-    train_hard) sage_run "python -c 'from train_hard import run_hard; run_hard()'" ;;
+    train)      sage_run "SAGE_CONFIG='${2:-config}' python -c 'from train import run_sage; run_sage()'" ;;
+    train_hard) sage_run "SAGE_CONFIG='${2:-config}' python -c 'from train_hard import run_hard; run_hard()'" ;;
     *) echo "Unknown task '$TASK'. Use: download | retry | psds | train | train_hard" >&2; exit 2 ;;
 esac

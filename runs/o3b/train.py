@@ -69,7 +69,11 @@ from sage.core.graph import Preprocessor
 from sage.factory.training import SageVanillaTraining
 from sage.factory.validation import SageVanillaValidation
 
-from config import set_configs
+import os as _os, importlib as _il
+# Config module to run: named by SAGE_CONFIG (default "config"). Make a
+# per-network config with `cp config.py config_<DETS>.py`, edit `detectors`
+# + `export_dir`, and pick it at launch. No network logic lives in code.
+set_configs = _il.import_module(_os.environ.get("SAGE_CONFIG", "config")).set_configs
 from sage.utils.checkpoint import CheckpointManager
 
 

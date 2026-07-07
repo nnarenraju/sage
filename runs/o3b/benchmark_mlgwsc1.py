@@ -24,7 +24,11 @@ sys.path.insert(0, RUN_DIR)
 sys.path.insert(0, SAGE_DIR)
 
 # --- Config setup (must happen before any sage imports that use configs) ---
-from config import set_configs
+import os as _os, importlib as _il
+# Config module to run: named by SAGE_CONFIG (default "config"). Make a
+# per-network config with `cp config.py config_<DETS>.py`, edit `detectors`
+# + `export_dir`, and pick it at launch. No network logic lives in code.
+set_configs = _il.import_module(_os.environ.get("SAGE_CONFIG", "config")).set_configs
 set_configs()
 
 from sage.core.config import get_cfg, get_data_cfg
