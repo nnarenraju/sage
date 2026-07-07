@@ -40,6 +40,7 @@ from typing import Any, Dict
 # LOCAL
 from sage.data.waveform.distributions import (
     angular,
+    cosmology,
     powerlaw,
     sky,
     uniform,
@@ -291,6 +292,12 @@ class DistributionSampler(torch.nn.Module):
             )
         if name == "uniform_radius":
             return powerlaw.UniformRadius(args["min"], args["max"])
+        if name == "uniform_comoving_volume":
+            return cosmology.UniformComovingVolume(
+                args["min"],
+                args["max"],
+                cosmology=args.get("cosmology", "Planck18"),
+            )
         raise ValueError(f"Unknown distribution {name}")
 
     def _build_distributions(self):
@@ -449,6 +456,9 @@ class DistributionSampler(torch.nn.Module):
                 bounds[pname] = (pcfg["min"], pcfg["max"])
 
             elif name == "uniform_radius":
+                bounds[pname] = (pcfg["min"], pcfg["max"])
+
+            elif name == "uniform_comoving_volume":
                 bounds[pname] = (pcfg["min"], pcfg["max"])
 
             elif name == "uniform_angle":
