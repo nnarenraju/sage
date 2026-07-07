@@ -64,8 +64,8 @@ handling, architecture, training, and utilities.
 - ASCL record: [ascl:4712](https://www.ascl.net/code/v/4712).
 - CI workflow (GitHub Actions) with pytest and Codecov coverage reporting.
 - Comprehensive test suite under `tests/`.
-- Verification notebooks: `notebooks/multibanding.ipynb` (DINGO comparison, mismatch
-  study across 200 prior waveforms, max mismatch 2×10⁻⁵) and
+- Verification notebooks: `notebooks/multibanding.ipynb` (decimation cross-check
+  and mismatch study across 200 prior waveforms, max mismatch 2×10⁻⁵) and
   `notebooks/heterodyning.ipynb` (reference binary selection, residual chirp-time
   envelope, compression comparison).
 

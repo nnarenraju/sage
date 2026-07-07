@@ -74,8 +74,7 @@ class FrequencyBandLayout:
 
         Each index is the start of a complete stride-sized window.  Partial
         trailing windows (where fewer than ``stride`` native bins remain before
-        the band boundary) are excluded, matching DINGO's floor-division
-        decimation exactly.
+        the band boundary) are excluded (floor-division decimation).
         """
         indices = []
         for band_id, band in enumerate(self.bands):
@@ -85,7 +84,7 @@ class FrequencyBandLayout:
                 end = min(end, self.n_freq)
             start = min(max(start, 0), self.n_freq)
             end = min(max(end, start), self.n_freq)
-            # Only complete stride-sized windows — matches DINGO's (k2-k1)//stride
+            # Only complete stride-sized windows: (k2-k1)//stride
             n_complete = (end - start) // band.stride
             indices.append(
                 torch.arange(start, start + n_complete * band.stride, band.stride, device=device)
@@ -361,7 +360,7 @@ def make_prior_informed_frequency_bands(
     duration : float
         Segment duration [s]; sets native resolution Δf = 1 / duration.
     n_bins_per_period : int
-        Minimum multibanded bins per GW signal oscillation period (DINGO: 32).
+        Minimum multibanded bins per GW signal oscillation period (default 32).
     max_stride : int
         Maximum stride (power of 2).  The final band runs to f_max at this
         stride regardless of the chirp-time criterion.
@@ -370,7 +369,7 @@ def make_prior_informed_frequency_bands(
     -------
     tuple[FrequencyBand, ...]
         Ready to pass to ``FrequencyMultibandCompressor``.  Use
-        ``pool="mean"`` to replicate DINGO's bin-averaging decimation.
+        ``pool="mean"`` for bin-averaging decimation.
     """
     import lalsimulation as lalsim
 
@@ -444,7 +443,7 @@ def make_empirical_frequency_bands(
     :func:`make_prior_informed_frequency_bands` (Method 1), but using
     τ_max(f) in place of the analytic SimIMRPhenomDChirpTime.
 
-    This follows the procedure described in the DINGO multibanding paper:
+    This follows the standard frequency-multibanding procedure:
     simulate waveforms from the prior and demand that every oscillation period
     of each signal is covered by at least ``n_bins_per_period`` bins in the
     multibanded domain.  The key difference from Method 1 is that τ_max(f) is
@@ -473,10 +472,10 @@ def make_empirical_frequency_bands(
     duration : float
         Segment duration [s]; native resolution Δf = 1 / duration.
     n_samples : int
-        Number of IMRPhenomD waveforms to simulate (DINGO paper: 1000).
+        Number of IMRPhenomD waveforms to simulate (default 1000).
         Includes the explicit worst-case binary as sample 0.
     n_bins_per_period : int
-        Minimum multibanded bins per GW period (DINGO: 32).
+        Minimum multibanded bins per GW period (default 32).
     max_stride : int
         Maximum stride (power of 2).
     seed : int
