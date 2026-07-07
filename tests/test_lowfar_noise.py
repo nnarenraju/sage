@@ -30,7 +30,7 @@ pytest.importorskip("tqdm", reason="lowfar_noise requires tqdm")
 
 # lowfar_noise.py does "from pycbc import DYN_RANGE_FAC" at import time.
 # We need pycbc in sys.modules only for that one import; afterwards we remove
-# the stub so that other tests in the session (e.g. test_dsp_heterodyning.py)
+# the stub so that other tests in the session (e.g. other pycbc-dependent tests)
 # see the correct state — pycbc absent — and are skipped via importorskip
 # rather than running against a hollow stub that has no submodules.
 _pycbc_stubbed = False
