@@ -38,8 +38,22 @@ case "$TASK" in
         sage_submit --job o3a-train \
             "python -c 'from train import run_sage; run_sage()'"
         ;;
+    train_hard)
+        # ONE hard-mining training segment (<=2-day wall, no chaining). Use for
+        # a short run or a smoke test; use `chain` for the full production run.
+        sage_submit --time 2-00:00 --job o3a-hard \
+            "python -c 'from train_hard import run_hard; run_hard()'"
+        ;;
+    chain)
+        # Full hard-mining run as N back-to-back <=2-day segments (default 4).
+        # Each segment resumes from the latest checkpoint; trailing segments
+        # no-op once training is done. Override N:  ./submit.sh chain 5
+        N="${2:-4}"
+        sage_submit_chain "$N" --time 2-00:00 --job o3a-hard \
+            "python -c 'from train_hard import run_hard; run_hard()'"
+        ;;
     *)
-        echo "Unknown task '$TASK'. Use: download | retry | psds | train" >&2
+        echo "Unknown task '$TASK'. Use: download | retry | psds | train | train_hard | chain [N]" >&2
         exit 2
         ;;
 esac
