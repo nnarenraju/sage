@@ -191,19 +191,20 @@ def run_hard():
     hard_cb = HardMiningCallback(
                 # File-resident HDF5 bank lives on /work; one file per
                 # (train_runs, detectors) -- see hardbank_<runs>_<dets>.h5.
-                bank_dir       = os.path.join(get_server().data_root, "hard_mining"),
+                bank_dir       = getattr(cfg, "bank_dir",
+                                         os.path.join(get_server().data_root, "hard_mining")),
                 # One arg, two forms: int N -> mine every N epochs; or a list of
                 # epoch indices (e.g. the cosine warm-restart cycle ends).
-                mine_schedule  = 5,
-                hard_bias_prob = 0.2,
+                mine_schedule  = getattr(cfg, "mine_schedule", 5),
+                hard_bias_prob = getattr(cfg, "hard_bias_prob", 0.2),
                 # Keep noise scoring >= logit 2.0 (~88% signal probability — a
                 # confident false positive). Use keep_threshold_sigmoided=<p> to
                 # set the same bar as a probability instead (raw wins if both are
                 # given). logit 5.0 (~0.993) keeps almost nothing until the model
                 # is well trained -- measured on a 1-epoch model the hardest mined
                 # noise peaks near logit ~6, p99 ~3.
-                keep_threshold_raw = 2.0,
-                mine_iters     = 200,
+                keep_threshold_raw = getattr(cfg, "keep_threshold_raw", 2.0),
+                mine_iters     = getattr(cfg, "mine_iters", 200),
                 # Diverse embedding bank: keep only embeddings >= novelty_dist
                 # apart (distance-gated), capped for speed; novelty_weight steers
                 # the search toward uncovered (new-family) regions.

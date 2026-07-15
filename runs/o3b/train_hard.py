@@ -190,20 +190,23 @@ def run_hard():
     # callbacks=[...] to disable mining entirely (no pyribs, random noise only).
     hard_cb = HardMiningCallback(
                 # File-resident HDF5 bank lives on /work; one file per
-                # (train_runs, detectors) -- see hardbank_<runs>_<dets>.h5.
-                bank_dir       = os.path.join(get_server().data_root, "hard_mining"),
+                # (train_runs, detectors) -- see hardbank_<runs>_<dets>.h5. Config
+                # may override (e.g. a smoke/resume test -> a throwaway bank dir).
+                bank_dir       = getattr(cfg, "bank_dir",
+                                         os.path.join(get_server().data_root, "hard_mining")),
                 # One arg, two forms: int N -> mine every N epochs; or a list of
-                # epoch indices (e.g. the cosine warm-restart cycle ends).
-                mine_schedule  = 5,
-                hard_bias_prob = 0.2,
+                # epoch indices (e.g. the cosine warm-restart cycle ends). Config
+                # may override these (e.g. a 2-epoch smoke: mine_schedule=[0]).
+                mine_schedule  = getattr(cfg, "mine_schedule", 5),
+                hard_bias_prob = getattr(cfg, "hard_bias_prob", 0.2),
                 # Keep noise scoring >= logit 2.0 (~88% signal probability — a
                 # confident false positive). Use keep_threshold_sigmoided=<p> to
                 # set the same bar as a probability instead (raw wins if both are
                 # given). logit 5.0 (~0.993) keeps almost nothing until the model
                 # is well trained -- measured on a 1-epoch model the hardest mined
                 # noise peaks near logit ~6, p99 ~3.
-                keep_threshold_raw = 2.0,
-                mine_iters     = 200,
+                keep_threshold_raw = getattr(cfg, "keep_threshold_raw", 2.0),
+                mine_iters     = getattr(cfg, "mine_iters", 200),
                 # Diverse embedding bank: keep only embeddings >= novelty_dist
                 # apart (distance-gated), capped for speed; novelty_weight steers
                 # the search toward uncovered (new-family) regions.
@@ -252,6 +255,12 @@ def run_hard():
     # ── Epoch loop (train + mine, validate every 5) ───────────────────────────
     for epoch in range(start_epoch, cfg.num_epochs):
         trainer(nepoch=epoch)
+        if epoch == start_epoch and torch.cuda.is_available():
+            print(f"[VRAM] batch_size={cfg.batch_size}  peak allocated "
+                  f"{torch.cuda.max_memory_allocated()/1e9:.1f} GB  reserved "
+                  f"{torch.cuda.max_memory_reserved()/1e9:.1f} GB  "
+                  f"(device total {torch.cuda.get_device_properties(0).total_memory/1e9:.0f} GB)",
+                  flush=True)
         logger.log(trainer.loss_components, epoch, split="training")
         if epoch % 5 == 0 or epoch == cfg.num_epochs - 1:
             vanilla_val(nepoch=epoch)
