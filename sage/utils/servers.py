@@ -147,8 +147,11 @@ SERVERS: dict[str, Server] = {
         qos="normal",
         gres="gpu:h100_80gb:1",
         time="2-00:00",
-        cpus=4,
-        mem="48G",
+        cpus=16,          # noise prefetch (16 read workers) + hard-mining threads
+        # RecolourPostprocess keeps the target ASD bank resident: ~16 GB/detector
+        # (see recolour.py). 2-det ~33 GB, 3-det (HLV) ~49 GB, + segment banks +
+        # torch/compile overhead. 128 GB covers all networks; nodes have ~770 GB.
+        mem="128G",
         mail="nagarajan@uni-potsdam.de",
     ),
 

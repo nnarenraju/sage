@@ -59,6 +59,17 @@ class RecolourPostprocess(torch.nn.Module):
     that glitch *morphology* is not altered — only the spectral amplitude
     envelope changes.
 
+    Memory
+    ------
+    The target recolour ASD bank is kept **resident in host RAM** (a per-batch
+    random gather from the NFS mount costs ~600 ms and starves the GPU). It is
+    LARGE: ``num_psds x n_freq x 4`` bytes ~= **16 GB per detector** (e.g. 250k
+    ASDs x 16385 bins). So a 2-detector network needs ~33 GB just for recolour
+    banks (~49 GB for 3 detectors), plus ~1.3 GB/detector of segment banks and
+    ~15 GB torch/compile overhead. **Size the job's ``--mem`` accordingly**
+    (>= ~96 GB for 2 detectors, ~128 GB for 3); requesting too little OOMs before
+    training starts.
+
     Parameters
     ----------
     p_recolour : float in [0, 1]
@@ -74,10 +85,12 @@ class RecolourPostprocess(torch.nn.Module):
 
     Inputs / Outputs
     ----------------
-    forward(batch_td, segment_ids) :
+    forward(batch_td, segment_ids, run_ids=None) :
         ``batch_td``  : ``(B, D, T)`` float32 — time-domain noise windows.
-        ``segment_ids``: ``(B, D)`` int64 — index into the segment ASD bank
-        (used to select the correct per-segment whitening ASD).
+        ``segment_ids``: ``(B, D)`` int64 — index into the per-run segment ASD
+        bank (selects the per-segment whitening ASD).
+        ``run_ids``    : ``(B, D)`` int64 or None — which pooled run each window
+        came from (keys the per-run segment bank); ``None`` = single-run (run 0).
 
     Returns ``(B, D, F)`` complex64 — frequency-domain (recoloured) strain.
     """
