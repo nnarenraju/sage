@@ -176,6 +176,7 @@ runs/o3b/*_smoke
 
 # New network modules
 sage/architecture/network/attentive_*.py
+sage/architecture/network/sentry.py
 sage/architecture/network/[!_]*/
 
 # New integration tests
