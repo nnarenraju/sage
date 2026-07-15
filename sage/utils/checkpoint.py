@@ -313,10 +313,14 @@ class CheckpointManager:
         self.scaler.load_state_dict(ckpt["scaler_state_dict"])
 
         # ---- RNG restore ----
-        torch.set_rng_state(ckpt["torch_rng"])
+        # torch.load(map_location=<cuda>) moves EVERY checkpoint tensor to the
+        # device, including the RNG-state ByteTensors -- but set_rng_state()
+        # requires them on CPU (else "RNG state must be a torch.ByteTensor").
+        # Force them back to CPU. (CPU-only resume never hit this.)
+        torch.set_rng_state(ckpt["torch_rng"].cpu())
 
         if torch.cuda.is_available() and ckpt["cuda_rng"] is not None:
-            torch.cuda.set_rng_state_all(ckpt["cuda_rng"])
+            torch.cuda.set_rng_state_all([s.cpu() for s in ckpt["cuda_rng"]])
 
         np.random.set_state(ckpt["numpy_rng"])
         random.setstate(ckpt["python_rng"])
