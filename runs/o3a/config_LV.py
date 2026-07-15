@@ -45,7 +45,7 @@ class O3aCFG:
     # Fiducial PSDs are per-detector and shared across a run's networks, so they
     # live in one place regardless of which detector set this config trains.
     fiducial_dir = "./run_export/fiducial_psds"
-    batch_size = 128
+    batch_size = 64
     device = "cuda:0"
     dtype = torch.float32
     detectors = ["L1", "V1"]          # LV network
