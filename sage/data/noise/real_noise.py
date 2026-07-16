@@ -108,8 +108,11 @@ class HDF5SingleNoiseSampler:
         if requested_nsamples in self._prob_cache:
             return self._prob_cache[requested_nsamples]
 
-        usable = self.seg_lengths - requested_nsamples
-        usable[usable == 0] = 1
+        # Weight ∝ number of valid start offsets = nsamples - seq_len + 1 (a
+        # segment of exactly seq_len has one valid start at offset 0). Segments
+        # shorter than seq_len get 0 weight. The old form dropped the +1, slightly
+        # under-weighting short segments relative to long ones.
+        usable = self.seg_lengths - requested_nsamples + 1
         usable[usable < 0] = 0
 
         total = usable.sum()
@@ -240,8 +243,11 @@ class MemmapSingleNoiseSampler:
         if requested_nsamples in self._prob_cache:
             return self._prob_cache[requested_nsamples]
 
-        usable = self.seg_lengths - requested_nsamples
-        usable[usable == 0] = 1
+        # Weight ∝ number of valid start offsets = nsamples - seq_len + 1 (a
+        # segment of exactly seq_len has one valid start at offset 0). Segments
+        # shorter than seq_len get 0 weight. The old form dropped the +1, slightly
+        # under-weighting short segments relative to long ones.
+        usable = self.seg_lengths - requested_nsamples + 1
         usable[usable < 0] = 0
 
         total = usable.sum()
@@ -362,6 +368,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         training=True,
         hard_bias_prob: float = 0.0,
         num_read_workers: int = 16,
+        hard_start_jitter_s: float = 2.0,
     ):
         super().__init__()
 
@@ -370,6 +377,14 @@ class MemmapNoiseSampler(torch.nn.Module):
         data_cfg = get_data_cfg()
 
         self.seq_len = data_cfg.padded_length_in_nsamples
+        self.sample_rate = float(data_cfg.sample_rate)
+        # Replayed hard windows are jittered by +/- this many seconds around the
+        # mined start (uniform, clamped to the SAME segment) so biasing toward a
+        # mined window keeps yielding varied (overlapping) noise rather than the
+        # identical realisation every draw. 0 disables. Segment/run ids are left
+        # unchanged, so the whitening PSD and recolour keys still match.
+        self._hard_jitter_s = float(hard_start_jitter_s)
+        self._seg_bounds_lut = None            # lazily built: (run,seg)->(lo,hi)/det
         self.device = cfg.device
         self.prefetch = prefetch
         self.n_detectors = len(cfg.detectors)
@@ -435,8 +450,10 @@ class MemmapNoiseSampler(torch.nn.Module):
                     dtype=_seg_dtype,
                 )
                 seg_tables.append(seg_arr)
-                usable = seg_arr["nsamples"] - self.seq_len
-                usable[usable == 0] = 1
+                # Weight ∝ number of valid start offsets = nsamples-seq_len+1
+                # (exactly-seq_len segments have one valid start at offset 0);
+                # shorter-than-seq_len segments get 0 weight.
+                usable = seg_arr["nsamples"] - self.seq_len + 1
                 usable[usable < 0] = 0
                 usable_parts.append(usable)
             pooled = (seg_tables[0] if len(seg_tables) == 1
@@ -578,18 +595,64 @@ class MemmapNoiseSampler(torch.nn.Module):
 
     def _sample_hard_starts(self, dataset, batch_size: int):
         """
-        Draw ``batch_size`` start indices uniformly from ``dataset``.
+        Draw ``batch_size`` start indices uniformly from ``dataset``, each
+        jittered by +/- ``self._hard_jitter_s`` seconds (uniform) and clamped to
+        stay inside its OWN segment.
 
-        Returns lists in the same format as ``_sample_starts_batch``.
+        The jitter (per window, per detector) means repeatedly biasing toward the
+        same mined window yields varied, overlapping noise realisations instead of
+        the identical window every time. Segment/run ids are unchanged, so the
+        per-segment whitening PSD and recolour keys still line up. Returns lists
+        in the same format as ``_sample_starts_batch``.
         """
         n = len(dataset)
         if n == 0:
             return self._sample_starts_batch(batch_size)
         idx = self.rng.integers(0, n, size=batch_size)
-        start_indices   = [dataset.start_indices[idx, d]   for d in range(self.n_detectors)]
-        segment_indices = [dataset.segment_indices[idx, d] for d in range(self.n_detectors)]
-        run_indices     = [dataset.run_indices[idx, d]     for d in range(self.n_detectors)]
+
+        jmax = int(round(self._hard_jitter_s * self.sample_rate))
+        if jmax > 0 and self._seg_bounds_lut is None:
+            self._build_seg_bounds_lut()
+
+        start_indices, segment_indices, run_indices = [], [], []
+        for d in range(self.n_detectors):
+            base = dataset.start_indices[idx, d].astype(np.int64)
+            segs = dataset.segment_indices[idx, d].astype(np.int64)
+            runs = dataset.run_indices[idx, d].astype(np.int64)
+            if jmax > 0:
+                starts = base + self.rng.integers(-jmax, jmax + 1, size=batch_size)
+                lut = self._seg_bounds_lut[d]
+                for i in range(batch_size):
+                    # clamp to [seg_start, seg_last_valid_start]; if the segment
+                    # is unknown (shouldn't happen) fall back to no jitter.
+                    lo, hi = lut.get((int(runs[i]), int(segs[i])),
+                                     (int(base[i]), int(base[i])))
+                    if starts[i] < lo:
+                        starts[i] = lo
+                    elif starts[i] > hi:
+                        starts[i] = hi
+            else:
+                starts = base
+            start_indices.append(starts)
+            segment_indices.append(segs)
+            run_indices.append(runs)
         return start_indices, segment_indices, run_indices
+
+    def _build_seg_bounds_lut(self):
+        """Per-detector map ``(run_id, segment_id) -> (min_start, max_start)`` for
+        clamping jittered hard-window starts to their own segment. ``max_start``
+        is the last offset at which a full ``seq_len`` window still fits.
+        """
+        lut = []
+        for d in range(self.n_detectors):
+            m = {}
+            for row in self.seg_index[d]:
+                start = int(row["start"])
+                m[(int(row["run"]), int(row["idx"]))] = (
+                    start, start + int(row["nsamples"]) - self.seq_len
+                )
+            lut.append(m)
+        self._seg_bounds_lut = lut
 
     def _sample_starts_batch(self, batch_size: int):
         """

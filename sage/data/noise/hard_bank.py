@@ -188,6 +188,21 @@ class HardMiningBank:
         """True before the first mining round has written anything."""
         return self.n_starts == 0
 
+    def has_epoch(self, epoch):
+        """True if this epoch's mining round is already persisted (mined starts
+        tagged ``found_epoch == epoch`` or an eval column ``model_epoch ==
+        epoch``). Used to make a crash-resume that re-runs the epoch idempotent
+        instead of double-appending its hard windows + eval column."""
+        e = int(epoch)
+        with h5py.File(self.path, "r") as f:
+            fe = f["start_found_epoch"]
+            if fe.shape[0] and e in np.asarray(fe[...]):
+                return True
+            me = f["eval_model_epoch"]
+            if me.shape[0] and e in np.asarray(me[...]):
+                return True
+        return False
+
     # ---------------------------------------------------------- start-times io
     @staticmethod
     def _append(ds, rows):
@@ -415,3 +430,47 @@ class HardMiningBank:
             es.resize(R + 1, axis=1)
             es[:, R] = stats
             self._append(f["eval_model_epoch"], np.array([int(model_epoch)], np.int32))
+
+    def hard_sample_ages(self, threshold):
+        """Per-start hardness *longevity*, derived from the persisted re-eval
+        history (``start_found_epoch`` + ``eval_stats`` + ``eval_model_epoch``).
+
+        "Age" = how long a start has stayed at/above ``threshold``. Windows that
+        remain hard for a very long time (large ``streak_rounds``, or found long
+        ago yet ``currently_active``) are the interesting ones to study. Returns a
+        length-``n_starts`` structured array (empty if the bank is cold):
+
+          found_epoch          : mine epoch the window was first found
+          first/last_active_epoch : model epoch it first/last scored >= threshold
+          n_active_rounds      : total re-eval rounds it was >= threshold
+          streak_rounds        : consecutive most-recent rounds it stayed hard
+          age_epochs           : last_active_epoch - found_epoch (span it stayed hard)
+          currently_active     : >= threshold in the latest round
+        """
+        dt = np.dtype([("found_epoch", "i4"), ("first_active_epoch", "i4"),
+                       ("last_active_epoch", "i4"), ("n_active_rounds", "i4"),
+                       ("streak_rounds", "i4"), ("age_epochs", "i4"),
+                       ("currently_active", "?")])
+        with h5py.File(self.path, "r") as f:
+            N = f["start_times"].shape[0]
+            if N == 0:
+                return np.zeros(0, dtype=dt)
+            found = np.asarray(f["start_found_epoch"][:], np.int32)
+            R = f["eval_stats"].shape[1]
+            es = f["eval_stats"][:] if R > 0 else np.full((N, 1), np.nan, np.float32)
+            mep = (np.asarray(f["eval_model_epoch"][:], np.int32) if R > 0
+                   else np.array([-1], np.int32))
+        act = np.nan_to_num(es, nan=-np.inf) >= float(threshold)     # (N, R)
+        anyact = act.any(1)
+        first_idx = np.argmax(act, axis=1)                            # first True col
+        last_idx = act.shape[1] - 1 - np.argmax(act[:, ::-1], axis=1)  # last True col
+        streak = np.cumprod(act[:, ::-1], axis=1).sum(1).astype(np.int32)  # trailing run
+        out = np.zeros(N, dtype=dt)
+        out["found_epoch"] = found
+        out["n_active_rounds"] = act.sum(1).astype(np.int32)
+        out["streak_rounds"] = streak
+        out["currently_active"] = act[:, -1]
+        out["first_active_epoch"] = np.where(anyact, mep[first_idx], -1)
+        out["last_active_epoch"] = np.where(anyact, mep[last_idx], -1)
+        out["age_epochs"] = np.where(anyact, mep[last_idx] - found, -1)
+        return out
