@@ -57,7 +57,7 @@ class O3bCFG:
     class_balance = 0.5
     clip_norm = 1.0
     dropout = 0.0  # set >0 (e.g. 0.05) to enable dropout + MC-dropout uncertainty
-    num_epochs = 128               # ~3.5 days at 14.2 it/s (measured); hard cap 4 days
+    num_epochs = 110               # ~3.1-3.6 d incl. mining (measured HL ~12-14 it/s)
     warmup_steps = 20_000          # linear LR warmup (~0.6 epoch at batch 64)
     ema_decay = 0.9999             # per-step weight EMA (the deliverable model)
     training_iterations = int(2_000_000 / batch_size)
