@@ -90,7 +90,11 @@ class OptimalSNREstimator(torch.nn.Module):
         data_cfg = get_data_cfg()
 
         self.device = cfg.device
-        self.delta_f = data_cfg.delta_f
+        # The projected FD waveform lives on the PADDED grid (padded_length_in_s),
+        # so its bin spacing is padded_delta_f = 1/(sample_length + 2*padding).
+        # Using the unpadded data_cfg.delta_f (1/sample_length) would mis-scale the
+        # optimal-SNR integral AND shift the frequency mask onto the wrong bins.
+        self.delta_f = data_cfg.padded_delta_f
 
         # store PSD once (broadcast ready)
         self.asds = get_fiducial_psds()

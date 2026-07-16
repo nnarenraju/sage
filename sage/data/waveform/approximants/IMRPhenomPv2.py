@@ -1319,6 +1319,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         af = torch.copysign(self.ONE, af_parallel) * torch.sqrt(
             Sperp * Sperp + af_parallel * af_parallel
         )
+        # Match LAL (LALSimIMRPhenomP.c:798-801): the in-plane quadrature add can
+        # push |af| > 1 in extreme corners (very high mass ratio + large aligned
+        # AND in-plane spin), which the QNM table (nodes at |a| <= 1) cannot take
+        # -- Sage would otherwise extrapolate past the endpoint, giving a wrong
+        # (even negative) fdamp. Clamp the magnitude to 1, preserving sign. This
+        # is a no-op on the whole validated prior (max reachable |af| ~ 0.98).
+        af = af.clamp(min=-1.0, max=1.0)
         return af
 
     def FinalSpin0815(self, eta, chi1, chi2):

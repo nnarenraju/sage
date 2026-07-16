@@ -26,10 +26,15 @@ Documentation: NULL
 
 # ALL CONSTANTS
 PI = 3.141592653589793238462643383279502884
-MSUN = 1.988409902147041637325262574352366540e30  # kg
-G = 6.67430e-11  # m^3 / kg / s^2
+# LAL_MSUN_SI: solar mass derived from the tabulated heliocentric gravitational
+# parameter GM_sun (known to ~1e-10) divided by G, per LAL/IAU. With G == LAL_G_SI
+# below, this makes the geometrised GM = G*MSUN/C^3 land EXACTLY on LAL_MTSUN_SI
+# (4.925490947641267e-6 s); the previous value (1.988409902e30) left GM off by
+# ~1.6e-8, a uniform stretch on every Mf = f*M_s mapping and the absolute strain.
+MSUN = 1.988409870698050731911960804878414216e30  # kg (== LAL_MSUN_SI)
+G = 6.67430e-11  # m^3 / kg / s^2  (== LAL_G_SI)
 C = 299792458.0  # m / s
-GM = G * MSUN / (C**3.0)  # s
+GM = G * MSUN / (C**3.0)  # s  (== LAL_MTSUN_SI = 4.925490947641267e-6)
 EulerGamma = 0.577215664901532860606512090082402431
 Mpc = 3.085677581491367278913937957796471611e22  # m
 SIDEREAL_DAY = 86164.09053083288  # s
