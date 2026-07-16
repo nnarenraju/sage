@@ -63,8 +63,17 @@ case "$TASK" in
         sage_submit_chain "$N" --time 2-00:00 --job "o3b-$CFG" \
             "SAGE_CONFIG='$CFG' python -c 'from train_hard import run_hard; run_hard()'"
         ;;
+    calibrate)
+        # Post-training EMA finalisation (run AFTER training): BN-recalibrate the
+        # averaged weights and compare vs best.pt on validation -> writes
+        # CHECKPOINTS/ema_vs_best.{txt,json}. Deletes nothing.
+        # e.g.  ./submit.sh calibrate config_HL
+        CFG="${2:-config}"
+        sage_submit --time 02:00:00 --job "o3b-cal-$CFG" \
+            "SAGE_CONFIG='$CFG' python -c 'from train_hard import calibrate_ema; calibrate_ema()'"
+        ;;
     *)
-        echo "Unknown task '$TASK'. Use: download | retry | psds | train | train_hard [config] | chain [config] [N]" >&2
+        echo "Unknown task '$TASK'. Use: download | retry | psds | train | train_hard [config] | chain [config] [N] | calibrate [config]" >&2
         exit 2
         ;;
 esac

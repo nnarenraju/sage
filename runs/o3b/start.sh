@@ -22,5 +22,6 @@ case "$TASK" in
     psds)     sage_run "python -c 'from dataset import make_psds_only; make_psds_only()'" ;;
     train)      sage_run "SAGE_CONFIG='${2:-config}' python -c 'from train import run_sage; run_sage()'" ;;
     train_hard) sage_run "SAGE_CONFIG='${2:-config}' python -c 'from train_hard import run_hard; run_hard()'" ;;
+    calibrate)  sage_run "SAGE_CONFIG='${2:-config}' python -c 'from train_hard import calibrate_ema; calibrate_ema()'" ;;
     *) echo "Unknown task '$TASK'. Use: download | retry | psds | train | train_hard" >&2; exit 2 ;;
 esac

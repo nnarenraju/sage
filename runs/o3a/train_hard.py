@@ -76,12 +76,12 @@ from sage.core.logger import HDF5LossLogger
 
 # Optimiser and scheduler
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
 # Training / validation / hard mining
 from sage.factory.training import SageVanillaTraining
 from sage.factory.validation import SageVanillaValidation
-from sage.factory.callbacks import HardMiningCallback
+from sage.factory.callbacks import HardMiningCallback, EMACallback
 from sage.utils.checkpoint import CheckpointManager
 
 # ---------------------------------------------------------------------------
@@ -102,6 +102,7 @@ def make_training_graph(seed):
     recolour = RecolourPostprocess(
         p_recolour          = 0.37,
         recolour_dataset_dir= get_server().dataset_dir("O3b"),   # O3a -> O3b bridge
+        seed                = seed + 7,   # resume-aware, distinct from other streams
     )
     noise_sampler = MemmapNoiseSampler(
         postprocess_fn   = recolour,
@@ -134,6 +135,46 @@ def make_processor(bounds):
     return Preprocessor([whitener, mrsampler])
 
 
+def calibrate_ema():
+    """SEPARATE post-training step (never in the hot path): recalibrate BatchNorm
+    for the averaged EMA weights (official ``torch.optim.swa_utils.update_bn``),
+    then compare the calibrated EMA against best.pt on validation and write a note
+    -- keeping ALL saved weights. Run after the 128-epoch training completes:
+        ./submit.sh calibrate config_HL
+    """
+    from sage.factory.ema_calibration import calibrate_and_compare
+
+    set_configs()
+    cfg, data_cfg = get_cfg(), get_data_cfg()
+
+    # Training-distribution graph (recoloured noise + signals; no hard bias ->
+    # the base training distribution) for BN recalibration. The validation graph
+    # is rebuilt per-model so ema and best see the SAME seeded batches.
+    bn_sig, bn_noise, bounds = make_training_graph(seed=BASE_SEED)
+    processor = make_processor(bounds)
+
+    model = MSCNN1D_2DResNetCBAM_HardMining(
+        frontend_filters=32, frontend_kernel=64,
+        backend_resnet_size=50, norm_type="groupnorm",
+    ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
+
+    loss_function = BCEWithPEsigmaLoss(
+        regression_weight=0.005, coupling_weight=0.005, beta=0.5,
+    )
+    use_bf16  = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
+
+    calibrate_and_compare(
+        cfg, os.path.join(cfg.export_dir, "CHECKPOINTS"), model,
+        bn_signal=bn_sig, bn_noise=bn_noise,
+        make_val_graph=make_validation_graph,
+        processor=processor, loss_fn=loss_function,
+        bn_batches=getattr(cfg, "bn_calib_batches", 500),
+        val_iters=getattr(cfg, "calib_val_iters", cfg.validation_iterations),
+        amp_dtype=amp_dtype,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -158,6 +199,15 @@ def run_hard():
     print(f"[train_hard] start_epoch={start_epoch}  sampler_seed={sampler_seed}",
           flush=True)
 
+    # Seed the GLOBAL torch RNG (resume-aware) so the draws that use it -- sky
+    # orientation/GMST (project.py) and the injection-slot randperm
+    # (training.py) -- plus one-off model init are reproducible on a fresh run
+    # like every other stream. On resume, load_latest() restores the checkpointed
+    # global RNG below, so these streams continue forward and never replay.
+    torch.manual_seed(sampler_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(sampler_seed)
+
     # ── Graphs ──────────────────────────────────────────────────────────────
     tr_sig, tr_noise, bounds = make_training_graph(seed=sampler_seed)
     val_sig, val_noise       = make_validation_graph()
@@ -168,7 +218,9 @@ def run_hard():
         frontend_filters    = 32,
         frontend_kernel     = 64,
         backend_resnet_size = 50,
-        norm_type           = "instancenorm",
+        norm_type           = "groupnorm",   # joint over detectors -> preserves the
+                                              # inter-detector amplitude (SNR/sky info)
+                                              # InstanceNorm would erase per-window.
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -176,55 +228,117 @@ def run_hard():
     print(f"Total parameters     : {total_params:,}")
     print(f"Trainable parameters : {trainable_params:,}")
 
+    base_model = model   # uncompiled handle for the weight-EMA (shares params)
     model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=True)
     print("Model compiled with torch.compile!")
 
     # ── Optimisation ─────────────────────────────────────────────────────────
-    loss_function = BCEWithPEsigmaLoss(regression_weight=0.005, coupling_weight=0.005)
-    optimiser     = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
-    scheduler     = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
-    scaler        = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
+    loss_function = BCEWithPEsigmaLoss(
+        regression_weight=0.005, coupling_weight=0.005,
+        beta=0.5,   # beta-NLL (Seitzer et al. 2022): temper the ~1/sigma^2 grad
+    )
+    optimiser     = optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
+    # Single cosine decay with a short linear warmup, stepped per batch over the
+    # whole run. Best-single-model schedule: "decay, not restarts" drives the
+    # gains (Gotmare et al. ICLR 2019), and the run ends at eta_min so the final
+    # checkpoint IS the fully-annealed model (no wasted post-restart epochs).
+    # Warmup stabilises early Adam + the heteroscedastic head (Kalra&Barkeshli 2024).
+    total_steps  = cfg.num_epochs * cfg.training_iterations
+    warmup_steps = min(getattr(cfg, "warmup_steps", 5000), max(1, total_steps // 2))
+    scheduler = SequentialLR(
+        optimiser,
+        schedulers=[
+            LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
+            CosineAnnealingLR(optimiser, T_max=max(1, total_steps - warmup_steps),
+                              eta_min=1e-6),
+        ],
+        milestones=[warmup_steps],
+    )
+    # AMP dtype: bf16 on GPUs that support it (H100 etc.) — full fp32 exponent
+    # range, so NO GradScaler is needed and there's no fp16 underflow; fall back
+    # to fp16 + GradScaler on older GPUs (Micikevicius et al. ICLR 2018).
+    use_bf16      = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    amp_dtype     = torch.bfloat16 if use_bf16 else torch.float16
+    scaler        = torch.amp.GradScaler(cfg.device,
+                                         enabled=(cfg.autocast and not use_bf16))
 
     # ── Training (vanilla + hard-mining callback) + validation ───────────────
     # Hard mining is a callback on plain SageVanillaTraining. Drop the
     # callbacks=[...] to disable mining entirely (no pyribs, random noise only).
+    # Front-load mining through the first ~60% of the run to build a large (~1M)
+    # hard-noise bank by the midpoint, then stop -- the persisted bank keeps
+    # biasing the second half. Bounding the number of mine events (each re-scores
+    # the whole growing bank) keeps the total walltime under the 4-day cap.
+    _mine_stop = int(round(0.6 * cfg.num_epochs))
+    _front_load_sched = list(range(3, _mine_stop, 4))
     hard_cb = HardMiningCallback(
                 # File-resident HDF5 bank lives on /work; one file per
                 # (train_runs, detectors) -- see hardbank_<runs>_<dets>.h5.
                 bank_dir       = getattr(cfg, "bank_dir",
                                          os.path.join(get_server().data_root, "hard_mining")),
                 # One arg, two forms: int N -> mine every N epochs; or a list of
-                # epoch indices (e.g. the cosine warm-restart cycle ends).
-                mine_schedule  = getattr(cfg, "mine_schedule", 5),
+                # epoch indices. Default = the front-loaded list above (every 4
+                # epochs over the first ~60%); a 2-epoch smoke overrides with [0].
+                mine_schedule  = getattr(cfg, "mine_schedule", _front_load_sched),
+                # Hard-noise bias is ANNEALED with the active-bank size (see
+                # HardMiningCallback._bias_for): ramps 0 -> hard_bias_prob so a few
+                # thousand early hard windows aren't replayed hundreds of times per
+                # epoch (variance collapse). hard_bias_prob is the target/max;
+                # bias_replays caps replays/window/epoch.
                 hard_bias_prob = getattr(cfg, "hard_bias_prob", 0.2),
-                # Keep noise scoring >= logit 2.0 (~88% signal probability — a
-                # confident false positive). Use keep_threshold_sigmoided=<p> to
-                # set the same bar as a probability instead (raw wins if both are
-                # given). logit 5.0 (~0.993) keeps almost nothing until the model
-                # is well trained -- measured on a 1-epoch model the hardest mined
-                # noise peaks near logit ~6, p99 ~3.
-                keep_threshold_raw = getattr(cfg, "keep_threshold_raw", 2.0),
-                mine_iters     = getattr(cfg, "mine_iters", 200),
-                # Diverse embedding bank: keep only embeddings >= novelty_dist
-                # apart (distance-gated), capped for speed; novelty_weight steers
-                # the search toward uncovered (new-family) regions.
-                novelty_dist   = 0.1,
-                max_embeddings = 50_000,
-                novelty_weight = 1.0,
+                bias_replays_per_epoch = getattr(cfg, "bias_replays_per_epoch", 4.0),
+                # Keep noise scoring >= logit 0.0 (~50% signal prob): any window
+                # the model leans "signal" on counts as hard, not just confident
+                # false positives -- a broad bar to accumulate a LARGE hard pool.
+                # Use keep_threshold_sigmoided=<p> for the same bar as a prob (raw
+                # wins if both given); raise toward logit ~2 (~88%) for confident
+                # FPs only.
+                keep_threshold_raw = getattr(cfg, "keep_threshold_raw", 0.0),
+                # Volume: candidates/event = n_warmup + mine_iters*emitter_batch
+                # (= 2048 + 6000*72 ~= 434k). With ~12% keep-and-distinct rate and
+                # the front-loaded ~19-event schedule, targets ~1M by epoch ~72.
+                # Verify kept/event via the [HardMining] log at the smoke and
+                # retune mine_iters if the real rate differs.
+                mine_iters         = getattr(cfg, "mine_iters", 6000),
+                emitter_batch_size = getattr(cfg, "emitter_batch_size", 72),
+                # Diversity (cover the ~22 H/L glitch families + V unknowns + tail
+                # without collapse). Measure space = descriptor_dim-D PCA of the
+                # model FRONTEND embedding; the CVT archive holds n_cells niches
+                # (one elite each). novelty_dist gates the embedding memory (>= this
+                # cosine apart); novelty_weight steers search toward uncovered
+                # families. These are reasonable estimates -- retune from archive
+                # occupancy / kept-per-event at the smoke.
+                descriptor_dim = getattr(cfg, "descriptor_dim", 8),
+                n_cells        = getattr(cfg, "n_cells", 2048),
+                novelty_dist   = getattr(cfg, "novelty_dist", 0.15),
+                novelty_weight = getattr(cfg, "novelty_weight", 1.5),
+                max_embeddings = getattr(cfg, "max_embeddings", 50_000),
                 mine_seed      = 150914,
+    )
+    # Per-step weight EMA -> ema.pt (recommended single model for eval/deploy).
+    ema_cb = EMACallback(
+        base_model,
+        decay        = float(getattr(cfg, "ema_decay", 0.9998)),
+        save_path    = os.path.join(cfg.export_dir, "CHECKPOINTS", "ema.pt"),
+        resume       = start_epoch > 0,
+        map_location = cfg.device,
     )
     trainer = SageVanillaTraining(
         tr_sig, tr_noise, processor, model, loss_function,
         optimiser, scheduler, scaler,
         num_iterations = cfg.training_iterations,
         num_epochs     = cfg.num_epochs,
-        callbacks      = [hard_cb],
+        callbacks      = [hard_cb, ema_cb],
+        # Step the warmup+cosine schedule once per batch across all total_steps.
+        scheduler_mode = "batch",
+        amp_dtype      = amp_dtype,
     )
 
     vanilla_val = SageVanillaValidation(
         val_sig, val_noise, processor, model, loss_function,
         num_iterations = cfg.validation_iterations,
         num_epochs     = cfg.num_epochs,
+        amp_dtype      = amp_dtype,
     )
 
     # ── Checkpoint + logger ──────────────────────────────────────────────────
@@ -242,9 +356,14 @@ def run_hard():
     # Exact continuation of everything except the sampler streams (seeded above).
     if start_epoch > 0:
         loaded = ckpt_mgr.load_latest(map_location=cfg.device)
-        assert loaded == start_epoch, (
-            f"checkpoint epoch {loaded} != peeked {start_epoch}"
-        )
+        if loaded != start_epoch:
+            # progress.json can lag latest.pt by one epoch if a crash landed
+            # between their two writes; latest.pt is authoritative for the
+            # restored state, so continue from it. (The samplers were seeded from
+            # the peeked epoch, which is still a valid non-replaying seed.)
+            print(f"[resume] progress.json epoch {start_epoch} != latest.pt "
+                  f"{loaded}; continuing from latest.pt", flush=True)
+            start_epoch = loaded
         print(f"Resuming from epoch {start_epoch}")
         # Re-bias the (freshly-built) sampler from the persisted hard bank so we
         # don't train on purely random noise until the next scheduled mine epoch.
@@ -254,11 +373,15 @@ def run_hard():
     for epoch in range(start_epoch, cfg.num_epochs):
         trainer(nepoch=epoch)
         logger.log(trainer.loss_components, epoch, split="training")
+        val_loss = None
         if epoch % 5 == 0 or epoch == cfg.num_epochs - 1:
             vanilla_val(nepoch=epoch)
             logger.log(vanilla_val.loss_components, epoch, split="validation")
-        ckpt_mgr.save(epoch=epoch,
-                      val_loss=float(trainer.loss_components[epoch][0].item()))
+            val_loss = float(vanilla_val.loss_components[epoch][0].item())
+        # best.pt tracks the lowest VALIDATION loss (persists across resume);
+        # latest.pt + per-epoch epoch_{N}.pt are written every epoch (the
+        # learning-evolution history). save() always writes latest.pt.
+        ckpt_mgr.save(epoch=epoch, val_loss=val_loss)
 
 
 if __name__ == "__main__":
