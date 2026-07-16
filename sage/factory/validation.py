@@ -77,6 +77,20 @@ class SageVanillaValidation(torch.nn.Module):
     Auto-multibanding and GWBatch tracking work identically to the training
     loop — no extra configuration needed.
 
+    Resume note
+    -----------
+    The *trained model* is fully resume-deterministic, but the validation
+    *loss curve* is not bit-reproducible across a resume. The val signal/noise
+    samplers are seeded once at construction and advance their RNGs per call,
+    and the injection permutation below (:func:`torch.randperm`) draws from the
+    global RNG — so a run resuming at epoch K draws different validation
+    realisations than a fresh run did at epoch K. This is only Monte-Carlo
+    sampling noise on an unbiased estimate of the same fixed-distribution loss;
+    it never affects the trained weights, only the exact val-loss value (and
+    hence a marginal, MC-level wobble in best.pt selection). Making the curve
+    bit-identical across resume would require per-epoch reseeding of the
+    (threaded) val samplers; deliberately not done.
+
     Parameters
     ----------
     signal_sampler, noise_sampler, processor, model, loss_function
@@ -96,10 +110,12 @@ class SageVanillaValidation(torch.nn.Module):
         loss_function,
         num_iterations,
         num_epochs,
+        amp_dtype=torch.float16,
     ):
         super().__init__()
 
         self.cfg = get_cfg()
+        self.amp_dtype = amp_dtype
 
         self.signal_sampler = signal_sampler
         self.noise_sampler  = noise_sampler
@@ -196,7 +212,7 @@ class SageVanillaValidation(torch.nn.Module):
 
                 # ── 6. Forward pass ───────────────────────────────────────
                 with (
-                    torch.autocast(device_type="cuda", dtype=torch.float16)
+                    torch.autocast(device_type="cuda", dtype=self.amp_dtype)
                     if self.cfg.autocast
                     else nullcontext()
                 ):

@@ -101,6 +101,7 @@ class SageVanillaTraining(torch.nn.Module):
         num_epochs,
         scheduler_mode="batch",
         callbacks=None,
+        amp_dtype=torch.float16,
     ):
         super().__init__()
 
@@ -125,6 +126,11 @@ class SageVanillaTraining(torch.nn.Module):
 
         # Training callbacks (loop hooks). Empty -> plain vanilla training.
         self.callbacks = list(callbacks) if callbacks else []
+
+        # AMP compute dtype: bf16 (H100 etc.; no loss scaler needed) or fp16
+        # (older GPUs, paired with a GradScaler). The caller picks it from the
+        # available hardware.
+        self.amp_dtype = amp_dtype
 
         self.num_point_estimate = len(self.cfg.do_point_estimate)
         self.num_targets        = self.num_point_estimate + 1
@@ -238,7 +244,7 @@ class SageVanillaTraining(torch.nn.Module):
             self.optimiser.zero_grad(set_to_none=True)
 
             with (
-                torch.autocast(device_type="cuda", dtype=torch.float16)
+                torch.autocast(device_type="cuda", dtype=self.amp_dtype)
                 if self.cfg.autocast
                 else nullcontext()
             ):
@@ -265,6 +271,10 @@ class SageVanillaTraining(torch.nn.Module):
 
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
             self.loss_components[nepoch] += loss.detach()
+
+            # Per-batch callback hook (e.g. per-step weight EMA).
+            for cb in self.callbacks:
+                cb.on_batch_end(nbatch, nepoch, self)
 
         # ── End-of-epoch callback hook (e.g. hard-noise mining) ───────────
         for cb in self.callbacks:
