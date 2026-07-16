@@ -10,6 +10,8 @@ trainer constructed with no callbacks behaves exactly like plain vanilla
 training.
 """
 
+import os
+
 import numpy as np
 import torch
 
@@ -36,6 +38,11 @@ class Callback:
     """
 
     def on_sample(self, ctx, trainer):
+        pass
+
+    def on_batch_end(self, nbatch, nepoch, trainer):
+        """Called once per batch, AFTER the optimiser + scheduler step (e.g. to
+        update a per-step weight EMA). No-op by default."""
         pass
 
     def on_epoch_end(self, nepoch, trainer):
@@ -86,6 +93,7 @@ class HardMiningCallback(Callback):
         keep_threshold_raw=None,
         keep_threshold_sigmoided=None,
         hard_bias_prob=0.2,
+        bias_replays_per_epoch=4.0,
         mine_iters=200,
         descriptor_dim=8,
         n_cells=1024,
@@ -115,7 +123,8 @@ class HardMiningCallback(Callback):
             self.keep_threshold = float(np.log(p / (1.0 - p)))
         else:
             self.keep_threshold = float("-inf")     # keep every mined window
-        self.hard_bias_prob = float(hard_bias_prob)
+        self.hard_bias_prob = float(hard_bias_prob)      # target/max bias
+        self.bias_replays = float(bias_replays_per_epoch)
         self.mine_iters = int(mine_iters)
         self.descriptor_dim = int(descriptor_dim)
         self.n_cells = int(n_cells)
@@ -135,6 +144,21 @@ class HardMiningCallback(Callback):
         if isinstance(s, (list, tuple, set, np.ndarray)):
             return int(nepoch) in {int(x) for x in s}
         return (int(nepoch) + 1) % int(s) == 0
+
+    def _bias_for(self, active, trainer):
+        """Anneal the hard-noise bias with the ACTIVE-bank size so each hard
+        window is replayed at most ~``bias_replays`` times/epoch.
+
+        Early on only a few thousand windows are hard; a fixed 0.2 bias would
+        replay each hundreds of times/epoch -> noise-variance collapse. This ramps
+        the bias 0 -> ``hard_bias_prob`` as the active bank grows:
+        ``p = min(hard_bias_prob, bias_replays * n_active / (iters * batch))``.
+        """
+        n = int(len(active))
+        draws = int(trainer.cfg.training_iterations) * int(trainer.cfg.batch_size)
+        if n <= 0 or draws <= 0:
+            return 0.0
+        return float(min(self.hard_bias_prob, self.bias_replays * n / draws))
 
     def _lazy_init(self, trainer):
         # Local imports: only the hard-mining path needs pyribs / the miner.
@@ -200,7 +224,7 @@ class HardMiningCallback(Callback):
             return
         active = self._bank.active_start_indices(self.keep_threshold)
         trainer.noise_sampler.set_hard_bank(
-            self._bank, active, hard_bias_prob=self.hard_bias_prob
+            self._bank, active, hard_bias_prob=self._bias_for(active, trainer)
         )
         print(
             f"[HardMining] resume: re-biased sampler from bank — "
@@ -260,6 +284,22 @@ class HardMiningCallback(Callback):
 
     @torch.inference_mode()
     def _mine(self, nepoch, trainer):
+        # Idempotent across a crash-resume: if this epoch's round is already in
+        # the bank (mined pre-crash, before the epoch checkpoint saved), do NOT
+        # double-append it -- just refresh the sampler's active view from the
+        # persisted bank and return.
+        if self._bank.has_epoch(nepoch):
+            active = self._bank.active_start_indices(self.keep_threshold)
+            trainer.noise_sampler.set_hard_bank(
+                self._bank, active, hard_bias_prob=self._bias_for(active, trainer)
+            )
+            print(
+                f"[HardMining] epoch {nepoch}: already in bank (resume) — "
+                f"skipped re-mine; re-biased {len(active):,} active",
+                flush=True,
+            )
+            return
+
         was_training = trainer.model.training
         trainer.model.eval()
         evaluate_fn, cleanup = self._build_evaluate_fn(trainer)
@@ -277,12 +317,89 @@ class HardMiningCallback(Callback):
         #    nothing is removed from the bank -- this is just a refreshed view.
         active = self._bank.active_start_indices(self.keep_threshold)
         trainer.noise_sampler.set_hard_bank(
-            self._bank, active, hard_bias_prob=self.hard_bias_prob
+            self._bank, active, hard_bias_prob=self._bias_for(active, trainer)
         )
         print(
             f"[HardMining] epoch {nepoch}: mined +{mstats['kept_starts']:,} starts "
             f"(+{mstats['kept_embeddings']} emb) | bank {mstats['bank_starts']:,} "
             f"starts, {mstats['bank_embeddings']:,} emb | active "
-            f"{len(active):,}/{rstats.get('reeval_n', 0):,}",
+            f"{len(active):,}/{rstats.get('reeval_n', 0):,} | "
+            f"bias {self._bias_for(active, trainer):.3f}",
             flush=True,
         )
+        # Hardness longevity: surface windows that have stayed hard a long time
+        # (age_epochs = span still hard since first found). Study candidates.
+        try:
+            ages = self._bank.hard_sample_ages(self.keep_threshold)
+            act = ages[ages["currently_active"]] if len(ages) else ages
+            if len(act):
+                print(
+                    f"[HardMining] age: active median {int(np.median(act['age_epochs']))} ep, "
+                    f"oldest {int(act['age_epochs'].max())} ep, "
+                    f"{int((act['streak_rounds'] >= 5).sum()):,} hard >=5 rounds straight",
+                    flush=True,
+                )
+        except Exception as e:                                   # never break training
+            print(f"[HardMining] age summary skipped: {e}", flush=True)
+
+
+class EMACallback(Callback):
+    """Per-STEP exponential moving average (EMA) of the model weights.
+
+    The averaged weights are the recommended single model for evaluation /
+    deployment: weight averaging over the low-LR tail generalises better than the
+    raw final iterate (Polyak-Ruppert averaging; Izmailov et al., SWA, UAI 2018).
+    Updated EVERY batch -- the per-step form is where the variance-reduction lives;
+    a per-epoch average discards most of it.
+
+    Thin wrapper over the OFFICIAL torch EMA
+    (:class:`torch.optim.swa_utils.AveragedModel` driven by
+    :func:`~torch.optim.swa_utils.get_ema_multi_avg_fn`): the update is
+    ``ema = decay*ema + (1-decay)*param`` every batch via a fused multi-tensor op,
+    with integer buffers (e.g. BatchNorm's ``num_batches_tracked``) copied rather
+    than averaged. ``use_buffers=True`` so BN running stats are tracked too. The
+    averaged weights are saved atomically to ``save_path`` (ema.pt) at each epoch
+    end -- as a BARE ``state_dict`` with plain keys (no ``AveragedModel`` wrapper,
+    no ``n_averaged``) so the ema_calibration loader and resume stay
+    format-compatible -- and reloaded on resume so the average continues.
+
+    ``model`` MUST be the UNCOMPILED module: it shares parameter tensors with the
+    torch.compiled model, so reading its parameters each step reflects the current
+    weights.
+    """
+
+    def __init__(self, model, decay=0.9998, save_path=None, resume=False,
+                 map_location="cpu"):
+        from sage.utils.checkpoint import _atomic_torch_save
+        from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+        self._atomic_save = _atomic_torch_save
+        self.model = model
+        self.decay = float(decay)
+        self.save_path = save_path
+
+        # Official EMA. AveragedModel deep-copies the model; the multi_avg_fn
+        # applies decay*ema + (1-decay)*param to float tensors and copies integer
+        # buffers. n_averaged starts at 0, so the FIRST on_batch_end seeds the
+        # average with the live weights (official seed convention).
+        self.ema_model = AveragedModel(
+            model,
+            multi_avg_fn=get_ema_multi_avg_fn(self.decay),
+            use_buffers=True,
+        )
+        if resume and save_path and os.path.exists(save_path):
+            sd = torch.load(save_path, map_location=map_location,
+                            weights_only=False)
+            self.ema_model.module.load_state_dict(sd)
+            # We are past the seed step: force the EMA branch (n_averaged > 0) so
+            # the next update averages into the restored weights instead of
+            # overwriting them with a fresh copy of the live model.
+            self.ema_model.n_averaged.fill_(1)
+
+    def on_batch_end(self, nbatch, nepoch, trainer):
+        self.ema_model.update_parameters(self.model)
+
+    def on_epoch_end(self, nepoch, trainer):
+        if self.save_path is not None:
+            # Bare state_dict of the averaged module -> identical on-disk format to
+            # the previous hand-rolled EMA (ema_calibration + resume both read it).
+            self._atomic_save(self.ema_model.module.state_dict(), self.save_path)
