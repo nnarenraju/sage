@@ -90,6 +90,13 @@ from sage.utils.checkpoint import CheckpointManager
 # Graph builders
 # ---------------------------------------------------------------------------
 
+# Seeds (module-level so run_hard AND calibrate_ema share one source of truth):
+# a fresh run uses BASE_SEED; a run resuming at epoch K uses BASE_SEED +
+# SEED_STRIDE*K, so the sampler RNG streams never replay their pre-crash draws.
+BASE_SEED   = 150914
+SEED_STRIDE = 1_000_003
+
+
 def make_training_graph(seed):
     # `seed` is resume-aware (derived from the resume epoch in run_hard) so the
     # noise/parameter/SNR RNGs never replay their pre-crash draws on restart.
@@ -192,8 +199,8 @@ def run_hard():
     # BASE_SEED; a run resuming at epoch K uses a distinct, deterministic seed,
     # so the noise/parameter/SNR streams never replay the pre-crash draws. The
     # model/optimiser/scheduler + global RNG and the mining bank are restored
-    # *exactly* further down -- only the sampler streams advance.
-    BASE_SEED, SEED_STRIDE = 150914, 1_000_003
+    # *exactly* further down -- only the sampler streams advance. BASE_SEED and
+    # SEED_STRIDE are module-level constants (shared with calibrate_ema).
     start_epoch  = CheckpointManager.peek_next_epoch(cfg.export_dir)
     sampler_seed = BASE_SEED + SEED_STRIDE * start_epoch
     print(f"[train_hard] start_epoch={start_epoch}  sampler_seed={sampler_seed}",
