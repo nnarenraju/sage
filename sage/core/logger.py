@@ -330,8 +330,10 @@ class HDF5LossLogger:
     Parameters
     ----------
     path : str
-        File path for the HDF5 output (created fresh at init; any
-        existing file at that path is overwritten).
+        File path for the HDF5 output. A compatible existing file (same
+        ``num_epochs``/``num_components``) is PRESERVED and appended to, so a
+        chained-segment resume keeps prior epochs' loss rows; only an absent or
+        shape-mismatched file is (re)created fresh.
     num_epochs : int
         Total number of training epochs (pre-allocates the dataset).
     num_components : int
@@ -346,6 +348,13 @@ class HDF5LossLogger:
         self.num_epochs = num_epochs
         self.num_components = num_components
         self.dtype = dtype
+
+        # Resume-safe: if a compatible file already exists (same shape), KEEP it
+        # so loss rows written by earlier chained 2-day segments are preserved.
+        # Opening 'w' unconditionally (the old behaviour) truncated the file on
+        # every resume, permanently zeroing all prior epochs' loss history.
+        if self._existing_is_compatible():
+            return
 
         with h5py.File(self.path, "w") as f:
 
@@ -364,6 +373,23 @@ class HDF5LossLogger:
                 shape=(num_epochs, num_components),
                 dtype=dtype,
             )
+
+    def _existing_is_compatible(self):
+        """True iff ``self.path`` already holds training/validation loss datasets
+        of the expected ``(num_epochs, num_components)`` shape (i.e. this is a
+        resume of the same run and the history must be preserved)."""
+        try:
+            with h5py.File(self.path, "r") as f:
+                for split in ("training", "validation"):
+                    if split not in f or "loss" not in f[split]:
+                        return False
+                    if tuple(f[split]["loss"].shape) != (
+                        self.num_epochs, self.num_components
+                    ):
+                        return False
+            return True
+        except Exception:
+            return False
 
     def log(self, loss_tensor, epoch, split):
         """

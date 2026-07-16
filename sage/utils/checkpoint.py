@@ -33,6 +33,23 @@ import numpy as np
 from datetime import datetime
 
 
+def _atomic_torch_save(obj, path):
+    """``torch.save`` to a sibling temp file then ``os.replace`` (atomic on the
+    same filesystem), so a crash/pre-emption mid-write can never truncate an
+    existing good checkpoint."""
+    tmp = f"{path}.tmp"
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
+
+
+def _atomic_json_dump(obj, path):
+    """``json.dump`` via a temp file + atomic ``os.replace`` (same rationale)."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
 class CheckpointManager:
     """
     Manages saving and loading of training checkpoints.
@@ -130,6 +147,7 @@ class CheckpointManager:
             "epoch": epoch,
             "timestamp": str(datetime.now()),
             "val_loss": val_loss,
+            "best_val_loss": self.best_val_loss,
             # ---- training objects ----
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
@@ -178,26 +196,83 @@ class CheckpointManager:
             If ``True`` (default), also write ``epoch_{epoch}.pt``.
         """
 
+        # Decide "best" BEFORE gathering state so best_val_loss is persisted at
+        # its current value and survives a resume. (Previously best_val_loss reset
+        # to inf on every restart, so best.pt was clobbered at each 2-day segment
+        # boundary; and it tracked whatever loss was passed in.)
+        improved = val_loss is not None and val_loss < self.best_val_loss
+        if improved:
+            self.best_val_loss = val_loss
+
         state = self._gather_state(epoch, val_loss)
 
-        # ---- latest ----
-        torch.save(state, self.latest_path)
+        # ---- latest (atomic: temp file + os.replace, so a kill mid-write leaves
+        #      the previous good latest.pt intact instead of truncating it) ------
+        _atomic_torch_save(state, self.latest_path)
 
         # Lightweight resume marker: lets a restarting process read the resume
-        # epoch (to seed the data samplers resume-aware) WITHOUT loading the
-        # full checkpoint. Written after latest.pt so it never points past it.
-        with open(os.path.join(self.ckpt_dir, "progress.json"), "w") as f:
-            json.dump({"epoch": epoch, "val_loss": val_loss}, f)
+        # epoch (to seed the data samplers resume-aware) WITHOUT loading the full
+        # checkpoint. Written (atomically) after latest.pt so it never points past
+        # an incomplete latest.pt.
+        _atomic_json_dump(
+            {"epoch": epoch, "val_loss": val_loss},
+            os.path.join(self.ckpt_dir, "progress.json"),
+        )
 
         # ---- epoch history ----
         if save_epoch_ckpt:
-            torch.save(state, os.path.join(self.ckpt_dir, f"epoch_{epoch}.pt"))
+            _atomic_torch_save(
+                state, os.path.join(self.ckpt_dir, f"epoch_{epoch}.pt")
+            )
+            # Optional retention: keep only the newest ``keep_last_ckpts`` epoch
+            # copies. Default None => keep everything (nothing is ever deleted
+            # unless a run opts in via cfg.keep_last_ckpts). latest.pt/best.pt are
+            # always kept.
+            self._prune_epoch_ckpts(getattr(self.cfg, "keep_last_ckpts", None))
 
-        # ---- best ----
-        if val_loss is not None and val_loss < self.best_val_loss:
+        # ---- best (atomic write of THIS state; only when val_loss improved) ----
+        if improved:
             print(f"New BEST checkpoint at epoch {epoch} | val_loss={val_loss:.6f}")
-            self.best_val_loss = val_loss
-            shutil.copy(self.latest_path, self.best_path)
+            _atomic_torch_save(state, self.best_path)
+
+    def _prune_epoch_ckpts(self, keep_last):
+        """Delete all but the newest ``keep_last`` ``epoch_{N}.pt`` files.
+        ``None`` or ``<= 0`` keeps everything (no deletion). ``latest.pt`` and
+        ``best.pt`` are never touched."""
+        if keep_last is None or keep_last <= 0:
+            return
+        import glob, re
+        def _epn(p):
+            m = re.search(r"epoch_(\d+)\.pt$", p)
+            return int(m.group(1)) if m else -1
+        files = sorted(
+            glob.glob(os.path.join(self.ckpt_dir, "epoch_*.pt")), key=_epn
+        )
+        for p in files[:-keep_last]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+    def _load_newest_epoch_ckpt(self, map_location):
+        """Load the newest intact ``epoch_{N}.pt`` (resume fallback when
+        ``latest.pt`` is unreadable, e.g. truncated by a pre-atomic write)."""
+        import glob, re
+        def _epn(p):
+            m = re.search(r"epoch_(\d+)\.pt$", p)
+            return int(m.group(1)) if m else -1
+        files = sorted(
+            glob.glob(os.path.join(self.ckpt_dir, "epoch_*.pt")),
+            key=_epn, reverse=True,
+        )
+        for p in files:
+            try:
+                return torch.load(p, map_location=map_location, weights_only=False)
+            except Exception:
+                continue
+        raise RuntimeError(
+            "No loadable checkpoint (latest.pt and all epoch_*.pt failed)"
+        )
 
     # ============================================================
     # LOAD
@@ -221,8 +296,16 @@ class CheckpointManager:
         # weights_only=False: our checkpoints intentionally carry non-tensor
         # state (cfg/data_cfg objects + numpy/python RNG) and are self-produced
         # and trusted; torch>=2.6 defaults weights_only=True which rejects them.
-        ckpt = torch.load(self.latest_path, map_location=map_location,
-                          weights_only=False)
+        try:
+            ckpt = torch.load(self.latest_path, map_location=map_location,
+                              weights_only=False)
+        except Exception as e:
+            # latest.pt unreadable (e.g. truncated by a kill mid-write on an old
+            # pre-atomic checkpoint). Fall back to the newest intact epoch_*.pt
+            # so the automated resume chain recovers instead of crash-looping.
+            print(f"[resume] latest.pt failed to load ({e}); "
+                  f"falling back to newest epoch checkpoint")
+            ckpt = self._load_newest_epoch_ckpt(map_location)
         self._restore(ckpt)
         return ckpt["epoch"] + 1
 
@@ -306,6 +389,10 @@ class CheckpointManager:
         ckpt : dict
             Dictionary as produced by :meth:`_gather_state`.
         """
+
+        # Restore the best-val-loss marker so best.pt tracking survives a resume
+        # (absent on pre-fix checkpoints -> fall back to +inf).
+        self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
 
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
