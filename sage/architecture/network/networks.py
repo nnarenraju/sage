@@ -94,8 +94,12 @@ class MSCNN1D_2DResNetCBAM_HardMining(nn.Module):
         }
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
+        # The frontend emits one channel per detector (concatenated below), so
+        # the backend's input channels must match num_detectors — otherwise a
+        # 3-detector (HLV) network feeds 3 channels into a conv that defaults to
+        # in_channels=2 and crashes on the first forward.
         self.backend = resnet_factories[backend_resnet_size](
-            pretrained=False, dropout=dropout
+            pretrained=False, in_channels=self.num_detectors, dropout=dropout
         )
 
         # Feature pooling

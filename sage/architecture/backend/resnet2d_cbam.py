@@ -29,6 +29,8 @@ import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
+from ..antialias import BlurPool2d
+
 
 __all__ = [
     "ResNet",
@@ -209,9 +211,13 @@ class Bottleneck(nn.Module):
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
         self.conv2 = nn.Conv2d(
-            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
+            planes, planes, kernel_size=3, stride=1, padding=1, bias=False
         )
         self.bn2 = nn.BatchNorm2d(planes)
+        # Anti-aliased downsampling: the stride moves OUT of conv2 into a BlurPool
+        # applied after it (Zhang, ICML 2019); identity for non-strided blocks.
+        self.blur2 = (BlurPool2d(planes, stride=stride)
+                      if stride != 1 else nn.Identity())
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * 4)
         self.relu = nn.ReLU(inplace=True)
@@ -235,6 +241,7 @@ class Bottleneck(nn.Module):
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
+        out = self.blur2(out)
 
         out = self.conv3(out)
         out = self.bn3(out)
@@ -283,12 +290,25 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=512, in_channels=2, dropout=0.0):
         self.inplanes = 64
         super(ResNet, self).__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False
+        # ResNet-C deep stem: three stacked 3x3 convs replace one 7x7 (He et al.,
+        # "Bag of Tricks for Image Classification with CNNs", CVPR 2019). Same 2x
+        # downsample (stride in the first 3x3), stronger early features at ~equal
+        # FLOPs. bn1 + relu below follow the final stem conv.
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, 32, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32), nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(32), nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, stride=1, padding=1, bias=False),
         )
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # Anti-aliased stem downsample: dense max (stride 1) then BlurPool
+        # (Zhang, ICML 2019), instead of a naive stride-2 max-pool.
+        self.maxpool = nn.Sequential(
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
+            BlurPool2d(64, stride=2),
+        )
         self.layer1 = self._make_layer(block, 64, layers[0], dropout=dropout)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dropout=dropout)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dropout=dropout)
@@ -329,12 +349,17 @@ class ResNet(nn.Module):
         """
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
+            # ResNet-D downsample: average-pool (stride) THEN a 1x1 stride-1 conv,
+            # instead of a 1x1 stride-2 conv that samples 1-in-4 and discards ~75%
+            # of the shortcut feature map (He et al., "Bag of Tricks", CVPR 2019).
             downsample = nn.Sequential(
+                (nn.AvgPool2d(kernel_size=stride, stride=stride, ceil_mode=True)
+                 if stride != 1 else nn.Identity()),
                 nn.Conv2d(
                     self.inplanes,
                     planes * block.expansion,
                     kernel_size=1,
-                    stride=stride,
+                    stride=1,
                     bias=False,
                 ),
                 nn.BatchNorm2d(planes * block.expansion),

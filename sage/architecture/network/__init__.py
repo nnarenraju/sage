@@ -53,5 +53,8 @@ try:
     from .attentive_mamba_tiny import BNSMamba3Tiny
 
     __all__ += ["Mamba3", "BNSMamba3", "BNSMamba3Lite", "BNSMamba3Tiny"]
-except ImportError:
+except Exception:
+    # Tolerate ANY failure of the optional import (not just ImportError) -- e.g.
+    # a GPU-driver / triton init RuntimeError on a CPU-only node -- so the CNN
+    # models above stay importable and usable regardless.
     pass

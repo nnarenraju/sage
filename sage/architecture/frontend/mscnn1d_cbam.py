@@ -32,6 +32,8 @@ import torch.nn as nn
 
 from torch.nn import MaxPool1d, BatchNorm1d
 
+from ..antialias import BlurPool1d
+
 
 class Conv1dSame(nn.Conv1d):
     """
@@ -326,7 +328,11 @@ class ConvBlock(nn.Module):
         self.conv1 = nn.Sequential(
             ConcatBlockConv5(in_channels, filters_start, k1, bias=False),
             ConcatBlockConv5(filters_start, filters_start, k2, bias=False),
-            MaxPool1d(kernel_size=8, stride=8),
+            # Anti-aliased /8 downsample: dense max (stride 1) then binomial-blur
+            # + subsample (Zhang, ICML 2019), so aliasing doesn't corrupt/shift
+            # the features. Wide blur (2*stride+1) matches the /8 Nyquist.
+            MaxPool1d(kernel_size=8, stride=1, padding=4),
+            BlurPool1d(filters_start, stride=8),
         )
 
         self.ca1 = ChannelAttention1D(filters_start)
@@ -335,7 +341,9 @@ class ConvBlock(nn.Module):
         self.conv2 = nn.Sequential(
             ConcatBlockConv5(filters_start, filters_start * 2, k2, bias=False),
             ConcatBlockConv5(filters_start * 2, filters_start * 2, k3, bias=False),
-            MaxPool1d(kernel_size=4, stride=4),
+            # Anti-aliased /4 downsample (Zhang, ICML 2019).
+            MaxPool1d(kernel_size=4, stride=1, padding=2),
+            BlurPool1d(filters_start * 2, stride=4),
         )
 
         self.ca2 = ChannelAttention1D(filters_start * 2)
