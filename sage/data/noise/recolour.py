@@ -101,6 +101,8 @@ class RecolourPostprocess(torch.nn.Module):
         p_recolour: float,
         recolour_dataset_dir: str,
         eps: float = 1e-38,
+        seed: int | None = None,
+        dr_gain: float = 0.5,
     ):
         super().__init__()
 
@@ -122,6 +124,16 @@ class RecolourPostprocess(torch.nn.Module):
         self.device = cfg.device
         self.eps = eps
 
+        # Dedicated CPU generator so the recolour augmentation draws (the
+        # per-sample mask + the random target-ASD pick) are reproducible and
+        # resume-aware, isolated from the main thread's global-RNG draws (this
+        # runs inside the noise-sampler prefetch thread). seed=None -> the global
+        # RNG (legacy, unseeded).
+        self._gen = None
+        if seed is not None:
+            self._gen = torch.Generator()
+            self._gen.manual_seed(int(seed))
+
         self.B = cfg.batch_size
         self.D = len(self.detectors)
 
@@ -129,9 +141,40 @@ class RecolourPostprocess(torch.nn.Module):
         # Interpolate them after production
         self.n_freq = self.seq_len // 2 + 1
 
+        # Domain randomization (Tobin et al., IROS 2017), DATA-DRIVEN bound: a
+        # smooth, per-(sample, detector), frequency-dependent MULTIPLICATIVE gain
+        # jitter on the recoloured target ASD, to fill the gaps between the
+        # DISCRETE real target-run ASDs so the net generalises around that
+        # manifold rather than only to its sampled points.
+        #
+        # The per-frequency jitter is capped at ``k * sigma(f)``, where
+        # ``sigma(f)`` is the EMPIRICAL fractional spread (std/mean) of the
+        # resident target ASD bank at that frequency and ``k = dr_gain`` in
+        # [0, 1]. This makes the perturbation an interpolation strictly WITHIN the
+        # real-ASD manifold (physical by construction, never extrapolation), and
+        # it is naturally low-frequency weighted because the real ASDs vary most
+        # there (measured sigma(f): ~0.51 at 15-30 Hz falling to ~0.18 above
+        # 300 Hz). Because the gain is MULTIPLICATIVE it is a constant fractional
+        # / dB perturbation -- correct in the log-ASD space where the real
+        # variation lives. ``k = 0.5`` -> up to half the real per-frequency
+        # spread. 0 disables. See notebooks/recolour_augmentation.ipynb.
+        self.dr_gain = float(dr_gain)
+        # Smooth Legendre-like shape basis (linear + quadratic tilt), precomputed
+        # as compile-friendly constants. Combined in forward with random O(1)
+        # coeffs and normalised so |shape| <= 1, so k*sigma(f) is a true per-bin
+        # bound on the fractional gain deviation.
+        _t = torch.linspace(-1.0, 1.0, self.n_freq).view(1, 1, -1)
+        self._tnorm = _t                                   # (1, 1, F) linear
+        self._tquad = _t * _t - 1.0 / 3.0                  # (1, 1, F) quadratic
+
         # Load PSDs to torch.float32 on GPU
         self._load_segment_asds()
         self._load_recolour_asds()
+
+        # Data-driven per-frequency jitter bound sigma(f) (float64; see method).
+        self._dr_sigma = None
+        if self.dr_gain > 0.0:
+            self._compute_dr_sigma()
 
     def _load_segment_asds(self):
         """
@@ -231,6 +274,31 @@ class RecolourPostprocess(torch.nn.Module):
             if self.n_recolour_asd is None:
                 self.n_recolour_asd = n_asd
 
+    def _compute_dr_sigma(self):
+        """
+        Data-driven domain-randomization bound ``sigma(f) = std/mean`` of the
+        resident recolour ASD bank, per detector, on the training frequency grid.
+
+        Computed in FLOAT64: ASD values are ~1e-24, so ASD^2 ~1e-48 underflows
+        float32 (min-normal ~1.2e-38) and the variance silently reads as 0. The
+        bank is streamed in chunks so the float64 upcast never materialises the
+        whole ~16 GB/detector array at once. Result is a (D, F) float32 CPU
+        tensor consumed multiplicatively in :meth:`forward`.
+        """
+        sig = np.empty((self.D, self.n_freq), dtype=np.float32)
+        for d, bank in enumerate(self._recolour_banks):
+            n = bank.shape[0]
+            s1 = np.zeros(self.n_freq, dtype=np.float64)
+            s2 = np.zeros(self.n_freq, dtype=np.float64)
+            for i in range(0, n, 4096):
+                chunk = np.asarray(bank[i:i + 4096], dtype=np.float64)
+                s1 += chunk.sum(axis=0)
+                s2 += (chunk * chunk).sum(axis=0)
+            mu = s1 / n
+            var = np.maximum(s2 / n - mu * mu, 0.0)
+            sig[d] = (np.sqrt(var) / (mu + 1e-300)).astype(np.float32)
+        self._dr_sigma = torch.from_numpy(sig)          # (D, F) CPU float32
+
     @torch.no_grad()
     def forward(
         self,
@@ -255,7 +323,7 @@ class RecolourPostprocess(torch.nn.Module):
         B = batch_td.shape[0]
 
         # Bernoulli recolour mask (B, D, 1)
-        mask_cpu = torch.rand(B, self.D, 1) < self.p_recolour
+        mask_cpu = torch.rand(B, self.D, 1, generator=self._gen) < self.p_recolour
         mask = mask_cpu.to(X.device, non_blocking=True)
 
         # Whitening PSD: each window's own segment ASD, keyed by (run, segment).
@@ -272,8 +340,31 @@ class RecolourPostprocess(torch.nn.Module):
         )
 
         # Recolour PSD: a random ASD from the target-epoch bank
-        recol_idx = torch.randint(0, self.n_recolour_asd, (B, self.D)).numpy()
-        gathered_recol_asd = self._gather(self._recolour_banks, recol_idx)
+        recol_idx = torch.randint(
+            0, self.n_recolour_asd, (B, self.D), generator=self._gen
+        ).numpy()
+        gathered_recol_asd = self._gather(self._recolour_banks, recol_idx)  # (B,D,F) CPU
+
+        # Data-driven domain-randomization gain jitter (Tobin et al. IROS 2017):
+        # a smooth broadband + linear + quadratic frequency shape, per (sample,
+        # detector), scaled per frequency by the data-driven bound k*sigma(f).
+        # Multiplicative -> constant fractional / dB perturbation (log-scale
+        # correct); per-frequency -> naturally low-frequency weighted. Drawn from
+        # the same seeded generator as the mask (reproducible / resume-aware).
+        if self.dr_gain > 0.0:
+            k = self.dr_gain
+            g = self._gen
+            # Random O(1) shape coeffs per (sample, detector), normalised so the
+            # smooth shape lies in ~[-1, 1] (max |b0| + |b1*t| + |b2*(t^2-1/3)|
+            # = 1 + 1 + 2/3 = 8/3), making k*sigma(f) an exact per-bin bound.
+            b0 = 2.0 * torch.rand(B, self.D, 1, generator=g) - 1.0
+            b1 = 2.0 * torch.rand(B, self.D, 1, generator=g) - 1.0
+            b2 = 2.0 * torch.rand(B, self.D, 1, generator=g) - 1.0
+            shape = (b0 + b1 * self._tnorm + b2 * self._tquad) * (3.0 / 8.0)
+            # k*sigma(f) per-frequency gain; clamp is a final physical safety rail.
+            gain = (1.0 + k * self._dr_sigma.unsqueeze(0) * shape).clamp(0.3, 3.0)
+            gathered_recol_asd = gathered_recol_asd * gain
+
         gathered_recol_asd = gathered_recol_asd.to(X.device)
 
         recol_gain = gathered_recol_asd + self.eps
