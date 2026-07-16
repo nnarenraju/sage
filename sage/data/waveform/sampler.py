@@ -140,30 +140,6 @@ class NamedConstraint:
         self.params = params or []
 
 
-class ExpressionConstraint:
-    """
-    Constraint defined as an inline Python expression string.
-
-    The expression is evaluated with ``eval`` against the current parameter
-    dictionary, so any parameter name can be referenced directly.
-
-    Parameters
-    ----------
-    expr : str
-        A Python expression that evaluates to ``True`` (accept) or ``False``
-        (reject) given the current parameter dict.  Example:
-        ``"mass1 >= mass2"``.
-    """
-
-    def __init__(self, expr: str):
-        self.name = "custom"
-        self.expr = expr
-
-    def check(self, params):
-        """Return ``True`` if the parameter dict satisfies the stored expression."""
-        return eval(self.expr, {}, params)
-
-
 class DistributionSampler(torch.nn.Module):
     """
     Batched waveform-parameter sampler driven by a YAML prior configuration.
@@ -175,8 +151,8 @@ class DistributionSampler(torch.nn.Module):
     * **waveform_transforms** — deterministic reparametrisations applied
       after sampling (spherical → Cartesian spins, m1/m2 → mchirp/q,
       chirp-distance → luminosity distance).
-    * **constraints** — named or custom Boolean filters applied via
-      rejection sampling (e.g. ``mass_order`` to enforce m1 ≥ m2).
+    * **constraints** — named deterministic projections that mutate params in
+      place (e.g. ``mass_order`` to enforce m1 ≥ m2).
 
     After construction, :meth:`_compile_batch_standardiser` must be called
     once to pre-compute mean and standard deviation buffers used by
@@ -324,18 +300,16 @@ class DistributionSampler(torch.nn.Module):
 
         for c in self.cfg.get("constraints", []):
 
-            # deterministic projection constraint
+            # deterministic projection constraint (the only supported kind: it
+            # mutates params in place, e.g. mass ordering). Rejection-style
+            # constraints are not implemented in the vectorised fixed-batch flow.
             if c["name"] in constraints._NAMED_CONSTRAINTS:
                 self.constraints.append(NamedConstraint(c["name"], c.get("params")))
-
-            # rejection constraint
-            elif c["name"] == "custom":
-                self.constraints.append(ExpressionConstraint(c["expr"]))
 
             else:
                 raise ValueError(
                     f"Unknown constraint type '{c['name']}'. "
-                    f"Available named: {constraints._NAMED_CONSTRAINTS} or 'custom'"
+                    f"Available named: {constraints._NAMED_CONSTRAINTS}"
                 )
 
     def _sample_base(self, N):
