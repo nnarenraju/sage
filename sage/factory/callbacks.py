@@ -11,6 +11,7 @@ training.
 """
 
 import os
+import time
 
 import numpy as np
 import torch
@@ -305,9 +306,14 @@ class HardMiningCallback(Callback):
         evaluate_fn, cleanup = self._build_evaluate_fn(trainer)
         try:
             # 1. mine new hard windows -> append start-times + diverse embeddings
+            _t0 = time.perf_counter()
             mstats = self._miner.mine(evaluate_fn, self.mine_iters, epoch=nepoch)
-            # 2. re-score the ENTIRE bank with the current model (family drift)
+            _t_mine = time.perf_counter() - _t0
+            # 2. re-score the ENTIRE bank with the current model (family drift).
+            #    Cost grows with the bank size -> timed separately for monitoring.
+            _t1 = time.perf_counter()
             rstats = self._miner.reevaluate(evaluate_fn, model_epoch=nepoch)
+            _t_reeval = time.perf_counter() - _t1
         finally:
             cleanup()                                 # reset the frontend-embed flag
             if was_training:
@@ -324,7 +330,8 @@ class HardMiningCallback(Callback):
             f"(+{mstats['kept_embeddings']} emb) | bank {mstats['bank_starts']:,} "
             f"starts, {mstats['bank_embeddings']:,} emb | active "
             f"{len(active):,}/{rstats.get('reeval_n', 0):,} | "
-            f"bias {self._bias_for(active, trainer):.3f}",
+            f"bias {self._bias_for(active, trainer):.3f} | "
+            f"mine {_t_mine:.1f}s reeval {_t_reeval:.1f}s",
             flush=True,
         )
         # Hardness longevity: surface windows that have stayed hard a long time
