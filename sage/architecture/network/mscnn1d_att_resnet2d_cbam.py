@@ -68,6 +68,11 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         cfg = get_cfg()
 
         self.num_detectors = len(cfg.detectors)
+        # BlurPool anti-aliasing and ResNet-C/D are toggleable via config (both
+        # default ON). use_blurpool/use_resnet_cd = False reproduces the
+        # pre-df55e89 (o3b_dummy_1) architecture exactly.
+        use_blurpool = getattr(cfg, "use_blurpool", True)
+        use_resnet_cd = getattr(cfg, "use_resnet_cd", True)
 
         # Normalization layer — normalises each detector channel independently.
         # Use self.num_detectors instead of hardcoding 2 so this works for any
@@ -86,7 +91,8 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         # CNN Frontend per detector
         self.frontend = nn.ModuleList(
             [
-                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout)
+                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout,
+                          use_blurpool=use_blurpool)
                 for _ in range(self.num_detectors)
             ]
         )
@@ -103,7 +109,8 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
         self.backend = resnet_factories[backend_resnet_size](
-            pretrained=False, dropout=dropout
+            pretrained=False, dropout=dropout,
+            use_blurpool=use_blurpool, use_resnet_cd=use_resnet_cd,
         )
 
         # Feature pooling
@@ -183,6 +190,11 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
 
         cfg = get_cfg()
         self.num_detectors = len(cfg.detectors)
+        # BlurPool anti-aliasing and ResNet-C/D are toggleable via config (both
+        # default ON). use_blurpool/use_resnet_cd = False reproduces the
+        # pre-df55e89 (o3b_dummy_1) architecture exactly.
+        use_blurpool = getattr(cfg, "use_blurpool", True)
+        use_resnet_cd = getattr(cfg, "use_resnet_cd", True)
 
         # Normalization layer — normalises each detector channel independently.
         # Use self.num_detectors instead of hardcoding 2 so this works for any
@@ -201,7 +213,8 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         # CNN Frontend per detector
         self.frontend = nn.ModuleList(
             [
-                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout)
+                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout,
+                          use_blurpool=use_blurpool)
                 for _ in range(self.num_detectors)
             ]
         )
@@ -217,7 +230,8 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
         self.backend = resnet_factories[backend_resnet_size](
-            pretrained=False, dropout=dropout
+            pretrained=False, dropout=dropout,
+            use_blurpool=use_blurpool, use_resnet_cd=use_resnet_cd,
         )
 
         # Feature pooling

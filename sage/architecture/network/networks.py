@@ -66,6 +66,11 @@ class MSCNN1D_2DResNetCBAM_HardMining(nn.Module):
 
         cfg = get_cfg()
         self.num_detectors = len(cfg.detectors)
+        # BlurPool anti-aliasing and ResNet-C/D are toggleable via config (both
+        # default ON). use_blurpool/use_resnet_cd = False reproduces the
+        # pre-df55e89 (o3b_dummy_1) architecture exactly.
+        use_blurpool = getattr(cfg, "use_blurpool", True)
+        use_resnet_cd = getattr(cfg, "use_resnet_cd", True)
 
         # Normalization layer — normalises each detector channel independently.
         norm_layers = {
@@ -79,7 +84,8 @@ class MSCNN1D_2DResNetCBAM_HardMining(nn.Module):
         # CNN Frontend per detector
         self.frontend = nn.ModuleList(
             [
-                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout)
+                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout,
+                          use_blurpool=use_blurpool)
                 for _ in range(self.num_detectors)
             ]
         )
@@ -99,7 +105,8 @@ class MSCNN1D_2DResNetCBAM_HardMining(nn.Module):
         # 3-detector (HLV) network feeds 3 channels into a conv that defaults to
         # in_channels=2 and crashes on the first forward.
         self.backend = resnet_factories[backend_resnet_size](
-            pretrained=False, in_channels=self.num_detectors, dropout=dropout
+            pretrained=False, in_channels=self.num_detectors, dropout=dropout,
+            use_blurpool=use_blurpool, use_resnet_cd=use_resnet_cd,
         )
 
         # Feature pooling

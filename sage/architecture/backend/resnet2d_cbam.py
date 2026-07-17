@@ -144,7 +144,10 @@ class BasicBlock(nn.Module):
 
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, dropout=0.0):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, dropout=0.0,
+                 use_blurpool=True):
+        # use_blurpool accepted for a uniform block API but unused here: BasicBlock
+        # (resnet18/34) is outside the anti-aliasing recipe and stays old-style.
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -206,18 +209,21 @@ class Bottleneck(nn.Module):
 
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, dropout=0.0):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, dropout=0.0,
+                 use_blurpool=True):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
+        # Anti-aliased downsampling (use_blurpool): the stride moves OUT of conv2
+        # into a BlurPool applied after it (Zhang, ICML 2019). Otherwise the
+        # stride stays in conv2 with an identity blur (pre-df55e89 / o3b_dummy_1).
         self.conv2 = nn.Conv2d(
-            planes, planes, kernel_size=3, stride=1, padding=1, bias=False
+            planes, planes, kernel_size=3,
+            stride=(1 if use_blurpool else stride), padding=1, bias=False
         )
         self.bn2 = nn.BatchNorm2d(planes)
-        # Anti-aliased downsampling: the stride moves OUT of conv2 into a BlurPool
-        # applied after it (Zhang, ICML 2019); identity for non-strided blocks.
         self.blur2 = (BlurPool2d(planes, stride=stride)
-                      if stride != 1 else nn.Identity())
+                      if (use_blurpool and stride != 1) else nn.Identity())
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * 4)
         self.relu = nn.ReLU(inplace=True)
@@ -287,32 +293,43 @@ class ResNet(nn.Module):
         Number of input channels (default 2 for dual-detector).
     """
 
-    def __init__(self, block, layers, num_classes=512, in_channels=2, dropout=0.0):
+    def __init__(self, block, layers, num_classes=512, in_channels=2, dropout=0.0,
+                 use_blurpool=True, use_resnet_cd=True):
         self.inplanes = 64
         super(ResNet, self).__init__()
-        # ResNet-C deep stem: three stacked 3x3 convs replace one 7x7 (He et al.,
-        # "Bag of Tricks for Image Classification with CNNs", CVPR 2019). Same 2x
-        # downsample (stride in the first 3x3), stronger early features at ~equal
-        # FLOPs. bn1 + relu below follow the final stem conv.
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, 32, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(32), nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, 3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(32), nn.ReLU(inplace=True),
-            nn.Conv2d(32, 64, 3, stride=1, padding=1, bias=False),
-        )
+        # STEM. use_resnet_cd -> ResNet-C deep stem: three stacked 3x3 convs
+        # replace one 7x7 (He et al., "Bag of Tricks", CVPR 2019); same 2x
+        # downsample, stronger early features at ~equal FLOPs. Else the original
+        # single 7x7 stride-2 conv (pre-df55e89 / o3b_dummy_1).
+        if use_resnet_cd:
+            self.conv1 = nn.Sequential(
+                nn.Conv2d(in_channels, 32, 3, stride=2, padding=1, bias=False),
+                nn.BatchNorm2d(32), nn.ReLU(inplace=True),
+                nn.Conv2d(32, 32, 3, stride=1, padding=1, bias=False),
+                nn.BatchNorm2d(32), nn.ReLU(inplace=True),
+                nn.Conv2d(32, 64, 3, stride=1, padding=1, bias=False),
+            )
+        else:
+            self.conv1 = nn.Conv2d(
+                in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False
+            )
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        # Anti-aliased stem downsample: dense max (stride 1) then BlurPool
-        # (Zhang, ICML 2019), instead of a naive stride-2 max-pool.
-        self.maxpool = nn.Sequential(
-            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
-            BlurPool2d(64, stride=2),
-        )
-        self.layer1 = self._make_layer(block, 64, layers[0], dropout=dropout)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dropout=dropout)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dropout=dropout)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dropout=dropout)
+        # STEM downsample. use_blurpool -> anti-aliased (dense max stride-1 then
+        # BlurPool, Zhang ICML 2019); else the original naive stride-2 max-pool.
+        if use_blurpool:
+            self.maxpool = nn.Sequential(
+                nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
+                BlurPool2d(64, stride=2),
+            )
+        else:
+            self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        _lk = dict(dropout=dropout, use_blurpool=use_blurpool,
+                   use_resnet_cd=use_resnet_cd)
+        self.layer1 = self._make_layer(block, 64, layers[0], **_lk)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, **_lk)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, **_lk)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, **_lk)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
@@ -327,7 +344,8 @@ class ResNet(nn.Module):
         nn.init.normal_(self.fc.weight, 0, 0.01)
         nn.init.zeros_(self.fc.bias)
 
-    def _make_layer(self, block, planes, blocks, stride=1, dropout=0.0):
+    def _make_layer(self, block, planes, blocks, stride=1, dropout=0.0,
+                    use_blurpool=True, use_resnet_cd=True):
         """Build one ResNet stage as a sequential stack of residual blocks.
 
         Parameters
@@ -349,27 +367,32 @@ class ResNet(nn.Module):
         """
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            # ResNet-D downsample: average-pool (stride) THEN a 1x1 stride-1 conv,
-            # instead of a 1x1 stride-2 conv that samples 1-in-4 and discards ~75%
-            # of the shortcut feature map (He et al., "Bag of Tricks", CVPR 2019).
-            downsample = nn.Sequential(
-                (nn.AvgPool2d(kernel_size=stride, stride=stride, ceil_mode=True)
-                 if stride != 1 else nn.Identity()),
-                nn.Conv2d(
-                    self.inplanes,
-                    planes * block.expansion,
-                    kernel_size=1,
-                    stride=1,
-                    bias=False,
-                ),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
+            if use_resnet_cd:
+                # ResNet-D downsample: average-pool (stride) THEN a 1x1 stride-1
+                # conv, instead of a 1x1 stride-2 conv that samples 1-in-4 and
+                # discards ~75% of the shortcut (He et al., "Bag of Tricks", 2019).
+                downsample = nn.Sequential(
+                    (nn.AvgPool2d(kernel_size=stride, stride=stride, ceil_mode=True)
+                     if stride != 1 else nn.Identity()),
+                    nn.Conv2d(self.inplanes, planes * block.expansion,
+                              kernel_size=1, stride=1, bias=False),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            else:
+                # Original 1x1 stride-2 projection shortcut (pre-df55e89).
+                downsample = nn.Sequential(
+                    nn.Conv2d(self.inplanes, planes * block.expansion,
+                              kernel_size=1, stride=stride, bias=False),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, dropout=dropout))
+        layers.append(block(self.inplanes, planes, stride, downsample,
+                            dropout=dropout, use_blurpool=use_blurpool))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, dropout=dropout))
+            layers.append(block(self.inplanes, planes, dropout=dropout,
+                                use_blurpool=use_blurpool))
 
         return nn.Sequential(*layers)
 

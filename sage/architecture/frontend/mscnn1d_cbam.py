@@ -311,7 +311,8 @@ class ConvBlock(nn.Module):
         Number of input channels (default ``1`` for a single detector).
     """
 
-    def __init__(self, filters_start=32, kernel_start=64, in_channels=1, dropout=0.0):
+    def __init__(self, filters_start=32, kernel_start=64, in_channels=1, dropout=0.0,
+                 use_blurpool=True):
         super().__init__()
 
         # Channel (spatial) dropout after each stage. ``Dropout1d`` zeroes whole
@@ -325,25 +326,36 @@ class ConvBlock(nn.Module):
         k2 = kernel_start // 2 + 1
         k3 = kernel_start // 4 + 1
 
+        # /8 downsample. use_blurpool -> anti-aliased (dense max stride-1 then a
+        # binomial BlurPool, Zhang ICML 2019, cutoff ~ the /8 Nyquist); else the
+        # original strided max-pool (pre-df55e89 / o3b_dummy_1 architecture).
+        _down1 = (
+            [MaxPool1d(kernel_size=8, stride=1, padding=4),
+             BlurPool1d(filters_start, stride=8)]
+            if use_blurpool else
+            [MaxPool1d(kernel_size=8, stride=8)]
+        )
         self.conv1 = nn.Sequential(
             ConcatBlockConv5(in_channels, filters_start, k1, bias=False),
             ConcatBlockConv5(filters_start, filters_start, k2, bias=False),
-            # Anti-aliased /8 downsample: dense max (stride 1) then binomial-blur
-            # + subsample (Zhang, ICML 2019), so aliasing doesn't corrupt/shift
-            # the features. Wide blur (2*stride+1) matches the /8 Nyquist.
-            MaxPool1d(kernel_size=8, stride=1, padding=4),
-            BlurPool1d(filters_start, stride=8),
+            *_down1,
         )
 
         self.ca1 = ChannelAttention1D(filters_start)
         self.ta1 = TemporalAttention1D(filters_start)
 
+        # /4 downsample (anti-aliased if use_blurpool, else the original strided
+        # max-pool).
+        _down2 = (
+            [MaxPool1d(kernel_size=4, stride=1, padding=2),
+             BlurPool1d(filters_start * 2, stride=4)]
+            if use_blurpool else
+            [MaxPool1d(kernel_size=4, stride=4)]
+        )
         self.conv2 = nn.Sequential(
             ConcatBlockConv5(filters_start, filters_start * 2, k2, bias=False),
             ConcatBlockConv5(filters_start * 2, filters_start * 2, k3, bias=False),
-            # Anti-aliased /4 downsample (Zhang, ICML 2019).
-            MaxPool1d(kernel_size=4, stride=1, padding=2),
-            BlurPool1d(filters_start * 2, stride=4),
+            *_down2,
         )
 
         self.ca2 = ChannelAttention1D(filters_start * 2)
