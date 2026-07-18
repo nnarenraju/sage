@@ -294,7 +294,7 @@ class ResNet(nn.Module):
     """
 
     def __init__(self, block, layers, num_classes=512, in_channels=2, dropout=0.0,
-                 use_blurpool=True, use_resnet_cd=True):
+                 use_blurpool=True, use_resnet_cd=True, zero_init_residual=True):
         self.inplanes = 64
         super(ResNet, self).__init__()
         # STEM. use_resnet_cd -> ResNet-C deep stem: three stacked 3x3 convs
@@ -340,6 +340,17 @@ class ResNet(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
+
+        # Zero-gamma residual init (He et al., "Bag of Tricks", CVPR 2019): zero
+        # the LAST BN scale in each residual block so the block starts as identity
+        # (residual branch == 0). Eases optimisation of the deep stack, no
+        # inference cost. Must run AFTER the ones-init above (which it overrides).
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.zeros_(m.bn3.weight)
+                elif isinstance(m, BasicBlock):
+                    nn.init.zeros_(m.bn2.weight)
 
         nn.init.normal_(self.fc.weight, 0, 0.01)
         nn.init.zeros_(self.fc.bias)

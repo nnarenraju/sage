@@ -109,6 +109,8 @@ def make_training_graph(seed):
     recolour = RecolourPostprocess(
         p_recolour          = 0.37,
         recolour_dataset_dir= get_server().dataset_dir("O3a"),
+        # data-driven k*sigma(f) PSD augmenter; config-overridable (default 0.5 = on)
+        dr_gain             = getattr(get_cfg(), "recolour_dr_gain", 0.5),
         seed                = seed + 7,   # resume-aware, distinct from other streams
     )
     noise_sampler = MemmapNoiseSampler(
@@ -162,7 +164,7 @@ def calibrate_ema():
 
     model = MSCNN1D_2DResNetCBAM_HardMining(
         frontend_filters=32, frontend_kernel=64,
-        backend_resnet_size=50, norm_type="groupnorm",
+        backend_resnet_size=50, norm_type="groupnorm", dropout=cfg.dropout,
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
 
     loss_function = BCEWithPEsigmaLoss(
@@ -228,6 +230,7 @@ def run_hard():
         norm_type           = "groupnorm",   # joint over detectors -> preserves the
                                               # inter-detector amplitude (SNR/sky info)
                                               # InstanceNorm would erase per-window.
+        dropout             = cfg.dropout,    # wired; config sets 0.0 (off)
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -244,7 +247,18 @@ def run_hard():
         regression_weight=0.005, coupling_weight=0.005,
         beta=0.5,   # beta-NLL (Seitzer et al. 2022): temper the ~1/sigma^2 grad
     )
-    optimiser     = optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
+    # No weight-decay on 1-D params (BN/GN scales+shifts, biases) -- He et al.
+    # "Bag of Tricks" CVPR 2019: decaying normalisation affine params just shrinks
+    # the normalisation and hurts. Decay only >=2-D weights (conv/linear).
+    _decay, _no_decay = [], []
+    for _n, _p in base_model.named_parameters():
+        if _p.requires_grad:
+            (_decay if _p.ndim >= 2 else _no_decay).append(_p)
+    optimiser = optim.AdamW(
+        [{"params": _decay, "weight_decay": 1e-4},   # conventional mild AdamW wd (weights only)
+         {"params": _no_decay, "weight_decay": 0.0}],
+        lr=2e-4, fused=True,
+    )
     # Single cosine decay with a short linear warmup, stepped per batch over the
     # whole run. Best-single-model schedule: "decay, not restarts" drives the
     # gains (Gotmare et al. ICLR 2019), and the run ends at eta_min so the final
