@@ -60,6 +60,13 @@ class O3bCFG:
     num_epochs = 128               # ~3.5 days at 14.2 it/s (measured); hard cap 4 days
     warmup_steps = 20_000          # linear LR warmup (~0.6 epoch at batch 64)
     ema_decay = 0.9999             # per-step weight EMA (the deliverable model)
+    keep_last_ckpts = 2            # keep 2 newest epoch_N restart points; best.pt/ema.pt always kept
+
+    # New pipeline features -- explicit = ON for production:
+    use_blurpool = True            # anti-aliased BlurPool downsampling (front + backend)
+    use_resnet_cd = True           # ResNet-C deep stem + ResNet-D avg-down
+    recolour_dr_gain = 0.5         # data-driven k*sigma(f) recolour PSD augmenter (0.0 = off)
+
     training_iterations = int(2_000_000 / batch_size)
     validation_iterations = int(200_000 / batch_size)
 
