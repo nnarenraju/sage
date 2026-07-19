@@ -31,18 +31,23 @@ def torch_linear_interp(x, xp, fp):
     """
     1D linear interpolation, compatible with ``jnp.interp`` / ``np.interp``.
 
+    Interpolation is over the LAST axis of ``fp``, so ``fp`` may carry leading
+    batch dimensions: ``fp`` of shape ``(..., N)`` is interpolated at the query
+    points ``x`` (shape ``(M,)``) to give ``(..., M)``.  The 1-D case
+    (``fp`` shape ``(N,)``) is unchanged.
+
     Parameters
     ----------
-    x : torch.Tensor, shape ``(...,)``
+    x : torch.Tensor, shape ``(M,)`` (or ``(...,)`` for scalar-batch ``fp``)
         Query points.
     xp : torch.Tensor, shape ``(N,)``
         Monotonically increasing node x-coordinates.
-    fp : torch.Tensor, shape ``(N,)``
-        Function values at ``xp``.
+    fp : torch.Tensor, shape ``(..., N)``
+        Function values at ``xp`` (last axis), with optional leading batch dims.
 
     Returns
     -------
-    torch.Tensor, shape ``(...,)``
+    torch.Tensor, shape ``(..., M)``
         Linearly interpolated values at ``x``.
     """
     # indices where elements should be inserted
@@ -52,8 +57,8 @@ def torch_linear_interp(x, xp, fp):
 
     x0 = xp[idx - 1]
     x1 = xp[idx]
-    y0 = fp[idx - 1]
-    y1 = fp[idx]
+    y0 = fp[..., idx - 1]      # gather over the last axis (batched-safe)
+    y1 = fp[..., idx]
 
     slope = (y1 - y0) / (x1 - x0)
     return y0 + slope * (x - x0)

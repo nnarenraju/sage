@@ -559,7 +559,7 @@ class TestIMRPhenomXAS_NRTidalv3:
     Shape and sanity tests for the BNS waveform model.
 
     Uses multiband_mode='worst_case' with explicit m1_worst/m2_worst so the
-    prior scan (500x500) is skipped and startup is fast.
+    exact prior scan is skipped and startup is fast.
     """
 
     @pytest.fixture(scope="class")
@@ -1188,3 +1188,45 @@ class TestFDConvention:
         # Just confirm neither is NaN.
         assert not math.isnan(signal_fd_amplitude)
         assert not math.isnan(amp_fd)
+
+
+# ── Network channel-layout contract (blocked FD) ──────────────────────────────
+
+
+def test_blocked_fd_channel_indices_match_to_network_input():
+    """
+    Guards the D>=2 detector-channel scramble bug.
+
+    ``GWBatch.to_network_input`` emits a BLOCKED FD layout
+    ``[d0_re, d1_re, ..., d0_im, d1_im, ...]``; ``blocked_detector_channel_indices``
+    (which BNSMamba3 uses to gather per-detector channels) must map detector d's
+    real part to channel d and its imaginary part to channel D+d. The old
+    interleaved slice ``[2d, 2d+1]`` scrambled detectors for D>=2.
+    """
+    from sage.core.pipeline import blocked_detector_channel_indices
+
+    B, D, F = 2, 3, 5  # 3 detectors -> exercises the general (non-D=2) case
+    data = torch.zeros(B, D, F, dtype=torch.complex64)
+    for d in range(D):
+        # distinct, identifiable real/imag per detector
+        data[:, d, :] = complex(10 * d + 1, 10 * d + 2)
+
+    x = GWBatch(data=data, state=ProcessingState(Grid.FD_COARSE)).to_network_input()
+    assert x.shape == (B, 2 * D, F)
+
+    for d in range(D):
+        idx = blocked_detector_channel_indices(d, num_detectors=D, channels_per_det=2)
+        re = x[:, idx[0], :]
+        im = x[:, idx[1], :]
+        assert torch.allclose(re, torch.full_like(re, float(10 * d + 1))), \
+            f"detector {d}: real part not at channel {idx[0]}"
+        assert torch.allclose(im, torch.full_like(im, float(10 * d + 2))), \
+            f"detector {d}: imag part not at channel {idx[1]}"
+
+    # Document the bug: the OLD interleaved slice [2d, 2d+1] does NOT give
+    # detector d's (re, im) for d >= 1.
+    for d in range(1, D):
+        wrong = x[:, d * 2 : (d + 1) * 2, :]
+        assert not torch.allclose(
+            wrong[:, 0, :], torch.full_like(wrong[:, 0, :], float(10 * d + 1))
+        ), f"interleaved slice unexpectedly matched detector {d} real part"

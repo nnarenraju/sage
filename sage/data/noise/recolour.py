@@ -33,6 +33,7 @@ from pathlib import Path
 
 # LOCAL
 from sage.core.config import get_cfg, get_data_cfg
+from sage.core.interpolation import torch_linear_interp
 
 
 class RecolourPostprocess(torch.nn.Module):
@@ -137,9 +138,16 @@ class RecolourPostprocess(torch.nn.Module):
         self.B = cfg.batch_size
         self.D = len(self.detectors)
 
-        # We expect this length from the PSDs
-        # Interpolate them after production
+        # Signal-grid rFFT length + frequency axis.  delta_f is set by the PADDED
+        # segment length (sample + BOTH-sided padding), so the freq axis spans
+        # [0, Nyquist] in n_freq bins.  ASD banks produced at a DIFFERENT padded
+        # grid (e.g. 16 s O3a banks reused for this 295 s BNS run) are linearly
+        # interpolated onto this axis on the fly in forward() (see _to_signal_grid);
+        # banks already at this grid (o3b) are used as-is with no interpolation.
         self.n_freq = self.seq_len // 2 + 1
+        self._sig_freqs = torch.linspace(
+            0.0, self.sample_rate / 2.0, self.n_freq, dtype=torch.float64
+        )
 
         # Domain randomization (Tobin et al., IROS 2017), DATA-DRIVEN bound: a
         # smooth, per-(sample, detector), frequency-dependent MULTIPLICATIVE gain
@@ -227,6 +235,9 @@ class RecolourPostprocess(torch.nn.Module):
                 det_banks.append(bank)
             self._segment_banks.append(det_banks)
 
+        # Grid of the segment ASD bank (None if it already matches the signal grid).
+        self._seg_src_freqs = self._bank_src_freqs(n_freq)
+
     def _load_recolour_asds(self):
         """
         Load the recolour ASD bank into RAM (one array per detector). Each
@@ -274,6 +285,9 @@ class RecolourPostprocess(torch.nn.Module):
             if self.n_recolour_asd is None:
                 self.n_recolour_asd = n_asd
 
+        # Grid of the recolour bank (None if it already matches the signal grid).
+        self._recol_src_freqs = self._bank_src_freqs(n_freq)
+
     def _compute_dr_sigma(self):
         """
         Data-driven domain-randomization bound ``sigma(f) = std/mean`` of the
@@ -285,11 +299,12 @@ class RecolourPostprocess(torch.nn.Module):
         whole ~16 GB/detector array at once. Result is a (D, F) float32 CPU
         tensor consumed multiplicatively in :meth:`forward`.
         """
-        sig = np.empty((self.D, self.n_freq), dtype=np.float32)
+        nfb = self._recolour_banks[0].shape[1]          # bank grid (may != signal grid)
+        sig = np.empty((self.D, nfb), dtype=np.float32)
         for d, bank in enumerate(self._recolour_banks):
             n = bank.shape[0]
-            s1 = np.zeros(self.n_freq, dtype=np.float64)
-            s2 = np.zeros(self.n_freq, dtype=np.float64)
+            s1 = np.zeros(nfb, dtype=np.float64)
+            s2 = np.zeros(nfb, dtype=np.float64)
             for i in range(0, n, 4096):
                 chunk = np.asarray(bank[i:i + 4096], dtype=np.float64)
                 s1 += chunk.sum(axis=0)
@@ -297,7 +312,11 @@ class RecolourPostprocess(torch.nn.Module):
             mu = s1 / n
             var = np.maximum(s2 / n - mu * mu, 0.0)
             sig[d] = (np.sqrt(var) / (mu + 1e-300)).astype(np.float32)
-        self._dr_sigma = torch.from_numpy(sig)          # (D, F) CPU float32
+        # sigma(f) is computed on the bank grid; interpolate it onto the signal
+        # grid so it aligns with the interpolated recolour ASD in forward().
+        self._dr_sigma = self._to_signal_grid(
+            torch.from_numpy(sig), self._recol_src_freqs
+        )                                               # (D, self.n_freq) CPU float32
 
     @torch.no_grad()
     def forward(
@@ -332,6 +351,7 @@ class RecolourPostprocess(torch.nn.Module):
                    else run_ids.detach().cpu().numpy())
         gathered_seg_asd = self._gather_segment(seg_idx, run_idx)
         gathered_seg_asd = gathered_seg_asd.to(X.device, non_blocking=True)
+        gathered_seg_asd = self._to_signal_grid(gathered_seg_asd, self._seg_src_freqs)
 
         X = torch.where(
             mask,
@@ -343,7 +363,8 @@ class RecolourPostprocess(torch.nn.Module):
         recol_idx = torch.randint(
             0, self.n_recolour_asd, (B, self.D), generator=self._gen
         ).numpy()
-        gathered_recol_asd = self._gather(self._recolour_banks, recol_idx)  # (B,D,F) CPU
+        gathered_recol_asd = self._gather(self._recolour_banks, recol_idx)  # (B,D,F_src) CPU
+        gathered_recol_asd = self._to_signal_grid(gathered_recol_asd, self._recol_src_freqs)
 
         # Data-driven domain-randomization gain jitter (Tobin et al. IROS 2017):
         # a smooth broadband + linear + quadratic frequency shape, per (sample,
@@ -406,3 +427,39 @@ class RecolourPostprocess(torch.nn.Module):
                 if m.any():
                     out[m, d, :] = self._segment_banks[r][d][seg_idx[m, d]]
         return torch.from_numpy(out)
+
+    # ── ASD grid alignment ────────────────────────────────────────────────
+    #
+    # A bank is produced at a run's own PADDED grid (sample + both-sided padding):
+    # o3b = 12 s + 2*2 s = 16 s -> 16385 bins; this BNS run = 287 s + 2*4 s = 295 s
+    # -> 302081 bins.  If a bank already sits on the run's signal grid it is used
+    # AS-IS; otherwise the SAMPLED ASDs (a handful per batch) are linearly
+    # interpolated onto the signal grid via the shared torch_linear_interp -- the
+    # whole ~16 GB bank is never materialised at the finer grid (that is ~302 GB).
+
+    def _bank_src_freqs(self, src_n_freq):
+        """
+        Source rFFT frequency axis for a bank with ``src_n_freq`` bins over
+        ``[0, Nyquist]``, or ``None`` when the bank already matches the signal
+        grid (``n_freq`` equal -> use as-is, no per-batch interpolation).
+        """
+        if int(src_n_freq) == int(self.n_freq):
+            return None
+        return torch.linspace(
+            0.0, self.sample_rate / 2.0, int(src_n_freq), dtype=torch.float64
+        )
+
+    def _to_signal_grid(self, asd, src_freqs):
+        """
+        Linear-interpolate an ASD ``(..., F_src)`` onto the signal grid via
+        :func:`sage.core.interpolation.torch_linear_interp` (batched over the
+        last axis).  No-op (returns ``asd``) when ``src_freqs is None``.
+        """
+        if src_freqs is None:
+            return asd
+        out = torch_linear_interp(
+            self._sig_freqs.to(asd.device),
+            src_freqs.to(asd.device),
+            asd,
+        )
+        return out.to(asd.dtype)
