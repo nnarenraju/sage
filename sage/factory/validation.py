@@ -21,6 +21,7 @@ from contextlib import nullcontext
 
 from sage.core.config import get_cfg
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
+from sage.utils.atomic_io import atomic_h5
 
 
 def save_validation(nepoch, output, target, params, signal_idx, savepath):
@@ -46,7 +47,10 @@ def save_validation(nepoch, output, target, params, signal_idx, savepath):
     savepath : str
         Path to the HDF5 output file.
     """
-    with h5py.File(savepath, "a") as f:
+    # Crash-atomic append: a mid-write kill can't corrupt validation_data.h5
+    # (which is reopened in append mode every validation and would otherwise
+    # crash the run on its next open).
+    with atomic_h5(savepath) as f:
         name = f"epoch_{nepoch:04d}"
         if name in f:
             # Overwrite a re-validated / restarted epoch rather than crashing on

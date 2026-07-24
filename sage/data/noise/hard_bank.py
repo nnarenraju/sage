@@ -36,6 +36,9 @@ party at a time is safe -- no SWMR needed.
 """
 
 import os
+import shutil
+from contextlib import contextmanager
+
 import numpy as np
 import h5py
 
@@ -106,7 +109,48 @@ class HardMiningBank:
         self.max_embeddings = int(max_embeddings)
         self.metric = metric
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        # A leftover "<bank>.tmp" means a mine round was interrupted before its
+        # atomic commit (see atomic_round). The live bank is the last consistent
+        # state, so discard the aborted temp before anything reads/writes.
+        _stale = self.path + ".tmp"
+        if os.path.exists(_stale):
+            try:
+                os.remove(_stale)
+            except OSError:
+                pass
         self._ensure_file()
+
+    # --------------------------------------------------------- crash-atomic io
+    @contextmanager
+    def atomic_round(self):
+        """Make a whole mine round's writes crash-atomic.
+
+        Every bank method opens ``self.path``; inside this context ``self.path``
+        is pointed at a private copy of the committed bank, so all reads and
+        writes of the round hit the copy. On clean exit the copy is
+        ``os.replace``-d over the live bank in ONE atomic filesystem step; on any
+        exception or hard kill the live bank is left exactly as it was (worst
+        case a stray ``.tmp``, removed on the next open). This closes the
+        multi-array-append corruption window: a SLURM TIMEOUT can no longer leave
+        the bank with mismatched dataset lengths or an unopenable HDF5 file.
+        """
+        real = self.path
+        tmp = real + ".tmp"
+        if os.path.exists(real):
+            shutil.copy2(real, tmp)              # snapshot committed state
+        self.path = tmp                          # redirect all round io to tmp
+        committed = False
+        try:
+            yield
+            os.replace(tmp, real)                # atomic commit
+            committed = True
+        finally:
+            self.path = real                     # always restore, commit or abort
+            if not committed and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)               # discard the partial round
+                except OSError:
+                    pass
 
     # ------------------------------------------------------------------ setup
     def _ensure_file(self):

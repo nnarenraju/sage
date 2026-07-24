@@ -145,7 +145,8 @@ SERVERS: dict[str, Server] = {
         scheduler="slurm",
         partition="gpu",
         qos="normal",
-        gres="gpu:h100_80gb:1",
+        gres="gpu:1",     # any GPU type (hgc01 h100_80gb + hgc02 h100_94gb/h200_143gb);
+                          # all fit the model -- pinning to h100_80gb starved us to 2 GPUs
         time="2-00:00",
         cpus=16,          # noise prefetch (16 read workers) + hard-mining threads
         # RecolourPostprocess keeps the target ASD bank resident: ~16 GB/detector

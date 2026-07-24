@@ -305,15 +305,22 @@ class HardMiningCallback(Callback):
         trainer.model.eval()
         evaluate_fn, cleanup = self._build_evaluate_fn(trainer)
         try:
-            # 1. mine new hard windows -> append start-times + diverse embeddings
-            _t0 = time.perf_counter()
-            mstats = self._miner.mine(evaluate_fn, self.mine_iters, epoch=nepoch)
-            _t_mine = time.perf_counter() - _t0
-            # 2. re-score the ENTIRE bank with the current model (family drift).
-            #    Cost grows with the bank size -> timed separately for monitoring.
-            _t1 = time.perf_counter()
-            rstats = self._miner.reevaluate(evaluate_fn, model_epoch=nepoch)
-            _t_reeval = time.perf_counter() - _t1
+            # All bank writes of this round (append_starts / add_embeddings /
+            # save_pca / append_eval) go through the same bank object, so wrap
+            # the whole round in one atomic transaction: a mid-round kill (e.g. a
+            # SLURM TIMEOUT landing in the ~10-20 min mine/reeval window) then
+            # leaves the live bank untouched instead of half-written. has_epoch
+            # (above) makes the re-mine on resume idempotent.
+            with self._bank.atomic_round():
+                # 1. mine new hard windows -> append start-times + diverse embeddings
+                _t0 = time.perf_counter()
+                mstats = self._miner.mine(evaluate_fn, self.mine_iters, epoch=nepoch)
+                _t_mine = time.perf_counter() - _t0
+                # 2. re-score the ENTIRE bank with the current model (family drift).
+                #    Cost grows with the bank size -> timed separately for monitoring.
+                _t1 = time.perf_counter()
+                rstats = self._miner.reevaluate(evaluate_fn, model_epoch=nepoch)
+                _t_reeval = time.perf_counter() - _t1
         finally:
             cleanup()                                 # reset the frontend-embed flag
             if was_training:

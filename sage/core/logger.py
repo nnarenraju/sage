@@ -33,6 +33,8 @@ import threading
 
 from pathlib import Path
 
+from sage.utils.atomic_io import atomic_h5
+
 
 def setup_logging(log_dir: str = "logs", level: int = logging.INFO):
     """
@@ -408,5 +410,7 @@ class HDF5LossLogger:
         """
         loss = loss_tensor[epoch].detach().cpu().numpy()
 
-        with h5py.File(self.path, "a") as f:
+        # Crash-atomic: this file is reopened in append mode every epoch, so a
+        # mid-write kill that corrupted it would crash the run on its next open.
+        with atomic_h5(self.path) as f:
             f[split]["loss"][epoch] = loss
