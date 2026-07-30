@@ -194,7 +194,7 @@ model = MSCNN1D_2DResNetCBAM_Heteroscedastic(
     frontend_filters=32,
     frontend_kernel=64,
     backend_resnet_size=50,
-    norm_type="instancenorm",
+    norm_type="groupnorm",   # MUST match training (train_hard.py); else weights load into wrong norm
 )
 
 print(f"Loading weights from {CHECKPOINT}")
