@@ -41,10 +41,10 @@ class O3bCFG:
     # and change `detectors` + `export_dir` together (e.g. detectors=["L1","V1"]
     # + export_dir="./run_export_LV"); everything else (noise files, model,
     # recolour, hard-mining bank) follows from `detectors` automatically.
-    export_dir = "./run_export_HV"
+    export_dir = "/work/nagarajan/sage_runs/o3b/prod_HV"
     # Fiducial PSDs are per-detector and shared across a run's networks, so they
     # live in one place regardless of which detector set this config trains.
-    fiducial_dir = "./run_export/fiducial_psds"
+    fiducial_dir = "./run_export/fiducial_psds_o3ab"
     batch_size = 64
     device = "cuda:0"
     dtype = torch.float32
@@ -61,6 +61,7 @@ class O3bCFG:
     warmup_steps = 20_000          # linear LR warmup (~0.6 epoch at batch 64)
     ema_decay = 0.9999             # per-step weight EMA (the deliverable model)
     keep_last_ckpts = 2            # keep 2 newest epoch_N restart points; best.pt/ema.pt always kept
+    anneal_fraction = 0.5          # cosine -> eta_min over first half of post-warmup, then hold (faster decay)
 
     # New pipeline features -- explicit = ON for production:
     use_blurpool = True            # anti-aliased BlurPool downsampling (front + backend)

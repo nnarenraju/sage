@@ -41,10 +41,10 @@ class O3bCFG:
     # and change `detectors` + `export_dir` together (e.g. detectors=["L1","V1"]
     # + export_dir="./run_export_LV"); everything else (noise files, model,
     # recolour, hard-mining bank) follows from `detectors` automatically.
-    export_dir = "./run_export_HL"
+    export_dir = "/work/nagarajan/sage_runs/o3b/prod_HL"
     # Fiducial PSDs are per-detector and shared across a run's networks, so they
     # live in one place regardless of which detector set this config trains.
-    fiducial_dir = "./run_export/fiducial_psds"
+    fiducial_dir = "./run_export/fiducial_psds_o3ab"
     batch_size = 64
     device = "cuda:0"
     dtype = torch.float32
@@ -56,10 +56,18 @@ class O3bCFG:
     autocast = True
     class_balance = 0.5
     clip_norm = 1.0
-    dropout = 0.0  # set >0 (e.g. 0.05) to enable dropout + MC-dropout uncertainty
-    num_epochs = 128               # ~3.5 days at 14.2 it/s (measured); hard cap 4 days
+    dropout = 0.0  # wired into the model; 0.0 = off (raise, e.g. 0.05, for MC-dropout)
+    num_epochs = 128               # ~3.5-4.0 d incl. mining (measured HL ~12-14 it/s)
     warmup_steps = 20_000          # linear LR warmup (~0.6 epoch at batch 64)
     ema_decay = 0.9999             # per-step weight EMA (the deliverable model)
+    keep_last_ckpts = 2            # keep 2 newest epoch_N restart points; best.pt/ema.pt always kept
+    anneal_fraction = 0.5          # cosine -> eta_min over first half of post-warmup, then hold (faster decay)
+
+    # New pipeline features -- explicit = ON for production:
+    use_blurpool = True            # anti-aliased BlurPool downsampling (front + backend)
+    use_resnet_cd = True           # ResNet-C deep stem + ResNet-D avg-down
+    recolour_dr_gain = 0.5         # data-driven k*sigma(f) recolour PSD augmenter (0.0 = off)
+
     training_iterations = int(2_000_000 / batch_size)
     validation_iterations = int(200_000 / batch_size)
 
