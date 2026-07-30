@@ -173,8 +173,12 @@ class MSCNN1D_2DResNetCBAM_HardMining(nn.Module):
             ranking_statistic: (B, 1)
             point_estimates:   (B, 2*num_pe)  -- [mu_0..mu_K, sraw_0..sraw_K]
         """
-        # Normalize input
-        x = self.norm(x)
+        # Normalize input in fp32 (autocast-safe). InstanceNorm's per-channel variance
+        # reduction is numerically unstable under bf16 autocast on the large-dynamic-range
+        # fiducial-whitened input (un-notched lines -> NaN -> poisoned weights). GroupNorm
+        # is auto-promoted to fp32 by autocast anyway, so this is a no-op for it.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            x = self.norm(x.float())
 
         # CNN Frontend per detector
         cnn_outputs = [
@@ -191,13 +195,22 @@ class MSCNN1D_2DResNetCBAM_HardMining(nn.Module):
         features = self.backend(cnn_output)
         features = self.flatten(self.avg_pool_1d(features))
 
-        # Ranking statistic for BCE
-        ranking_statistic = self.get_ranking_statistic(features)
+        # Heads in fp32 (autocast-disabled). The ranking statistic is the detection
+        # output we threshold on; its bf16 output-cast quantises the logit to
+        # 1/16-1/64 steps right where the FAR threshold sits (comb artefact). The
+        # 512-D features feed a single linear projection, so casting only the OUTPUT
+        # to bf16 is the sole coarse step -- computing the head in fp32 removes it.
+        # The body stays bf16 (fast; discriminates fine via fp32-accumulated matmuls).
+        with torch.autocast(device_type=features.device.type, enabled=False):
+            features = features.float()
 
-        # Heteroscedastic PE predictions (blocked layout: all mus, then all sigmas)
-        raw = [layer(features) for layer in self.point_estimate_layers]
-        mus = torch.cat([r[:, :1] for r in raw], dim=1)        # (B, num_pe)
-        sigma_raw = torch.cat([r[:, 1:] for r in raw], dim=1)  # (B, num_pe)
-        point_estimates = torch.cat([mus, sigma_raw], dim=1)   # (B, 2*num_pe)
+            # Ranking statistic for BCE
+            ranking_statistic = self.get_ranking_statistic(features)
+
+            # Heteroscedastic PE predictions (blocked layout: all mus, then all sigmas)
+            raw = [layer(features) for layer in self.point_estimate_layers]
+            mus = torch.cat([r[:, :1] for r in raw], dim=1)        # (B, num_pe)
+            sigma_raw = torch.cat([r[:, 1:] for r in raw], dim=1)  # (B, num_pe)
+            point_estimates = torch.cat([mus, sigma_raw], dim=1)   # (B, 2*num_pe)
 
         return ranking_statistic, point_estimates
