@@ -24,6 +24,7 @@ Documentation: NULL
 
 # Packages
 import math
+import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
@@ -101,6 +102,31 @@ class FiducialWhitening(torch.nn.Module):
         # Register as buffer for compile friendliness
         self.register_buffer("whitening", whitening)  # (D, F)
 
+        # ~Unit-variance normalisation for the FD_COARSE (stay-in-FD) path.
+        # The TD path gets unit variance from the ``irfft(norm="forward")·Δf`` step
+        # in ``_whiten_to_td``; the FD_COARSE branch skips it, leaving the whitened
+        # data sub-unity.  We restore ~O(1) with a SINGLE analytic constant
+        # (dividing the 2Δf/(√0.5·ASD) whitening by 2·Δf^1.5, i.e. the proper
+        # √2/(ASD·√Δf) form).  It is a shared scalar -- deliberately NOT a
+        # per-detector or data-driven fit: each detector is already divided by its
+        # own ASD, so a common constant preserves the relative sensitivity between
+        # detectors (which carries sky/SNR information); a per-detector fit would
+        # destroy it.  It just happens to land the typical whitened noise near unity
+        # for all detectors.  Only the FD_COARSE (BNS) branch uses it; TD/BBH is
+        # untouched.
+        self._fd_unit_norm = 1.0 / (2.0 * float(delta_f) ** 1.5)
+
+        # Exp 1: optional suppress-only FFT per-bin line notch. After whitening, bins
+        # flagged as spectral lines (fiducial ASD >> its running-median floor) have
+        # their magnitude pulled DOWN to the local floor (gain<=1, phase kept) -- it
+        # removes the residual line power the fiducial's median-based envelope leaves
+        # (esp. L1 wandering lines) and, because gain<=1, can never amplify a segment.
+        # Signals carry ~no power in the ~1.5%-of-band narrow line bins -> zero SNR loss.
+        # Default OFF: configs that don't set `use_line_notch` are byte-for-byte unchanged.
+        self._line_notch_on = bool(getattr(cfg, "use_line_notch", False))
+        if self._line_notch_on:
+            self._build_line_notch(fiducial_psds, cfg, data_cfg)
+
     def remove_corrupted(self, x):
         """
         Strip edge samples corrupted by the Welch PSD estimation window.
@@ -154,9 +180,62 @@ class FiducialWhitening(torch.nn.Module):
         # Legacy raw-tensor path: FD → whitened TD (backward compatible)
         return self._whiten_to_td(input)
 
+    def _build_line_notch(self, fiducial_asds, cfg, data_cfg, win=201, thr=1.8, k_ref=32):
+        """Precompute per-detector line-bin indices + local-floor reference indices.
+
+        A bin is a "line" when the fiducial ASD exceeds its running-median floor by
+        ``thr``, within ``[signal_low_frequency_cutoff, Nyquist]``. The union of O3a+O3b
+        lines is captured automatically because the fiducial here is the combined max(A,B).
+        """
+        from scipy.signal import medfilt
+
+        asds = fiducial_asds.detach().cpu().numpy().astype(np.float64)   # (D, F)
+        D, Fbins = asds.shape
+        df = float(self.sample_rate) / self.seq_len
+        freqs = np.arange(Fbins) * df
+        inband = (freqs >= float(data_cfg.signal_low_frequency_cutoff)) & (freqs <= self.sample_rate / 2)
+
+        self._notch_line_idx, self._notch_ref_idx = [], []
+        counts = []
+        for d in range(D):
+            floor = np.maximum(medfilt(asds[d], win), 1e-40)
+            mask = (asds[d] / floor > thr) & inband
+            line_bins = np.where(mask)[0]
+            nonline = np.where((~mask) & inband)[0]
+            ref = np.empty((len(line_bins), k_ref), dtype=np.int64)
+            for j, b in enumerate(line_bins):
+                pos = int(np.searchsorted(nonline, b))
+                lo, hi = max(0, pos - k_ref), min(len(nonline), pos + k_ref)
+                cand = nonline[lo:hi]
+                sel = cand[np.argsort(np.abs(cand - b))[:k_ref]]
+                if len(sel) < k_ref:
+                    sel = np.pad(sel, (0, k_ref - len(sel)), mode="edge")
+                ref[j] = sel
+            self._notch_line_idx.append(torch.from_numpy(line_bins).to(self.device))
+            self._notch_ref_idx.append(torch.from_numpy(ref).to(self.device))
+            counts.append(len(line_bins))
+        dets = getattr(cfg, "detectors", [f"d{d}" for d in range(D)])
+        print("[FiducialWhitening] line notch ON: "
+              + ", ".join(f"{dets[d]}={counts[d]} bins" for d in range(D)))
+
+    def _apply_line_notch(self, X_white: torch.Tensor) -> torch.Tensor:
+        """Suppress-only per-bin line notch on whitened FD data (in place, gain<=1)."""
+        eps = 1e-20
+        for d, (li, ri) in enumerate(zip(self._notch_line_idx, self._notch_ref_idx)):
+            if li.numel() == 0:
+                continue
+            mag = X_white[:, d].abs()                        # (B, F)
+            ref = mag[:, ri].median(dim=-1).values           # (B, n_lines)
+            cur = mag[:, li]                                 # (B, n_lines)
+            gain = torch.clamp(ref / (cur + eps), max=1.0)    # (B, n_lines) in [0,1]
+            X_white[:, d, li] = X_white[:, d, li] * gain
+        return X_white
+
     def _whiten_to_td(self, X_fd: torch.Tensor) -> torch.Tensor:
         """Whiten FD strain and convert to valid TD float32."""
         X_white = X_fd * self.whitening.unsqueeze(0)
+        if self._line_notch_on:
+            X_white = self._apply_line_notch(X_white)
         x_td    = torch.fft.irfft(X_white, dim=-1, norm="forward") * self.delta_f
         return self.remove_corrupted(x_td)
 
@@ -168,7 +247,9 @@ class FiducialWhitening(torch.nn.Module):
             # delta_f, so no interpolation is needed.
             idx = batch.coarse_indices                         # (N_coarse,)
             whitening_coarse = self.whitening[:, idx]          # (D, N_coarse)
-            X_white = batch.data * whitening_coarse.unsqueeze(0)
+            # Stay in FD: apply the unit-variance factor the (skipped) IFFT would
+            # have provided, so the coarse data is O(1) like the BBH TD path.
+            X_white = batch.data * whitening_coarse.unsqueeze(0) * self._fd_unit_norm
             new_state = batch.state.after_whiten()
             return GWBatch(X_white, new_state, batch.freqs, batch.coarse_indices)
 
