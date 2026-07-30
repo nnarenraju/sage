@@ -76,7 +76,8 @@ from sage.core.logger import HDF5LossLogger
 
 # Optimiser and scheduler
 import torch.optim as optim
-from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+from torch.optim.lr_scheduler import (LinearLR, CosineAnnealingLR, SequentialLR,
+                                      CosineAnnealingWarmRestarts, ConstantLR)
 
 # Training / validation / hard mining
 from sage.factory.training import SageVanillaTraining
@@ -265,16 +266,49 @@ def run_hard():
     # checkpoint IS the fully-annealed model (no wasted post-restart epochs).
     # Warmup stabilises early Adam + the heteroscedastic head (Kalra&Barkeshli 2024).
     total_steps  = cfg.num_epochs * cfg.training_iterations
-    warmup_steps = min(getattr(cfg, "warmup_steps", 5000), max(1, total_steps // 2))
-    scheduler = SequentialLR(
-        optimiser,
-        schedulers=[
-            LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
-            CosineAnnealingLR(optimiser, T_max=max(1, total_steps - warmup_steps),
-                              eta_min=1e-6),
-        ],
-        milestones=[warmup_steps],
-    )
+    # Ablation toggle: if cfg sets warm_restart_t0 (epochs), use SGDR warm restarts
+    # (no separate warmup -- the first cycle serves that role) instead of the
+    # default warmup+single-cosine. Default (unset) => original schedule unchanged.
+    _wr_t0 = getattr(cfg, "warm_restart_t0", None)
+    if _wr_t0 is not None:
+        scheduler = CosineAnnealingWarmRestarts(
+            optimiser,
+            T_0     = max(1, int(_wr_t0) * cfg.training_iterations),
+            T_mult  = int(getattr(cfg, "warm_restart_tmult", 1)),
+            eta_min = 1e-6,
+        )
+    else:
+        warmup_steps = min(getattr(cfg, "warmup_steps", 5000), max(1, total_steps // 2))
+        _base_lr, _eta_min = 2e-4, 1e-6
+        # Faster-anneal knob: cfg.anneal_fraction f in (0,1] anneals the cosine to
+        # eta_min over the FIRST f of the post-warmup run, then HOLDS at eta_min for
+        # the rest (front-loads the decay; ep-gain analysis showed the long high-LR
+        # tail buys almost nothing). Default 1.0 => original single cosine unchanged.
+        _af = float(getattr(cfg, "anneal_fraction", 1.0))
+        _post = max(1, total_steps - warmup_steps)
+        if _af < 1.0:
+            _cos = max(1, int(_af * _post))
+            scheduler = SequentialLR(
+                optimiser,
+                schedulers=[
+                    LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
+                    CosineAnnealingLR(optimiser, T_max=_cos, eta_min=_eta_min),
+                    # hold at eta_min for the rest; total_iters > remaining steps so
+                    # ConstantLR never reverts to base_lr before the run ends.
+                    ConstantLR(optimiser, factor=_eta_min / _base_lr,
+                               total_iters=total_steps),
+                ],
+                milestones=[warmup_steps, warmup_steps + _cos],
+            )
+        else:
+            scheduler = SequentialLR(
+                optimiser,
+                schedulers=[
+                    LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
+                    CosineAnnealingLR(optimiser, T_max=_post, eta_min=_eta_min),
+                ],
+                milestones=[warmup_steps],
+            )
     # AMP dtype: bf16 on GPUs that support it (H100 etc.) — full fp32 exponent
     # range, so NO GradScaler is needed and there's no fp16 underflow; fall back
     # to fp16 + GradScaler on older GPUs (Micikevicius et al. ICLR 2018).
@@ -290,6 +324,7 @@ def run_hard():
     # hard-noise bank by the midpoint, then stop -- the persisted bank keeps
     # biasing the second half. Bounding the number of mine events (each re-scores
     # the whole growing bank) keeps the total walltime under the 4-day cap.
+    _enable_mining = getattr(cfg, "enable_mining", True)   # ablation toggle; default on
     _mine_stop = int(round(0.6 * cfg.num_epochs))
     _front_load_sched = list(range(3, _mine_stop, 4))
     hard_cb = HardMiningCallback(
@@ -350,8 +385,8 @@ def run_hard():
         optimiser, scheduler, scaler,
         num_iterations = cfg.training_iterations,
         num_epochs     = cfg.num_epochs,
-        callbacks      = [hard_cb, ema_cb],
-        # Step the warmup+cosine schedule once per batch across all total_steps.
+        callbacks      = ([hard_cb, ema_cb] if _enable_mining else [ema_cb]),
+        # Step the LR schedule once per batch across all total_steps.
         scheduler_mode = "batch",
         amp_dtype      = amp_dtype,
     )
@@ -389,7 +424,8 @@ def run_hard():
         print(f"Resuming from epoch {start_epoch}")
         # Re-bias the (freshly-built) sampler from the persisted hard bank so we
         # don't train on purely random noise until the next scheduled mine epoch.
-        hard_cb.attach_for_resume(trainer)
+        if _enable_mining:
+            hard_cb.attach_for_resume(trainer)
 
     # ── Epoch loop (train + mine, validate every 5) ───────────────────────────
     for epoch in range(start_epoch, cfg.num_epochs):
