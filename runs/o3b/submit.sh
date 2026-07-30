@@ -63,6 +63,14 @@ case "$TASK" in
         sage_submit_chain "$N" --time 2-00:00 --job "o3b-$CFG" \
             "SAGE_CONFIG='$CFG' python -c 'from train_hard import run_hard; run_hard()'"
         ;;
+    chain_in)
+        # NORM A/B: chained segments with the InstanceNorm trainer (train_hard_in.py,
+        # a copy of train_hard.py with norm_type hardcoded to "instancenorm"). Identical
+        # to `chain` otherwise. e.g.  ./submit.sh chain_in config_HL_in 2
+        CFG="${2:-config}"; N="${3:-4}"
+        sage_submit_chain "$N" --time 2-00:00 --job "o3b-$CFG" \
+            "SAGE_CONFIG='$CFG' python -c 'from train_hard_in import run_hard; run_hard()'"
+        ;;
     calibrate)
         # Post-training EMA finalisation (run AFTER training): BN-recalibrate the
         # averaged weights and compare vs best.pt on validation -> writes
