@@ -41,20 +41,3 @@ __all__ = [
     "enable_mc_dropout",
     "mc_predict",
 ]
-
-# Mamba3 models are optional: the mamba_ssm extension and attentive_mamba
-# modules are gitignored / not synced on every machine. Import them only when
-# present so the CNN models above stay usable without Mamba. Re-enables
-# automatically once the mamba files are synced back in.
-try:
-    from .mamba_ssm import Mamba3
-    from .attentive_mamba import BNSMamba3
-    from .attentive_mamba_lite import BNSMamba3Lite
-    from .attentive_mamba_tiny import BNSMamba3Tiny
-
-    __all__ += ["Mamba3", "BNSMamba3", "BNSMamba3Lite", "BNSMamba3Tiny"]
-except Exception:
-    # Tolerate ANY failure of the optional import (not just ImportError) -- e.g.
-    # a GPU-driver / triton init RuntimeError on a CPU-only node -- so the CNN
-    # models above stay importable and usable regardless.
-    pass

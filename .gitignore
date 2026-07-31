@@ -163,24 +163,12 @@ source/baseline/data/psds/
 !requirements.txt
 !docs/_static/display_picture.jpg
 
-# Automatically added files
-sage/architectures/zoo/*ba.py
-sage/benchmark/evomcts
+# Third-party reference sources (LALSuite C, kept locally for the waveform ports)
 sage/data/waveform/lalsim_src
 
 # Experimental runs
 runs/o3b_dummy_1
-runs/test
-runs/*s
 runs/o3b/*_smoke
 
 # Run output symlinks (checkpoints/logs live on /work/nagarajan/sage_runs)
 runs/*/run_export_*
-
-# New network modules
-sage/architecture/network/attentive_*.py
-sage/architecture/network/sentry.py
-sage/architecture/network/[!_]*/
-
-# New integration tests
-tests/*_complex.py
