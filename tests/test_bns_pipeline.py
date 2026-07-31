@@ -797,7 +797,7 @@ class TestBNSPipelineIntegration:
 
     White Gaussian noise is already spectrally flat — no whitening is applied.
     The preprocessor is an identity pass-through (Preprocessor([])).
-    This matches how runs/bns/train.py is configured.
+    This matches how the BNS run driver is configured.
     """
 
     @pytest.fixture(scope="class")
@@ -887,7 +887,7 @@ class TestBNSPipelineIntegration:
     ):
         """
         to_network_input() on a FD_COARSE batch (no whitening) must return
-        (B, 2*D, N_coarse) — the format expected by BNSMamba3Lite.
+        (B, 2*D, N_coarse) — the format expected by the BNS sequence model.
         """
         cfg, _ = bns_cfg
         selector  = sampler_worst_case.selector
@@ -1199,7 +1199,7 @@ def test_blocked_fd_channel_indices_match_to_network_input():
 
     ``GWBatch.to_network_input`` emits a BLOCKED FD layout
     ``[d0_re, d1_re, ..., d0_im, d1_im, ...]``; ``blocked_detector_channel_indices``
-    (which BNSMamba3 uses to gather per-detector channels) must map detector d's
+    (which the BNS sequence model uses to gather per-detector channels) must map detector d's
     real part to channel d and its imaginary part to channel D+d. The old
     interleaved slice ``[2d, 2d+1]`` scrambled detectors for D>=2.
     """
