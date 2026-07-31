@@ -89,17 +89,18 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
     Call ``forward()`` to obtain a batch of detector-frame strain tensors
     and normalised parameter targets ready for network training.
 
-    Parameters (waveform math only)
-    --------------------------------
-    f : torch.Tensor, shape (B, F)
-        Frequency grid in Hz.
-    f_ref : torch.Tensor, shape (B, 1)
-        Reference frequency in Hz.
+    Unlike :class:`IMRPhenomD` and :class:`IMRPhenomXAS`, the frequency grid is
+    **not** passed to the constructor.  It is built at construction time from
+    the active data config — ``signal_low_frequency_cutoff`` up to
+    ``sample_rate / 2``, with ``df = 1 / padded_length_in_s`` — so
+    :func:`sage.core.config.register_configs` must have been called first.
+    Instantiate with no arguments for pure waveform math.
 
     Parameters (signal-sampler mode)
     ---------------------------------
     param_sampler : DistributionSampler or None
-        BNS parameter sampler built from ``runs/bns/gwconfig.yaml``.
+        BNS parameter sampler, built from the ``gwconfig.yaml`` of whichever
+        run driver is in use.
         When ``None`` the instance can still be used as pure waveform math.
     waveform_project : ConstantProjection or None
         Multi-detector projection module.

@@ -13,22 +13,56 @@ import torch
 pytest.importorskip("pycbc", reason="pycbc required for LALSim comparison")
 
 from sage.data.waveform.approximants.IMRPhenomXAS_NRTidalv3 import IMRPhenomXAS_NRTidalv3
+from sage.core.base_classes import BaseConfig, BaseDataConfig
+from sage.core.config import register_configs, get_cfg
 
 # ---------------------------------------------------------------------------
-# Shared physical setup
+# Shared physical setup — production BNS grid (T=295 s, 2048 Hz, f_low=20 Hz)
+#
+# IMRPhenomXAS_NRTidalv3 builds its own frequency grid from the active data
+# config; it does NOT take (f, f_ref) the way IMRPhenomD/IMRPhenomXAS do.  So a
+# config must be registered before instantiating, and the LAL comparison grid
+# below is derived from those same numbers.  These values match
+# test_waveform_all_approximants.py and test_waveform_nrt_corner_mismatch.py so
+# that the shared global config is consistent whatever order tests collect in.
 # ---------------------------------------------------------------------------
 
-FSAMP   = 4096.0
-SEG_LEN = 32.0
-NFREQ   = int(SEG_LEN * FSAMP) // 2 + 1
-DELTA_F = FSAMP / (2 * (NFREQ - 1))
+
+def _ensure_bns_config():
+    """Register the BNS production config if no suitable config is active yet."""
+    try:
+        cfg = get_cfg()
+        if not (hasattr(cfg, "batch_size") and cfg.batch_size <= 4):
+            raise RuntimeError("Wrong config active")
+    except RuntimeError:
+        class _Cfg:
+            batch_size    = 2
+            device        = "cpu"
+            dtype         = torch.float64
+            autocast      = False
+            class_balance = 0.5
+
+        class _DataCfg:
+            sample_rate                  = 2048.0
+            signal_low_frequency_cutoff  = 20.0
+            noise_low_frequency_cutoff   = 15.0
+            sample_length_in_s           = 287.0
+            padding_length_in_s          = 4.0
+
+        register_configs(BaseConfig(_Cfg()), BaseDataConfig(_DataCfg()))
+
+
+_ensure_bns_config()
+
+FSAMP   = 2048.0
+SEG_LEN = 295.0                              # 287 + 2 x 4 padding
+NFREQ   = int(FSAMP * SEG_LEN) // 2 + 1      # 302081
+DELTA_F = 1.0 / SEG_LEN
 DTYPE   = torch.float64
 F_LOW   = 20.0
 MSUN_S  = 4.925491025873693e-6
 
-_f_arr = torch.linspace(0.0, FSAMP / 2, NFREQ, dtype=DTYPE).unsqueeze(0)
-_f_ref = torch.tensor([[F_LOW]], dtype=DTYPE)
-_model  = IMRPhenomXAS_NRTidalv3(_f_arr, _f_ref)
+_model = IMRPhenomXAS_NRTidalv3()
 
 # Reference: symmetric 1.4+1.4 Msun BNS with Lambda=500
 _THETA_SYM = torch.tensor(
@@ -226,8 +260,10 @@ class TestNRTidalMismatch:
         theta   = torch.tensor(
             [[m1, m2, chi1z, chi2z, 100.0, 0.0, 0.0, 0.0, L1, L2]], dtype=DTYPE
         )
-        hp_sage, _ = _model.get_hphc(theta, reproduce_lal=True)
-        hp_sage_np  = hp_sage[0].detach().cpu().numpy()
+        with torch.no_grad():
+            hp_sage, _ = _model.get_hphc(theta, reproduce_lal=True)
+        # get_hphc returns complex64; pycbc.filter.match requires complex128.
+        hp_sage_np = hp_sage[0].detach().cpu().to(torch.complex128).numpy()
 
         mm = _mismatch(hp_lal, hp_sage_np)
         assert mm < self.THRESHOLD, (
