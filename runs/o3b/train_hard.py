@@ -72,7 +72,14 @@ from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 # Model and loss
 from sage.architecture.network import MSCNN1D_2DResNetCBAM_HardMining
 from sage.architecture.custom_losses import BCEWithPEsigmaLoss
-from sage.core.logger import HDF5LossLogger
+from sage.core.logger import (
+    HDF5LossLogger,
+    setup_logging,
+    get_logger,
+    format_duration,
+)
+
+logger = get_logger("sage.run.o3b.hard")
 
 # Optimiser and scheduler
 import torch.optim as optim
@@ -204,10 +211,18 @@ def run_hard():
     # model/optimiser/scheduler + global RNG and the mining bank are restored
     # *exactly* further down -- only the sampler streams advance. BASE_SEED and
     # SEED_STRIDE are module-level constants (shared with calibrate_ema).
+    # Logging: console + <export_dir>/logs/run.log. After set_configs, since
+    # that is what tells us where this run writes. SAGE_LOG_LEVEL=DEBUG for the
+    # verbose console format.
+    log_path = setup_logging(cfg.export_dir)
+    logger.info("Run: %s | detectors %s | runs %s",
+                cfg.export_dir, cfg.detectors, getattr(cfg, "train_runs", "?"))
+    logger.info("Logging to %s", log_path)
+
     start_epoch  = CheckpointManager.peek_next_epoch(cfg.export_dir)
     sampler_seed = BASE_SEED + SEED_STRIDE * start_epoch
-    print(f"[train_hard] start_epoch={start_epoch}  sampler_seed={sampler_seed}",
-          flush=True)
+    logger.info("Resume state: start_epoch=%d, sampler_seed=%d",
+                start_epoch, sampler_seed)
 
     # Seed the GLOBAL torch RNG (resume-aware) so the draws that use it -- sky
     # orientation/GMST (project.py) and the injection-slot randperm
@@ -403,7 +418,9 @@ def run_hard():
         cfg=cfg, data_cfg=data_cfg, model=model,
         optimizer=optimiser, scheduler=scheduler, scaler=scaler,
     )
-    logger = HDF5LossLogger(
+    # Named loss_logger, not logger: this writes the per-epoch loss array to
+    # HDF5 and is a different thing from the module's text logger.
+    loss_logger = HDF5LossLogger(
         path           = os.path.join(cfg.export_dir, "losses.h5"),
         num_epochs     = cfg.num_epochs,
         num_components = loss_function.num_components,
@@ -436,11 +453,11 @@ def run_hard():
                   f"{torch.cuda.max_memory_reserved()/1e9:.1f} GB  "
                   f"(device total {torch.cuda.get_device_properties(0).total_memory/1e9:.0f} GB)",
                   flush=True)
-        logger.log(trainer.loss_components, epoch, split="training")
+        loss_logger.log(trainer.loss_components, epoch, split="training")
         val_loss = None
         if epoch % 5 == 0 or epoch == cfg.num_epochs - 1:
             vanilla_val(nepoch=epoch)
-            logger.log(vanilla_val.loss_components, epoch, split="validation")
+            loss_logger.log(vanilla_val.loss_components, epoch, split="validation")
             val_loss = float(vanilla_val.loss_components[epoch][0].item())
         # best.pt tracks the lowest VALIDATION loss (persists across resume);
         # latest.pt + per-epoch epoch_{N}.pt are written every epoch (the

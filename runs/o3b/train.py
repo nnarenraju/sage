@@ -25,6 +25,7 @@ Documentation: NULL
 
 # Packages
 import os
+import time
 import torch
 
 # Optional extra silence
@@ -58,7 +59,14 @@ from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 # Model and loss
 from sage.architecture.network import MSCNN1D_2DResNetCBAM_Heteroscedastic
 from sage.architecture.custom_losses import BCEWithPEsigmaLoss
-from sage.core.logger import HDF5LossLogger
+from sage.core.logger import (
+    HDF5LossLogger,
+    setup_logging,
+    get_logger,
+    format_duration,
+)
+
+logger = get_logger("sage.run.o3b")
 
 # Optimiser and scheduler
 import torch.optim as optim
@@ -143,6 +151,13 @@ def run_sage():
     set_configs()
     cfg, data_cfg = get_cfg(), get_data_cfg()
 
+    # Logging: console + <export_dir>/logs/run.log. Must come after the config
+    # is registered, since that is what tells us where the run writes.
+    # SAGE_LOG_LEVEL=DEBUG turns on the verbose console format.
+    log_path = setup_logging(cfg.export_dir)
+    logger.info("Run: %s | detectors %s", cfg.export_dir, cfg.detectors)
+    logger.info("Logging to %s", log_path)
+
     # Training, validation and processor
     training_signal_sampler, training_noise_sampler, bounds = make_training_graph()
     validation_signal_sampler, validation_noise_sampler = make_validation_graph()
@@ -160,11 +175,17 @@ def run_sage():
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
+    logger.info(
+        "Model: %s | %s parameters (%s trainable)",
+        type(model).__name__, f"{total_params:,}", f"{trainable_params:,}",
+    )
 
+    # max-autotune costs several minutes on the first step. Say so, so a run
+    # that appears hung at startup is legible.
+    logger.info("Compiling model (torch.compile, max-autotune) -- first step will be slow")
+    _t_compile = time.time()
     model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=True)
-    print("Model compiled with torch.compile!")
+    logger.info("Compile requested in %s", format_duration(time.time() - _t_compile))
 
     loss_function = BCEWithPEsigmaLoss(regression_weight=0.005, coupling_weight=0.005)
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
@@ -205,25 +226,35 @@ def run_sage():
 
     ## TRAINING LOOP
 
-    logger = HDF5LossLogger(
+    # Named loss_logger, not logger: this writes the per-epoch loss array to
+    # HDF5, and is a different thing from the module's text logger above.
+    loss_logger = HDF5LossLogger(
         path=os.path.join(cfg.export_dir, "losses.h5"),
         num_epochs=cfg.num_epochs,
         num_components=train_sage.loss_function.num_components,
     )
 
+    logger.info("Starting training: %d epochs", cfg.num_epochs)
+    _t_run = time.time()
+
     for nepoch in range(cfg.num_epochs):
 
         # TRAINING
-        print(f"Epoch {nepoch}: Training Sage")
         train_sage(nepoch=nepoch)
-        logger.log(train_sage.loss_components, nepoch, split="training")
+        loss_logger.log(train_sage.loss_components, nepoch, split="training")
 
         # VALIDATION
         if (nepoch + 1) % 5 == 0 or nepoch == 0:
-            print(f"Epoch {nepoch}: Validating Sage")
             validate_sage(nepoch=nepoch)
-            logger.log(validate_sage.loss_components, nepoch, split="validation")
+            loss_logger.log(validate_sage.loss_components, nepoch, split="validation")
 
             # Saving total loss and checkpointing
             val_loss = validate_sage.loss_components[nepoch][0].item()
             ckpt_mgr.save(epoch=nepoch, val_loss=val_loss)
+            logger.info(
+                "Epoch %d | checkpoint saved | val loss %.5f | elapsed %s",
+                nepoch, val_loss, format_duration(time.time() - _t_run),
+            )
+
+    logger.info("Training complete: %d epochs in %s",
+                cfg.num_epochs, format_duration(time.time() - _t_run))
