@@ -26,7 +26,6 @@ Documentation: NULL
 import math
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 
 # LOCAL
 from sage.data.psd import get_fiducial_psds

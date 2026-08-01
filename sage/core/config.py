@@ -25,25 +25,12 @@ Documentation: NULL
 
 # Packages
 import torch
-import pathlib
-import matplotlib as mpl
 
 # LOCAL
 from sage.core.logger import get_logger
 
 # Logging
 logger = get_logger(__name__)
-
-# Directory containing style files (bundled with the core package)
-_STYLES_DIR = pathlib.Path(__file__).parent / "styles"
-
-# Pre-built styles
-AVAILABLE_STYLES = {
-    "classic": "classic.mplstyle",
-    "dark": "dark.mplstyle",
-    "publication": "publication.mplstyle",
-    "minimalist": "minimal.mplstyle",
-}
 
 _CFG = None
 _DATA_CFG = None
@@ -168,33 +155,3 @@ class ConfiguredModule(torch.nn.Module):
         self.data_cfg = get_data_cfg()
 
 
-class StyleConfig:
-    """
-    Base configuration class for Sage.
-
-    Users should subclass this and can optionally set:
-        1. mplstyle : str   (e.g., "dark")
-           Upon instantiation, the chosen style is automatically applied.
-
-    """
-
-    # Default if user doesn't specify one
-    mplstyle: str = "classic"
-
-    def __init__(self):
-        self.apply_style()
-
-    def apply_style(self):
-        """Load the user's chosen matplotlib style file."""
-        style_key = self.mplstyle
-
-        if style_key not in AVAILABLE_STYLES:
-            logger.warning(
-                f"Unknown mplstyle '{style_key}'. "
-                f"Available: {list(AVAILABLE_STYLES.keys())}"
-                f"Defaulting to classic."
-            )
-            style_key = "classic"
-
-        style_path = _STYLES_DIR / AVAILABLE_STYLES[style_key]
-        mpl.style.use(str(style_path))
