@@ -76,7 +76,6 @@ from sage.core.logger import (
     HDF5LossLogger,
     setup_logging,
     get_logger,
-    format_duration,
 )
 
 logger = get_logger("sage.run.o3b.hard")

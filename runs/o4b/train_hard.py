@@ -68,7 +68,13 @@ from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
 # Model and loss
 from sage.architecture.network import MSCNN1D_2DResNetCBAM_HardMining
 from sage.architecture.custom_losses import BCEWithPEsigmaLoss
-from sage.core.logger import HDF5LossLogger
+from sage.core.logger import (
+    HDF5LossLogger,
+    setup_logging,
+    get_logger,
+)
+
+logger = get_logger("sage.run.o4b.hard")
 
 # Optimiser and scheduler
 import torch.optim as optim
@@ -138,6 +144,13 @@ def run_hard():
 
     set_configs()
     cfg, data_cfg = get_cfg(), get_data_cfg()
+
+    # Logging: console + <export_dir>/logs/run.log. After set_configs, since
+    # that is what tells us where this run writes. SAGE_LOG_LEVEL=DEBUG for the
+    # verbose console format.
+    log_path = setup_logging(cfg.export_dir)
+    logger.info("Run: %s | detectors %s", cfg.export_dir, cfg.detectors)
+    logger.info("Logging to %s", log_path)
 
     os.makedirs(cfg.export_dir, exist_ok=True)
 
@@ -227,7 +240,7 @@ def run_hard():
         cfg=cfg, data_cfg=data_cfg, model=model,
         optimizer=optimiser, scheduler=scheduler, scaler=scaler,
     )
-    logger = HDF5LossLogger(
+    loss_logger = HDF5LossLogger(
         path           = os.path.join(cfg.export_dir, "losses.h5"),
         num_epochs     = cfg.num_epochs,
         num_components = loss_function.num_components,
@@ -248,10 +261,10 @@ def run_hard():
     # ── Epoch loop (train + mine, validate every 5) ───────────────────────────
     for epoch in range(start_epoch, cfg.num_epochs):
         trainer(nepoch=epoch)
-        logger.log(trainer.loss_components, epoch, split="training")
+        loss_logger.log(trainer.loss_components, epoch, split="training")
         if epoch % 5 == 0 or epoch == cfg.num_epochs - 1:
             vanilla_val(nepoch=epoch)
-            logger.log(vanilla_val.loss_components, epoch, split="validation")
+            loss_logger.log(vanilla_val.loss_components, epoch, split="validation")
         ckpt_mgr.save(epoch=epoch,
                       val_loss=float(trainer.loss_components[epoch][0].item()))
 
