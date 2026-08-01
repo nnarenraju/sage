@@ -57,7 +57,8 @@ Modules
    * - :mod:`sage.plotting`
      - Diagnostic plots: ROC curves, efficiency, parameter recovery, loss curves
    * - :mod:`sage.presets`
-     - Legacy run configs and shared data configs (see ``runs/`` for current examples)
+     - Named run presets. Currently empty and being rebuilt from the run
+       configs; use ``runs/`` as the source of truth in the meantime.
    * - :mod:`sage.utils`
      - Checkpointing, timing utilities, Condor job submission
 

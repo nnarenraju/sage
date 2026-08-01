@@ -95,7 +95,7 @@ sage/
 │   ├── exec/               # Pipeline orchestration
 │   ├── factory/            # Training, validation, schedulers, callbacks
 │   ├── plotting/           # Diagnostic and publication plotting
-│   ├── presets/            # Legacy configs and shared data configs
+│   ├── presets/            # Named run presets (being rebuilt from runs/)
 │   └── utils/              # Checkpointing, timing, Condor utilities
 ├── runs/                   # Run scripts for specific experiments
 ├── repro/                  # Reproducibility notebooks and configuration
@@ -134,19 +134,20 @@ Full API documentation is available at **[sage-gw.readthedocs.io](https://sage-g
 
 ## Testing
 
-A minimal smoke test for configuration registration:
+A minimal smoke test that the package imports and the main training path is
+wired up:
 
 ```bash
 python -c "
-from sage.core.config import register_configs
-from sage.presets.data_configs import Default as data_cfg
-from sage.presets.configs import DefaultConfig as cfg
-register_configs(cfg, data_cfg)
-print('Config registration: OK')
+import sage.dsp
+from sage.data.waveform import read_from_config, IMRPhenomPv2
+from sage.data.noise import MemmapNoiseSampler
+from sage.factory.training import SageVanillaTraining
+print('Sage imports: OK')
 "
 ```
 
-Individual module tests can be run with pytest (where present):
+Run the test suite with pytest:
 
 ```bash
 pytest tests/ -v

@@ -56,7 +56,7 @@ Repository layout
     │   ├── exec/               # Pipeline orchestration
     │   ├── factory/            # Training, validation, schedulers, callbacks
     │   ├── plotting/           # Diagnostic and publication plotting
-    │   ├── presets/            # Legacy configs and shared data configs
+    │   ├── presets/            # Named run presets (being rebuilt from runs/)
     │   └── utils/              # Checkpointing, timing, Condor utilities
     ├── runs/                   # Run scripts for specific experiments
     ├── repro/                  # Reproducibility notebooks and configuration
