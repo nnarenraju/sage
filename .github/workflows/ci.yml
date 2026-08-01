@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   syntax-check:
     name: Syntax check
@@ -19,7 +23,7 @@ jobs:
           python-version: "3.11"
 
       - name: Check Python syntax
-        run: python -m py_compile $(find sage -name '*.py' | tr '\n' ' ')
+        run: python -m py_compile $(git ls-files 'sage/**.py' | tr '\n' ' ')
 
   import-check:
     name: Import smoke test
@@ -31,25 +35,47 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      - name: Install minimal dependencies
+      # Installs WITHOUT --no-deps, so this job also verifies that the
+      # dependency set declared in pyproject.toml actually resolves.
+      - name: Install package and declared dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy scipy
-          pip install -e . --no-deps
+          pip install -e .
 
       - name: Smoke test core imports
         run: |
-          python -c "
+          python - <<'PY'
           import sage.dsp
           from sage.dsp import (
               FrequencyBand, FrequencyBandLayout, FrequencyMultibandCompressor,
+              describe_layout,
               make_dyadic_frequency_bands, make_prior_informed_frequency_bands,
-              apply_heterodyne, compute_reference_phase,
+              make_empirical_frequency_bands,
+              heterodyne, apply_phase,
+              analytic_signal, instantaneous_frequency,
+              decimate, halfband_kernel, rate_and_factor,
           )
-          print('sage.dsp imports: OK')
-          "
+          missing = [n for n in sage.dsp.__all__ if not hasattr(sage.dsp, n)]
+          assert not missing, f"__all__ names missing from sage.dsp: {missing}"
+          print(f"sage.dsp imports OK ({len(sage.dsp.__all__)} public names)")
+          PY
+
+      - name: Smoke test the documented training-path imports
+        run: |
+          python - <<'PY'
+          from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
+          from sage.data.noise import MemmapNoiseSampler, RecolourPostprocess
+          from sage.dsp.whiten import FiducialWhitening
+          from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
+          from sage.architecture.network import MSCNN1D_2DResNetCBAM_Heteroscedastic
+          from sage.factory.training import SageVanillaTraining
+          from sage.factory.validation import SageVanillaValidation
+          from sage.core.graph import Preprocessor
+          print("training-path imports OK")
+          PY
 
   tests:
     name: Run tests
@@ -64,13 +90,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy scipy tqdm h5py matplotlib scikit-learn pytest pytest-cov ribs astropy
-          pip install -e . --no-deps
+          pip install -e ".[dev,mining]"
 
       - name: Run tests with coverage
         run: |
@@ -88,3 +114,33 @@ jobs:
         uses: codecov/test-results-action@v1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Waveform correctness against LALSim. Kept separate from `tests` so that a
+  # lalsuite/pycbc packaging problem shows up as its own red job instead of
+  # masking an ordinary test failure. Without this job the ~80 physics tests
+  # silently `importorskip` and never run.
+  physics:
+    name: Waveform validation vs LALSim
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install with LALSuite
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,mining,lal]"
+
+      - name: Confirm LALSim is actually importable
+        run: |
+          python -c "import pycbc, lalsimulation; print('pycbc', pycbc.__version__)"
+
+      - name: Run waveform validation
+        run: |
+          pytest tests/ -v --tb=short -k "waveform or bns or multiband or recolour"
