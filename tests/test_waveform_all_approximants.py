@@ -21,6 +21,7 @@ from sage.data.waveform.approximants.IMRPhenomD   import IMRPhenomD
 from sage.data.waveform.approximants.IMRPhenomXAS import IMRPhenomXAS
 from sage.data.waveform.approximants.IMRPhenomPv2 import IMRPhenomPv2
 from sage.data.waveform import IMRPhenomXAS_NRTidalv3
+from sage.data.waveform import waveform_utils
 
 # ---------------------------------------------------------------------------
 # Per-model mismatch thresholds (flat PSD, reproduce_lal=True vs LALSim)
@@ -28,13 +29,16 @@ from sage.data.waveform import IMRPhenomXAS_NRTidalv3
 #   IMRPhenomXAS: verified < 1.5e-5 across parameter space
 #   IMRPhenomPv2: worst-case ~1.14e-7; 5e-4 covers edge cases
 #   NRTidalv3   : verified ~4e-9 across BNS space
-#   MB amp err  : coarse vs full-res amplitude; phase < 1e-3 rad is the key metric
+#   MB amp err  : coarse vs full-res amplitude; phase < 1e-3 rad is the key metric.
+#                 Measured 5.74e-08 - 5.93e-08 over 20 independent BNS draws
+#                 (systematic interpolation floor, ~3% spread), so 1e-6 leaves
+#                 ~17x headroom while still catching a real regression.
 # ---------------------------------------------------------------------------
 THRESH_D   = 5e-4
 THRESH_XAS = 2e-5
 THRESH_PV2 = 5e-4
 THRESH_NRT = 1e-6
-THRESH_MB  = 2e-2
+THRESH_MB  = 1e-6
 
 DTYPE  = torch.float64
 N_PTS  = 5
@@ -49,8 +53,13 @@ BBH_FL = 20.0
 BBH_DF = 1.0 / BBH_T
 BBH_N  = int(BBH_SR * BBH_T) // 2 + 1   # 16385
 
-_f_bbh  = torch.linspace(0.0, BBH_SR / 2, BBH_N, dtype=DTYPE).unsqueeze(0)
-_fr_bbh = torch.tensor([[BBH_FL]], dtype=DTYPE)
+# IMRPhenomD/XAS/Pv2 expect a grid that STARTS at f_low and pad the
+# 0 -> f_low bins themselves (self.n_pad).  Handing them a grid from 0 Hz gives
+# n_pad = 0 and evaluates the PN amplitude at f = 0, producing NaN.  get_freqs
+# builds the grid the models actually expect: n_pad + len(f) == BBH_N.
+_f_bbh, _fr_bbh = waveform_utils.get_freqs(
+    BBH_FL, BBH_SR / 2.0, BBH_T, batch_size=1, device="cpu", dtype=DTYPE
+)
 
 _model_D   = IMRPhenomD(_f_bbh, _fr_bbh)
 _model_XAS = IMRPhenomXAS(_f_bbh, _fr_bbh)
@@ -339,10 +348,19 @@ _mb_valid     = (
 )
 
 
+# Amplitude floor for the multiband comparison, as a fraction of peak |h|.
+# This must be a physically meaningful fraction, not merely "non-zero": a 1e-40
+# floor admits post-merger tail bins sitting at ~1e-19 of peak, where a float64
+# relative error is pure numerical noise.  On one BNS draw a single bin at
+# |h|=2e-44 (7.8e-19 of peak) produced a spurious 3e-2 "error" while every bin
+# carrying actual signal agreed to 5.8e-08.
+_AMP_FLOOR = 1e-8
+
+
 def _coarse_amp_err(a, b):
-    """Max relative amplitude error over bins where b is above noise floor."""
+    """Max relative amplitude error over bins where b carries real signal."""
     amp_b = np.abs(b)
-    mask  = amp_b > 1e-40 * amp_b.max()
+    mask  = amp_b > _AMP_FLOOR * amp_b.max()
     if not mask.any():
         return 0.0
     return float(np.max(np.abs(np.abs(a[mask]) - amp_b[mask]) / amp_b[mask]))
