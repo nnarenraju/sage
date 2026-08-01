@@ -43,11 +43,12 @@ from typing import Union, List, Sequence
 from sage.core.errors import safe_call
 from sage.core.utils import to_sequence
 from sage.core.typing import SEGMENT_DTYPE
-from sage.core.logger import get_logger, setup_logging
+from sage.core.logger import get_logger
 from sage.core.hardcode import _DETECTORS, _check_detector_prefixes
 
+# Importing a module must not configure logging for the whole process -- that
+# is the caller's decision. Whoever runs this calls sage.core.logger.setup_logging().
 logger = get_logger(__name__)
-setup_logging("logs")
 
 
 def get_all_detnames():

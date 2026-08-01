@@ -462,9 +462,12 @@ class SageDirector:
 
 if __name__ == "__main__":
 
-    # Initialising logger
-    # sets up main log and console output
-    setup_logging("logs")
+    # Console logging only at this point: the export directory is not known
+    # until the config is loaded below. SageDirector re-calls setup_logging()
+    # with the resolved export_dir, which attaches the run's log file.
+    # setup_logging() is idempotent, so the second call replaces this handler
+    # rather than duplicating output.
+    setup_logging()
 
     # Parse command-line arguments
     opts = parse_args()

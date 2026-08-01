@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 # Logging essentials
+import os
 import sys
 import h5py
 import torch
@@ -36,78 +37,152 @@ from pathlib import Path
 from sage.utils.atomic_io import atomic_h5
 
 
-def setup_logging(log_dir: str = "logs", level: int = logging.INFO):
+# Marker attribute stamped on handlers Sage installs, so setup_logging() can
+# be called again (a resumed segment, a notebook re-run) without stacking
+# duplicate handlers and printing everything twice.
+_SAGE_HANDLER = "_sage_handler"
+
+# Console: readable at a glance. No module:lineno at INFO -- that detail is
+# noise when you are watching a run, and it is always in the file anyway.
+_CONSOLE_FMT = "%(asctime)s | %(levelname)-7s | %(message)s"
+_CONSOLE_FMT_DEBUG = "%(asctime)s | %(levelname)-7s | %(name)s:%(lineno)d | %(message)s"
+_CONSOLE_DATEFMT = "%H:%M:%S"
+
+# File: full provenance, always. The file is for reading after the fact.
+_FILE_FMT = "%(asctime)s | %(levelname)-7s | %(name)s:%(lineno)d | %(message)s"
+_FILE_DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+
+def format_duration(seconds) -> str:
+    """Render a duration as ``'2h 04m'``, ``'39m 12s'`` or ``'18s'``.
+
+    Used for epoch timings and ETAs so long runs read naturally in the log
+    rather than as a raw float.
     """
-    Configure global and per-module logging.
+    seconds = int(max(0, seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m"
+    if m:
+        return f"{m}m {s:02d}s"
+    return f"{s}s"
 
-    Args:
-        log_dir (str): Directory where log files are stored.
-        level (int): Minimum logging level.
+
+def _resolve_level(level=None) -> int:
+    """Resolve the console level: explicit arg, then $SAGE_LOG_LEVEL, then INFO."""
+    if level is not None:
+        return logging._nameToLevel.get(level, level) if isinstance(level, str) else level
+    env = os.environ.get("SAGE_LOG_LEVEL")
+    if env:
+        resolved = logging._nameToLevel.get(env.strip().upper())
+        if resolved is None:
+            raise ValueError(
+                f"SAGE_LOG_LEVEL={env!r} is not a valid level. "
+                f"Use one of: {', '.join(sorted(logging._nameToLevel))}."
+            )
+        return resolved
+    return logging.INFO
+
+
+def setup_logging(export_dir=None, level=None, console: bool = True, filename: str = "run.log"):
     """
-    log_dir = Path(log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
+    Attach Sage's log handlers. Call this **once**, at the start of a run.
 
-    # Formatter for all logs
-    formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    This is the only function that configures handlers. :func:`get_logger` is
+    deliberately inert, so importing a Sage module never touches the
+    filesystem and never emits anything.
 
-    # --- Main log file (all logs) ---
-    main_log = log_dir / "main.log"
-    main_handler = logging.FileHandler(main_log, mode="a")
-    main_handler.setFormatter(formatter)
-    main_handler.setLevel(level)
+    Parameters
+    ----------
+    export_dir : str or Path or None
+        The run's export directory. Logs are written to
+        ``<export_dir>/logs/<filename>``, so they live with the run they
+        describe rather than in whatever directory the job happened to start
+        in. When ``None``, no file is written and logging goes to the console
+        only -- appropriate for notebooks and one-off scripts.
+    level : int or str or None
+        Console verbosity. Defaults to ``$SAGE_LOG_LEVEL`` if set, else
+        ``INFO``. The *file* always records DEBUG regardless, so turning the
+        console down never loses detail you might need afterwards.
+    console : bool
+        Attach a stdout handler. Disable for jobs where stdout is captured
+        separately.
+    filename : str
+        Log file name within ``<export_dir>/logs/``.
 
-    # --- Stream handler (console) ---
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(level)
+    Returns
+    -------
+    pathlib.Path or None
+        The log file path, or ``None`` if ``export_dir`` was not given.
 
-    # Configure root logger (collects everything)
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-
-    # Avoid duplicate handlers when reloading
-    if not root_logger.handlers:
-        root_logger.addHandler(main_handler)
-        root_logger.addHandler(console_handler)
-
-
-def get_logger(module_name: str, log_dir: str = "logs") -> logging.Logger:
+    Notes
+    -----
+    Safe to call more than once: previously installed Sage handlers are
+    removed first, so a resumed run does not double-log.
     """
-    Get a logger for a specific module.
-    Each module has its own log file + logs also go to the main file.
+    console_level = _resolve_level(level)
 
-    Args:
-        module_name (str): Name of the module.
-        log_dir (str): Directory where log files are stored.
+    root = logging.getLogger()
+    # Root must pass DEBUG through; the handlers decide what is actually shown.
+    root.setLevel(logging.DEBUG)
 
-    Returns:
-        logging.Logger: Configured logger instance
-    """
+    # Drop handlers we installed previously (leave anyone else's alone).
+    for h in [h for h in root.handlers if getattr(h, _SAGE_HANDLER, False)]:
+        root.removeHandler(h)
+        h.close()
 
-    logger = logging.getLogger(module_name)
-    logger.setLevel(logging.DEBUG)
-
-    # Per-module log file
-    log_path = Path(log_dir)
-    log_path.mkdir(parents=True, exist_ok=True)
-    module_log = log_path / f"{module_name}.log"
-
-    if not any(
-        isinstance(h, logging.FileHandler) and h.baseFilename == str(module_log)
-        for h in logger.handlers
-    ):
-        formatter = logging.Formatter(
-            fmt="%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
+    if console:
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setLevel(console_level)
+        ch.setFormatter(
+            logging.Formatter(
+                _CONSOLE_FMT_DEBUG if console_level <= logging.DEBUG else _CONSOLE_FMT,
+                datefmt=_CONSOLE_DATEFMT,
+            )
         )
-        file_handler = logging.FileHandler(module_log, mode="a")
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        setattr(ch, _SAGE_HANDLER, True)
+        root.addHandler(ch)
 
-    return logger
+    log_path = None
+    if export_dir is not None:
+        log_dir = Path(export_dir) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / filename
+
+        fh = logging.FileHandler(log_path, mode="a")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(_FILE_FMT, datefmt=_FILE_DATEFMT))
+        setattr(fh, _SAGE_HANDLER, True)
+        root.addHandler(fh)
+
+    return log_path
+
+
+def get_logger(module_name: str) -> logging.Logger:
+    """
+    Return the logger for a module. Has no side effects.
+
+    Safe to call at module scope -- it creates no directories, opens no files
+    and installs no handlers. Until :func:`setup_logging` runs, records simply
+    go nowhere (Python's last-resort handler still surfaces WARNING and above
+    on stderr, so genuine problems are never silently swallowed).
+
+    This used to create a ``logs/`` directory and a per-module log file at call
+    time. Because it is called at module scope throughout the package, merely
+    importing Sage scattered ``logs/`` directories into whatever directory the
+    caller happened to be in, and would fail outright on a read-only one.
+
+    Parameters
+    ----------
+    module_name : str
+        Usually ``__name__``.
+
+    Returns
+    -------
+    logging.Logger
+    """
+    return logging.getLogger(module_name)
 
 
 class TensorRingBuffer:
