@@ -47,12 +47,29 @@ dependencies = [
   "astropy>=5.3",
   "gwpy>=3.0",
   "torch>=2.1",
+  # Read by sage.data.waveform.sampler.read_from_config, which parses the
+  # gwconfig.yaml on the main training path — not optional.
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 lal = [
   "lalsuite>=7.0",
   "pycbc>=2.2",
+]
+# GWOSC data download and segment preparation (sage.data.primer).
+download = [
+  "requests>=2.28",
+  "urllib3>=1.26",
+  "gwosc>=0.7",
+]
+# Quality-diversity hard-noise mining (sage.data.noise.cma_mae_mining).
+mining = [
+  "ribs>=0.7",
+]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
 ]
 
 [project.urls]

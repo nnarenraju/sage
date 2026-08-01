@@ -1,4 +1,10 @@
-# requirements for most basic use
+# Convenience list for `pip install -r requirements.txt`.
+#
+# pyproject.toml is authoritative: `pip install -e .` installs exactly the
+# runtime dependencies below, plus the optional extras this file cannot
+# express ([lal], [download], [mining], [dev]). Keep the two in sync.
+
+# --- runtime (mirrors [project.dependencies]) ---
 numpy>=1.24
 scipy>=1.10
 pandas>=2.0
@@ -7,11 +13,14 @@ tqdm>=4.65
 matplotlib>=3.7
 scikit-learn>=1.3
 astropy>=5.3
+gwpy>=3.0
+pyyaml>=6.0
 
-# Torch should not always be installed this way
-# TODO: setup an automatic checker and installer
+# PyTorch: the right build depends on your CUDA version. For CPU-only, or if
+# the default wheel does not match your driver, install it first using the
+# command from https://pytorch.org/get-started/locally/ and then run this file.
 torch>=2.1
 
+# --- [lal] extra: required to validate waveforms against LALSim ---
 lalsuite>=7.0
 pycbc>=2.2
-gwpy>=3.0
