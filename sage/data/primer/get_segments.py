@@ -9,7 +9,7 @@ Created on 2025-11-06 15:06:12
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2025, Sage
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A

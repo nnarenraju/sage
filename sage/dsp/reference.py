@@ -37,7 +37,7 @@ Created on 2026-07-07
 
 __author__      = Narenraju Nagarajan
 __copyright__   = Copyright 2026, Sage
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __status__      = inProgress
 """
 

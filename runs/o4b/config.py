@@ -6,7 +6,7 @@ Filename        : config.py
 Description     : O4b run configuration.
 
 __author__        = Narenraju Nagarajan
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __status__        = ['inUsage']
 """
 

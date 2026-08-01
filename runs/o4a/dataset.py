@@ -10,7 +10,7 @@ written into its OWN release sub-folder (data_release_o4a) so it can never
 collide with other concurrent downloads.
 
 __author__        = Narenraju Nagarajan
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __status__        = ['inUsage']
 """
 

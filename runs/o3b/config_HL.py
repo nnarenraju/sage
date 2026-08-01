@@ -9,7 +9,7 @@ Created on 2026-03-16 11:45:28
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
