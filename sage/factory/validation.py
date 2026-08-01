@@ -12,6 +12,8 @@ SageVanillaValidation
 """
 
 import os
+import sys
+import time
 import h5py
 import torch
 import torch.nn.functional as F
@@ -20,8 +22,11 @@ from tqdm import tqdm
 from contextlib import nullcontext
 
 from sage.core.config import get_cfg
+from sage.core.logger import get_logger, format_duration as _fmt_duration
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
 from sage.utils.atomic_io import atomic_h5
+
+logger = get_logger(__name__)
 
 
 def save_validation(nepoch, output, target, params, signal_idx, savepath):
@@ -168,9 +173,22 @@ class SageVanillaValidation(torch.nn.Module):
             "network_target": [],
         }
 
+        # See the note in training.forward: a tqdm bar on a non-TTY fills the
+        # job's .out file with carriage-return redraws.
+        interactive = sys.stdout.isatty()
+        t_epoch = time.time()
+        logger.info(
+            "Epoch %d | validating: %d iterations", nepoch, self.num_iterations
+        )
+
         with torch.inference_mode():
 
-            for _ in tqdm(range(self.num_iterations)):
+            for _ in tqdm(
+                range(self.num_iterations),
+                disable=not interactive,
+                desc=f"epoch {nepoch} val",
+                leave=False,
+            ):
 
                 # ── 1. Sample ─────────────────────────────────────────────
                 signal_data, signal_targets, theta = self.signal_sampler(
@@ -256,6 +274,15 @@ class SageVanillaValidation(torch.nn.Module):
                 self.loss_components[nepoch] += loss.detach()
 
         self.loss_components[nepoch] /= self.num_iterations
+
+        comps = self.loss_components[nepoch].detach().cpu()
+        logger.info(
+            "Epoch %d | val   loss %.5f | components [%s] | %s",
+            nepoch,
+            comps[0].item(),
+            ", ".join(f"{c:.5f}" for c in comps[1:].tolist()),
+            _fmt_duration(time.time() - t_epoch),
+        )
 
         # ── Save diagnostic outputs ───────────────────────────────────────
         network_output = torch.vstack(diagnostics["network_output"])

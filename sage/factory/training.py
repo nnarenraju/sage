@@ -27,6 +27,8 @@ SageVanillaTraining
 """
 
 # Packages
+import sys
+import time
 import torch
 
 from tqdm import tqdm
@@ -34,8 +36,11 @@ from contextlib import nullcontext
 
 # LOCAL
 from sage.core.config import get_cfg
+from sage.core.logger import get_logger, format_duration as _fmt_duration
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
 from .schedulers import ManageScheduler
+
+logger = get_logger(__name__)
 
 
 class SageVanillaTraining(torch.nn.Module):
@@ -187,7 +192,27 @@ class SageVanillaTraining(torch.nn.Module):
         self.model.train()
         device = self.cfg.device
 
-        for nbatch in tqdm(range(self.num_iterations)):
+        # A progress bar is useful interactively and actively harmful in a
+        # batch job: tqdm repaints with carriage returns, which a SLURM .out
+        # file records verbatim, so a long run buries its own output under
+        # hundreds of MB of redraw. Show the bar on a TTY; on anything else
+        # emit a periodic single line instead.
+        interactive = sys.stdout.isatty()
+        log_every = max(1, self.num_iterations // 10)
+        t_epoch = time.time()
+
+        logger.info(
+            "Epoch %d | training: %d iterations, batch %d",
+            nepoch, self.num_iterations, self.cfg.batch_size,
+        )
+
+        _iter = tqdm(
+            range(self.num_iterations),
+            disable=not interactive,
+            desc=f"epoch {nepoch} train",
+            leave=False,
+        )
+        for nbatch in _iter:
 
             # ── 1. Sample ─────────────────────────────────────────────────
             signal_data, signal_targets = self.signal_sampler()
@@ -272,6 +297,23 @@ class SageVanillaTraining(torch.nn.Module):
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
             self.loss_components[nepoch] += loss.detach()
 
+            # ── Progress reporting ────────────────────────────────────────
+            done = nbatch + 1
+            if interactive:
+                if done % 50 == 0:
+                    running = (self.loss_components[nepoch][0] / done).item()
+                    _iter.set_postfix(loss=f"{running:.4f}")
+            elif done % log_every == 0 or done == self.num_iterations:
+                running = (self.loss_components[nepoch][0] / done).item()
+                elapsed = time.time() - t_epoch
+                rate = done / max(elapsed, 1e-9)
+                logger.info(
+                    "  epoch %d | %3.0f%% (%d/%d) | loss %.4f | %.1f it/s | eta %s",
+                    nepoch, 100.0 * done / self.num_iterations, done,
+                    self.num_iterations, running, rate,
+                    _fmt_duration((self.num_iterations - done) / max(rate, 1e-9)),
+                )
+
             # Per-batch callback hook (e.g. per-step weight EMA).
             for cb in self.callbacks:
                 cb.on_batch_end(nbatch, nepoch, self)
@@ -281,3 +323,22 @@ class SageVanillaTraining(torch.nn.Module):
             cb.on_epoch_end(nepoch, self)
 
         self.loss_components[nepoch] /= self.num_iterations
+
+        # One summary line per epoch. This is the record that matters when
+        # reading back a multi-day run, and until now nothing was emitted at
+        # all -- a 46-hour job reported no loss whatsoever.
+        comps = self.loss_components[nepoch].detach().cpu()
+        elapsed = time.time() - t_epoch
+        try:
+            lr = self.optimiser.param_groups[0]["lr"]
+        except (AttributeError, IndexError, KeyError):
+            lr = float("nan")
+        logger.info(
+            "Epoch %d | train loss %.5f | components [%s] | lr %.3e | %.1f it/s | %s",
+            nepoch,
+            comps[0].item(),
+            ", ".join(f"{c:.5f}" for c in comps[1:].tolist()),
+            lr,
+            self.num_iterations / max(elapsed, 1e-9),
+            _fmt_duration(elapsed),
+        )
