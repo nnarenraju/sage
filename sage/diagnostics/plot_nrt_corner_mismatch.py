@@ -9,11 +9,11 @@ Usage
 -----
 Run from the sage root directory::
 
-    python -m sage.debug.plot_nrt_corner_mismatch
+    python -m sage.diagnostics.plot_nrt_corner_mismatch
 
 or::
 
-    python sage/debug/plot_nrt_corner_mismatch.py [--n_samples N] [--seed S] [--out PATH]
+    python sage/diagnostics/plot_nrt_corner_mismatch.py [--n_samples N] [--seed S] [--out PATH]
 
 The BNS production config (T=295 s, 2048 Hz, f_low=20 Hz) is set up inline;
 no external run-config files are required.

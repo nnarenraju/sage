@@ -1,7 +1,7 @@
 """
 Statistical mismatch verification for IMRPhenomXAS_NRTidalv3 across random BNS draws.
 Adapted from runs/corner_mismatch_nrt.py (computation portion; corner plot is in
-sage/debug/plot_nrt_corner_mismatch.py).
+sage/diagnostics/plot_nrt_corner_mismatch.py).
 
 Uses the production BNS grid (T=295 s, 2048 Hz, f_low=20 Hz) and draws 10 random
 BNS systems from the same prior as the corner plot (m=[1,3] Msun, |chi|<0.4,
