@@ -83,7 +83,7 @@ logger = get_logger("sage.run.o3b.hard")
 # Optimiser and scheduler
 import torch.optim as optim
 from torch.optim.lr_scheduler import (LinearLR, CosineAnnealingLR, SequentialLR,
-                                      CosineAnnealingWarmRestarts, ConstantLR)
+                                      CosineAnnealingWarmRestarts)
 
 # Training / validation / hard mining
 from sage.factory.training import SageVanillaTraining
@@ -293,36 +293,20 @@ def run_hard():
         )
     else:
         warmup_steps = min(getattr(cfg, "warmup_steps", 5000), max(1, total_steps // 2))
-        _base_lr, _eta_min = 2e-4, 1e-6
-        # Faster-anneal knob: cfg.anneal_fraction f in (0,1] anneals the cosine to
-        # eta_min over the FIRST f of the post-warmup run, then HOLDS at eta_min for
-        # the rest (front-loads the decay; ep-gain analysis showed the long high-LR
-        # tail buys almost nothing). Default 1.0 => original single cosine unchanged.
-        _af = float(getattr(cfg, "anneal_fraction", 1.0))
+        _eta_min = 1e-6
         _post = max(1, total_steps - warmup_steps)
-        if _af < 1.0:
-            _cos = max(1, int(_af * _post))
-            scheduler = SequentialLR(
-                optimiser,
-                schedulers=[
-                    LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
-                    CosineAnnealingLR(optimiser, T_max=_cos, eta_min=_eta_min),
-                    # hold at eta_min for the rest; total_iters > remaining steps so
-                    # ConstantLR never reverts to base_lr before the run ends.
-                    ConstantLR(optimiser, factor=_eta_min / _base_lr,
-                               total_iters=total_steps),
-                ],
-                milestones=[warmup_steps, warmup_steps + _cos],
-            )
-        else:
-            scheduler = SequentialLR(
-                optimiser,
-                schedulers=[
-                    LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
-                    CosineAnnealingLR(optimiser, T_max=_post, eta_min=_eta_min),
-                ],
-                milestones=[warmup_steps],
-            )
+        # Short linear warmup, then a SINGLE full-length cosine decaying base_lr->eta_min
+        # over the WHOLE post-warmup run, so the final checkpoint is fully annealed.
+        # (The removed anneal_fraction variant did "cosine then HOLD at eta_min", which
+        # floored the LR mid-run and left the back half crawling at 1e-6.)
+        scheduler = SequentialLR(
+            optimiser,
+            schedulers=[
+                LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
+                CosineAnnealingLR(optimiser, T_max=_post, eta_min=_eta_min),
+            ],
+            milestones=[warmup_steps],
+        )
     # AMP dtype: bf16 on GPUs that support it (H100 etc.) — full fp32 exponent
     # range, so NO GradScaler is needed and there's no fp16 underflow; fall back
     # to fp16 + GradScaler on older GPUs (Micikevicius et al. ICLR 2018).

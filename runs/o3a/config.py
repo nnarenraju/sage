@@ -61,7 +61,6 @@ class O3aCFG:
     warmup_steps = 20_000          # linear LR warmup (~0.6 epoch at batch 64)
     ema_decay = 0.9999             # per-step weight EMA (the deliverable model)
     keep_last_ckpts = 2            # keep 2 newest epoch_N restart points; best.pt/ema.pt always kept
-    anneal_fraction = 0.5          # cosine -> eta_min over first half of post-warmup, then hold (faster decay)
 
     # New pipeline features -- explicit = ON for production:
     use_blurpool = True            # anti-aliased BlurPool downsampling (front + backend)
