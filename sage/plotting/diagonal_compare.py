@@ -118,7 +118,13 @@ def plot_diagonal_compare(
             cbar = fig.colorbar(sc)
             cbar.set_label("Network SNR")
         else:
-            ax.scatter(pred, true, s=8, alpha=0.25, color="tab:blue")
+            # With ~100k signals and nothing to colour by, a scatter saturates
+            # into a solid block and hides all density structure. A hexbin
+            # shows where the samples actually are.
+            hb = ax.hexbin(pred, true, gridsize=60, bins="log", mincnt=1,
+                           cmap="viridis")
+            cbar = fig.colorbar(hb)
+            cbar.set_label("count (log)")
 
         ax.set_xlabel(f"Predicted [{param}]")
         ax.set_ylabel(f"True [{param}]")
