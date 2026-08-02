@@ -28,6 +28,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_diagonal_compare(
@@ -65,7 +66,7 @@ def plot_diagonal_compare(
     """
 
     if save and export_dir is not None:
-        base_dir = os.path.join(export_dir, f"DIAGONAL/epoch_{epoch}")
+        base_dir = os.path.join(export_dir, f"DIAGONAL/{_etag(epoch)}")
         os.makedirs(base_dir, exist_ok=True)
     else:
         base_dir = None
@@ -75,7 +76,13 @@ def plot_diagonal_compare(
     # --------------------------------------------
     signal_mask = labels == 1.0
 
-    snr_sig = network_snrs[signal_mask]
+    # Colour-by-SNR is optional: the optimal SNR is computed during signal
+    # generation but is not currently recorded in the validation output, so on
+    # most runs there is nothing to colour by. Fall back to uncoloured points
+    # rather than substituting a different quantity (chirp distance was
+    # previously standing in, on an axis labelled SNR).
+    has_snr = network_snrs is not None
+    snr_sig = np.asarray(network_snrs)[signal_mask] if has_snr else None
 
     cmap = cm.get_cmap("RdYlBu_r")
 
@@ -90,35 +97,32 @@ def plot_diagonal_compare(
         # --------------------------------------------
         # order by SNR (nice visual layering)
         # --------------------------------------------
-        order = np.argsort(snr_sig)
+        if has_snr:
+            order = np.argsort(snr_sig)
+            snr = snr_sig[order]
+            high = snr > 8.0
+        else:
+            order = np.arange(len(pred))
+            snr, high = None, None
 
         pred = pred[order]
         true = true[order]
-        snr = snr_sig[order]
-
-        # SNR > 8 subset
-        high = snr > 8.0
 
         # --------------------------------------------
         # FULL scatter
         # --------------------------------------------
         fig, ax = plt.subplots(figsize=(7, 6))
 
-        sc = ax.scatter(
-            pred,
-            true,
-            c=snr,
-            cmap=cmap,
-            s=20,
-            alpha=0.8,
-        )
-
-        cbar = fig.colorbar(sc)
-        cbar.set_label("Network SNR")
+        if has_snr:
+            sc = ax.scatter(pred, true, c=snr, cmap=cmap, s=20, alpha=0.8)
+            cbar = fig.colorbar(sc)
+            cbar.set_label("Network SNR")
+        else:
+            ax.scatter(pred, true, s=8, alpha=0.25, color="tab:blue")
 
         ax.set_xlabel(f"Predicted [{param}]")
         ax.set_ylabel(f"True [{param}]")
-        ax.set_title(f"Diagonal Plot of {param} at {epoch}")
+        ax.set_title(f"Diagonal Plot of {param} at {_etitle(epoch)}")
         ax.grid(True, ls=":")
 
         # diagonal reference
@@ -142,7 +146,8 @@ def plot_diagonal_compare(
         # --------------------------------------------
         # HIGH SNR scatter
         # --------------------------------------------
-        if np.sum(high) == 0:
+        # The high-SNR panel needs a real SNR; skip it when none was recorded.
+        if not has_snr or np.sum(high) == 0:
             continue
 
         fig2, ax2 = plt.subplots(figsize=(7, 6))
@@ -161,7 +166,7 @@ def plot_diagonal_compare(
 
         ax2.set_xlabel(f"Predicted [{param}]")
         ax2.set_ylabel(f"True [{param}]")
-        ax2.set_title(f"Diagonal Plot of {param} (SNR>8) at {epoch}")
+        ax2.set_title(f"Diagonal Plot of {param} (SNR>8) at {_etitle(epoch)}")
         ax2.grid(True, ls=":")
 
         if param not in ("norm_dist", "norm_dchirp"):

@@ -57,6 +57,13 @@ from sage.plotting import (
     plot_separation_over_epochs,
     plot_uncertainty_vs_gradient,
 )
+from sage.plotting.loss_curves import best_validated_epoch
+from sage.plotting.pp_calibration import plot_pp_calibration
+from sage.plotting._params import select_params as _select_params
+from sage.plotting._epochs import epoch_number
+from sage.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Ordered list matching signal_params column layout (from gwconfig param_names)
 _PARAM_NAMES = [
@@ -89,10 +96,37 @@ class ValidationPlotManager:
         Directory to save plots.  Subdirectories are created per plot type.
     """
 
-    def __init__(self, validation_h5, losses_h5, export_dir=None):
+    #: Parameter pairs used for the two-dimensional views.
+    DEFAULT_PARAM_PAIRS = (
+        ("mchirp", "distance"),
+        ("mass1", "mass2"),
+        ("mchirp", "q"),
+        ("spin1z", "spin2z"),
+        ("mchirp", "inclination"),
+        ("distance", "inclination"),
+    )
+
+    def __init__(
+        self,
+        validation_h5,
+        losses_h5,
+        export_dir=None,
+        params=None,
+        param_pairs=None,
+        efficiency_threshold=0.5,
+        min_abs_correlation=0.05,
+    ):
         self.validation_h5 = validation_h5
         self.losses_h5 = losses_h5
         self.export_dir = export_dir
+        #: Which source parameters to sweep over. None = all available.
+        self.params = params
+        self.param_pairs = (
+            self.DEFAULT_PARAM_PAIRS if param_pairs is None else tuple(param_pairs)
+        )
+        self.efficiency_threshold = efficiency_threshold
+        self.min_abs_correlation = min_abs_correlation
+        self._warned_no_snr = False
 
         self.validation_data = {}
         self.training_loss = None
@@ -154,7 +188,7 @@ class ValidationPlotManager:
                         for i, name in enumerate(_PARAM_NAMES)
                     }
 
-                self.validation_data[epoch_key] = {
+                entry = {
                     "ranking_stat": ranking_stat,
                     "pred_prob": expit(ranking_stat),
                     "labels": labels,
@@ -162,12 +196,150 @@ class ValidationPlotManager:
                     "network_target": network_target,
                     "source_params": source_params,
                 }
+                entry.update(
+                    self._resolve_point_estimates(
+                        network_output, network_target, labels, source_params
+                    )
+                )
+                self.validation_data[epoch_key] = entry
+
+    def _correlated_params(self, ranking_stat, source_params, labels):
+        """Keep only parameters the ranking statistic actually correlates with.
+
+        Showing all 25 columns makes the matrix unreadable and mostly reports
+        structural redundancy: the spin components are different
+        parameterisations of the same two spin vectors, and the isotropic
+        angles are uncorrelated with anything by construction.
+
+        A parameter is kept when ``|r|`` against the ranking statistic reaches
+        ``self.min_abs_correlation``. Set that to ``0`` to keep everything.
+        """
+        if not self.min_abs_correlation:
+            return source_params
+
+        sig = labels == 1.0
+        stat = np.asarray(ranking_stat)[sig]
+        kept = {}
+        for name, values in source_params.items():
+            v = np.asarray(values)[sig]
+            ok = np.isfinite(v) & np.isfinite(stat)
+            if ok.sum() < 10 or np.std(v[ok]) == 0:
+                continue
+            if abs(np.corrcoef(v[ok], stat[ok])[0, 1]) >= self.min_abs_correlation:
+                kept[name] = values
+        return kept
+
+    # -------------------------------------------------------
+    # POINT ESTIMATES
+    # -------------------------------------------------------
+
+    @staticmethod
+    def _resolve_point_estimates(network_output, network_target, labels, source_params):
+        """Put predictions and truth for the PE parameters on the same scale.
+
+        ``network_output`` is ``[ranking, mu..., sigma...]`` where ``mu`` and
+        ``sigma`` have already been **unstandardised into physical units** by
+        the validation loop. ``network_target``, however, holds the
+        *standardised* regression targets the network was trained against.
+
+        Differencing the two directly is a unit mismatch, and it silently
+        produces nonsense: chirp-mass "residuals" of ~20 against a "true
+        mchirp" axis running -2 to 2. Every plot that compares predictions to
+        truth (diagonal, P-P calibration, recovery heatmap) hit this.
+
+        The physical truth is already available in ``source_params``, so rather
+        than hardcode which columns are which, each target column is matched to
+        the source parameter it correlates with. The standardisation is affine,
+        so the correct match has ``|r| = 1`` to floating-point precision and
+        there is no ambiguity.
+
+        Returns
+        -------
+        dict
+            ``pe_names``, ``pe_pred``, ``pe_sigma``, ``pe_true`` -- all
+            physical, all restricted to signal rows. Empty lists/dicts when
+            there are no PE outputs or no source parameters to match against.
+        """
+        empty = {"pe_names": [], "pe_pred": {}, "pe_sigma": {}, "pe_true": {}}
+
+        n_pe = (network_output.shape[1] - 1) // 2
+        if n_pe < 1 or not source_params:
+            return empty
+
+        sig = labels == 1.0
+        if not sig.any():
+            return empty
+
+        names, pred, sigma, true = [], {}, {}, {}
+        for i in range(n_pe):
+            tgt = network_target[sig, i]
+            if not np.isfinite(tgt).all() or np.std(tgt) == 0:
+                continue
+
+            best_name, best_r = None, 0.0
+            for pname, pvals in source_params.items():
+                phys = np.asarray(pvals)[sig]
+                if not np.isfinite(phys).all() or np.std(phys) == 0:
+                    continue
+                r = abs(np.corrcoef(tgt, phys)[0, 1])
+                if r > best_r:
+                    best_name, best_r = pname, r
+
+            # An affine rescaling of the same quantity; anything less is not it.
+            if best_name is None or best_r < 0.999:
+                continue
+
+            names.append(best_name)
+            pred[best_name] = network_output[sig, 1 + i]
+            sigma[best_name] = network_output[sig, 1 + n_pe + i]
+            true[best_name] = np.asarray(source_params[best_name])[sig]
+
+        return {"pe_names": names, "pe_pred": pred, "pe_sigma": sigma, "pe_true": true}
 
     # -------------------------------------------------------
     # MASTER DRIVER
     # -------------------------------------------------------
 
-    def make_all_plots(self, save=True):
+    def resolve_epochs(self, epochs=None):
+        """Normalise an epoch selection to keys present in the data.
+
+        Accepts epoch numbers (``127``), full keys (``"epoch_0127"``), the
+        string ``"best"``, or ``"all"``. ``None`` selects the best validated
+        epoch, which is almost always the one you want to look at.
+        """
+        available = sorted(self.validation_data)
+        if not available:
+            return []
+        if epochs == "all":
+            return available
+
+        by_number = {epoch_number(k): k for k in available}
+        best_idx = best_validated_epoch(self.validation_loss)
+        best_key = by_number.get(best_idx, available[-1])
+
+        if epochs is None or epochs == "best":
+            return [best_key]
+
+        if isinstance(epochs, (str, int)):
+            epochs = [epochs]
+
+        out = []
+        for e in epochs:
+            if e == "best":
+                out.append(best_key)
+            elif e in self.validation_data:
+                out.append(e)
+            elif epoch_number(e) in by_number:
+                out.append(by_number[epoch_number(e)])
+            else:
+                raise KeyError(
+                    f"epoch {e!r} not in this run. Available: "
+                    f"{[epoch_number(k) for k in available]}"
+                )
+        # preserve chronological order, drop duplicates
+        return [k for k in available if k in set(out)]
+
+    def make_all_plots(self, save=True, epochs=None):
         """
         Dispatch the full suite of validation diagnostic plots.
 
@@ -182,13 +354,32 @@ class ValidationPlotManager:
             If ``True`` (default), save all plots to disk; otherwise display.
         """
 
-        epochs = sorted(self.validation_data.keys())
-        best_epoch = np.argmin(self.validation_loss[:, 0])
+        # Per-epoch plots run only for the requested epochs (default: the best
+        # one). Cross-epoch plots further down deliberately ignore this and use
+        # every available epoch -- a "residual over epochs" heatmap built from
+        # a single epoch is a blank strip, which is exactly what happened.
+        selected = self.resolve_epochs(epochs)
+        all_epochs = sorted(self.validation_data.keys())
+        # Ignore epochs where validation never ran: losses.h5 is pre-allocated
+        # and those rows are still zero, so a plain argmin returns the first
+        # unwritten row instead of the best epoch.
+        best_epoch = best_validated_epoch(self.validation_loss)
+
+        # Loss curves depend only on the loss arrays, not on the per-epoch
+        # validation data -- drawing them once, rather than redundantly inside
+        # the per-epoch loop below.
+        plot_loss_curves(
+            training_loss=self.training_loss,
+            validation_loss=self.validation_loss,
+            export_dir=self.export_dir,
+            save=save,
+            best_epoch=best_epoch,
+        )
 
         # -------------------------------------------------------
         # Per-epoch plots
         # -------------------------------------------------------
-        for epoch_key in epochs:
+        for epoch_key in selected:
             data = self.validation_data[epoch_key]
             sp = data["source_params"]  # {} if signal_idx not saved
 
@@ -214,14 +405,6 @@ class ValidationPlotManager:
                 labels=data["labels"],
                 export_dir=self.export_dir,
                 save=save,
-            )
-
-            plot_loss_curves(
-                training_loss=self.training_loss,
-                validation_loss=self.validation_loss,
-                export_dir=self.export_dir,
-                save=save,
-                best_epoch=best_epoch,
             )
 
             plot_calibration_curve(
@@ -281,29 +464,110 @@ class ValidationPlotManager:
                     save=save,
                 )
 
-                for param_name in ("distance", "mchirp", "tc"):
-                    if param_name in sp:
-                        plot_output_vs_param_heatmap(
-                            epoch=epoch_key,
-                            ranking_stat=data["ranking_stat"],
-                            labels=data["labels"],
-                            source_params=sp,
-                            param_name=param_name,
-                            export_dir=self.export_dir,
-                            save=save,
-                        )
+                # Heatmap and gradient for every parameter, not a hardcoded
+                # three: which parameter the ranking statistic leans on is
+                # exactly what these are for, so pre-selecting defeats them.
+                for param_name in _select_params(sp, self.params):
+                    plot_output_vs_param_heatmap(
+                        epoch=epoch_key,
+                        ranking_stat=data["ranking_stat"],
+                        labels=data["labels"],
+                        source_params=sp,
+                        param_name=param_name,
+                        export_dir=self.export_dir,
+                        save=save,
+                    )
+                    plot_output_gradient(
+                        epoch=epoch_key,
+                        ranking_stat=data["ranking_stat"],
+                        labels=data["labels"],
+                        source_params=sp,
+                        param_name=param_name,
+                        export_dir=self.export_dir,
+                        save=save,
+                    )
 
+                # Correlation matrix over all available parameters.
                 plot_correlation_matrix(
                     ranking_stat=data["ranking_stat"],
-                    source_params={
-                        k: sp[k] for k in ("distance", "mchirp", "tc", "inclination", "q")
-                        if k in sp
-                    },
+                    source_params=self._correlated_params(
+                        data["ranking_stat"], _select_params(sp, self.params),
+                        data["labels"],
+                    ),
                     labels=data["labels"],
                     export_dir=self.export_dir,
                     save=save,
                     epoch=epoch_key,
                 )
+
+                # Two-parameter views over the configured pairs.
+                for px, py in self.param_pairs:
+                    if px in sp and py in sp:
+                        plot_2d_efficiency(
+                            epoch=epoch_key,
+                            ranking_stat=data["ranking_stat"],
+                            labels=data["labels"],
+                            source_params=sp,
+                            param_x=px, param_y=py,
+                            threshold=self.efficiency_threshold,
+                            export_dir=self.export_dir,
+                            save=save,
+                        )
+                        plot_2d_param_density(
+                            epoch=epoch_key,
+                            ranking_stat=data["ranking_stat"],
+                            labels=data["labels"],
+                            source_params=sp,
+                            param_x=px, param_y=py,
+                            export_dir=self.export_dir,
+                            save=save,
+                        )
+
+                # Confidence against the loudness proxy actually available.
+                # Only a real network SNR. Chirp distance was standing in for
+                # it, which put a distance on an axis labelled SNR.
+                snr_key = next((k for k in ("snr", "network_snr") if k in sp), None)
+                if snr_key is None and not self._warned_no_snr:
+                    logger.info(
+                        "No network SNR in signal_params, so SNR-based plots are "
+                        "skipped. The optimal SNR is computed during generation "
+                        "but not recorded; store it in the validation output to "
+                        "enable them."
+                    )
+                    self._warned_no_snr = True
+                if snr_key is not None:
+                    plot_confidence_vs_snr(
+                        epoch=epoch_key,
+                        ranking_stat=data["ranking_stat"],
+                        labels=data["labels"],
+                        network_snrs=sp[snr_key],
+                        export_dir=self.export_dir,
+                        save=save,
+                    )
+
+                # Point-estimate recovery, on physical scales for both sides.
+                if data["pe_names"]:
+                    plot_diagonal_compare(
+                        epoch=epoch_key,
+                        pred_params=data["pe_pred"],
+                        true_params=data["pe_true"],
+                        network_snrs=(
+                            np.asarray(sp[snr_key])[data["labels"] == 1.0]
+                            if snr_key is not None else None
+                        ),
+                        labels=data["labels"][data["labels"] == 1.0],
+                        export_dir=self.export_dir,
+                        save=save,
+                    )
+                    plot_pp_calibration(
+                        mu=np.column_stack([data["pe_pred"][p] for p in data["pe_names"]]),
+                        sigma=np.column_stack([data["pe_sigma"][p] for p in data["pe_names"]]),
+                        y=np.column_stack([data["pe_true"][p] for p in data["pe_names"]]),
+                        param_names=list(data["pe_names"]),
+                        epoch=epoch_key,
+                        export_dir=self.export_dir,
+                        save=save,
+                    )
 
                 plot_cumulative_volume(
                     epoch=epoch_key,
@@ -318,24 +582,40 @@ class ValidationPlotManager:
         # -------------------------------------------------------
         # Cross-epoch plots (run once using all epochs)
         # -------------------------------------------------------
-        all_stats = {ek: self.validation_data[ek]["ranking_stat"] for ek in epochs}
-        all_labels = {ek: self.validation_data[ek]["labels"] for ek in epochs}
+        all_stats = {ek: self.validation_data[ek]["ranking_stat"] for ek in all_epochs}
+        all_labels = {ek: self.validation_data[ek]["labels"] for ek in all_epochs}
 
         plot_separation_over_epochs(
             all_network_outputs=all_stats,
             all_labels=all_labels,
-            epochs=epochs,
+            epochs=all_epochs,
             export_dir=self.export_dir,
             save=save,
         )
 
         # Trajectory: track a fixed set of samples over all epochs
         # Use the last epoch's labels as the shared mask
-        last_labels = self.validation_data[epochs[-1]]["labels"]
+        last_labels = self.validation_data[all_epochs[-1]]["labels"]
         plot_output_trajectory_over_epochs(
-            all_ranking_stats=[self.validation_data[ek]["ranking_stat"] for ek in epochs],
-            labels=last_labels,
-            epoch_list=list(range(len(epochs))),
+            all_ranking_stats=[self.validation_data[ek]["ranking_stat"] for ek in all_epochs],
+            labels=[self.validation_data[ek]["labels"] for ek in all_epochs],
+            epoch_list=[epoch_number(ek) for ek in all_epochs],
             export_dir=self.export_dir,
             save=save,
         )
+
+        # Recovery of each point-estimate parameter across epochs, physical
+        # scale on both sides (see _resolve_point_estimates).
+        pe_names = self.validation_data[all_epochs[-1]]["pe_names"]
+        if pe_names:
+            pe_pred = {ek: self.validation_data[ek]["pe_pred"] for ek in all_epochs}
+            pe_true = {ek: self.validation_data[ek]["pe_true"] for ek in all_epochs}
+            for pname in pe_names:
+                plot_param_recovery_heatmap(
+                    all_network_outputs=pe_pred,
+                    all_labels=pe_true,
+                    param_name=pname,
+                    epochs=all_epochs,
+                    export_dir=self.export_dir,
+                    save=save,
+                )

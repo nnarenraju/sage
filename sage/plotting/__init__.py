@@ -34,7 +34,11 @@ from .epoch_separation import plot_separation_over_epochs
 from .gradient_uncertainty import plot_uncertainty_vs_gradient
 from .joint_cdfs import plot_joint_cdfs
 from .learning_parameter_prior import plot_learning_parameter_prior
-from .loss_curves import plot_loss_curves
+from .loss_curves import (
+    plot_loss_curves,
+    validated_epochs,
+    best_validated_epoch,
+)
 from .output_gradient import plot_output_gradient
 from .output_param_heatmap import plot_output_vs_param_heatmap
 from .output_trajectory import plot_output_trajectory_over_epochs
@@ -77,4 +81,9 @@ __all__ = [
     "plot_prediction_raw",
     "plot_roc_curve",
     "plot_confidence_vs_snr",
+    # was implemented and tested but never exported
+    "plot_pp_calibration",
+    # helpers for the pre-allocated losses.h5 layout
+    "validated_epochs",
+    "best_validated_epoch",
 ]
