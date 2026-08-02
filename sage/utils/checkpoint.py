@@ -31,6 +31,7 @@ import json
 import random
 import numpy as np
 from datetime import datetime
+from functools import cached_property
 
 
 def _atomic_torch_save(obj, path):
@@ -48,6 +49,78 @@ def _atomic_json_dump(obj, path):
     with open(tmp, "w") as f:
         json.dump(obj, f)
     os.replace(tmp, path)
+
+
+def config_to_dict(cfg):
+    """Flatten a Sage config into a plain, JSON-serialisable dict of values.
+
+    ``BaseConfig`` / ``BaseDataConfig`` are ``__getattr__`` forwarders whose own
+    instance dict is just ``{"cfg": <wrapped object>}``. Serialising
+    ``cfg.__dict__`` therefore wrote a single useless entry::
+
+        {"cfg": "<config_HL.O3bCFG object at 0x7f38...>"}
+
+    and the run's actual hyperparameters -- learning rate schedule, epochs,
+    detectors, everything -- were never recorded. That makes a finished run
+    impossible to interrogate afterwards, which is exactly when you want to
+    know what it was configured with.
+
+    The real settings live as *class* attributes on the wrapped config object,
+    so this walks the class as well as the instance, and also materialises the
+    derived ``cached_property`` values (``padded_length_in_s``, ``delta_f``,
+    ...) so the snapshot records what the run actually used rather than only
+    what was typed.
+
+    Parameters
+    ----------
+    cfg : object
+        A ``BaseConfig``/``BaseDataConfig`` wrapper, or a raw config object.
+
+    Returns
+    -------
+    dict
+        Attribute name -> value, for every public, non-callable setting.
+    """
+    seen = {}
+
+    def public_attrs(obj):
+        out = {}
+        # Class attributes: where a `class MyCFG: batch_size = 64` config keeps
+        # its values. Walk the MRO so subclassed configs are covered too.
+        for klass in reversed(type(obj).__mro__):
+            if klass is object:
+                continue
+            for name, value in vars(klass).items():
+                if name.startswith("_") or callable(value):
+                    continue
+                if isinstance(value, (property, staticmethod, classmethod)):
+                    continue
+                out[name] = value
+        # Instance attributes take precedence.
+        for name, value in vars(obj).items():
+            if not name.startswith("_") and not callable(value):
+                out[name] = value
+        return out
+
+    # Unwrap the forwarder, keeping anything set on the wrapper itself.
+    raw = getattr(cfg, "cfg", None) or getattr(cfg, "data_cfg", None)
+    if raw is not None and raw is not cfg:
+        seen.update(public_attrs(raw))
+    seen.update({k: v for k, v in public_attrs(cfg).items()
+                 if k not in ("cfg", "data_cfg")})
+
+    # Derived cached_property values (delta_f, padded_length_in_s, ...): these
+    # are what the pipeline actually consumed, so record them too.
+    for klass in type(cfg).__mro__:
+        for name, value in vars(klass).items():
+            if name.startswith("_") or not isinstance(value, cached_property):
+                continue
+            try:
+                seen[name] = getattr(cfg, name)
+            except Exception:
+                pass
+
+    return seen
 
 
 class CheckpointManager:
@@ -113,10 +186,10 @@ class CheckpointManager:
 
         # ---- save config snapshots once ----
         with open(os.path.join(self.ckpt_dir, "cfg_snapshot.json"), "w") as f:
-            json.dump(cfg.__dict__, f, indent=2, default=str)
+            json.dump(config_to_dict(cfg), f, indent=2, default=str, sort_keys=True)
 
         with open(os.path.join(self.ckpt_dir, "data_cfg_snapshot.json"), "w") as f:
-            json.dump(data_cfg.__dict__, f, indent=2, default=str)
+            json.dump(config_to_dict(data_cfg), f, indent=2, default=str, sort_keys=True)
 
     # ============================================================
     # STATE GATHER
