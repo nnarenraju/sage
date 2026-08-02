@@ -296,7 +296,7 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         # tensor has the blocked layout [mu_0, ..., mu_K, sraw_0, ..., sraw_K]
         # rather than the interleaved layout [mu_0, sraw_0, mu_1, sraw_1, ...].
         # BCEWithPEsigmaLoss splits at [:num_pe] for mu and [num_pe:] for sigma,
-        # so interleaved would silently mix mu/sigma for num_pe > 1.
+        # so interleaved would mix mu/sigma for num_pe > 1.
         raw = [layer(features) for layer in self.point_estimate_layers]
         mus = torch.cat([r[:, :1] for r in raw], dim=1)        # (B, num_pe)
         sigma_raw = torch.cat([r[:, 1:] for r in raw], dim=1)  # (B, num_pe)
