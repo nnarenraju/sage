@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_calibration_curve(
@@ -108,14 +109,14 @@ def plot_calibration_curve(
     plt.colorbar(sc, label="Number of Samples in Bin")
     plt.xlabel("Predicted Ranking Statistic")
     plt.ylabel("Observed Fraction of Signals")
-    plt.title(f"Calibration Curve - Epoch {epoch}")
+    plt.title(f"Calibration Curve - {_etitle(epoch)}")
     plt.grid(True, ls=":")
 
     if save and export_dir is not None:
         outdir = os.path.join(export_dir, "calibration")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"calibration_epoch_{epoch}.png"),
+            os.path.join(outdir, f"calibration_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

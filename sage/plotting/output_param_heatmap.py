@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_output_vs_param_heatmap(
@@ -98,14 +99,14 @@ def plot_output_vs_param_heatmap(
     plt.colorbar(label="Number of signals")
     plt.xlabel(param_name)
     plt.ylabel("Network Ranking Statistic")
-    plt.title(f"Network Output vs {param_name} - Epoch {epoch}")
+    plt.title(f"Network Output vs {param_name} - {_etitle(epoch)}")
     plt.grid(False)
 
     if save and export_dir is not None:
-        outdir = os.path.join(export_dir, "OUTPUT_PARAM_HEATMAP")
+        outdir = os.path.join(export_dir, "OUTPUT_PARAM_HEATMAP", _etag(epoch))
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"{param_name}_heatmap_epoch_{epoch}.png"),
+            os.path.join(outdir, f"{param_name}_heatmap_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

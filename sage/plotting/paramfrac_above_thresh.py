@@ -27,6 +27,8 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
+from sage.plotting._params import select_params as _select_params
 
 
 def plot_paramfrac_detected_above_thresh(
@@ -37,6 +39,7 @@ def plot_paramfrac_detected_above_thresh(
     export_dir=None,
     save=True,
     nbins=4,
+    params=None,
 ):
     """
     Detection fraction above threshold in bins of each source parameter.
@@ -67,7 +70,7 @@ def plot_paramfrac_detected_above_thresh(
 
     if save and export_dir is not None:
         parent_dir = os.path.join(export_dir, "PARAMFRAC_ABOVE_THRESH")
-        base_dir = os.path.join(parent_dir, f"epoch_{epoch}")
+        base_dir = os.path.join(parent_dir, f"{_etag(epoch)}")
         os.makedirs(base_dir, exist_ok=True)
     else:
         base_dir = None
@@ -91,7 +94,7 @@ def plot_paramfrac_detected_above_thresh(
     # --------------------------------------------
     # loop parameters
     # --------------------------------------------
-    for param, distr in sample_params.items():
+    for param, distr in _select_params(sample_params, params).items():
 
         masked_distr = distr[signal_mask]
 
@@ -103,7 +106,7 @@ def plot_paramfrac_detected_above_thresh(
 
         fig, ax = plt.subplots(1, 2, figsize=(14, 6))
         fig.suptitle(
-            f"Epoch {epoch}: Fraction of binned {param} above noise thresholds"
+            f"{_etitle(epoch)}: Fraction of binned {param} above noise thresholds"
         )
 
         # overall signal distribution

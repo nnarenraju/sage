@@ -27,6 +27,7 @@ Documentation: NULL
 # Packages
 import os
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_2d_param_density(
@@ -80,14 +81,14 @@ def plot_2d_param_density(
     plt.colorbar(label="Sum of ranking statistic")
     plt.xlabel(param_x)
     plt.ylabel(param_y)
-    plt.title(f"Ranking Statistic Density - Epoch {epoch}")
+    plt.title(f"Ranking Statistic Density - {_etitle(epoch)}")
 
     if save and export_dir is not None:
-        outdir = os.path.join(export_dir, "2D_PARAM_DENSITY")
+        outdir = os.path.join(export_dir, "2D_PARAM_DENSITY", _etag(epoch))
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
             os.path.join(
-                outdir, f"{param_x}_{param_y}_ranking_density_epoch_{epoch}.png"
+                outdir, f"{param_x}_{param_y}_ranking_density_{_etag(epoch)}.png"
             ),
             dpi=150,
             bbox_inches="tight",

@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True):
@@ -83,7 +84,7 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
     # Plot
     # --------------------------------------------
     fig, ax = plt.subplots(1, 2, figsize=(16, 6))
-    fig.suptitle(f"Raw Output at {epoch}")
+    fig.suptitle(f"Raw Output at {_etitle(epoch)}")
 
     # Histogram panel
     ax[0].hist(raw_tp, bins=100, histtype="step", label="Signals")

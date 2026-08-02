@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_confidence_vs_snr(
@@ -58,14 +59,14 @@ def plot_confidence_vs_snr(
     plt.errorbar(bin_centers, avg_conf, yerr=std_conf, fmt="o-", c="blue")
     plt.xlabel("Network SNR")
     plt.ylabel("Mean Network Output (Confidence)")
-    plt.title(f"Confidence vs SNR - Epoch {epoch}")
+    plt.title(f"Confidence vs SNR - {_etitle(epoch)}")
     plt.grid(True, ls=":")
 
     if save and export_dir is not None:
         outdir = os.path.join(export_dir, "CONFIDENCE_VS_SNR")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"confidence_vs_snr_epoch_{epoch}.png"),
+            os.path.join(outdir, f"confidence_vs_snr_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

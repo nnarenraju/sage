@@ -27,6 +27,8 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
+from sage.plotting._params import select_params as _select_params
 
 
 def plot_learning_parameter_prior(
@@ -39,6 +41,7 @@ def plot_learning_parameter_prior(
     save_name="stat",
     bin_width=500,
     step=10,
+    params=None,
 ):
     """
     Overlay learned detection efficiency on the source-parameter prior distribution.
@@ -72,7 +75,7 @@ def plot_learning_parameter_prior(
     """
 
     if save and export_dir is not None:
-        base_dir = os.path.join(export_dir, f"LEARN_PARAMS/epoch_{epoch}")
+        base_dir = os.path.join(export_dir, f"LEARN_PARAMS/{_etag(epoch)}")
         os.makedirs(base_dir, exist_ok=True)
     else:
         base_dir = None
@@ -83,7 +86,7 @@ def plot_learning_parameter_prior(
     signal_mask = labels == 1.0
     data_tp = pred_stat[signal_mask]
 
-    for key, param_array in source_params.items():
+    for key, param_array in _select_params(source_params, params).items():
 
         source_data = param_array[signal_mask]
 
@@ -157,7 +160,7 @@ def plot_learning_parameter_prior(
 
         plt.xlabel(key)
         plt.ylabel(save_name)
-        plt.title(f"Learning {key} at {epoch}")
+        plt.title(f"Learning {key} at {_etitle(epoch)}")
         plt.grid(True, ls=":")
         plt.legend()
 

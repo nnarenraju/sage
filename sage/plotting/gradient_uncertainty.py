@@ -26,6 +26,7 @@ Documentation: NULL
 # Packages
 import os
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_uncertainty_vs_gradient(
@@ -85,7 +86,7 @@ def plot_uncertainty_vs_gradient(
     plt.scatter(grad, uncertainty, alpha=0.5, c="purple")
     plt.xlabel(f"Gradient of Output w.r.t {param_name}")
     plt.ylabel("Predicted Uncertainty")
-    plt.title(f"Uncertainty vs Gradient - {param_name} - Epoch {epoch}")
+    plt.title(f"Uncertainty vs Gradient - {param_name} - {_etitle(epoch)}")
     plt.grid(True, ls=":")
 
     if save and export_dir is not None:
@@ -93,7 +94,7 @@ def plot_uncertainty_vs_gradient(
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
             os.path.join(
-                outdir, f"uncertainty_vs_gradient_{param_name}_epoch_{epoch}.png"
+                outdir, f"uncertainty_vs_gradient_{param_name}_{_etag(epoch)}.png"
             ),
             dpi=150,
             bbox_inches="tight",

@@ -26,6 +26,7 @@ Documentation: NULL
 # Packages
 import os
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_output_vs_uncertainty(
@@ -72,7 +73,7 @@ def plot_output_vs_uncertainty(
     plt.scatter(ranking_stat, uncertainty, alpha=0.5, c="red", label="Signals")
     plt.xlabel("Ranking Statistic")
     plt.ylabel("Predicted Uncertainty")
-    plt.title(f"Output vs Uncertainty - Epoch {epoch}")
+    plt.title(f"Output vs Uncertainty - {_etitle(epoch)}")
     plt.grid(True, ls=":")
     plt.legend()
 
@@ -80,7 +81,7 @@ def plot_output_vs_uncertainty(
         outdir = os.path.join(export_dir, "OUTPUT_VS_UNCERTAINTY")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"output_vs_uncertainty_epoch_{epoch}.png"),
+            os.path.join(outdir, f"output_vs_uncertainty_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

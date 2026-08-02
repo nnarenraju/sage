@@ -28,6 +28,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_cumulative_volume(
@@ -88,14 +89,14 @@ def plot_cumulative_volume(
     plt.plot(output_sorted, cum_vol, c="blue", lw=2)
     plt.xlabel("Network Ranking Statistic")
     plt.ylabel("Cumulative Fraction of Accessible Volume")
-    plt.title(f"Cumulative Detection Volume - Epoch {epoch}")
+    plt.title(f"Cumulative Detection Volume - {_etitle(epoch)}")
     plt.grid(True, ls=":")
 
     if save and export_dir is not None:
         outdir = os.path.join(export_dir, "CUMULATIVE_VOLUME")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"cumulative_volume_epoch_{epoch}.png"),
+            os.path.join(outdir, f"cumulative_volume_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

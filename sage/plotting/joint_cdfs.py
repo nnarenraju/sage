@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_joint_cdfs(epoch, ranking_stat, labels, export_dir=None, save=True):
@@ -47,7 +48,7 @@ def plot_joint_cdfs(epoch, ranking_stat, labels, export_dir=None, save=True):
     plt.plot(noise_stats, cdf_noise, c="blue", label="Noise")
     plt.xlabel("Network Output (Ranking Statistic)")
     plt.ylabel("Cumulative Probability")
-    plt.title(f"Joint CDFs - Epoch {epoch}")
+    plt.title(f"Joint CDFs - {_etitle(epoch)}")
     plt.legend()
     plt.grid(True, ls=":")
 
@@ -55,7 +56,7 @@ def plot_joint_cdfs(epoch, ranking_stat, labels, export_dir=None, save=True):
         outdir = os.path.join(export_dir, "JOINT_CDFS")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"joint_cdfs_epoch_{epoch}.png"),
+            os.path.join(outdir, f"joint_cdfs_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

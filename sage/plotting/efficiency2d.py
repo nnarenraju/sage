@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_2d_efficiency(
@@ -116,13 +117,13 @@ def plot_2d_efficiency(
     plt.colorbar(im, label=f"Fraction of signals above {threshold:.2f}")
     plt.xlabel(param_x)
     plt.ylabel(param_y)
-    plt.title(f"2D Efficiency Map - Epoch {epoch}")
+    plt.title(f"2D Efficiency Map - {_etitle(epoch)}")
 
     if save and export_dir is not None:
-        outdir = os.path.join(export_dir, "2D_EFFICIENCY")
+        outdir = os.path.join(export_dir, "2D_EFFICIENCY", _etag(epoch))
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"{param_x}_{param_y}_efficiency_epoch_{epoch}.png"),
+            os.path.join(outdir, f"{param_x}_{param_y}_efficiency_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )
