@@ -27,6 +27,8 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
+from sage.plotting._params import select_params as _select_params
 
 
 def plot_efficiency_curves(
@@ -37,8 +39,9 @@ def plot_efficiency_curves(
     export_dir=None,
     save=True,
     save_name="stat",
-    bin_width=500,
-    step=10,
+    bin_width=None,
+    step=None,
+    params=None,
 ):
     """
     Plot detection efficiency as a function of each source parameter.
@@ -64,14 +67,21 @@ def plot_efficiency_curves(
         If ``True``, save figures to disk; otherwise display interactively.
     save_name : str
         Prefix for saved filenames (default ``"stat"``).
-    bin_width : int
-        Number of samples per parameter bin (default ``500``).
-    step : float
-        Step size for threshold sweep (default ``10``).
+    bin_width : int or None
+        Samples per sliding window. ``None`` scales it to the sample count
+        (``N/50``, floor 500), which keeps the curve readable instead of
+        dominated by per-window scatter.
+    step : int or None
+        Stride between windows. ``None`` uses ``bin_width // 4``.
+    params : iterable[str] or None
+        Which source parameters to plot. ``None`` selects
+        :data:`~sage.plotting._params.INFORMATIVE_PARAMS`; pass
+        ``ALL_PARAMS`` for every column, including the isotropic ones that
+        are flat by construction.
     """
 
     if save and export_dir is not None:
-        base_dir = os.path.join(export_dir, f"EFFICIENCY/epoch_{epoch}")
+        base_dir = os.path.join(export_dir, f"EFFICIENCY/{_etag(epoch)}")
         os.makedirs(base_dir, exist_ok=True)
     else:
         base_dir = None
@@ -82,7 +92,18 @@ def plot_efficiency_curves(
     signal_mask = labels == 1.0
     data_tp = pred_stat[signal_mask]
 
-    for key, param_array in source_params.items():
+    # Window size and stride scale with the sample count. The old fixed
+    # (500, 10) meant ~9,950 windows for 100k signals overlapping by 98%, so
+    # the curve was dominated by per-window scatter and the underlying trend
+    # was barely readable. ~200 windows of N/50 samples each resolves the
+    # trend without the noise; both remain overridable.
+    n_sig = int(signal_mask.sum())
+    if bin_width is None:
+        bin_width = max(500, n_sig // 50)
+    if step is None:
+        step = max(1, bin_width // 4)
+
+    for key, param_array in _select_params(source_params, params).items():
 
         source_data = param_array[signal_mask]
 
@@ -129,7 +150,7 @@ def plot_efficiency_curves(
 
         plt.xlabel(key)
         plt.ylabel(save_name)
-        plt.title(f"Efficiency Curve for {key} at {epoch}")
+        plt.title(f"Efficiency Curve for {key} at {_etitle(epoch)}")
         plt.grid(True, ls=":")
         plt.legend()
 
@@ -137,7 +158,7 @@ def plot_efficiency_curves(
             plt.savefig(
                 os.path.join(
                     base_dir,
-                    f"efficiency_{save_name}_{key}_{epoch}.png",
+                    f"efficiency_{save_name}_{key}_{_etag(epoch)}.png",
                 ),
                 dpi=150,
                 bbox_inches="tight",

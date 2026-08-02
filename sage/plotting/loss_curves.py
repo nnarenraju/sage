@@ -29,12 +29,51 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+def validated_epochs(validation_loss):
+    """Indices of epochs where validation actually ran.
+
+    ``losses.h5`` is pre-allocated ``(num_epochs, num_components)`` and filled
+    in as the run proceeds, but validation typically runs only every Nth epoch.
+    The rows in between keep their initial **zero**, which is not a loss value.
+
+    Plotting those zeros draws the validation curve as a comb dropping to the
+    axis between validation points, and ``argmin`` over the raw column returns
+    the first unwritten row rather than the best epoch. Both were happening.
+
+    A total loss of exactly 0.0 is not attainable for the losses used here, so
+    an exact zero is an unambiguous "not written yet" sentinel.
+
+    Parameters
+    ----------
+    validation_loss : numpy.ndarray, shape ``(E, L)``
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer indices of the epochs that were validated.
+    """
+    validation_loss = np.asarray(validation_loss)
+    return np.flatnonzero(validation_loss[:, 0] != 0.0)
+
+
+def best_validated_epoch(validation_loss):
+    """Index of the lowest-total-loss epoch, ignoring un-validated rows.
+
+    Returns ``None`` when nothing has been validated yet.
+    """
+    idx = validated_epochs(validation_loss)
+    if idx.size == 0:
+        return None
+    return int(idx[np.argmin(np.asarray(validation_loss)[idx, 0])])
+
+
 def plot_loss_curves(
     training_loss,
     validation_loss,
     export_dir=None,
     save=True,
     best_epoch=None,
+    component_names=None,
 ):
     """
     Plot training and validation loss curves with optional best-epoch markers.
@@ -57,10 +96,25 @@ def plot_loss_curves(
     save : bool
         If ``True``, save to disk; otherwise display interactively.
     best_epoch : int or None
-        Zero-based epoch index to mark with a star on all curves.
+        Zero-based epoch index to mark with a star on all curves. Use
+        :func:`best_validated_epoch`, which ignores un-validated rows.
+    component_names : list[str] or None
+        Names for the PE loss components (columns 1..L-1). Falls back to
+        ``component {i}`` when not supplied.
+
+    Notes
+    -----
+    Only epochs where validation actually ran are drawn for the validation
+    curves -- see :func:`validated_epochs`.
     """
 
+    training_loss = np.asarray(training_loss)
+    validation_loss = np.asarray(validation_loss)
+
     epochs = np.arange(1, len(training_loss) + 1)
+    # Validation usually runs every Nth epoch; the rows in between are still
+    # zero from pre-allocation and must not be drawn. See validated_epochs.
+    val_idx = validated_epochs(validation_loss)
 
     # --------------------------------------------
     # TOTAL LOSS CURVE
@@ -68,12 +122,20 @@ def plot_loss_curves(
     plt.figure(figsize=(7, 6))
 
     plt.plot(epochs, training_loss[:, 0], label="Training Loss")
-    plt.plot(epochs, validation_loss[:, 0], ls="dashed", label="Validation Loss")
+    plt.plot(
+        epochs[val_idx],
+        validation_loss[val_idx, 0],
+        ls="dashed", marker="o", ms=3, label="Validation Loss",
+    )
 
     if best_epoch is not None:
         idx = int(best_epoch)
-        plt.scatter(epochs[idx], training_loss[:, 0][idx], marker="*", s=150)
-        plt.scatter(epochs[idx], validation_loss[:, 0][idx], marker="*", s=150)
+        plt.scatter(epochs[idx], training_loss[idx, 0], marker="*", s=180,
+                    zorder=5, color="tab:green")
+        if idx in set(val_idx.tolist()):
+            plt.scatter(epochs[idx], validation_loss[idx, 0], marker="*", s=180,
+                        zorder=5, color="tab:red",
+                        label=f"best epoch {idx} ({validation_loss[idx, 0]:.4f})")
 
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
@@ -102,23 +164,25 @@ def plot_loss_curves(
 
     for lidx in range(1, training_loss.shape[1]):
 
-        plt.plot(
-            epochs,
-            training_loss[:, lidx],
-            label=f"PE Loss {lidx}",
+        name = (
+            component_names[lidx]
+            if component_names is not None and lidx < len(component_names)
+            else f"component {lidx}"
         )
-
+        # Share a colour between the train/val pair so they read together.
+        line, = plt.plot(epochs, training_loss[:, lidx], label=f"{name} (train)")
         plt.plot(
-            epochs,
-            validation_loss[:, lidx],
-            ls="dashed",
-            label=f"PE Loss {lidx}",
+            epochs[val_idx],
+            validation_loss[val_idx, lidx],
+            ls="dashed", marker="o", ms=3,
+            color=line.get_color(),
+            label=f"{name} (val)",
         )
 
         if best_epoch is not None:
             idx = int(best_epoch)
-            plt.scatter(epochs[idx], training_loss[:, lidx][idx], marker="*", s=150)
-            plt.scatter(epochs[idx], validation_loss[:, lidx][idx], marker="*", s=150)
+            plt.scatter(epochs[idx], training_loss[idx, lidx], marker="*", s=150,
+                        zorder=5, color=line.get_color())
 
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
