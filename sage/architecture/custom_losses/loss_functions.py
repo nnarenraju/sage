@@ -126,6 +126,67 @@ class BCEWithPEregLoss(nn.Module):
         return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
 
 
+class BCEWithPEmseLoss(nn.Module):
+    """
+    Year-old parameter-estimation loss: BCE + pure-MSE regression.
+
+    Identical to :class:`BCEWithPEregLoss` EXCEPT the regression term is plain MSE
+    (not smooth_l1/Huber) and is NOT re-weighted by the predicted signal
+    probability -- i.e. exactly the ``norm_tc + norm_mchirp`` MSE the year-old
+    SageNet run minimised.
+
+    Why this matters: MSE's gradient is error-proportional (``2*error``), so it
+    drives the point estimates down hard in the first epoch; PE converges almost
+    immediately and stops competing with the BCE for the shared trunk. Huber caps
+    the regression gradient at +/-1, which under-drives PE, leaving it hot
+    (~35% of the total loss) and a persistent competitor for many epochs -> slower
+    BCE convergence. Kept as a separate module so :class:`BCEWithPEregLoss` stays
+    branch-free.
+
+        L = BCE(ranking_stat, class_target)
+          + regression_weight * MSE_signal(point_estimates, pe_targets)
+
+    Parameters
+    ----------
+    regression_weight : float
+        Relative weight of the regression term vs. BCE.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(3,)``
+        Stacked ``[total_loss, bce_loss, reg_loss]``.
+    """
+
+    def __init__(self, regression_weight: float = 1.0):
+        super().__init__()
+
+        self.regression_weight = regression_weight
+
+        cfg = get_cfg()
+        self.num_components = len(cfg.do_point_estimate) + 1
+
+    def forward(self, outputs, targets):
+        ranking_stat, point_estimates = outputs
+
+        class_target = targets[:, -1].to(ranking_stat.dtype)
+        ranking_stat = ranking_stat.reshape(-1)
+
+        bce_loss = F.binary_cross_entropy_with_logits(ranking_stat, class_target)
+
+        pe_targets = targets[:, :-1]
+        signal_mask = targets[:, -1].unsqueeze(1)
+
+        # Pure MSE on signal samples only: no Huber, no p_signal weighting --
+        # the year-old regression term exactly.
+        reg = F.mse_loss(point_estimates, pe_targets, reduction="none")
+        reg = reg * signal_mask
+        reg_loss = reg.sum() / signal_mask.sum().clamp_min(1)
+
+        total_loss = bce_loss + self.regression_weight * reg_loss
+
+        return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
+
+
 class BCEWithPEsigmaLoss(nn.Module):
     """
     Combined BCE + Heteroscedastic Regression Loss.
