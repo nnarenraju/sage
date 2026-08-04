@@ -29,7 +29,11 @@ from .real_noise import (
     MemmapNoiseSampler,
 )
 
-from .white_noise import WhiteGaussianNoiseSampler
+from .white_noise import (
+    sample_synthetic_noise,
+    available_asds,
+    WhiteGaussianNoiseSampler,
+)
 from .recolour import RecolourPostprocess
 from .glitch_sampler import GlitchOversampledNoiseSampler
 from .lowfar_noise import StartTimeDataset
@@ -43,6 +47,8 @@ __all__ = [
     "HDF5SingleNoiseSampler",
     "MemmapSingleNoiseSampler",
     "MemmapNoiseSampler",
+    "sample_synthetic_noise",
+    "available_asds",
     "WhiteGaussianNoiseSampler",
     "RecolourPostprocess",
     "GlitchOversampledNoiseSampler",

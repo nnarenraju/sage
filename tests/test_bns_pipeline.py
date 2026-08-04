@@ -461,16 +461,27 @@ class TestWhiteGaussianNoiseSampler:
     def test_graph_ready_flag(self, bns_cfg):
         assert WhiteGaussianNoiseSampler.GRAPH_READY is False
 
-    def test_fd_roundtrip_unit_variance(self, bns_cfg):
-        """Inverting the rfft must recover unit-variance Gaussian noise."""
+    def test_fd_roundtrip_unit_psd(self, bns_cfg):
+        """Inverting the rfft must recover noise with a flat unit one-sided PSD."""
         _, data_cfg = bns_cfg
         sampler = WhiteGaussianNoiseSampler(seed=0)
         noise_fd, _ = sampler()
         # irfft(rfft(x, norm="forward"), norm="forward") == x
         noise_td = torch.fft.irfft(noise_fd, n=data_cfg.padded_length_in_nsamples,
                                    dim=-1, norm="forward")
-        std = noise_td.std()
-        assert std.item() == pytest.approx(1.0, abs=0.3)
+        # Default convention is one-sided PSD == 1, i.e. sigma = sqrt(fs / 2),
+        # so that colouring by an ASD is a bare multiply.  See white_noise.py.
+        expected = math.sqrt(data_cfg.sample_rate / 2.0)
+        assert noise_td.std().item() == pytest.approx(expected, rel=0.05)
+
+    def test_fd_roundtrip_unit_variance_flag(self, bns_cfg):
+        """unit_psd=False restores the legacy zero-mean, unit-variance output."""
+        _, data_cfg = bns_cfg
+        sampler = WhiteGaussianNoiseSampler(seed=0, unit_psd=False)
+        noise_fd, _ = sampler()
+        noise_td = torch.fft.irfft(noise_fd, n=data_cfg.padded_length_in_nsamples,
+                                   dim=-1, norm="forward")
+        assert noise_td.std().item() == pytest.approx(1.0, abs=0.3)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

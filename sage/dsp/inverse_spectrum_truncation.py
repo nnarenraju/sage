@@ -155,7 +155,9 @@ def inverse_spectrum_truncation_single(
     N = 2 * (F - 1)  # full time-domain length
 
     # Prepare inverse sqrt PSD in FD
-    inv_asd = torch.zeros(F, dtype=torch.complex128)  # always use float64 for CPU
+    # float64 throughout for precision; device follows the input so this works
+    # on GPU too (the batch sibling already does this).
+    inv_asd = torch.zeros(F, dtype=torch.complex128, device=psd.device)
     kmin = 0
     if low_frequency_cutoff is not None:
         kmin = int(low_frequency_cutoff / delta_f)
@@ -174,7 +176,7 @@ def inverse_spectrum_truncation_single(
 
     # Apply Hann taper if requested
     if trunc_method == "hann":
-        window = torch.hann_window(max_filter_len, dtype=q.dtype)
+        window = torch.hann_window(max_filter_len, dtype=q.dtype, device=q.device)
         # left edge
         q[:trunc_start] *= window[-trunc_start:]
         # right edge
