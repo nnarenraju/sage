@@ -172,3 +172,4 @@ runs/o3b/*_smoke
 
 # Run output symlinks (checkpoints/logs live on /work/nagarajan/sage_runs)
 runs/*/run_export_*
+scratch
