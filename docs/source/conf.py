@@ -39,6 +39,7 @@ ogp_description_length = 200
 ogp_type = "website"
 ogp_custom_meta_tags = [
     '<meta name="twitter:card" content="summary_large_image">',
+    '<meta name="google-site-verification" content="cz-DZtJgJScLi4A7MPQyCntXuotPFiQXwh3g5uv3j-w">',
 ]
 
 templates_path = ["_templates"]
