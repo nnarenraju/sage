@@ -29,7 +29,13 @@ _O4A_DIR = f"{_SRV.data_root}/data_release_o4a"
 
 class O4bCFG:
 
-    export_dir = "./run_export"
+    # Runs export to /work, never home: filling the home quota mid-run
+    # corrupts checkpoints (Errno 122). Mirrors the o3a/o3b layout,
+    # sage_runs/<run>/prod_<DETS>.
+    export_dir = f"{_SRV.data_root}/sage_runs/o4b/prod_HLV"
+    # Fiducial ASDs are per-detector and shared across a run's networks, so
+    # they stay with the repo rather than moving with export_dir.
+    fiducial_dir = "./run_export/fiducial_psds"
     batch_size = 128
     device = "cuda:0"
     dtype = torch.float32

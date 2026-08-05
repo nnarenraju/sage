@@ -9,7 +9,7 @@ Created on 2026-01-22 10:38:25
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -20,6 +20,16 @@ __status__        = ['inProgress', 'Archived', 'inUsage', 'Debugging']
 GitHub Repository: NULL
 
 Documentation: NULL
+
+Licensing
+---------
+This file is part of Sage and is distributed under GPL-3.0-or-later.
+Portions derive from the MIT-licensed JAX reference implementation by
+Adam Coogan and Thomas Edwards; that notice is retained verbatim in
+``THIRD_PARTY_LICENSE`` in this directory and must not be removed.  The MIT
+terms cover those derived portions only.  See ``README.md`` here for the
+full provenance chain (LALSuite GPL-2+ -> MIT JAX reference -> this PyTorch
+reimplementation, validated directly against LALSuite).
 
 """
 
