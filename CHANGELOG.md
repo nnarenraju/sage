@@ -21,7 +21,7 @@ handling, architecture, training, and utilities.
   generators, recolouring, glitch noise and glitch sampler, and hard noise mining.
 - `sage.data.primer` — automated download and preparation of GWOSC data releases,
   observing-run segments, PSDs, MLGWSC data, and pre-trained checkpoints.
-- `sage.data.psd` — PSD generation (Welch), PSD reading, and blackout utilities.
+- `sage.data.asd` — ASD estimation (Welch + sqrt), ASD reading, and blackout utilities.
 - `sage.data.waveform` — parameter sampling distributions, IMRPhenomD/PhenomPv2
   waveform generation, multi-detector projection, SNR calculation, and tapering.
 - `sage.architecture` — modular frontend (MSCNN1D, MSCNN1D-CBAM variants), backend

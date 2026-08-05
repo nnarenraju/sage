@@ -6,7 +6,7 @@ lines SURVIVE whitening -> inflated noise floor -> lower effective SNR).
 
 Whitens the SAME real O3b noise three ways and compares the whitened-noise floor
 in the signal band [20,1024] Hz:
-  (a) CURRENT smoothed fiducial ASD          -> get_fiducial_psds()
+  (a) CURRENT smoothed fiducial ASD          -> get_fiducial_asds()
   (b) OLD-style UNSMOOTHED median ASD         -> median of per-segment TorchWelch
   (c) EXACT per-segment ASD (ideal reference) -> each segment by its own Welch PSD
 Also overlays the two fiducial ASDs (showing smoothing fills the line notches)
@@ -62,11 +62,11 @@ valid_freqs = np.arange(VF) * (SR / VALID)
 vband = (valid_freqs >= 20.0) & (valid_freqs <= 1024.0)
 print(f"padded={PADDED} F={F} delta_f={DELTA_F} band_bins={band.sum()} valid={VALID} VF={VF}")
 
-from sage.data.psd import get_fiducial_psds
+from sage.data.asd import get_fiducial_asds
 from sage.data.noise import MemmapSingleNoiseSampler
 from sage.dsp.welch import TorchWelch
 
-fid_asd = get_fiducial_psds().detach().cpu().numpy()  # (D,F) -- SMOOTHED fiducial ASD
+fid_asd = get_fiducial_asds().detach().cpu().numpy()  # (D,F) -- SMOOTHED fiducial ASD
 welch = TorchWelch(delta_t=1/SR, seg_len=int(SR*4), seg_stride=int(SR*2), avg_method="median")
 welch_freqs = welch.freqs.numpy()
 

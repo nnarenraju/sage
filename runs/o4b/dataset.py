@@ -3,7 +3,7 @@
 
 """
 Filename        : dataset.py
-Description     : O4b noise download + PSD generation.
+Description     : O4b noise download + ASD generation.
 
 O4b public data covers H1, L1 and V1 (Virgo joined for O4b). Everything is
 written into its OWN release sub-folder (data_release_o4b) so it can never
@@ -118,11 +118,11 @@ def _download_data_release(tq, data_cfg):
     drd.download()
 
 
-def _make_psds(detector, data_cfg):
-    from sage.data.primer import EstimatePSD, NoBlackout
+def _make_asds(detector, data_cfg):
+    from sage.data.primer import EstimateASD, NoBlackout
     from sage.dsp.welch import TorchWelch
     from sage.data.noise import MemmapSingleNoiseSampler
-    from sage.data.psd import smoothing
+    from sage.data.asd import smoothing
 
     torch_welch = TorchWelch(
         delta_t=1 / 2048,
@@ -131,12 +131,12 @@ def _make_psds(detector, data_cfg):
         avg_method="median",
     )
 
-    psd_smoothener = smoothing.LogSplineSmoothing(
+    asd_smoothener = smoothing.LogSplineSmoothing(
         smooth_factor=None,
         noise_low_frequency_cutoff=data_cfg.noise_low_frequency_cutoff,
     )
 
-    epsd = EstimatePSD(
+    easd = EstimateASD(
         # Detector
         detector=detector,
         # Inverse spectrum truncation
@@ -144,32 +144,32 @@ def _make_psds(detector, data_cfg):
         max_filter_len=int(round(2048.0 * 2)),
         low_frequency_cutoff=15.0,
         trunc_method="hann",
-        # PSD estimation method
-        psd_method=torch_welch,
+        # Spectral estimator (Welch); EstimateASD square-roots its output
+        asd_method=torch_welch,
         num_samples=250_000,
-        store_psds_as_bin=True,
-        # Fiducial PSD parameters
+        store_asds_as_bin=True,
+        # Fiducial ASD parameters
         blackout_policy=NoBlackout(),
         # Interpolation
-        interpolate_psd=True,
+        interpolate_asd=True,
         training_sample_length=int(2048.0 * 16),
-        # PSD Smoothening
-        psd_smoothener=psd_smoothener,
+        # ASD smoothing
+        asd_smoothener=asd_smoothener,
     )
 
-    # This is used for whitening with the exact segment PSD before recolouring
-    epsd.estimate_segment_psds(
+    # This is used for whitening with the exact segment ASD before recolouring
+    easd.estimate_segment_asds(
         noise_segments_file=f"{_DATASET_DIR}/data_{detector}_{_RUN}.bin"
     )
 
-    # With this we make num_samples random PSDs from the given data
+    # With this we make num_samples random ASDs from the given data
     # We use this for recolouring augmentation
-    # We also do blackout and aggregate the PSDs to produce the fiducial PSD
+    # We also do blackout and aggregate the ASDs to produce the fiducial ASD
     noise_sampler = MemmapSingleNoiseSampler(
         f"{_DATASET_DIR}/data_{detector}_{_RUN}.bin",
         return_tensor=True,
     )
-    epsd.estimate_raw_psds(
+    easd.estimate_raw_asds(
         noise_sampler=noise_sampler, duration=int(round(2048.0 * 16))
     )
 
@@ -236,27 +236,27 @@ def make_dataset():
     tq = _get_timeline(data_cfg)
     _download_data_release(tq, data_cfg)
     for det in _DETECTORS:
-        _make_psds(det, data_cfg)
+        _make_asds(det, data_cfg)
 
 
-def make_psds_only():
-    """Generate fiducial / recolour / segment PSDs for all detectors.
+def make_asds_only():
+    """Generate fiducial / recolour / segment ASDs for all detectors.
 
     Assumes the noise .bin files are already downloaded. Does NOT re-download.
     Run from this directory so the relative ``export_dir`` (./run_export)
-    resolves to runs/o4b/run_export for the fiducial PSDs.
+    resolves to runs/o4b/run_export for the fiducial ASDs.
     """
     set_configs()
     _, data_cfg = get_cfg(), get_data_cfg()
     for det in _DETECTORS:
-        _make_psds(det, data_cfg)
+        _make_asds(det, data_cfg)
 
 
-def make_psds_single(detector):
-    """Generate PSDs for a single detector in its own process."""
+def make_asds_single(detector):
+    """Generate ASDs for a single detector in its own process."""
     set_configs()
     _, data_cfg = get_cfg(), get_data_cfg()
-    _make_psds(detector, data_cfg)
+    _make_asds(detector, data_cfg)
 
 
 def retry_dataset(detectors=None, num_workers=8):

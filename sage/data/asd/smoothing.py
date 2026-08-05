@@ -3,7 +3,7 @@
 
 """
 Filename        : smoothing.py
-Description     : Short description of the file
+Description     : Log-log spline smoothing of a spectral density.
 
 Created on 2026-02-11 20:48:57
 
@@ -31,17 +31,23 @@ from scipy.interpolate import UnivariateSpline
 
 class LogSplineSmoothing:
     """
-    PSD smoother based on a univariate spline fit in log-log space.
+    Spectral smoother based on a univariate spline fit in log-log space.
 
-    Transforms both frequency and PSD to log scale before fitting a
+    Transforms both frequency and amplitude to log scale before fitting a
     :class:`scipy.interpolate.UnivariateSpline`, then exponentiates the
-    result back.  Log-log fitting is well-suited to PSDs because their
+    result back.  Log-log fitting suits detector spectra because their
     broad-band structure follows approximate power laws, so the spline needs
     fewer knots and produces a more physically plausible smooth curve than a
     linear-domain fit would.
 
+    In Sage this is always handed an ASD (see
+    :class:`~sage.data.primer.get_asds.EstimateASD`), which matters for the
+    choice of ``smooth_factor``: the usable strength is roughly 0.001 x
+    ``len(freqs)`` on an ASD versus 0.004 on a PSD, since the log-domain
+    residuals are half as large.  The maths itself is domain agnostic.
+
     Frequencies below ``noise_low_frequency_cutoff`` are excluded from the
-    spline fit (the seismic wall makes PSD estimates unreliable there); the
+    spline fit (the seismic wall makes the estimate unreliable there); the
     original values are returned unchanged for those bins.
 
     Parameters
@@ -57,7 +63,7 @@ class LogSplineSmoothing:
     return_coeffs : bool
         Unused placeholder for future coefficient export (default ``False``).
     noise_low_frequency_cutoff : float
-        Frequency (Hz) below which PSD values are not used for fitting
+        Frequency (Hz) below which values are not used for fitting
         (default ``15.0``).
     """
 
@@ -73,29 +79,29 @@ class LogSplineSmoothing:
         self.return_coeffs = return_coeffs
         self.noise_low_frequency_cutoff = noise_low_frequency_cutoff
 
-    def smooth(self, freqs, psd, smooth_factor=None):
+    def smooth(self, freqs, asd, smooth_factor=None):
         """
-        Smooth a noisy PSD estimate using a spline in log-log space.
+        Smooth a noisy spectral estimate using a spline in log-log space.
 
         Parameters
         ----------
         freqs : (F,) array
             Frequency array (must be > 0).
-        psd : (F,) array
-            PSD values (must be > 0).
+        asd : (F,) array
+            Spectral values, an ASD in Sage's pipeline (must be > 0).
         smooth_factor : float or None
             Smoothing strength. Larger = smoother.
             If None, an automatic heuristic is used.
 
         Returns
         -------
-        psd_smooth : (F,) array
-            Smoothed PSD (same shape as input).
+        asd_smooth : (F,) array
+            Smoothed spectrum (same shape as input).
         """
 
         # remove zero freq if present
         f = freqs
-        p = psd
+        p = asd
 
         # Floor before masking
         # float32 normal range is upto ~1e-38
@@ -128,15 +134,15 @@ class LogSplineSmoothing:
                 line_mask = (f >= f_low) & (f <= f_high)
                 weights[line_mask] = 2
 
-        # Number and placement of knots might different between PSDs
+        # Number and placement of knots might differ between spectra
         # Use LSQUnivariateSpline if you want to keep these fixed
         spline = UnivariateSpline(logf, logp, s=self.smooth_factor, w=weights)
 
         logp_smooth = spline(logf)
-        psd_smooth = np.exp(logp_smooth)
+        asd_smooth = np.exp(logp_smooth)
 
         # put back DC if needed
-        out = psd.copy()
-        out[mask] = psd_smooth
+        out = asd.copy()
+        out[mask] = asd_smooth
 
         return out

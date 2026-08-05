@@ -48,7 +48,7 @@ class StartTimeDataset:
     Each of the N samples is identified by D per-detector absolute memmap
     indices (``start_indices``) and the corresponding D segment IDs
     (``segment_indices``).  The segment IDs match the ``segment_index`` field
-    from the sidecar JSON metadata and are needed to look up PSDs during
+    from the sidecar JSON metadata and are needed to look up ASDs during
     postprocessing.
 
     Saved as a compressed ``.npz`` archive; string metadata (detector names,
@@ -388,7 +388,7 @@ class _MiningReader:
         run_ids = torch.from_numpy(runs.astype(np.int64))       # (B, D) CPU
 
         if self.postprocess_fn is not None:
-            # recolour keys its per-run segment PSD by (run_id, segment_index).
+            # recolour keys its per-run segment ASD by (run_id, segment_index).
             return self.postprocess_fn(batch_td, segment_ids, run_ids)
         return torch.fft.rfft(batch_td, dim=-1, norm="forward")
 

@@ -382,7 +382,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         # mined start (uniform, clamped to the SAME segment) so biasing toward a
         # mined window keeps yielding varied (overlapping) noise rather than the
         # identical realisation every draw. 0 disables. Segment/run ids are left
-        # unchanged, so the whitening PSD and recolour keys still match.
+        # unchanged, so the whitening ASD and recolour keys still match.
         self._hard_jitter_s = float(hard_start_jitter_s)
         self._seg_bounds_lut = None            # lazily built: (run,seg)->(lo,hi)/det
         self.device = cfg.device
@@ -396,7 +396,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         # pools several observing runs. Legacy form: the flat
         # training/validation_noise_files list -> a single run. A run id is
         # carried through every window so it can be read from the right run's
-        # mmap and recoloured with the right run's per-segment PSD.
+        # mmap and recoloured with the right run's per-segment ASD.
         runs = self._resolve_runs(cfg, data_cfg, training)
         self.run_names = [r["run"] for r in runs]
         self.run_data_dirs = [r["data_dir"] for r in runs]
@@ -644,7 +644,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         The jitter (per window, per detector) means repeatedly biasing toward the
         same mined window yields varied, overlapping noise realisations instead of
         the identical window every time. Segment/run ids are unchanged, so the
-        per-segment whitening PSD and recolour keys still line up. Returns lists
+        per-segment whitening ASD and recolour keys still line up. Returns lists
         in the same format as ``_sample_starts_batch``.
         """
         n = len(dataset)
@@ -719,7 +719,7 @@ class MemmapNoiseSampler(torch.nn.Module):
             Per-detector array of absolute memmap start indices, shape
             ``(batch_size,)``.
         segment_indices : list of np.ndarray
-            Per-detector array of segment IDs (for PSD look-up), shape
+            Per-detector array of segment IDs (for ASD look-up), shape
             ``(batch_size,)``.
         run_indices : list of np.ndarray
             Per-detector array of run IDs (which pooled run each window came
@@ -826,7 +826,7 @@ class MemmapNoiseSampler(torch.nn.Module):
             batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=pin)
 
         # Segment + run ids as CPU tensors (B, D) -- recolour keys its per-run
-        # whitening PSD by (run_id, segment_index).
+        # whitening ASD by (run_id, segment_index).
         segment_ids = torch.empty((B, D), dtype=torch.int64)
         run_ids     = torch.empty((B, D), dtype=torch.int64)
         for d in range(D):

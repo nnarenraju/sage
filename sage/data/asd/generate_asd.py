@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Filename        : psds.py
-Description     : Short description of the file
+Filename        : generate_asd.py
+Description     : Normalising-flow generative model for detector ASDs.
 
 Created on 2025-12-16 18:08:32
 
@@ -36,28 +36,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class PSDGenerator:
+class ASDGenerator:
     """
-    Normalising-flow-based PSD generative model trained in log-spline space.
+    Normalising-flow-based ASD generative model trained in log-spline space.
 
     Fits a masked autoregressive flow (MAF, implemented via ``nflows``) to the
-    spline coefficients of real measured PSDs.  Once trained, the flow can
-    generate novel plausible PSD realisations by sampling from the latent
+    spline coefficients of real measured ASDs.  Once trained, the flow can
+    generate novel plausible ASD realisations by sampling from the latent
     Gaussian and inverting through the learned transform.
 
     The overall pipeline is:
 
-    1. Represent each real PSD as a set of log-spline coefficients (using
-       :class:`~sage.data.psd.smoothing.LogSplineSmoothing`).
+    1. Represent each real ASD as a set of log-spline coefficients (using
+       :class:`~sage.data.asd.smoothing.LogSplineSmoothing`).
     2. Fit the MAF on those coefficients (:meth:`build_flow`,
        :meth:`train_flow`).
-    3. Sample new coefficient vectors from the flow and reconstruct PSDs via
-       :meth:`spline_to_psd`.
+    3. Sample new coefficient vectors from the flow and reconstruct ASDs via
+       :meth:`spline_to_asd`.
 
     Parameters
     ----------
-    spline_coeffs : numpy.ndarray, shape ``(N_psd, num_spline_coeffs)``
-        Matrix of spline coefficients from the training PSDs.
+    spline_coeffs : numpy.ndarray, shape ``(N_asd, num_spline_coeffs)``
+        Matrix of spline coefficients from the training ASDs.
     num_layers : int
         Number of autoregressive transform layers (default ``5``).
     hidden_features : int
@@ -115,27 +115,27 @@ class PSDGenerator:
                 f"Epoch {epoch+1}/{self.n_epochs}, loss: {total_loss / len(dataset):.6f}"
             )
 
-    def spline_to_psd(
+    def spline_to_asd(
         self,
         coeffs: np.ndarray,
         freqs: np.ndarray,
         smoothing_spline=None,
     ) -> np.ndarray:
         """
-        Convert spline coefficients to PSD values.
+        Convert spline coefficients to ASD values.
 
         Args:
             coeffs: (num_spline_coeffs,) or (N_samples, num_spline_coeffs)
-            freqs: frequency array corresponding to PSD
-            smoothing_spline: optional UnivariateSpline object to reconstruct PSD
+            freqs: frequency array corresponding to the ASD
+            smoothing_spline: optional UnivariateSpline object to reconstruct the ASD
 
         Returns:
-            psd: (len(freqs),) or (N_samples, len(freqs))
+            asd: (len(freqs),) or (N_samples, len(freqs))
         """
         from scipy.interpolate import UnivariateSpline
 
         coeffs = np.atleast_2d(coeffs)
-        psds = []
+        asds = []
         for c in coeffs:
             if smoothing_spline is None:
                 # default: reconstruct spline from coefficients
@@ -143,14 +143,14 @@ class PSDGenerator:
             else:
                 spline = smoothing_spline
             logp = spline(np.linspace(0, len(c) - 1, len(freqs)))
-            psds.append(np.exp(logp))
-        return np.array(psds)
+            asds.append(np.exp(logp))
+        return np.array(asds)
 
-    def sample_psds(self, nsamples: int, freqs: np.ndarray) -> np.ndarray:
-        """Sample new PSDs from the trained flow."""
+    def sample_asds(self, nsamples: int, freqs: np.ndarray) -> np.ndarray:
+        """Sample new ASDs from the trained flow."""
         self.flow.eval()
         with torch.no_grad():
             z = self.base_dist.sample((nsamples,))
             new_coeffs = self.flow.inverse(z).cpu().numpy()
-        psds = self.spline_to_psd(new_coeffs, freqs)
-        return psds
+        asds = self.spline_to_asd(new_coeffs, freqs)
+        return asds

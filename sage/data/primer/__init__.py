@@ -36,7 +36,7 @@ from sage.data.primer.retry import (
     retry_detector,
 )
 
-from sage.data.psd.blackout import (
+from sage.data.asd.blackout import (
     NoBlackout,
     HardRatioBlackout,
     SoftRatioBlackout,
@@ -45,4 +45,4 @@ from sage.data.psd.blackout import (
     SqrtSoftRatioBlackout,
 )
 
-from sage.data.primer.get_psds import EstimatePSD
+from sage.data.primer.get_asds import EstimateASD

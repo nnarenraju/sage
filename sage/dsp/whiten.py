@@ -28,14 +28,14 @@ import numpy as np
 import torch
 
 # LOCAL
-from sage.data.psd import get_fiducial_psds
+from sage.data.asd import get_fiducial_asds
 from sage.core.config import get_cfg, get_data_cfg
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
 
 
 class FiducialWhitening(torch.nn.Module):
     """
-    Whiten frequency-domain strain using fixed, detector-specific fiducial PSDs.
+    Whiten frequency-domain strain using fixed, detector-specific fiducial ASDs.
 
     The whitening kernel is derived once from pre-computed fiducial ASDs and
     stored as a registered buffer so it moves to the correct device
@@ -47,7 +47,7 @@ class FiducialWhitening(torch.nn.Module):
        ``X_white = X_fd * whitening``  where
        ``whitening[d, f] = 2 Δf / (√0.5 · ASD[d, f])``.
     2. Convert back to time domain via inverse real FFT.
-    3. Strip the corrupted edge samples introduced by the Welch PSD
+    3. Strip the corrupted edge samples introduced by the Welch
        estimation window (``padding_nsamples`` on each side).
 
     The ``@torch.no_grad()`` decorator on :meth:`forward` means this
@@ -80,8 +80,8 @@ class FiducialWhitening(torch.nn.Module):
         cfg = get_cfg()
         data_cfg = get_data_cfg()
 
-        # Get fiducial psds
-        fiducial_psds = get_fiducial_psds()
+        # Per-detector fiducial ASDs (strain/sqrt(Hz)); see sage.data.asd
+        fiducial_asds = get_fiducial_asds()
 
         self.device = cfg.device
 
@@ -94,7 +94,7 @@ class FiducialWhitening(torch.nn.Module):
         self.delta_f = torch.tensor(delta_f).to(device=cfg.device)
 
         # Whitening
-        whitening = 2 * self.delta_f / (math.sqrt(0.5) * fiducial_psds)
+        whitening = 2 * self.delta_f / (math.sqrt(0.5) * fiducial_asds)
         # Final whitening moved to device
         whitening = whitening.to(device=cfg.device)
 
@@ -124,11 +124,11 @@ class FiducialWhitening(torch.nn.Module):
         # Default OFF: configs that don't set `use_line_notch` are byte-for-byte unchanged.
         self._line_notch_on = bool(getattr(cfg, "use_line_notch", False))
         if self._line_notch_on:
-            self._build_line_notch(fiducial_psds, cfg, data_cfg)
+            self._build_line_notch(fiducial_asds, cfg, data_cfg)
 
     def remove_corrupted(self, x):
         """
-        Strip edge samples corrupted by the Welch PSD estimation window.
+        Strip edge samples corrupted by the Welch estimation window.
 
         Parameters
         ----------

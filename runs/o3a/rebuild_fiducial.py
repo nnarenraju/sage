@@ -3,14 +3,14 @@
 """
 rebuild_fiducial.py  (O3a)
 
-Rebuild the fiducial PSDs for the O3a run from the recolour raw PSD banks that
-are already on disk. The original PSD-generation run (Jun 2) crashed at the very
+Rebuild the fiducial ASDs for the O3a run from the recolour raw ASD banks that
+are already on disk. The original ASD-generation run (Jun 2) crashed at the very
 last step writing the fiducial files because run_export/fiducial_psds/ did not
 exist (the makedirs guard was added later). The expensive raw banks completed
 fine, so the fiducial is just the median-of-medians of those banks (NoBlackout
 policy) -- no noise re-sampling needed.
 
-This replicates EstimatePSD._aggregate_psds + _save_fiducial_psd exactly.
+This replicates EstimateASD._aggregate_asds + _save_fiducial_asd exactly.
 """
 
 import os
@@ -25,11 +25,11 @@ FIDUCIAL_DIR = os.path.join(os.path.dirname(__file__), "run_export", "fiducial_p
 DETECTORS = ["H1", "L1", "V1"]
 
 
-def _aggregate_psds(bank):
+def _aggregate_asds(bank):
     # Median of medians, reading the on-disk bank one chunk at a time.
-    # Verbatim copy of EstimatePSD._aggregate_psds (get_psds.py:321).
-    num_psds = bank.shape[0]
-    chunks = np.array_split(np.arange(num_psds), max(1, num_psds // 10_000))
+    # Verbatim copy of EstimateASD._aggregate_asds (get_asds.py).
+    num_asds = bank.shape[0]
+    chunks = np.array_split(np.arange(num_asds), max(1, num_asds // 10_000))
     medians = [
         np.median(np.asarray(bank[idx[0] : idx[-1] + 1]), axis=0) for idx in chunks
     ]
@@ -58,21 +58,21 @@ def rebuild_detector(det):
 
     print(f"[{det}] reading bank ({n} x {num_freq}) ...", flush=True)
     bank = np.memmap(bank_path, dtype=np.float32, mode="r", shape=(n, num_freq))
-    median_psd = _aggregate_psds(bank)
+    median_asd = _aggregate_asds(bank)
     del bank
 
     # NoBlackout policy: pass-through, empty blackout index array.
-    fiducial_psd = np.asarray(median_psd, dtype=np.float32)
+    fiducial_asd = np.asarray(median_asd, dtype=np.float32)
     freqs = np.arange(num_freq, dtype=np.float64) * delta_f
 
     os.makedirs(FIDUCIAL_DIR, exist_ok=True)
 
     bin_out = os.path.join(FIDUCIAL_DIR, f"fiducial_{det}_psd.bin")
-    fiducial_psd.tofile(bin_out)
+    fiducial_asd.tofile(bin_out)
 
     meta = {
         "detector": det,
-        "num_freq_bins": int(len(fiducial_psd)),
+        "num_freq_bins": int(len(fiducial_asd)),
         "dtype": "float32",
         "byte_order": "little",
         "sample_rate": sample_rate,
@@ -96,8 +96,8 @@ def rebuild_detector(det):
 
     print(
         f"[{det}] wrote {bin_out} "
-        f"({len(fiducial_psd)} bins, min={fiducial_psd.min():.3e}, "
-        f"max={fiducial_psd.max():.3e})",
+        f"({len(fiducial_asd)} bins, min={fiducial_asd.min():.3e}, "
+        f"max={fiducial_asd.max():.3e})",
         flush=True,
     )
 
@@ -105,4 +105,4 @@ def rebuild_detector(det):
 if __name__ == "__main__":
     for det in DETECTORS:
         rebuild_detector(det)
-    print("Done. Fiducial PSDs rebuilt in", FIDUCIAL_DIR, flush=True)
+    print("Done. Fiducial ASDs rebuilt in", FIDUCIAL_DIR, flush=True)

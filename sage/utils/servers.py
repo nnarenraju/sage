@@ -94,7 +94,7 @@ class Server:
         return os.path.join(self.data_release_root, f"{run.lower()}_dataset")
 
     def data_dir(self, run: str) -> str:
-        """The per-run ``data_dir`` (recolour PSDs etc.)."""
+        """The per-run ``data_dir`` (recolour ASD banks etc.)."""
         return os.path.join(self.dataset_dir(run), "data_dir")
 
     def noise_bin(self, detector: str, run: str,
@@ -103,7 +103,7 @@ class Server:
 
         The downloader writes the .bin FLAT inside its release folder with the
         run encoded in the filename -- there is NO ``<run>_dataset`` sub-folder
-        for the strain (that sub-folder only holds derived PSDs).
+        for the strain (that sub-folder only holds derived ASD banks).
         ``release_dirname`` is the folder the run was downloaded into:
         ``"data_release"`` (the default/base run) or an isolated dir such as
         ``"data_release_o3a"`` / ``"data_release_o4b"``.
@@ -117,8 +117,8 @@ class Server:
         """One run's entry for the multi-run noise sampler's ``training_noise``.
 
         Bundles the per-detector strain ``.bin`` (from ``release_dirname``) with
-        the run's derived-PSD ``data_dir`` (holding the per-segment whitening
-        PSDs the recolour step needs). ``bins`` are ordered to match
+        the run's derived-ASD ``data_dir`` (holding the per-segment whitening
+        ASDs the recolour step needs). ``bins`` are ordered to match
         ``detectors``. Pass ``data_dir`` explicitly for the flat O4 layout
         (``data_release_<run>/data_dir``); it defaults to the O3-style
         ``data_release/<run>_dataset/data_dir``.

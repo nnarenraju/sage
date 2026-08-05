@@ -1,17 +1,20 @@
 """
-Regenerate fiducial PSDs onto a different run's FFT grid.
+Regenerate fiducial ASDs onto a different run's FFT grid.
 
-A fiducial PSD is stored per-detector at the resolution it was produced at
-(``EstimatePSD(interpolate_psd=True, training_sample_length=...)``).  To reuse a
+A fiducial ASD is stored per-detector at the resolution it was produced at
+(``EstimateASD(interpolate_asd=True, training_sample_length=...)``).  To reuse a
 run's REAL fiducial for a longer/shorter analysis segment, resample it onto the
-target signal grid via the SAME tested interpolation ``EstimatePSD`` uses at
-production (:meth:`EstimatePSD._interpolate` -> ``np.interp``, linear, edge-clamped).
+target signal grid via the SAME tested interpolation ``EstimateASD`` uses at
+production (:meth:`EstimateASD._interpolate` -> ``np.interp``, linear, edge-clamped).
 
-This is a one-time data-prep step (output kept on disk): the smooth broadband PSD
+This is a one-time data-prep step (output kept on disk): the smooth broadband ASD
 is resampled to the target ``delta_f``.  It does NOT add real spectral resolution
-— that is set by the Welch window used at production — it only lands the real PSD
-on the analysis grid.  The whitener (:func:`sage.data.psd.read_psds.get_fiducial_psds`)
+— that is set by the Welch window used at production — it only lands the real ASD
+on the analysis grid.  The whitener (:func:`sage.data.asd.read_asds.get_fiducial_asds`)
 then loads it verbatim, so the on-disk file must already be at the run's grid.
+
+The ``fiducial_{det}_psd.{bin,json}`` filenames are historical; the contents are
+ASDs in strain/sqrt(Hz).
 """
 
 from __future__ import annotations
@@ -21,20 +24,20 @@ from pathlib import Path
 
 import numpy as np
 
-from sage.data.primer.get_psds import EstimatePSD
+from sage.data.primer.get_asds import EstimateASD
 
 
-def interpolate_fiducial(psd, src_delta_f, target_sample_length, sample_rate):
+def interpolate_fiducial(asd, src_delta_f, target_sample_length, sample_rate):
     """
-    Resample a per-detector fiducial PSD onto the rFFT grid of
+    Resample a per-detector fiducial ASD onto the rFFT grid of
     ``target_sample_length`` (``target_sample_length // 2 + 1`` bins).
 
-    Thin wrapper over :meth:`EstimatePSD._interpolate` (linear, edge-clamped).
-    Returns ``(psd_target_float32, delta_f_target)``.
+    Thin wrapper over :meth:`EstimateASD._interpolate` (linear, edge-clamped).
+    Returns ``(asd_target_float32, delta_f_target)``.
     """
-    out, delta_f_new, _ = EstimatePSD._interpolate(
-        np.asarray(psd, dtype=np.float64),
-        delta_f_psd=float(src_delta_f),
+    out, delta_f_new, _ = EstimateASD._interpolate(
+        np.asarray(asd, dtype=np.float64),
+        delta_f_asd=float(src_delta_f),
         sample_length=int(target_sample_length),
         sample_rate=float(sample_rate),
     )
@@ -83,14 +86,14 @@ def regenerate_fiducials(
             meta.get("delta_f")
             or (sample_rate / (2.0 * (n_freq_src - 1)))
         )
-        src_psd = np.fromfile(src_dir / f"fiducial_{det}_psd.bin", dtype=np.float32)
-        if src_psd.shape[-1] != n_freq_src:
+        src_asd = np.fromfile(src_dir / f"fiducial_{det}_psd.bin", dtype=np.float32)
+        if src_asd.shape[-1] != n_freq_src:
             raise ValueError(
-                f"{det}: fiducial .bin has {src_psd.shape[-1]} bins, json says {n_freq_src}"
+                f"{det}: fiducial .bin has {src_asd.shape[-1]} bins, json says {n_freq_src}"
             )
 
         out, delta_f_new = interpolate_fiducial(
-            src_psd, src_delta_f, target_sample_length, sample_rate
+            src_asd, src_delta_f, target_sample_length, sample_rate
         )
         assert out.shape[-1] == n_freq_target, (out.shape[-1], n_freq_target)
 
@@ -108,7 +111,7 @@ def regenerate_fiducials(
                     "source_delta_f": src_delta_f,
                     "source_n_freq": n_freq_src,
                     "note": note
-                    or (f"REAL fiducial resampled (linear) from delta_f={src_delta_f:g} "
+                    or (f"REAL fiducial ASD resampled (linear) from delta_f={src_delta_f:g} "
                         f"to {delta_f_new:g}; broadband real content, resolution set at source."),
                 },
                 indent=2,

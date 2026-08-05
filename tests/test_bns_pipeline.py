@@ -173,7 +173,7 @@ def param_sampler(gwconfig_path):
 
 
 @pytest.fixture(scope="module")
-def flat_psds(bns_cfg):
+def flat_asds(bns_cfg):
     """Return flat unit ASDs (D, F) for mocking FiducialWhitening."""
     cfg, data_cfg = bns_cfg
     D = len(cfg.detectors)
@@ -1123,7 +1123,7 @@ class TestFDConvention:
             f"The * df convention is broken."
         )
 
-    def test_snr_rescaler_asd_sliced_to_coarse_grid(self, gwconfig_path, bns_cfg, flat_psds):
+    def test_snr_rescaler_asd_sliced_to_coarse_grid(self, gwconfig_path, bns_cfg, flat_asds):
         """
         When worst_case multibanding is used with an augment, the SNR estimator's
         ASD must be sliced to the coarse frequency indices during __init__ so
@@ -1133,8 +1133,8 @@ class TestFDConvention:
         from sage.data.waveform import IMRPhenomXAS_NRTidalv3, HalfNorm
         from sage.data.waveform.snr import OptimalSNRRescaler
 
-        with patch("sage.dsp.whiten.get_fiducial_psds", return_value=flat_psds), \
-             patch("sage.data.waveform.snr.get_fiducial_psds", return_value=flat_psds):
+        with patch("sage.dsp.whiten.get_fiducial_asds", return_value=flat_asds), \
+             patch("sage.data.waveform.snr.get_fiducial_asds", return_value=flat_asds):
 
             ps = read_from_config(gwconfig_path, seed=20)
             sampler = IMRPhenomXAS_NRTidalv3(

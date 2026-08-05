@@ -29,12 +29,17 @@ import numpy as np
 
 class BlackoutPolicy:
     """
-    Abstract base class for PSD blackout / glitch-suppression policies.
+    Abstract base class for ASD blackout / glitch-suppression policies.
 
     A blackout policy inflates (or hard-sets) selected frequency bins of the
-    median PSD so that those bins contribute negligibly to the matched-filter
+    median ASD so that those bins contribute negligibly to the matched-filter
     SNR.  This is used to suppress persistent spectral lines or short-duration
-    glitches whose ratio to the median PSD exceeds an acceptable threshold.
+    glitches whose ratio to the median ASD exceeds an acceptable threshold.
+
+    Ratios are AMPLITUDE ratios.  Every policy is handed the median and
+    per-bin-maximum ASD produced by
+    :meth:`~sage.data.primer.get_asds.EstimateASD.estimate_raw_asds`, so a
+    ``max_ratio`` of 4 corresponds to a factor 16 in power, not 4.
 
     All subclasses must implement :meth:`apply`.
 
@@ -44,40 +49,40 @@ class BlackoutPolicy:
 
     Returns (from :meth:`apply`)
     ----------------------------
-    psd : numpy.ndarray, shape ``(F,)``
-        Modified (inflated) PSD array.
+    asd : numpy.ndarray, shape ``(F,)``
+        Modified (inflated) ASD array.
     idxs : numpy.ndarray of int or None
         Indices of frequency bins that were modified.
     """
 
-    def apply(self, median_psd, max_psd):
+    def apply(self, median_asd, max_asd):
         """
-        Apply the blackout policy to the median PSD.
+        Apply the blackout policy to the median ASD.
 
         Parameters
         ----------
-        median_psd : numpy.ndarray, shape ``(F,)``
-            Median PSD computed across all available noise segments.
-        max_psd : numpy.ndarray, shape ``(F,)``
-            Per-bin maximum PSD across all sampled segments, used to detect
+        median_asd : numpy.ndarray, shape ``(F,)``
+            Median ASD computed across all available noise segments.
+        max_asd : numpy.ndarray, shape ``(F,)``
+            Per-bin maximum ASD across all sampled segments, used to detect
             outlier bins. (Every policy needs only this reduction, not the full
             per-segment stack, so it can be accumulated incrementally.)
 
         Returns
         -------
-        psd : numpy.ndarray, shape ``(F,)``
-            Modified PSD (inflated at blackout bins; unchanged elsewhere).
+        asd : numpy.ndarray, shape ``(F,)``
+            Modified ASD (inflated at blackout bins; unchanged elsewhere).
         idxs : numpy.ndarray of int or None
             Indices of frequency bins that were modified, or ``None``.
         """
-        return median_psd, None
+        return median_asd, None
 
 
 class HardRatioBlackout(BlackoutPolicy):
     """
-    Hard zeroing of frequency bins where ``max_psd / median_psd > max_ratio``.
+    Hard zeroing of frequency bins where ``max_asd / median_asd > max_ratio``.
 
-    Any bin whose worst-case PSD (across all segments) exceeds the median by
+    Any bin whose worst-case ASD (across all segments) exceeds the median by
     more than ``max_ratio`` is set to ``1e12``, effectively removing it from
     matched-filter calculations.  This is the most aggressive strategy and
     should be used when glitch contamination is severe and well-localised in
@@ -92,26 +97,26 @@ class HardRatioBlackout(BlackoutPolicy):
     def __init__(self, max_ratio):
         self.max_ratio = max_ratio
 
-    def apply(self, median_psd, max_psd):
+    def apply(self, median_asd, max_asd):
         """Hard-zero bins where max/median exceeds :attr:`max_ratio` (set to 1e12)."""
-        ratio = max_psd / median_psd
+        ratio = max_asd / median_asd
         idxs = np.where(ratio > self.max_ratio)[0]
 
-        psd = median_psd.copy()
-        psd[idxs] = 1e12
+        asd = median_asd.copy()
+        asd[idxs] = 1e12
 
         # We can log this if necessary
         blacked_out_frac = len(idxs) / len(ratio)
 
-        return psd, idxs
+        return asd, idxs
 
 
 class SoftRatioBlackout(BlackoutPolicy):
     """
-    Power-law soft suppression of frequency bins with elevated PSD ratios.
+    Power-law soft suppression of frequency bins with elevated ASD ratios.
 
-    Rather than hard-zeroing, this policy continuously inflates the median PSD
-    for bins where ``max_psd / median_psd > max_ratio`` using a power-law
+    Rather than hard-zeroing, this policy continuously inflates the median ASD
+    for bins where ``max_asd / median_asd > max_ratio`` using a power-law
     scale:  ``scale = 1 + alpha * ((ratio / max_ratio)^beta - 1)``.  Bins
     below the threshold are unmodified.  The power-law shape (``beta > 1``)
     makes suppression sharper near the threshold.
@@ -140,11 +145,11 @@ class SoftRatioBlackout(BlackoutPolicy):
         self.beta = beta
         self.max_scale = max_scale
 
-    def apply(self, median_psd, max_psd):
-        """Apply power-law soft suppression to elevated PSD bins."""
-        ratio = max_psd / median_psd
+    def apply(self, median_asd, max_asd):
+        """Apply power-law soft suppression to elevated ASD bins."""
+        ratio = max_asd / median_asd
 
-        scale = np.ones_like(median_psd)
+        scale = np.ones_like(median_asd)
 
         mask = ratio > self.max_ratio
         scale[mask] += self.alpha * ((ratio[mask] / self.max_ratio) ** self.beta - 1)
@@ -152,22 +157,22 @@ class SoftRatioBlackout(BlackoutPolicy):
         if self.max_scale is not None:
             scale = np.minimum(scale, self.max_scale)
 
-        return median_psd * scale, np.where(mask)[0]
+        return median_asd * scale, np.where(mask)[0]
 
 
 class GaussianSoftNotchBlackout(BlackoutPolicy):
     """
-    Soft notch filter: inflates the PSD at known spectral lines via Gaussians.
+    Soft notch filter: inflates the ASD at known spectral lines via Gaussians.
 
     Adds a sum of Gaussian bumps centred at ``centers`` with widths ``widths``
-    to the median PSD scale factor.  This is useful for suppressing well-known
+    to the median ASD scale factor.  This is useful for suppressing well-known
     spectral lines (e.g. 60 Hz power-grid harmonics, violin modes) without
     hard-removing nearby clean bins.
 
     Parameters
     ----------
     freqs : array-like, shape ``(F,)``
-        Frequency array corresponding to the PSD bins (Hz).
+        Frequency array corresponding to the ASD bins (Hz).
     centers : list[float]
         Centre frequencies of the notch Gaussians (Hz).
     widths : list[float]
@@ -182,21 +187,21 @@ class GaussianSoftNotchBlackout(BlackoutPolicy):
         self.widths = widths
         self.depth = depth
 
-    def apply(self, median_psd, max_psd):
-        """Inflate the PSD at known spectral lines via Gaussian notch bumps."""
-        scale = np.ones_like(median_psd)
+    def apply(self, median_asd, max_asd):
+        """Inflate the ASD at known spectral lines via Gaussian notch bumps."""
+        scale = np.ones_like(median_asd)
 
         for f0, w in zip(self.centers, self.widths):
             scale += self.depth * np.exp(-0.5 * ((self.freqs - f0) / w) ** 2)
 
-        return median_psd * scale, np.empty(0, dtype=np.int64)
+        return median_asd * scale, np.empty(0, dtype=np.int64)
 
 
 class LogSoftRatioBlackout(BlackoutPolicy):
     """
-    Logarithmic soft suppression of bins with elevated PSD ratios.
+    Logarithmic soft suppression of bins with elevated ASD ratios.
 
-    Inflates bins where ``max_psd / median_psd > max_ratio`` using a
+    Inflates bins where ``max_asd / median_asd > max_ratio`` using a
     logarithmic scale: ``scale = 1 + alpha * log1p((ratio - max_ratio) /
     max_ratio)``.  The log growth is slower than the power-law variant
     (:class:`SoftRatioBlackout`), making this a gentler alternative suitable
@@ -223,11 +228,11 @@ class LogSoftRatioBlackout(BlackoutPolicy):
         self.alpha = alpha
         self.max_scale = max_scale
 
-    def apply(self, median_psd, max_psd):
-        """Apply logarithmic soft suppression to elevated PSD bins."""
-        ratio = max_psd / median_psd
+    def apply(self, median_asd, max_asd):
+        """Apply logarithmic soft suppression to elevated ASD bins."""
+        ratio = max_asd / median_asd
 
-        scale = np.ones_like(median_psd)
+        scale = np.ones_like(median_asd)
 
         mask = ratio > self.max_ratio
         x = (ratio[mask] - self.max_ratio) / self.max_ratio
@@ -236,14 +241,14 @@ class LogSoftRatioBlackout(BlackoutPolicy):
         if self.max_scale is not None:
             scale = np.minimum(scale, self.max_scale)
 
-        return median_psd * scale, np.where(mask)[0]
+        return median_asd * scale, np.where(mask)[0]
 
 
 class SqrtSoftRatioBlackout(BlackoutPolicy):
     """
-    Square-root soft suppression of bins with elevated PSD ratios.
+    Square-root soft suppression of bins with elevated ASD ratios.
 
-    Inflates bins where ``max_psd / median_psd > max_ratio`` using a
+    Inflates bins where ``max_asd / median_asd > max_ratio`` using a
     square-root scale: ``scale = 1 + alpha * sqrt(ratio / max_ratio - 1)``.
     The sqrt growth is intermediate in aggressiveness between the log
     (:class:`LogSoftRatioBlackout`) and power-law (:class:`SoftRatioBlackout`)
@@ -264,10 +269,10 @@ class SqrtSoftRatioBlackout(BlackoutPolicy):
         self.alpha = alpha
         self.max_scale = max_scale
 
-    def apply(self, median_psd, max_psd):
-        """Apply square-root soft suppression to elevated PSD bins."""
-        ratio = max_psd / median_psd
-        scale = np.ones_like(median_psd)
+    def apply(self, median_asd, max_asd):
+        """Apply square-root soft suppression to elevated ASD bins."""
+        ratio = max_asd / median_asd
+        scale = np.ones_like(median_asd)
 
         mask = ratio > self.max_ratio
         scale[mask] += self.alpha * np.sqrt(ratio[mask] / self.max_ratio - 1)
@@ -275,7 +280,7 @@ class SqrtSoftRatioBlackout(BlackoutPolicy):
         if self.max_scale is not None:
             scale = np.minimum(scale, self.max_scale)
 
-        return median_psd * scale, np.where(mask)[0]
+        return median_asd * scale, np.where(mask)[0]
 
 
 class SmoothSoftRatioBlackout(BlackoutPolicy):
@@ -283,7 +288,7 @@ class SmoothSoftRatioBlackout(BlackoutPolicy):
     Power-law soft suppression with a Gaussian-tapered (smoothed) profile.
 
     Identical core to :class:`SoftRatioBlackout` -- inflate bins where
-    ``max_psd / median_psd > max_ratio`` by ``1 + alpha*((ratio/max_ratio)**beta - 1)``
+    ``max_asd / median_asd > max_ratio`` by ``1 + alpha*((ratio/max_ratio)**beta - 1)``
     -- but the resulting *scale* profile is Gaussian-smoothed in log-space before it
     is applied.  Two benefits, both verified empirically on O3b HL:
 
@@ -326,11 +331,11 @@ class SmoothSoftRatioBlackout(BlackoutPolicy):
         self.smooth_sigma_bins = smooth_sigma_bins
         self.max_scale = max_scale
 
-    def apply(self, median_psd, max_psd):
+    def apply(self, median_asd, max_asd):
         """Power-law soft suppression, then Gaussian-smooth the scale in log-space."""
-        ratio = max_psd / median_psd
+        ratio = max_asd / median_asd
 
-        scale = np.ones_like(median_psd)
+        scale = np.ones_like(median_asd)
         mask = ratio > self.max_ratio
         scale[mask] += self.alpha * ((ratio[mask] / self.max_ratio) ** self.beta - 1)
 
@@ -347,18 +352,18 @@ class SmoothSoftRatioBlackout(BlackoutPolicy):
             scale = np.minimum(scale, self.max_scale)
 
         idxs = np.where(scale > 1.0 + 1e-6)[0]
-        return median_psd * scale, idxs
+        return median_asd * scale, idxs
 
 
 class NoBlackout(BlackoutPolicy):
     """
-    Pass-through policy that leaves the median PSD completely unmodified.
+    Pass-through policy that leaves the median ASD completely unmodified.
 
-    Returns the median PSD unchanged with an empty blackout index array.
+    Returns the median ASD unchanged with an empty blackout index array.
     Used as a no-op default so that code that calls :meth:`apply` always
     gets a consistent interface regardless of whether blackout is enabled.
     """
 
-    def apply(self, median_psd, max_psd):
-        """Return the median PSD unmodified with an empty blackout index array."""
-        return median_psd, np.empty(0, dtype=np.int64)
+    def apply(self, median_asd, max_asd):
+        """Return the median ASD unmodified with an empty blackout index array."""
+        return median_asd, np.empty(0, dtype=np.int64)

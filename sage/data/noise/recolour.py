@@ -38,13 +38,13 @@ from sage.core.interpolation import torch_linear_interp
 
 class RecolourPostprocess(torch.nn.Module):
     """
-    GPU postprocessing step: stochastic PSD recolouring from one noise epoch
+    GPU postprocessing step: stochastic ASD recolouring from one noise epoch
     to another, operating entirely in the frequency domain.
 
     Motivation
     ----------
     Sage trains on O3b noise but evaluates on O3a noise (different GPS epoch,
-    different spectral shape).  Simply whitening with O3b PSDs and testing on
+    different spectral shape).  Simply whitening with O3b ASDs and testing on
     O3a produces a distribution shift.  With ``p_recolour`` probability, each
     training sample is:
 
@@ -175,7 +175,7 @@ class RecolourPostprocess(torch.nn.Module):
         self._tnorm = _t                                   # (1, 1, F) linear
         self._tquad = _t * _t - 1.0 / 3.0                  # (1, 1, F) quadratic
 
-        # Load PSDs to torch.float32 on GPU
+        # Load the ASD banks to torch.float32 on GPU
         self._load_segment_asds()
         self._load_recolour_asds()
 
@@ -194,7 +194,7 @@ class RecolourPostprocess(torch.nn.Module):
         Each detector is read into its own array (no rectangular padding): after
         the dense ``segment_index`` renumbering the sampler emits per-detector
         positional ids in ``[0, N_seg_d)``, keyed within a run. With multiple
-        pooled runs the whitening PSD is keyed by (run_id, segment_index), so a
+        pooled runs the whitening ASD is keyed by (run_id, segment_index), so a
         separate bank is kept per run.
 
         Result:
@@ -342,7 +342,7 @@ class RecolourPostprocess(torch.nn.Module):
         """
         torch.compile-safe FD recolouring.
 
-        ``run_ids`` (B, D) tags each window's source run so the whitening PSD is
+        ``run_ids`` (B, D) tags each window's source run so the whitening ASD is
         keyed by (run_id, segment_index). ``None`` means single-run (all run 0) —
         the case for single-run training and the hard-noise miner's reader.
         """
@@ -359,7 +359,7 @@ class RecolourPostprocess(torch.nn.Module):
         mask_cpu = torch.rand(B, self.D, 1, generator=self._gen) < self.p_recolour
         mask = mask_cpu.to(X.device, non_blocking=True)
 
-        # Whitening PSD: each window's own segment ASD, keyed by (run, segment).
+        # Whitening: each window's own segment ASD, keyed by (run, segment).
         seg_idx = segment_ids.detach().cpu().numpy()
         run_idx = (np.zeros_like(seg_idx) if run_ids is None
                    else run_ids.detach().cpu().numpy())
@@ -373,7 +373,7 @@ class RecolourPostprocess(torch.nn.Module):
             X,
         )
 
-        # Recolour PSD: a random ASD from the target-epoch bank
+        # Recolour: a random ASD from the target-epoch bank
         recol_idx = torch.randint(
             0, self.n_recolour_asd, (B, self.D), generator=self._gen
         ).numpy()

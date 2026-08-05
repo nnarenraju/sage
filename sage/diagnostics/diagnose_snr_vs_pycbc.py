@@ -34,7 +34,7 @@ register_configs(BaseConfig(C()), BaseDataConfig(DC()))
 
 from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
 from sage.data.waveform.snr import OptimalSNREstimator
-from sage.data.psd import get_fiducial_psds
+from sage.data.asd import get_fiducial_asds
 
 DF_PAD = 1.0/16.0       # padded_delta_f = 1/(sample_length + 2*padding) -- CORRECT
 DF_UNPAD = 1.0/12.0     # old unpadded delta_f = 1/sample_length -- WRONG
@@ -45,7 +45,7 @@ ps = read_from_config("./gwconfig.yaml", seed=150914)
 ss = IMRPhenomPv2(ps, ConstantProjection(), augment=None)
 hf, _ = ss()                                   # (S, D, F) padded grid, 16385 bins
 hf = hf.detach().cpu().numpy()
-asds = get_fiducial_psds().detach().cpu().numpy()   # (D, F) = sqrt(PSD)
+asds = get_fiducial_asds().detach().cpu().numpy()   # (D, F) amplitude spectral densities
 S, D, F = hf.shape
 
 def sage_snr(h1d, asd1d, df):

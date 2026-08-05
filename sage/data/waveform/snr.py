@@ -22,7 +22,7 @@ GitHub Repository: NULL
 Documentation:
 
     snr = OptimalSNREstimator(
-        psds=fiducial_psds,     # (D, F)
+        asds=fiducial_asds,     # (D, F)
         delta_f=delta_f,
         f_low=20.0,
         f_high=1024.0,
@@ -41,7 +41,7 @@ from typing import Callable
 
 # LOCAL
 from sage.core.config import get_cfg, get_data_cfg
-from sage.data.psd import get_fiducial_psds
+from sage.data.asd import get_fiducial_asds
 
 
 class OptimalSNREstimator(torch.nn.Module):
@@ -49,7 +49,7 @@ class OptimalSNREstimator(torch.nn.Module):
     Fast batched optimal matched-filter SNR estimator (equivalent to PyCBC ``sigmasq``).
 
     Computes the optimal (whitened) SNR for a batch of frequency-domain
-    detector-projected waveforms using fiducial PSDs loaded from disk.  The
+    detector-projected waveforms using fiducial ASDs loaded from disk.  The
     integration is performed as:
 
     .. math::
@@ -61,7 +61,8 @@ class OptimalSNREstimator(torch.nn.Module):
     Attributes
     ----------
     asds : torch.Tensor, shape ``(1, D, F)``
-        Amplitude spectral densities (sqrt of PSDs) per detector.
+        Amplitude spectral densities per detector, as stored on disk --
+        the strain is divided by them once, not by their square root.
     mask : torch.Tensor or None, shape ``(1, 1, F)``
         Pre-computed frequency mask for ``[f_low, f_high]`` integration band.
     delta_f : float
@@ -76,8 +77,8 @@ class OptimalSNREstimator(torch.nn.Module):
         """
         Parameters
         ----------
-        psd : (D, F) tensor
-            Fiducial PSD per detector
+        asd : (D, F) tensor
+            Fiducial ASD per detector
         delta_f : float
         f_low, f_high : float or None
             Frequency cutoffs
@@ -96,8 +97,8 @@ class OptimalSNREstimator(torch.nn.Module):
         # optimal-SNR integral AND shift the frequency mask onto the wrong bins.
         self.delta_f = data_cfg.padded_delta_f
 
-        # store PSD once (broadcast ready)
-        self.asds = get_fiducial_psds()
+        # store the ASD once (broadcast ready)
+        self.asds = get_fiducial_asds()
         self.asds = self.asds.unsqueeze(0)  # (1, D, F)
 
         # precompute mask once (compile safe)
@@ -112,7 +113,6 @@ class OptimalSNREstimator(torch.nn.Module):
         k_low = int(torch.ceil(torch.tensor(f_low / self.delta_f)).item())
         k_high = int(torch.floor(torch.tensor(f_high / self.delta_f)).item())
 
-        # mask = torch.zeros(F, dtype=self.psds.dtype, device=self.device)
         mask = torch.zeros(F, dtype=torch.float64, device=self.device)
         mask[k_low:k_high] = 1.0
         return mask.view(1, 1, F)  # broadcastable
@@ -125,8 +125,8 @@ class OptimalSNREstimator(torch.nn.Module):
         ----------
         h : complex tensor (B, D, F)
             Detector-projected frequency-domain strain
-        psd : real tensor (D, F)
-            One-sided PSD for each detector
+        asd : real tensor (D, F)
+            One-sided ASD for each detector
         delta_f : float
             Frequency spacing
         mask : optional bool tensor (F,)

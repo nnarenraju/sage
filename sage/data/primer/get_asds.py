@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Filename        : get_psds.py
-Description     : Short description of the file
+Filename        : get_asds.py
+Description     : Fiducial / recolour / per-segment ASD estimation.
 
 Created on 2025-12-16 15:44:10
 
@@ -41,9 +41,19 @@ from sage.dsp.inverse_spectrum_truncation import inverse_spectrum_truncation_sin
 from sage.core.config import get_cfg, get_data_cfg
 
 
-class EstimatePSD:
+class EstimateASD:
     """
-    Estimate a fiducial PSD by sampling noise from the active noise pipeline.
+    Estimate a fiducial ASD by sampling noise from the active noise pipeline.
+
+    Welch returns a PSD; this class square-roots it immediately (see
+    :meth:`estimate_raw_asds` and :meth:`estimate_segment_asds`), so every
+    quantity produced here -- the per-segment bank, the recolour bank and the
+    fiducial itself -- is an amplitude spectral density in strain/sqrt(Hz)
+    (~1e-23), not a power spectral density (~1e-46).  That is what the whitener
+    and the optimal-SNR integral both want, since each divides by the ASD once.
+
+    The output files keep their historical ``*_psd*`` names so existing data
+    releases and run exports stay readable; only the code was renamed.
     """
 
     def __init__(
@@ -51,17 +61,17 @@ class EstimatePSD:
         *,
         detector: str,
         num_samples: int = 200_000,
-        psd_method=None,
+        asd_method=None,
         blackout_policy=None,
-        store_psds_as_hdf5: bool = False,
-        store_psds_as_bin: bool = False,
+        store_asds_as_hdf5: bool = False,
+        store_asds_as_bin: bool = False,
         apply_inverse_spectrum_truncation: bool = False,
         max_filter_len: int | None = None,
         low_frequency_cutoff: float | None = 15.0,
         trunc_method: str = "hann",
-        interpolate_psd: bool = False,
+        interpolate_asd: bool = False,
         training_sample_length=None,
-        psd_smoothener=None,
+        asd_smoothener=None,
         **kwargs,
     ):
         # Pull required runtime context
@@ -70,10 +80,10 @@ class EstimatePSD:
 
         self.detector = detector
         self.num_samples = int(num_samples)
-        self.psd_method = psd_method
+        self.asd_method = asd_method
         self.blackout_policy = blackout_policy or NoBlackout()
-        self.store_psds_as_hdf5 = store_psds_as_hdf5
-        self.store_psds_as_bin = store_psds_as_bin
+        self.store_asds_as_hdf5 = store_asds_as_hdf5
+        self.store_asds_as_bin = store_asds_as_bin
 
         self.apply_ist = apply_inverse_spectrum_truncation
         self.max_filter_len = max_filter_len
@@ -81,11 +91,11 @@ class EstimatePSD:
         self.trunc_method = trunc_method
 
         # Interpolation
-        self.interpolate_psd = interpolate_psd
+        self.interpolate_asd = interpolate_asd
         self.training_sample_length = training_sample_length
 
-        # Smoothen PSD
-        self.psd_smoothener = psd_smoothener
+        # Spline smoother applied to each ASD before it is written
+        self.asd_smoothener = asd_smoothener
 
         # Sanity checks
         if self.apply_ist:
@@ -96,57 +106,57 @@ class EstimatePSD:
 
     @staticmethod
     def _interpolate(
-        psd,
+        asd,
         *,
-        delta_f_psd: float,
+        delta_f_asd: float,
         sample_length: int,
         sample_rate: float,
     ):
         """
-        Interpolate PSD to match FFT grid of a given sample length.
+        Interpolate an ASD to match the FFT grid of a given sample length.
         Works with NumPy arrays or torch tensors (CPU only).
 
         Args:
-            psd:
+            asd:
                 shape (F,) or (..., F)
-            delta_f_psd:
-                frequency spacing of input PSD
+            delta_f_asd:
+                frequency spacing of input ASD
             sample_length:
                 time-domain sample length
             sample_rate:
                 sampling rate in Hz
 
         Returns:
-            psd_interp:
+            asd_interp:
                 shape (..., sample_length//2 + 1)
         """
         # Determine backend
-        if "torch" in str(type(psd)):
-            psd = psd.detach().cpu().numpy()
+        if "torch" in str(type(asd)):
+            asd = asd.detach().cpu().numpy()
 
-        psd = np.asarray(psd)
-        orig_shape = psd.shape
-        F_psd = orig_shape[-1]
+        asd = np.asarray(asd)
+        orig_shape = asd.shape
+        F_asd = orig_shape[-1]
 
         # Frequency grids
         delta_f_new = sample_rate / sample_length
         F_new = sample_length // 2 + 1
 
-        f_psd = np.arange(F_psd) * delta_f_psd
+        f_asd = np.arange(F_asd) * delta_f_asd
         f_new = np.arange(F_new) * delta_f_new
 
         # Reshape to 2D for interpolation
-        psd_flat = psd.reshape(-1, F_psd)
-        out = np.empty((psd_flat.shape[0], F_new), dtype=psd.dtype)
+        asd_flat = asd.reshape(-1, F_asd)
+        out = np.empty((asd_flat.shape[0], F_new), dtype=asd.dtype)
 
         # Interpolate
-        for i in range(psd_flat.shape[0]):
+        for i in range(asd_flat.shape[0]):
             out[i] = np.interp(
                 f_new,
-                f_psd,
-                psd_flat[i],
-                left=psd_flat[i, 0],
-                right=psd_flat[i, -1],
+                f_asd,
+                asd_flat[i],
+                left=asd_flat[i, 0],
+                right=asd_flat[i, -1],
             )
 
         # Restore shape
@@ -154,11 +164,11 @@ class EstimatePSD:
 
         return out, delta_f_new, f_new
 
-    def taper(self, freqs, psd, psd_floor=3.16e-23):
+    def taper(self, freqs, asd, asd_floor=3.16e-23):
         """
         Apply a cosine roll-off below the low-frequency cutoff.
 
-        Smoothly transitions the PSD from ``psd_floor`` at DC to the measured
+        Smoothly transitions the ASD from ``asd_floor`` at DC to the measured
         value at ``low_frequency_cutoff``, imposing C¹ continuity and reducing
         time-domain ringing.
 
@@ -166,36 +176,37 @@ class EstimatePSD:
         ----------
         freqs : numpy.ndarray
             Frequency array (Hz).
-        psd : numpy.ndarray
-            PSD array to be tapered (modified in-place).
-        psd_floor : float
-            Noise floor value applied at DC (default ``3.16e-23``).
+        asd : numpy.ndarray
+            ASD array to be tapered (modified in-place).
+        asd_floor : float
+            Noise floor applied at DC, in strain/sqrt(Hz) (default ``3.16e-23``).
 
         Returns
         -------
         numpy.ndarray
-            Tapered PSD (same object as *psd*).
+            Tapered ASD (same object as *asd*).
         """
         # Tapering down to a noise floor
         # This imposes C1 continuity and reduces ringing effects in TD
         # Make a tapering function below low freq cutoff
-        taper = np.ones_like(psd)
+        taper = np.ones_like(asd)
         mask = freqs < self.low_frequency_cutoff
         # All values below f_low down to 0.0 Hz
         x = freqs[mask] / self.low_frequency_cutoff  # 0 to 1
         # Cosine roll-off from floor to 1
-        taper[mask] = psd_floor + (psd[mask] - psd_floor) * 0.5 * (
+        taper[mask] = asd_floor + (asd[mask] - asd_floor) * 0.5 * (
             1 - np.cos(np.pi * x)
         )
         # Tapering will take effect and impose a floor
-        psd[mask] = taper[mask]
-        return psd
+        asd[mask] = taper[mask]
+        return asd
 
-    def estimate_raw_psds(self, *, noise_sampler, duration, return_fiducial=False):
-        """Run PSD estimation to get recolour and fiducial psds"""
+    def estimate_raw_asds(self, *, noise_sampler, duration, return_fiducial=False):
+        """Run ASD estimation to produce the recolour bank and the fiducial."""
         sample_rate = self.data_cfg.sample_rate
 
-        # Save directories for PSDs and Fiducial PSDs
+        # Output directories. The ``*_psds`` names are historical -- the files
+        # hold ASDs -- and are kept so existing data releases stay readable.
         fiducial_dir = os.path.join(self.cfg.export_dir, "fiducial_psds")
         recolour_dir = os.path.join(self.data_cfg.data_dir, "recolour_psds")
 
@@ -204,7 +215,7 @@ class EstimatePSD:
 
         n = self.num_samples
 
-        # We stream every PSD straight to disk instead of accumulating the
+        # We stream every ASD straight to disk instead of accumulating the
         # whole (num_samples, F) bank in RAM. The recolour bank is written one
         # row at a time; the fiducial median is computed afterwards by reading
         # the bank back in chunks; and the per-bin maximum that the blackout
@@ -213,7 +224,7 @@ class EstimatePSD:
 
         # If the bank is not meant to be kept, stream to a scratch file that we
         # delete once the median has been computed.
-        keep_bin = self.store_psds_as_bin
+        keep_bin = self.store_asds_as_bin
         stream_path = (
             bin_path
             if keep_bin
@@ -223,37 +234,38 @@ class EstimatePSD:
         freqs = None
         num_freq = None
         delta_f = None
-        max_psd = None
+        max_asd = None
 
         with open(stream_path, "wb") as fh:
             for _ in tqdm(
                 range(n),
-                desc=f"Estimating recolour PSDs for {self.detector}",
+                desc=f"Estimating recolour ASDs for {self.detector}",
             ):
                 # Sample noise sample given duration
                 noise = noise_sampler(duration)
 
-                # Compute PSD using the Welch method
-                pxx = self.psd_method(noise)
+                # Welch returns a PSD; take the square root here so everything
+                # downstream -- and everything written to disk -- is an ASD.
+                pxx = self.asd_method(noise)
                 pxx = torch.sqrt(pxx).to(dtype=torch.float32)
-                pxx_freqs = self.psd_method.freqs
-                pxx_delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
+                pxx_freqs = self.asd_method.freqs
+                pxx_delta_f = 1.0 / (self.asd_method.seg_len * self.asd_method.delta_t)
 
                 if self.apply_ist:
                     raise NotImplementedError("Inverse spectrum truncation removed")
 
                 # Interpolate if requested
-                if self.interpolate_psd:
-                    pxx, pxx_delta_f, pxx_freqs = EstimatePSD._interpolate(
-                        psd=pxx,
-                        delta_f_psd=pxx_delta_f,
+                if self.interpolate_asd:
+                    pxx, pxx_delta_f, pxx_freqs = EstimateASD._interpolate(
+                        asd=pxx,
+                        delta_f_asd=pxx_delta_f,
                         sample_length=self.training_sample_length,
                         sample_rate=sample_rate,
                     )
 
-                # Spline smooth the PSD before saving
-                if self.psd_smoothener is not None:
-                    pxx = self.psd_smoothener.smooth(
+                # Spline smooth the ASD before saving
+                if self.asd_smoothener is not None:
+                    pxx = self.asd_smoothener.smooth(
                         pxx_freqs, pxx, smooth_factor=0.025 * len(pxx_freqs)
                     )
 
@@ -264,51 +276,51 @@ class EstimatePSD:
                 # Instead we make a slow taper
                 pxx = self.taper(pxx_freqs, pxx)
 
-                # Stream this PSD straight to disk (row-major, float32)
+                # Stream this ASD straight to disk (row-major, float32)
                 pxx = np.ascontiguousarray(pxx, dtype=np.float32)
                 fh.write(pxx.tobytes())
 
                 # Track the per-bin maximum (exact and order-independent) for
                 # the blackout policy, and capture the frequency grid once (it
                 # is identical on every sweep).
-                if max_psd is None:
-                    max_psd = pxx.copy()
+                if max_asd is None:
+                    max_asd = pxx.copy()
                     freqs = np.asarray(pxx_freqs, dtype=np.float64)
                     num_freq = pxx.shape[0]
                     delta_f = float(pxx_delta_f)
                 else:
-                    np.maximum(max_psd, pxx, out=max_psd)
+                    np.maximum(max_asd, pxx, out=max_asd)
 
         # Sidecar metadata for the recolour bank (consumed by recolour.py)
-        if self.store_psds_as_bin:
+        if self.store_asds_as_bin:
             self._write_recolour_bank_meta(
                 recolour_dir, n, num_freq, freqs, sample_rate
             )
 
         # Optional gzip-HDF5 archival of the bank (chunked, low memory)
-        if self.store_psds_as_hdf5:
-            self._save_raw_psds_hdf5(
+        if self.store_asds_as_hdf5:
+            self._save_raw_asds_hdf5(
                 stream_path, recolour_dir, n, num_freq, freqs, sample_rate
             )
 
-        # Compute the median PSD by streaming the on-disk bank in chunks, so the
+        # Compute the median ASD by streaming the on-disk bank in chunks, so the
         # full (num_samples, F) array is never resident in memory.
         bank = np.memmap(
             stream_path, dtype=np.float32, mode="r", shape=(n, num_freq)
         )
-        median_psd = self._aggregate_psds(bank)
+        median_asd = self._aggregate_asds(bank)
         del bank
 
         # Drop the scratch bank if we were not asked to keep it
         if not keep_bin:
             os.remove(stream_path)
 
-        # Compute fiducial PSD; blackout policies need only the per-bin maximum
-        fiducial_psd, blackout_idxs = self.blackout_policy.apply(median_psd, max_psd)
+        # Compute fiducial ASD; blackout policies need only the per-bin maximum
+        fiducial_asd, blackout_idxs = self.blackout_policy.apply(median_asd, max_asd)
 
-        # Saving fiducial PSD in export_dir of run
-        self._save_fiducial_psd(
-            fiducial_psd,
+        # Saving fiducial ASD in export_dir of run
+        self._save_fiducial_asd(
+            fiducial_asd,
             freqs,
             blackout_idxs,
             fiducial_dir,
@@ -316,21 +328,21 @@ class EstimatePSD:
         )
 
         if return_fiducial:
-            return freqs, fiducial_psd
+            return freqs, fiducial_asd
 
-    def _aggregate_psds(self, bank):
+    def _aggregate_asds(self, bank):
         # Median of medians, reading the on-disk bank one chunk at a time so the
         # full (num_samples, F) array is never resident in memory. ``bank`` is
         # any row-sliceable array (np.memmap / h5py dataset).
-        num_psds = bank.shape[0]
-        chunks = np.array_split(np.arange(num_psds), max(1, num_psds // 10_000))
+        num_asds = bank.shape[0]
+        chunks = np.array_split(np.arange(num_asds), max(1, num_asds // 10_000))
         medians = [
             np.median(np.asarray(bank[idx[0] : idx[-1] + 1]), axis=0)
             for idx in chunks
         ]
 
-        median_psd = np.median(medians, axis=0)
-        return median_psd
+        median_asd = np.median(medians, axis=0)
+        return median_asd
 
     @staticmethod
     def _to_float(x):
@@ -338,22 +350,24 @@ class EstimatePSD:
             return float(x.item())
         return float(x)
 
-    def _write_recolour_bank_meta(self, save_dir, num_psds, num_freq, freqs, sample_rate):
-        # The bank .bin is streamed to disk during estimate_raw_psds; here we
-        # only emit the sidecar JSON the recolour module reads.
+    def _write_recolour_bank_meta(self, save_dir, num_asds, num_freq, freqs, sample_rate):
+        # The bank .bin is streamed to disk during estimate_raw_asds; here we
+        # only emit the sidecar JSON the recolour module reads. The ``psd``
+        # spellings in the key names are the on-disk contract -- left alone so
+        # sidecars written before and after this rename stay interchangeable.
         meta_path = os.path.join(save_dir, f"raw_{self.detector}_psds.json")
         meta = {
             "detector": self.detector,
-            "num_psds": num_psds,
+            "num_psds": num_asds,
             "num_freq_bins": num_freq,
             "dtype": "float32",
             "byte_order": "little",
             "layout": "row-major",
             "sample_rate": sample_rate,
-            "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
-            "freq_start": EstimatePSD._to_float(freqs[0]),
-            "freq_end": EstimatePSD._to_float(freqs[-1]),
-            "psd_method": self.psd_method.__class__.__name__,
+            "delta_f": EstimateASD._to_float(freqs[1] - freqs[0]),
+            "freq_start": EstimateASD._to_float(freqs[0]),
+            "freq_end": EstimateASD._to_float(freqs[-1]),
+            "psd_method": self.asd_method.__class__.__name__,
             "apply_inverse_spectrum_truncation": self.apply_ist,
             "low_frequency_cutoff": self.low_frequency_cutoff,
             "max_filter_len": self.max_filter_len,
@@ -362,41 +376,41 @@ class EstimatePSD:
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
-    def _save_raw_psds_hdf5(self, bin_path, save_dir, num_psds, num_freq, freqs, sample_rate):
+    def _save_raw_asds_hdf5(self, bin_path, save_dir, num_asds, num_freq, freqs, sample_rate):
         # Archive the streamed bank as a gzip-compressed HDF5 dataset, copied in
         # chunks so the full bank is never held in memory at once.
         hdf5_path = os.path.join(save_dir, f"raw_{self.detector}_psds.h5")
         bank = np.memmap(
-            bin_path, dtype=np.float32, mode="r", shape=(num_psds, num_freq)
+            bin_path, dtype=np.float32, mode="r", shape=(num_asds, num_freq)
         )
         step = 1000
         with h5py.File(hdf5_path, "w") as hf:
             dset = hf.create_dataset(
                 "psds",
-                shape=(num_psds, num_freq),
+                shape=(num_asds, num_freq),
                 dtype="float32",
-                chunks=(min(step, num_psds), num_freq),
+                chunks=(min(step, num_asds), num_freq),
                 compression="gzip",
                 compression_opts=9,
                 shuffle=True,
             )
-            for start in range(0, num_psds, step):
-                end = min(start + step, num_psds)
+            for start in range(0, num_asds, step):
+                end = min(start + step, num_asds)
                 dset[start:end] = np.asarray(bank[start:end])
             hf.create_dataset("freqs", data=freqs)
             hf.attrs["sample_rate"] = sample_rate
         del bank
 
-    def _save_fiducial_psd(
+    def _save_fiducial_asd(
         self,
-        psd,
+        asd,
         freqs,
         blackout_idxs,
         fiducial_dir,
         sample_rate,
     ):
-        # Fiducial PSDs saved in export directory
-        if self.store_psds_as_hdf5:
+        # Fiducial ASDs saved in export directory
+        if self.store_asds_as_hdf5:
             hdf5_path = os.path.join(fiducial_dir, f"fiducial_{self.detector}_psd.h5")
 
             if os.path.exists(hdf5_path):
@@ -405,7 +419,7 @@ class EstimatePSD:
             with h5py.File(hdf5_path, "w") as hf:
                 hf.create_dataset(
                     "psd",
-                    data=psd,
+                    data=asd,
                     compression="gzip",
                     compression_opts=9,
                     shuffle=True,
@@ -419,7 +433,7 @@ class EstimatePSD:
                     {
                         "detector": self.detector,
                         "delta_f": freqs[1] - freqs[0],
-                        "num_freq_bins": len(psd),
+                        "num_freq_bins": len(asd),
                         "freq_start": freqs[0],
                         "freq_end": freqs[-1],
                         "blackout_policy": self.blackout_policy.__class__.__name__,
@@ -436,19 +450,19 @@ class EstimatePSD:
                     }
                 )
 
-        elif self.store_psds_as_bin:
+        elif self.store_asds_as_bin:
             bin_path = os.path.join(fiducial_dir, f"fiducial_{self.detector}_psd.bin")
-            np.asarray(psd, dtype=np.float32).tofile(bin_path)
+            np.asarray(asd, dtype=np.float32).tofile(bin_path)
 
             meta = {
                 "detector": self.detector,
-                "num_freq_bins": len(psd),
+                "num_freq_bins": len(asd),
                 "dtype": "float32",
                 "byte_order": "little",
                 "sample_rate": sample_rate,
-                "delta_f": EstimatePSD._to_float(freqs[1] - freqs[0]),
-                "freq_start": EstimatePSD._to_float(freqs[0]),
-                "freq_end": EstimatePSD._to_float(freqs[-1]),
+                "delta_f": EstimateASD._to_float(freqs[1] - freqs[0]),
+                "freq_start": EstimateASD._to_float(freqs[0]),
+                "freq_end": EstimateASD._to_float(freqs[-1]),
                 "num_samples_used": self.num_samples,
                 "psd_aggregation": "median",
                 "blackout_policy": self.blackout_policy.__class__.__name__,
@@ -464,13 +478,13 @@ class EstimatePSD:
             with open(meta_path, "w") as f:
                 json.dump(meta, f, indent=2)
 
-    def estimate_segment_psds(self, *, noise_segments_file):
+    def estimate_segment_asds(self, *, noise_segments_file):
         """
-        Compute Welch PSD for each noise segment in a bin file.
+        Compute the Welch ASD for each noise segment in a bin file.
 
         Args:
             noise_segments_file: path to noise .bin file
-            output_dir: directory to write PSD bin + metadata
+            output_dir: directory to write the ASD bin + metadata
         """
         noise_segments_file = Path(noise_segments_file)
         output_dir = Path(self.data_cfg.data_dir) / "segment_psds"
@@ -492,14 +506,14 @@ class EstimatePSD:
         # NOTE: filename is detector-based (no run label) to match the
         # consumer in sage/data/noise/recolour.py, which loads segment ASDs as
         # ``data_{det}_psds.bin``. Per-run separation is provided by data_dir.
-        psd_bin_path = output_dir / f"data_{self.detector}_psds.bin"
-        psd_meta_path = output_dir / f"data_{self.detector}_psds_segments.json"
+        asd_bin_path = output_dir / f"data_{self.detector}_psds.bin"
+        asd_meta_path = output_dir / f"data_{self.detector}_psds_segments.json"
 
-        psd_meta = []
-        psd_cursor = 0
+        asd_meta = []
+        asd_cursor = 0
 
-        with open(psd_bin_path, "wb") as psd_fh:
-            for seg in tqdm(seg_meta, desc="Computing PSDs per segment"):
+        with open(asd_bin_path, "wb") as asd_fh:
+            for seg in tqdm(seg_meta, desc="Computing ASDs per segment"):
                 start = seg["sample_start_idx"]
                 nsamp = seg["nsamples"]
 
@@ -512,72 +526,74 @@ class EstimatePSD:
 
                 ts = torch.from_numpy(data)
 
-                psd = self.psd_method(ts).cpu().numpy()
-                psd = np.sqrt(psd).astype(np.float32)
-                freqs = self.psd_method.freqs
-                delta_f = 1.0 / (self.psd_method.seg_len * self.psd_method.delta_t)
+                # Welch gives a PSD; square-root it so the bank on disk is
+                # an ASD, matching the fiducial and what recolour expects.
+                asd = self.asd_method(ts).cpu().numpy()
+                asd = np.sqrt(asd).astype(np.float32)
+                freqs = self.asd_method.freqs
+                delta_f = 1.0 / (self.asd_method.seg_len * self.asd_method.delta_t)
 
                 # Apply inverse spectrum truncation
                 if self.apply_ist:
                     raise NotImplementedError("Inverse spectrum truncation removed")
-                    psd = torch.from_numpy(psd).to(torch.float64)
-                    psd = inverse_spectrum_truncation_single(
-                        psd=psd,
+                    asd = torch.from_numpy(asd).to(torch.float64)
+                    asd = inverse_spectrum_truncation_single(
+                        psd=asd,
                         max_filter_len=self.max_filter_len,
                         low_frequency_cutoff=self.low_frequency_cutoff,
                         delta_f=delta_f,
                         trunc_method=self.trunc_method,
                     )
-                    psd = psd.cpu().numpy()
+                    asd = asd.cpu().numpy()
 
                 # Interpolate if requested
-                if self.interpolate_psd:
-                    psd, delta_f, freqs = EstimatePSD._interpolate(
-                        psd=psd,
-                        delta_f_psd=delta_f,
+                if self.interpolate_asd:
+                    asd, delta_f, freqs = EstimateASD._interpolate(
+                        asd=asd,
+                        delta_f_asd=delta_f,
                         sample_length=self.training_sample_length,
                         sample_rate=self.data_cfg.sample_rate,
                     )
 
-                # Spline smooth the PSD before saving
-                # For PSD: 0.004 * len(freqs)
-                # For ASD: 0.001 * len(freqs)
-                if self.psd_smoothener is not None:
-                    psd = self.psd_smoothener.smooth(
-                        freqs, psd, smooth_factor=0.001 * len(freqs)
+                # Spline smooth the ASD before saving.
+                # Smoothing strength is domain dependent: 0.004 * len(freqs)
+                # would be right for a PSD, 0.001 for the ASD we have here.
+                if self.asd_smoothener is not None:
+                    asd = self.asd_smoothener.smooth(
+                        freqs, asd, smooth_factor=0.001 * len(freqs)
                     )
 
                 # DO NOT do the following although its tempting
                 # Kill all values below low frequency cutoff
-                # psd[freqs < self.low_frequency_cutoff] = 1e30
+                # asd[freqs < self.low_frequency_cutoff] = 1e30
                 # This introduces long lasting ringing effects in TD
                 # Instead we make a slow taper
-                psd = self.taper(freqs, psd)
+                asd = self.taper(freqs, asd)
 
-                nbytes = psd.nbytes
-                psd_fh.write(psd.tobytes())
+                nbytes = asd.nbytes
+                asd_fh.write(asd.tobytes())
 
-                psd_meta.append(
+                asd_meta.append(
                     {
                         "noise_segment_index": seg["segment_index"],
                         "gps_start": seg["gps_start"],
                         "gps_end": seg["gps_end"],
                         "sample_rate": seg["sample_rate"],
-                        "psd_len": psd.shape[0],
-                        "byte_offset": psd_cursor,
+                        "psd_len": asd.shape[0],
+                        "byte_offset": asd_cursor,
                         "byte_length": nbytes,
                         "delta_f": delta_f,
-                        "seg_len": self.psd_method.seg_len,
-                        "seg_stride": self.psd_method.seg_stride,
+                        "seg_len": self.asd_method.seg_len,
+                        "seg_stride": self.asd_method.seg_stride,
                         "window": "hann",
                         "inverse_spectrum_truncation": 1 if self.apply_ist else 0,
                         "max_filter_len": self.max_filter_len,
                         "low_frequency_cutoff": self.low_frequency_cutoff,
-                        "interpolation": 1 if self.interpolate_psd else 0,
+                        "interpolation": 1 if self.interpolate_asd else 0,
                     }
                 )
 
-                psd_cursor += nbytes
+                asd_cursor += nbytes
 
-        with open(psd_meta_path, "w") as f:
-            json.dump(psd_meta, f, indent=2)
+        with open(asd_meta_path, "w") as f:
+            json.dump(asd_meta, f, indent=2)

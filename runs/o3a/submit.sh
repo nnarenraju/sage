@@ -16,7 +16,7 @@ REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 source "$REPO_ROOT/sage/utils/run_base.sh"
 
 # --- 2. choose the task -----------------------------------------------------
-TASK="${1:-download}"   # download | retry | psds | train
+TASK="${1:-download}"   # download | retry | asds | train
 
 # Data tasks are network/CPU-bound -> cpu partition, no GPU (see o3b/submit.sh).
 CPU_OPTS=(--partition cpu --qos "" --gres none --cpus 16 --mem 64G --time 2-00:00)
@@ -30,9 +30,9 @@ case "$TASK" in
         sage_submit "${CPU_OPTS[@]}" --job o3a-retry \
             "python -c 'from dataset import retry_dataset; retry_dataset(num_workers=8)'"
         ;;
-    psds)
-        sage_submit "${CPU_OPTS[@]}" --job o3a-psds \
-            "python -c 'from dataset import make_psds_only; make_psds_only()'"
+    asds)
+        sage_submit "${CPU_OPTS[@]}" --job o3a-asds \
+            "python -c 'from dataset import make_asds_only; make_asds_only()'"
         ;;
     train)
         # Vanilla trainer. Optional 2nd arg: config module (default config).
@@ -63,7 +63,7 @@ case "$TASK" in
             "SAGE_CONFIG='$CFG' python -c 'from train_hard import calibrate_ema; calibrate_ema()'"
         ;;
     *)
-        echo "Unknown task '$TASK'. Use: download | retry | psds | train | train_hard [config] | chain [config] [N] | calibrate [config]" >&2
+        echo "Unknown task '$TASK'. Use: download | retry | asds | train | train_hard [config] | chain [config] [N] | calibrate [config]" >&2
         exit 2
         ;;
 esac
