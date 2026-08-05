@@ -54,10 +54,11 @@ from sage.data.waveform import HalfNorm
 from sage.data.waveform.snr import OptimalSNRRescaler
 from sage.dsp.whiten import FiducialWhitening
 from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
+from sage.dsp.normalise import MinMaxNormalise
 
 # Model and loss
-from sage.architecture.network import MSCNN1D_2DResNetCBAM_Heteroscedastic
-from sage.architecture.custom_losses import BCEWithPEsigmaLoss
+from sage.architecture.network import MSCNN1D_2DResNetCBAM
+from sage.architecture.custom_losses import BCEWithPEregLoss, BCEWithPEmseLoss
 from sage.core.logger import (
     HDF5LossLogger,
     setup_logging,
@@ -96,12 +97,16 @@ def make_training_graph():
         augment=snrscaler,
     )
 
-    # Make the noise sampler
-    # O3a trains on O3a noise and recolours toward the O3b epoch
-    recolour = RecolourPostprocess(
-        p_recolour=0.37,
-        recolour_dataset_dir=get_server().dataset_dir("O3b"),
-    )
+    # Make the noise sampler. By default O3a training noise is recoloured toward the
+    # O3b epoch (cross-run augmentation). Disable via use_recolour=False -- e.g. an
+    # in-domain O3a diagnostic where O3b color is an out-of-domain contaminant that
+    # mismatches the held-out-O3a validation.
+    recolour = None
+    if getattr(get_cfg(), "use_recolour", True):
+        recolour = RecolourPostprocess(
+            p_recolour=0.37,
+            recolour_dataset_dir=get_server().dataset_dir("O3b"),
+        )
     training_noise_sampler = MemmapNoiseSampler(
         postprocess_fn=recolour, prefetch=8, seed=150914
     )
@@ -140,7 +145,13 @@ def make_processor(bounds):
     whitener = FiducialWhitening()
     dyadic_binning = DyadicPyramidBinning(bounds)
     mrsampler = MultirateSampler(binning_method=dyadic_binning)
-    processor = Preprocessor([whitener, mrsampler])
+    # Year-old pipeline inserted a per-window min-max Normalise between whitening
+    # and multirate sampling; opt in via normalise_input=True in the config.
+    stages = [whitener]
+    if getattr(get_cfg(), "normalise_input", False):
+        stages.append(MinMaxNormalise())
+    stages.append(mrsampler)
+    processor = Preprocessor(stages)
 
     return processor
 
@@ -163,7 +174,7 @@ def run_sage():
     processor = make_processor(bounds)
 
     # Model and optimisation
-    model = MSCNN1D_2DResNetCBAM_Heteroscedastic(
+    model = MSCNN1D_2DResNetCBAM(
         frontend_filters=32,
         frontend_kernel=64,
         backend_resnet_size=50,
@@ -179,9 +190,14 @@ def run_sage():
     model = torch.compile(model, mode="max-autotune", fullgraph=True, dynamic=True)
     print("Model compiled with torch.compile!")
 
-    loss_function = BCEWithPEsigmaLoss(regression_weight=0.005, coupling_weight=0.005)
+    # Default (existing behaviour) = Huber PE. Opt in to the year-old pure-MSE PE
+    # (no Huber, no p_signal weighting) with pe_loss_mse=True in the config.
+    if getattr(get_cfg(), "pe_loss_mse", False):
+        loss_function = BCEWithPEmseLoss(regression_weight=1.0)  # year-old: BCE + pure-MSE PE
+    else:
+        loss_function = BCEWithPEregLoss(regression_weight=1.0)  # BCE + Huber PE, no coupling
     optimiser = optim.Adam(model.parameters(), lr=2e-4, weight_decay=1e-6, fused=True)
-    scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=2, eta_min=1e-6)
+    scheduler = CosineAnnealingWarmRestarts(optimiser, T_0=5, T_mult=1, eta_min=1e-6)  # warm restarts EVERY 5 epochs
     scaler = torch.amp.GradScaler(cfg.device, enabled=cfg.autocast)
 
     train_sage = SageVanillaTraining(
@@ -195,6 +211,7 @@ def run_sage():
         scaler=scaler,
         num_iterations=cfg.training_iterations,
         num_epochs=cfg.num_epochs,
+        scheduler_mode="fractional",  # FIX: T_0=5 => restart every 5 EPOCHS (default 'batch' made it 5 BATCHES)
     )
 
     validate_sage = SageVanillaValidation(

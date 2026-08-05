@@ -82,7 +82,8 @@ logger = get_logger("sage.run.o3a.hard")
 
 # Optimiser and scheduler
 import torch.optim as optim
-from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+from torch.optim.lr_scheduler import (LinearLR, CosineAnnealingLR, SequentialLR,
+                                      CosineAnnealingWarmRestarts)
 
 # Training / validation / hard mining
 from sage.factory.training import SageVanillaTraining
@@ -278,16 +279,27 @@ def run_hard():
     # checkpoint IS the fully-annealed model (no wasted post-restart epochs).
     # Warmup stabilises early Adam + the heteroscedastic head (Kalra&Barkeshli 2024).
     total_steps  = cfg.num_epochs * cfg.training_iterations
-    warmup_steps = min(getattr(cfg, "warmup_steps", 5000), max(1, total_steps // 2))
-    scheduler = SequentialLR(
-        optimiser,
-        schedulers=[
-            LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
-            CosineAnnealingLR(optimiser, T_max=max(1, total_steps - warmup_steps),
-                              eta_min=1e-6),
-        ],
-        milestones=[warmup_steps],
-    )
+    # SGDR warm restarts if cfg sets warm_restart_t0 (in EPOCHS); else warmup + single
+    # cosine. Stepped per batch (scheduler_mode="batch"), so T_0 is given in ITERATIONS.
+    _wr_t0 = getattr(cfg, "warm_restart_t0", None)
+    if _wr_t0 is not None:
+        scheduler = CosineAnnealingWarmRestarts(
+            optimiser,
+            T_0     = max(1, int(_wr_t0) * cfg.training_iterations),
+            T_mult  = int(getattr(cfg, "warm_restart_tmult", 1)),
+            eta_min = 1e-6,
+        )
+    else:
+        warmup_steps = min(getattr(cfg, "warmup_steps", 5000), max(1, total_steps // 2))
+        scheduler = SequentialLR(
+            optimiser,
+            schedulers=[
+                LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
+                CosineAnnealingLR(optimiser, T_max=max(1, total_steps - warmup_steps),
+                                  eta_min=1e-6),
+            ],
+            milestones=[warmup_steps],
+        )
     # AMP dtype: bf16 on GPUs that support it (H100 etc.) — full fp32 exponent
     # range, so NO GradScaler is needed and there's no fp16 underflow; fall back
     # to fp16 + GradScaler on older GPUs (Micikevicius et al. ICLR 2018).
