@@ -37,6 +37,12 @@ from ..backend.resnet2d_cbam import (
 )
 
 from ..frontend.mscnn1d_cbam import ConvBlock, _initialize_frontend_weights
+# The base MSCNN1D_2DResNetCBAM has a NON-CBAM multi-scale frontend (its name:
+# MSCNN1D = no attention in the frontend, only the 2D-ResNet backend is CBAM).
+from ..frontend.mscnn1d import (
+    ConvBlock as ConvBlockClassic,
+    _initialize_frontend_weights as _classic_frontend_init,
+)
 
 from sage.core.config import get_cfg, get_data_cfg
 
@@ -91,8 +97,7 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         # CNN Frontend per detector
         self.frontend = nn.ModuleList(
             [
-                ConvBlock(frontend_filters, frontend_kernel, dropout=dropout,
-                          use_blurpool=use_blurpool)
+                ConvBlockClassic(frontend_filters, frontend_kernel)
                 for _ in range(self.num_detectors)
             ]
         )
@@ -138,7 +143,7 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
             nn.init.zeros_(layer.bias)
 
         for det in self.frontend:
-            _initialize_frontend_weights(det)
+            _classic_frontend_init(det)
 
     def forward(self, x):
         """
