@@ -24,6 +24,19 @@ Documentation: NULL
 """
 
 
+import warnings
+
+# torch's SequentialLR steps its child scheduler with an explicit epoch internally,
+# which trips the benign EPOCH_DEPRECATION_WARNING ("The epoch parameter in
+# scheduler.step() was not necessary..."). The LR trajectory is correct; silence just
+# that one message so it doesn't spam the training logs.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*epoch parameter in .*was not necessary.*",
+    category=UserWarning,
+)
+
+
 class ManageScheduler:
     """
     Unified adapter for PyTorch learning-rate schedulers with multiple
