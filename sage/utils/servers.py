@@ -127,6 +127,7 @@ class Server:
             "run": run,
             "data_dir": data_dir if data_dir is not None else self.data_dir(run),
             "bins": [self.noise_bin(d, run, release_dirname) for d in detectors],
+            "detectors": list(detectors),  # validated against cfg.detectors by the sampler
         }
 
 

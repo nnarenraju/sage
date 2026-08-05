@@ -201,6 +201,7 @@ class RecolourPostprocess(torch.nn.Module):
             self._segment_banks: list[list[np.ndarray]]  [run_id][d] -> (N_seg, F)
         """
         self._segment_banks = []
+        seg_n_freq = None   # all pooled runs must share one segment-ASD grid
 
         for run in self._runs:
             data_dir = Path(run["data_dir"])
@@ -216,6 +217,18 @@ class RecolourPostprocess(torch.nn.Module):
 
                 n_seg = len(meta)
                 n_freq = int(meta[0]["psd_len"])  # interpolated to a fixed F
+                # Pooled runs are gathered into one buffer allocated at the first
+                # run's grid (see _gather_segment), so a run whose segment ASDs
+                # live on a different frequency grid would silently broadcast-fail.
+                # Require one shared grid across all pooled runs.
+                if seg_n_freq is None:
+                    seg_n_freq = n_freq
+                elif n_freq != seg_n_freq:
+                    raise ValueError(
+                        f"segment ASD bank {bin_path}: psd_len {n_freq} != {seg_n_freq} "
+                        f"from an earlier pooled run; all runs' segment ASDs must share one "
+                        f"frequency grid to be pooled for recolour."
+                    )
                 expected = n_seg * n_freq * 4
                 actual = os.path.getsize(bin_path)
                 if actual != expected:
@@ -236,7 +249,8 @@ class RecolourPostprocess(torch.nn.Module):
             self._segment_banks.append(det_banks)
 
         # Grid of the segment ASD bank (None if it already matches the signal grid).
-        self._seg_src_freqs = self._bank_src_freqs(n_freq)
+        # Use the validated shared grid, not the leaked last-iteration n_freq.
+        self._seg_src_freqs = self._bank_src_freqs(seg_n_freq)
 
     def _load_recolour_asds(self):
         """

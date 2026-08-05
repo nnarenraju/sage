@@ -176,8 +176,13 @@ class HardMiningCallback(Callback):
                 "(e.g. MemmapNoiseSampler)."
             )
         dcfg = get_data_cfg()
-        # runs / detectors are config-sourced (library stays run-agnostic).
-        runs = (getattr(trainer.cfg, "train_runs", None)
+        # Run identity MUST match the noise sampler's authoritative order -- ns.run_names
+        # is the exact list/order that assigned the run ids in the pooled segment table and
+        # the bank's start_runs column. Sourcing it from cfg.train_runs instead can decouple
+        # from the training_noise order, so a resume could replay hard windows through the
+        # wrong run's mmap. Fall back to config only if the sampler doesn't expose it.
+        runs = (getattr(ns, "run_names", None)
+                or getattr(trainer.cfg, "train_runs", None)
                 or getattr(dcfg, "train_runs", None)
                 or [getattr(trainer.cfg, "run", "unknown")])
         detectors = list(trainer.cfg.detectors)

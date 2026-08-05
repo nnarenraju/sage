@@ -407,6 +407,19 @@ class MemmapNoiseSampler(torch.nn.Module):
                     f"noise run {r['run']!r}: {len(r['bins'])} bins != "
                     f"{self.n_detectors} detectors"
                 )
+            # Config-layer guard: bins bind to channels positionally, so a run
+            # whose detector order differs from cfg.detectors would cross-map
+            # channels. run_noise records the order; enforce it here (the sidecar
+            # detector check below is the authoritative runtime backstop).
+            r_dets = r.get("detectors")
+            if r_dets is not None and (
+                [str(x).upper() for x in r_dets]
+                != [str(x).upper() for x in cfg.detectors]
+            ):
+                raise ValueError(
+                    f"noise run {r['run']!r}: detectors {list(r_dets)} != cfg.detectors "
+                    f"{list(cfg.detectors)}. Order each run's bins to match cfg.detectors."
+                )
 
         self.mmaps = [[] for _ in range(self.n_detectors)]      # [d][run] -> memmap
         self.seg_index = [None] * self.n_detectors              # [d] -> pooled struct
@@ -430,9 +443,38 @@ class MemmapNoiseSampler(torch.nn.Module):
                 self.bin_files.append(p)
                 meta_path = p.parent / f"{p.stem}_segments.json"
                 if not meta_path.exists():
-                    raise FileNotFoundError(f"Metadata {meta_path} not found")
+                    raise FileNotFoundError(
+                        f"noise run {r['run']!r} provides no data for detector "
+                        f"{cfg.detectors[d]!r}: expected {meta_path}. If this run lacks "
+                        f"that detector it cannot be pooled for a {list(cfg.detectors)} network."
+                    )
                 with open(meta_path, "r") as f:
                     meta = json.load(f)
+                # Multi-run identity guards. Bins bind to channels POSITIONALLY
+                # (mmaps[d] <- bins[d]), so a mis-ordered or wrong-run bin would
+                # silently feed the wrong detector's strain into channel d and be
+                # whitened/recoloured with the wrong PSD. Validate the sidecar's own
+                # detector / observing-run against the expected (channel d, run r).
+                meta_det = str(meta[0].get("detector", "")).upper()
+                if meta_det and meta_det != str(cfg.detectors[d]).upper():
+                    raise ValueError(
+                        f"noise run {r['run']!r}: bins[{d}] ({p.name}) holds detector "
+                        f"{meta_det}, but cfg.detectors[{d}] = {cfg.detectors[d]}. Order "
+                        f"each run's bins to match cfg.detectors."
+                    )
+                # Observing-run identity only matters when >1 run is pooled (the
+                # run id keys the per-run recolour PSD bank). A single run takes
+                # the legacy path, which labels it from cfg.train_runs[0] -- the
+                # first TRAIN run -- and that legitimately differs from a cross-run
+                # validation set (e.g. train O3b+O3a, validate O3a), so enforce
+                # this only for genuine multi-run pools.
+                meta_run = str(meta[0].get("observing_run", "")).upper()
+                if self.n_runs > 1 and meta_run and meta_run != str(r["run"]).upper():
+                    raise ValueError(
+                        f"noise bin {p.name} is from observing run {meta_run}, but was placed "
+                        f"in the {r['run']!r} run slot. Fix training_noise so each run's bins "
+                        f"come from that run."
+                    )
                 dtype = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
                 self.dtypes[d].append(dtype)
                 self.mmaps[d].append(np.memmap(p, dtype=dtype, mode="r"))
@@ -521,7 +563,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         if training and getattr(data_cfg, "training_noise", None):
             return [
                 {"run": s["run"], "data_dir": s.get("data_dir"),
-                 "bins": list(s["bins"])}
+                 "bins": list(s["bins"]), "detectors": s.get("detectors")}
                 for s in data_cfg.training_noise
             ]
         files = (data_cfg.training_noise_files if training
