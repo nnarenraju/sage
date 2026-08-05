@@ -207,8 +207,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
                 all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
             )
 
-        # Target handling
-        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
+        # Target handling. Default: z-score (standardise). Opt in to the year-old
+        # [0,1] min-max normalisation with pe_target_minmax=True -- shrinks the PE
+        # target variance, hence the PE gradient at a given regression_weight.
+        if getattr(self.cfg, "pe_target_minmax", False):
+            normed_targets = self.param_sampler.norm_from_batch(all_theta)
+        else:
+            normed_targets = self.param_sampler.standardise_from_batch(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )

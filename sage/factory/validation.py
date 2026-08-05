@@ -246,26 +246,37 @@ class SageVanillaValidation(torch.nn.Module):
 
                 ranking   = network_output[:, 0:1]
                 mu_std    = network_output[:, 1 : 1 + self.num_point_estimate]
-                sigma_raw = network_output[
-                    :, 1 + self.num_point_estimate : 1 + 2 * self.num_point_estimate
-                ]
-
-                mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
-                    mu_std
-                )
-                # Map the raw sigma params to a std the *same* way the loss does
-                # (softplus, not exp(0.5*log_var)) so exported sigma matches the
-                # trained parameterisation. Reuse the loss's own _sigma when present.
-                _sigma = getattr(self.loss_function, "_sigma", None)
-                if callable(_sigma):
-                    sigma_std = _sigma(sigma_raw)
+                if getattr(self.cfg, "pe_target_minmax", False):
+                    mu_phys = self.signal_sampler.param_sampler.unnorm_from_batch(
+                        mu_std
+                    )
                 else:
-                    sigma_std = F.softplus(sigma_raw) + 1e-3
-                std_prior  = self.signal_sampler.param_sampler._std_stds.to(
-                    sigma_std.device
-                )
-                sigma_phys = sigma_std * std_prior
-                network_output = torch.cat([ranking, mu_phys, sigma_phys], dim=1)
+                    mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
+                        mu_std
+                    )
+                # Heteroscedastic models also emit a raw sigma per point estimate
+                # (columns after the means); mean-only models (e.g. BCEWithPEregLoss)
+                # do not -- their network_output has no sigma columns, so export
+                # ranking + mu only (no sigma_phys) instead of crashing on an empty slice.
+                if network_output.shape[1] >= 1 + 2 * self.num_point_estimate:
+                    sigma_raw = network_output[
+                        :, 1 + self.num_point_estimate : 1 + 2 * self.num_point_estimate
+                    ]
+                    # Map the raw sigma params to a std the *same* way the loss does
+                    # (softplus, not exp(0.5*log_var)) so exported sigma matches the
+                    # trained parameterisation. Reuse the loss's own _sigma when present.
+                    _sigma = getattr(self.loss_function, "_sigma", None)
+                    if callable(_sigma):
+                        sigma_std = _sigma(sigma_raw)
+                    else:
+                        sigma_std = F.softplus(sigma_raw) + 1e-3
+                    std_prior  = self.signal_sampler.param_sampler._std_stds.to(
+                        sigma_std.device
+                    )
+                    sigma_phys = sigma_std * std_prior
+                    network_output = torch.cat([ranking, mu_phys, sigma_phys], dim=1)
+                else:
+                    network_output = torch.cat([ranking, mu_phys], dim=1)
 
                 diagnostics["network_output"].append(network_output.cpu())
                 diagnostics["network_target"].append(targets.cpu())
