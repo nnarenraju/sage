@@ -34,6 +34,14 @@ case "$TASK" in
         sage_submit "${CPU_OPTS[@]}" --job o3a-asds \
             "python -c 'from dataset import make_asds_only; make_asds_only()'"
         ;;
+    fiducial)
+        # Build the combined O3a+O3b line-notched (LocalLineNotch K=4) fiducial from
+        # the on-disk recolour banks (no bank regen). Heavy RAM/IO -> CPU partition,
+        # generous memory; never on the login node.
+        sage_submit --partition cpu --qos "" --gres none --cpus 16 --mem 128G \
+            --time 06:00:00 --job build-fiducial-o3ab \
+            "python ../build_fiducial.py"
+        ;;
     train)
         # Vanilla trainer. Optional 2nd arg: config module (default config).
         CFG="${2:-config}"
