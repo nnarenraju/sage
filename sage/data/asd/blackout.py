@@ -25,6 +25,7 @@ Documentation: NULL
 
 # Packages
 import numpy as np
+from scipy.ndimage import median_filter
 
 
 class BlackoutPolicy:
@@ -353,6 +354,79 @@ class SmoothSoftRatioBlackout(BlackoutPolicy):
 
         idxs = np.where(scale > 1.0 + 1e-6)[0]
         return median_asd * scale, idxs
+
+
+class LocalLineNotch(BlackoutPolicy):
+    """
+    Line-ONLY notch: suppress narrow spectral lines, leave the broadband floor alone.
+
+    A bin is flagged as a *line* only when the robust worst-case ASD spikes above
+    its own LOCAL continuum -- a wide running median of ``log(worst)`` over
+    ``window_hz``.  Because the continuum tracks any broadband hump (scattered
+    light, seismic, wandering lines), the hump is never flagged; only narrow
+    excesses (violins, power-line harmonics, calibration lines) poke above their
+    local trend and get notched.  Flagged bins have the fiducial raised to
+    ``k_depth * worst`` (so the whitened line is capped at ~``1/k_depth`` even on
+    its loudest segment), with a Gaussian taper in log-space (no TD ringing).
+    Everywhere else the fiducial IS the median -- the broadband floor is untouched.
+
+    IMPORTANT -- ``worst_asd`` is a ROBUST worst-case (e.g. the p99.9 percentile
+    ASD across segments), NOT the per-bin TRUE maximum that
+    :meth:`~sage.data.primer.get_asds.EstimateASD.estimate_raw_asds` accumulates.
+    The true max is glitch-dominated; feed this policy a percentile computed over
+    the on-disk recolour banks (see the combined-run fiducial builder).
+
+    Parameters
+    ----------
+    freqs : array-like, shape ``(F,)``
+        Frequency array for the ASD bins (Hz).
+    k_depth : float
+        Fiducial at a flagged bin = ``k_depth * worst``; caps the whitened line at
+        ~``1/k_depth`` (default ``4.0`` -> ~0.25 sigma, between soft and hard notch).
+    window_hz : float
+        Local-continuum running-median window (Hz); wider than a line, narrower
+        than a broadband hump (default ``8.0``).
+    thresh : float
+        Flag a bin when ``worst > thresh * local_continuum`` (default ``2.0``).
+    taper_bins : float
+        Gaussian taper (bins) on the notch profile edges (default ``1.5``).
+    f_low, f_high : float
+        Only notch within this band, Hz (default ``15.0`` .. ``1024.0``).
+    """
+
+    def __init__(self, freqs, k_depth=4.0, window_hz=8.0, thresh=2.0,
+                 taper_bins=1.5, f_low=15.0, f_high=1024.0):
+        self.freqs = np.asarray(freqs, dtype=np.float64)
+        self.k_depth = float(k_depth)
+        self.window_hz = float(window_hz)
+        self.thresh = float(thresh)
+        self.taper_bins = float(taper_bins)
+        self.f_low = float(f_low)
+        self.f_high = float(f_high)
+
+    def apply(self, median_asd, worst_asd):
+        """Notch only narrow lines (worst spikes above its local continuum); keep the floor."""
+        median_asd = np.asarray(median_asd, dtype=np.float64)
+        worst_asd = np.asarray(worst_asd, dtype=np.float64)
+        df = float(self.freqs[1] - self.freqs[0])
+        win = int(round(self.window_hz / df)) | 1        # odd window, in bins
+
+        lw = np.log(worst_asd)
+        cont = median_filter(lw, size=win, mode="nearest")   # local continuum of the worst-case
+        line = (lw - cont) > np.log(self.thresh)             # narrow excess above the local trend
+        line &= (self.freqs >= self.f_low) & (self.freqs <= self.f_high)
+
+        # fiducial = median everywhere (floor untouched); at line bins raise to k_depth*worst
+        log_scale = np.zeros_like(median_asd)
+        log_scale[line] = np.log(self.k_depth * worst_asd[line] / median_asd[line])
+        if self.taper_bins > 0:                              # soft edges -> no TD ringing
+            r = max(1, int(round(4 * self.taper_bins)))
+            k = np.exp(-0.5 * (np.arange(-r, r + 1) / self.taper_bins) ** 2)
+            k /= k.sum()
+            log_scale = np.convolve(log_scale, k, mode="same")
+
+        asd = median_asd * np.exp(log_scale)
+        return asd, np.where(line)[0]
 
 
 class NoBlackout(BlackoutPolicy):
