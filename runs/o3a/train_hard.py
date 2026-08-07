@@ -83,7 +83,7 @@ logger = get_logger("sage.run.o3a.hard")
 # Optimiser and scheduler
 import torch.optim as optim
 from torch.optim.lr_scheduler import (LinearLR, CosineAnnealingLR, SequentialLR,
-                                      CosineAnnealingWarmRestarts)
+                                      CosineAnnealingWarmRestarts, LambdaLR)
 
 # Training / validation / hard mining
 from sage.factory.training import SageVanillaTraining
@@ -171,7 +171,8 @@ def calibrate_ema():
 
     model = MSCNN1D_2DResNetCBAM_HardMining(
         frontend_filters=32, frontend_kernel=64,
-        backend_resnet_size=50, norm_type="groupnorm", dropout=cfg.dropout,
+        backend_resnet_size=50, norm_type=getattr(cfg, "norm_type", "instancenorm"),
+        dropout=cfg.dropout,
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
 
     loss_function = BCEWithPEsigmaLoss(
@@ -241,9 +242,11 @@ def run_hard():
         frontend_filters    = 32,
         frontend_kernel     = 64,
         backend_resnet_size = 50,
-        norm_type           = "groupnorm",   # joint over detectors -> preserves the
-                                              # inter-detector amplitude (SNR/sky info)
-                                              # InstanceNorm would erase per-window.
+        norm_type           = getattr(cfg, "norm_type", "instancenorm"),  # config-driven;
+                                                # default InstanceNorm (per-detector unit-normalise).
+                                                # With the line-notched fiducial the line-inflated
+                                                # input std that skewed GroupNorm(1,D) is gone;
+                                                # GroupNorm A/B selected via cfg.norm_type.
         dropout             = cfg.dropout,    # wired; config sets 0.0 (off)
     ).to(dtype=cfg.dtype, device=cfg.device, memory_format=torch.channels_last)
 
@@ -268,19 +271,24 @@ def run_hard():
     for _n, _p in base_model.named_parameters():
         if _p.requires_grad:
             (_decay if _p.ndim >= 2 else _no_decay).append(_p)
-    optimiser = optim.AdamW(
-        [{"params": _decay, "weight_decay": 1e-4},   # conventional mild AdamW wd (weights only)
+    # Optimiser is config-driven (defaults = production: AdamW, wd 1e-4). An
+    # ablation may set cfg.optimizer="adam" (coupled L2) and cfg.weight_decay.
+    _wd  = float(getattr(cfg, "weight_decay", 1e-4))       # weights-only (1-D params always 0)
+    _opt = str(getattr(cfg, "optimizer", "adamw")).lower() # "adamw" (default) | "adam"
+    _OptCls = optim.Adam if _opt == "adam" else optim.AdamW
+    optimiser = _OptCls(
+        [{"params": _decay, "weight_decay": _wd},
          {"params": _no_decay, "weight_decay": 0.0}],
         lr=2e-4, fused=True,
     )
-    # Single cosine decay with a short linear warmup, stepped per batch over the
-    # whole run. Best-single-model schedule: "decay, not restarts" drives the
-    # gains (Gotmare et al. ICLR 2019), and the run ends at eta_min so the final
-    # checkpoint IS the fully-annealed model (no wasted post-restart epochs).
-    # Warmup stabilises early Adam + the heteroscedastic head (Kalra&Barkeshli 2024).
+    # LR: short linear warmup, then PolynomialLR (power `lr_anneal_power`) decay
+    # peak->eta_min over most of the run, then a short flat tail at eta_min for the
+    # final `lr_flat_tail_epochs` epochs so EMA settles on a stable minimum. power>1
+    # leaves the peak faster than cosine's flat top (which wasted ~half the run
+    # near-peak for no loss gain) yet does not rush to the floor -- it bottoms out
+    # only in the flat tail. Stepped per batch (scheduler_mode="batch"). SGDR warm
+    # restarts remain an opt-in ablation via cfg.warm_restart_t0.
     total_steps  = cfg.num_epochs * cfg.training_iterations
-    # SGDR warm restarts if cfg sets warm_restart_t0 (in EPOCHS); else warmup + single
-    # cosine. Stepped per batch (scheduler_mode="batch"), so T_0 is given in ITERATIONS.
     _wr_t0 = getattr(cfg, "warm_restart_t0", None)
     if _wr_t0 is not None:
         scheduler = CosineAnnealingWarmRestarts(
@@ -290,16 +298,22 @@ def run_hard():
             eta_min = 1e-6,
         )
     else:
-        warmup_steps = min(getattr(cfg, "warmup_steps", 5000), max(1, total_steps // 2))
-        scheduler = SequentialLR(
-            optimiser,
-            schedulers=[
-                LinearLR(optimiser, start_factor=1e-3, total_iters=warmup_steps),
-                CosineAnnealingLR(optimiser, T_max=max(1, total_steps - warmup_steps),
-                                  eta_min=1e-6),
-            ],
-            milestones=[warmup_steps],
-        )
+        _peak, _eta_min = 2e-4, 1e-6                 # peak = optimiser base lr (above)
+        _floor  = _eta_min / _peak
+        _power  = float(getattr(cfg, "lr_anneal_power", 2.0))
+        _warmup = min(getattr(cfg, "warmup_steps", 20_000), max(1, total_steps // 2))
+        _flat   = int(getattr(cfg, "lr_flat_tail_epochs", 4)) * cfg.training_iterations
+        _anneal = max(1, total_steps - _warmup - _flat)
+
+        def _lr_lambda(step):
+            if step < _warmup:                       # linear warmup: 1e-3 -> 1.0
+                return 1e-3 + (1.0 - 1e-3) * (step / max(1, _warmup))
+            s = step - _warmup
+            if s >= _anneal:                         # flat tail at eta_min
+                return _floor
+            return _floor + (1.0 - _floor) * (1.0 - s / _anneal) ** _power
+
+        scheduler = LambdaLR(optimiser, _lr_lambda)
     # AMP dtype: bf16 on GPUs that support it (H100 etc.) — full fp32 exponent
     # range, so NO GradScaler is needed and there's no fp16 underflow; fall back
     # to fp16 + GradScaler on older GPUs (Micikevicius et al. ICLR 2018).
@@ -318,10 +332,12 @@ def run_hard():
     _mine_stop = int(round(0.6 * cfg.num_epochs))
     _front_load_sched = list(range(3, _mine_stop, 4))
     hard_cb = HardMiningCallback(
-                # File-resident HDF5 bank lives on /work; one file per
-                # (train_runs, detectors) -- see hardbank_<runs>_<dets>.h5.
+                # File-resident HDF5 bank, one PER RUN under its export_dir
+                # (<export_dir>/hard_mining/hardbank_<runs>_<dets>.h5). Per-run rather
+                # than a shared dir so two same-(runs,detectors) jobs -- e.g. a norm
+                # A/B -- never contend for the same HDF5 lock. Config may override.
                 bank_dir       = getattr(cfg, "bank_dir",
-                                         os.path.join(get_server().data_root, "hard_mining")),
+                                         os.path.join(cfg.export_dir, "hard_mining")),
                 # One arg, two forms: int N -> mine every N epochs; or a list of
                 # epoch indices. Default = the front-loaded list above (every 4
                 # epochs over the first ~60%); a 2-epoch smoke overrides with [0].
