@@ -227,8 +227,15 @@ class CheckpointManager:
             "scheduler_state_dict": self.scheduler.state_dict(),
             "scaler_state_dict": self.scaler.state_dict(),
             # ---- configs ----
-            "cfg": self.cfg,
-            "data_cfg": self.data_cfg,
+            # Store a flattened, plain-dict snapshot (identical to
+            # cfg_snapshot.json) rather than the live config object. The raw
+            # object pickles to a useless "<... object at 0x...>" anyway (see
+            # config_to_dict) and its class may be unpicklable -- e.g. a config
+            # built by a factory (make_configs.<locals>.O3aCFG). Nothing on
+            # resume reads these keys; they are purely a record of settings.
+            "cfg": json.loads(json.dumps(config_to_dict(self.cfg), default=str)),
+            "data_cfg": json.loads(
+                json.dumps(config_to_dict(self.data_cfg), default=str)),
             # ---- model info ----
             "param_count": sum(p.numel() for p in self.model.parameters()),
             "trainable_param_count": sum(
