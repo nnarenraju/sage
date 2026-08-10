@@ -72,8 +72,18 @@ case "$TASK" in
         sage_submit --time 02:00:00 --job "o3b-cal-$CFG" \
             "SAGE_CONFIG='$CFG' python -c 'from train_hard import calibrate_ema; calibrate_ema()'"
         ;;
+    eval_snr)
+        # Sensitivity testing (SageVanillaTesting): efficiency vs SNR at fixed FAR.
+        # Args: config ckpt out [pass=both] [n_noise] [n_sig] [batch]
+        # e.g. ./submit.sh eval_snr config_HL /path/epoch_19.pt /path/out noise 160e6 0 2048
+        CFG="${2:-config_HL}"; CKPT="$3"; OUT="$4"
+        PASS="${5:-both}"; NN="${6:-1000000}"; NS="${7:-100000}"; BATCH="${8:-1024}"
+        sage_submit --time 1-00:00 --job "o3b-evalsnr-$CFG-$PASS" \
+            "SAGE_CONFIG='$CFG' EVAL_CKPT='$CKPT' EVAL_OUT='$OUT' EVAL_PASS='$PASS' \
+             N_NOISE=$NN N_SIG=$NS EVAL_BATCH=$BATCH python eval_efficiency_snr.py"
+        ;;
     *)
-        echo "Unknown task '$TASK'. Use: download | retry | asds | train | train_hard [config] | chain [config] [N] | calibrate [config]" >&2
+        echo "Unknown task '$TASK'. Use: download | retry | asds | train | train_hard [config] | chain [config] [N] | calibrate [config] | eval_snr <config> <ckpt> <out> [pass] [n_noise] [n_sig] [batch]" >&2
         exit 2
         ;;
 esac
