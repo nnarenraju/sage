@@ -28,6 +28,7 @@ from .real_noise import (
     MemmapSingleNoiseSampler,
     MemmapNoiseSampler,
 )
+from .testing_noise import TestNoiseSampler
 
 from .white_noise import (
     sample_synthetic_noise,
@@ -48,6 +49,7 @@ __all__ = [
     "HDF5SingleNoiseSampler",
     "MemmapSingleNoiseSampler",
     "MemmapNoiseSampler",
+    "TestNoiseSampler",
     "sample_synthetic_noise",
     "available_asds",
     "WhiteGaussianNoiseSampler",
