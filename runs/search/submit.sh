@@ -91,10 +91,13 @@ case "$TASK" in
         # the single-pass conditioning path; --mem leaves room above it.
         # QOS "long" allows 14 days and no GPU, which is what this is; the
         # default "normal" caps at 2 days and would wall-kill a slow fetch.
-        sage_submit --partition cpu --qos long --gres none --cpus 16 --mem 32G \
-            --time 3-00:00 --job "dataprep-${RUN}" \
+        # 32 GB holds the longest segment of every run (O4a L1 runs 74 h, which
+        # needs 26 GB) on the single-pass conditioning path, so nothing falls
+        # back to blocked conditioning. The nodes carry 773 GB.
+        sage_submit --partition cpu --qos long --gres none --cpus 16 --mem 64G \
+            --time 3-00:00 --job "dataprep-${RUN}" ${DEP:+--dependency "$DEP"} \
             "python -m sage.search.dataprep --run $RUN --detectors $DETS \
-                 --flag DATA --memory-budget-gb 20 --workers 8 --cache-files 64"
+                 --flag DATA --memory-budget-gb 32 --workers 8 --cache-files 64"
         ;;
     dataprep-budget)
         # What it will cost, before fetching anything.

@@ -380,13 +380,48 @@ def _files_spanning(gps_start: float, gps_end: float) -> List[int]:
 
 
 def file_url(detector: str, observing_run: str, file_start: int) -> str:
-    """GWOSC 4 kHz strain file URL for a detector and file start."""
+    """
+    GWOSC 4 kHz strain file URL for a detector and file start.
+
+    Constructed rather than looked up, since resolving nearly ten thousand files through
+    the API would cost as many round trips. The directory component is not always the one
+    the API reports -- the archive groups files into directories on a boundary that is not
+    a function of the file start alone -- but the server serves the file either way.
+    :func:`resolve_file_url` is the fallback for the case where it does not.
+    """
     parent = (int(file_start) // 65536) * 65536
     tag = f"{observing_run}_4KHZ_R1"
     return (
         f"https://gwosc.org/archive/data/{tag}/{parent}/"
         f"{detector[0]}-{detector}_GWOSC_{tag}-{int(file_start)}-"
         f"{GWOSC_FILE_DURATION_S}.hdf5"
+    )
+
+
+def resolve_file_url(detector: str, observing_run: str, file_start: int) -> str:
+    """
+    Ask GWOSC where a file actually is.
+
+    Used only when the constructed URL is not found, so the build does not depend on the
+    archive's directory convention staying as it is.
+    """
+    from gwosc.locate import get_urls
+
+    name = (
+        f"{detector[0]}-{detector}_GWOSC_{observing_run}_4KHZ_R1-"
+        f"{int(file_start)}-{GWOSC_FILE_DURATION_S}.hdf5"
+    )
+    urls = get_urls(
+        detector,
+        int(file_start),
+        int(file_start) + GWOSC_FILE_DURATION_S,
+        sample_rate=4096,
+    )
+    for url in urls:
+        if url.endswith(name):
+            return url
+    raise RuntimeError(
+        f"GWOSC does not publish {name} for {detector} in {observing_run}"
     )
 
 
@@ -454,12 +489,19 @@ class SourceFiles:
         url = file_url(detector, self.observing_run, file_start)
         partial = target.with_suffix(".part")
         last = None
-        for attempt in range(retries):
+        resolved = False
+        for attempt in range(retries + 1):
             floor = self.min_rate_bytes_s / (attempt + 1)
             try:
                 # Separate connect and read timeouts: a dead socket must not hold a
                 # worker for the whole transfer budget.
                 with requests.get(url, stream=True, timeout=(30, 120)) as response:
+                    if response.status_code == 404 and not resolved:
+                        # The constructed directory was wrong for this file; ask GWOSC
+                        # once, then carry on with the answer.
+                        resolved = True
+                        url = resolve_file_url(detector, self.observing_run, file_start)
+                        continue
                     response.raise_for_status()
                     started = time.monotonic()
                     seen = 0
