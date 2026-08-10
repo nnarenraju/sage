@@ -129,6 +129,11 @@ def make_training_graph(seed):
         # bank (set_hard_bank); no .npz pre-loading and no bias until the first
         # mining round writes some hard start-times.
         hard_bias_prob   = 0.0,
+        # Focal replay weighting: draw a mined window with weight
+        # sigmoid(ranking_stat)**gamma instead of uniformly, so the tail that
+        # sets the FAR gets more of the replay budget. Bounded by construction
+        # (<= 2**gamma spread across the active set); 0.0 = uniform.
+        hard_focal_gamma = float(getattr(cfg, "hard_focal_gamma", 0.0)),
     )
     return signal_sampler, noise_sampler, param_sampler.bounds
 
@@ -325,11 +330,17 @@ def run_hard():
     # ── Training (vanilla + hard-mining callback) + validation ───────────────
     # Hard mining is a callback on plain SageVanillaTraining. Drop the
     # callbacks=[...] to disable mining entirely (no pyribs, random noise only).
-    # Front-load mining through the first ~60% of the run to build a large (~1M)
-    # hard-noise bank by the midpoint, then stop -- the persisted bank keeps
-    # biasing the second half. Bounding the number of mine events (each re-scores
-    # the whole growing bank) keeps the total walltime under the 4-day cap.
-    _mine_stop = int(round(0.6 * cfg.num_epochs))
+    # Mine for essentially the whole run, stopping only at the LR flat tail: the
+    # model keeps changing, so its false alarms keep changing, and a bank frozen
+    # at 60% goes stale against the model that actually gets deployed. Mining is
+    # ~constant cost per round (~500s); only the re-eval grows with the bank
+    # (~0.6 ms/window), and with chained segments the old 4-day single-job cap
+    # that motivated stopping early no longer binds.
+    # The flat tail is left mining-free on purpose: those epochs exist for the
+    # weights/EMA to settle on a stable minimum, so the data distribution should
+    # not still be shifting under them.
+    _mine_stop = int(getattr(cfg, "mine_stop_epoch",
+                             cfg.num_epochs - int(getattr(cfg, "lr_flat_tail_epochs", 4))))
     _front_load_sched = list(range(3, _mine_stop, 4))
     hard_cb = HardMiningCallback(
                 # File-resident HDF5 bank, one PER RUN under its export_dir
