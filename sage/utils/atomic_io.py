@@ -49,3 +49,22 @@ def atomic_h5(path, mode="a"):
                 os.remove(tmp)           # discard the partial write
             except OSError:
                 pass
+
+
+def write_h5(path, datasets, attrs=None, compression="gzip"):
+    """Crash-atomically (re)write an HDF5 file with the given datasets/attrs.
+
+    A dataset of the same name is replaced rather than merged, so a rewrite with a
+    different shape succeeds instead of raising. Everything else already in the file is
+    preserved, since ``atomic_h5`` snapshots before writing.
+
+    Shared by the validation/testing side products and by the search's trigger shards and
+    manifests, so one definition of "written safely" covers both.
+    """
+    with atomic_h5(path) as f:
+        for k, v in datasets.items():
+            if k in f:
+                del f[k]
+            f.create_dataset(k, data=v, compression=compression)
+        for k, v in (attrs or {}).items():
+            f.attrs[k] = v
