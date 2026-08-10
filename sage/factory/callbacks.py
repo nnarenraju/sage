@@ -194,7 +194,13 @@ class HardMiningCallback(Callback):
             descriptor_dim=self.descriptor_dim, novelty_dist=self.novelty_dist,
             max_embeddings=self.max_embeddings,
         )
-        self._reader = _MiningReader(ns, seed=self.mine_seed)
+        # postprocess=False: mine and re-evaluate on REAL noise, never recoloured.
+        # Hardness must be a property of the stored (run, segment, start) pointer,
+        # and re-eval gates replay via HardMiningBank.active_indices -- a random
+        # ASD draw there would mask hard windows and promote benign ones. Recolour
+        # still applies when these windows are replayed through the training
+        # sampler. Also keeps mining off the recolour RNG stream.
+        self._reader = _MiningReader(ns, seed=self.mine_seed, postprocess=False)
         self._preprocess = make_miner_preprocessor(
             trainer.processor, trainer.signal_sampler
         )

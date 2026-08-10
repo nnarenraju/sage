@@ -232,9 +232,27 @@ class _MiningReader:
     ----------
     noise_sampler : MemmapNoiseSampler
     seed : int or None
+    postprocess : bool, default False
+        Apply the sampler's ``postprocess_fn`` (i.e. recolour) to the windows
+        read here.  **Off by default, which is what hard mining requires.**
+
+        Mining and bank re-evaluation are *measurements*: they decide whether a
+        stored ``(run, segment, start)`` pointer is a hard window, and re-eval
+        additionally gates which windows the sampler replays
+        (``HardMiningBank.active_indices``).  Recolouring makes that verdict a
+        function of a random ASD draw that is NOT stored with the pointer, so a
+        genuinely hard window can be masked by an easy draw (and a benign one
+        promoted by a hard draw), the verdict churns between rounds for reasons
+        unrelated to learning, and the bank stops being reproducible.  The
+        search runs on real noise, so hardness is measured on real noise.
+
+        Recolour augmentation still applies where it belongs: mined windows are
+        replayed through the *training* sampler, which recolours them, so each
+        banked window is seen under many ASDs across training rather than the
+        single frozen draw a recoloured mine would have baked in.
     """
 
-    def __init__(self, noise_sampler, seed=None):
+    def __init__(self, noise_sampler, seed=None, postprocess=False):
         self.mmaps = noise_sampler.mmaps                # nested [d][run] (5a)
         self.seg_index = noise_sampler.seg_index        # pooled struct arr per detector
         self.segment_probs = noise_sampler.segment_probs
@@ -242,7 +260,8 @@ class _MiningReader:
         self.n_detectors = noise_sampler.n_detectors
         self.n_runs = len(self.mmaps[0]) if self.mmaps else 1
         self.device = noise_sampler.device
-        self.postprocess_fn = noise_sampler.postprocess_fn
+        # Not inherited unconditionally: see the ``postprocess`` docstring above.
+        self.postprocess_fn = noise_sampler.postprocess_fn if postprocess else None
         self.rng = np.random.default_rng(seed)
 
         # The GPS/segment lookups below feed ONLY the legacy single-run helpers
