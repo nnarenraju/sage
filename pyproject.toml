@@ -87,7 +87,18 @@ exclude = ["sage.egg-info*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers"
+# An xfail that starts passing is reported as a failure. Unimplemented search tests are
+# marked xfail(raises=NotImplementedError) while their module is a stub; implementing the
+# module makes the test pass, which fails the run until the marker is removed. That is the
+# intended ratchet, so the strictness must not be optional.
+xfail_strict = true
+markers = [
+    "gpu: needs a CUDA device",
+    "data: needs a strain release on project storage",
+    "net: needs network access to an external service",
+    "slow: takes long enough to be worth deselecting during development",
+]
 
 [tool.coverage.run]
 source = ["sage"]
