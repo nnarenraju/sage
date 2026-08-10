@@ -451,6 +451,25 @@ class HardMiningBank:
         # that is correct: it has no current-model evidence of being hard.
         return active
 
+    def latest_eval(self, indices=None):
+        """LATEST re-eval ranking stat, for ``indices`` (default: all starts).
+
+        Returns NaN-free float32; rows never scored (or before any re-eval round)
+        come back as 0.0, which the focal replay weighting treats as the neutral
+        keep-threshold value rather than silently dropping them.
+        """
+        with h5py.File(self.path, "r") as f:
+            N = f["start_times"].shape[0]
+            R = f["eval_stats"].shape[1]
+            if N == 0 or R == 0:
+                n = N if indices is None else len(np.asarray(indices))
+                return np.zeros(n, np.float32)
+            latest = f["eval_stats"][:, R - 1]
+        if indices is not None:
+            latest = latest[np.asarray(indices, dtype=np.int64)]
+        latest = np.asarray(latest, dtype=np.float32)
+        return np.nan_to_num(latest, nan=0.0, posinf=0.0, neginf=0.0)
+
     # ----------------------------------------------------- re-eval history io
     def append_eval(self, stats, model_epoch):
         """Add one re-evaluation column: the current model's ranking stat for

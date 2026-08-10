@@ -369,6 +369,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         hard_bias_prob: float = 0.0,
         num_read_workers: int = 16,
         hard_start_jitter_s: float = 2.0,
+        hard_focal_gamma: float = 0.0,
     ):
         super().__init__()
 
@@ -519,6 +520,10 @@ class MemmapNoiseSampler(torch.nn.Module):
         self._hard_dataset   = None
         self._hard_bias_prob = float(hard_bias_prob)
         self._hard_lock      = threading.Lock()
+        # Focal-style replay weighting: a window with ranking stat s is drawn with
+        # weight sigmoid(s)**gamma (see _sample_hard_starts). 0.0 -> uniform.
+        self._hard_focal_gamma = float(hard_focal_gamma)
+        self._hard_cdf         = None      # cached, rebuilt on dataset swap
         # -----------------------------------------------------------------------
 
         # Worker pool that reads the batch's per-window noise slices in
@@ -592,8 +597,37 @@ class MemmapNoiseSampler(torch.nn.Module):
         """
         with self._hard_lock:
             self._hard_dataset = dataset
+            self._hard_cdf = self._build_hard_cdf(dataset)
             if hard_bias_prob is not None:
                 self._hard_bias_prob = float(hard_bias_prob)
+
+    def _build_hard_cdf(self, dataset):
+        """Cache the focal replay distribution for ``dataset`` (None -> uniform).
+
+        Weight of a hard window with ranking stat ``s`` is ``sigmoid(s)**gamma``
+        -- the focal-loss modulating factor for a negative the model is calling
+        signal. It is monotone in ``s`` and BOUNDED: within the active set
+        (``s >= keep_threshold``, typically 0) the hardest-to-easiest weight
+        ratio is at most ``2**gamma``, so replay concentrates on the tail that
+        sets the FAR without any window being replayed orders of magnitude more
+        than its peers. ``bias_replays_per_epoch`` still caps the absolute count.
+
+        Built once per dataset swap (between epochs), not per batch.
+        """
+        gamma = self._hard_focal_gamma
+        if dataset is None or gamma <= 0.0 or len(dataset) == 0:
+            return None
+        s = np.asarray(dataset.scores, dtype=np.float64)
+        if s.size != len(dataset) or not np.any(np.isfinite(s)):
+            return None
+        w = np.exp(-gamma * np.logaddexp(0.0, -s))     # sigmoid(s)**gamma, stable
+        w[~np.isfinite(w)] = 0.0
+        total = w.sum()
+        if total <= 0.0:
+            return None
+        cdf = np.cumsum(w / total)
+        cdf[-1] = 1.0                                   # guard fp drift
+        return cdf
 
     def set_hard_bank(self, bank, active_indices, hard_bias_prob: float | None = None):
         """Augment random start-times with the *currently-hard* windows from a
@@ -621,13 +655,16 @@ class MemmapNoiseSampler(torch.nn.Module):
         # (start, segment, run) per detector -- the run tells the reader which
         # pooled file's mmap to read this hard window from.
         starts, segs, runs = bank.read_starts(ai)         # (K, D) each
+        # Latest re-eval stat per active window -- drives the focal replay
+        # weighting in _sample_hard_starts (ignored when hard_focal_gamma == 0).
+        scores = bank.latest_eval(ai)
         ds = StartTimeDataset(
             detectors=bank.detectors,
             start_indices=starts,
             segment_indices=segs,
             run_indices=runs,
             gps_times=np.zeros(ai.size, dtype=np.float64),     # unused by sampling
-            scores=np.zeros(ai.size, dtype=np.float32),        # unused by sampling
+            scores=scores,
             bin_files=bank.bin_files,
             sample_rate=bank.sample_rate,
             seq_len=bank.seq_len,
@@ -637,9 +674,13 @@ class MemmapNoiseSampler(torch.nn.Module):
 
     def _sample_hard_starts(self, dataset, batch_size: int):
         """
-        Draw ``batch_size`` start indices uniformly from ``dataset``, each
-        jittered by +/- ``self._hard_jitter_s`` seconds (uniform) and clamped to
-        stay inside its OWN segment.
+        Draw ``batch_size`` start indices from ``dataset``, each jittered by
+        +/- ``self._hard_jitter_s`` seconds (uniform) and clamped to stay inside
+        its OWN segment.
+
+        Windows are drawn UNIFORMLY when ``hard_focal_gamma`` is 0, else from the
+        cached focal distribution (``_build_hard_cdf``) so harder windows are
+        replayed more often -- bounded, never unboundedly.
 
         The jitter (per window, per detector) means repeatedly biasing toward the
         same mined window yields varied, overlapping noise realisations instead of
@@ -650,7 +691,12 @@ class MemmapNoiseSampler(torch.nn.Module):
         n = len(dataset)
         if n == 0:
             return self._sample_starts_batch(batch_size)
-        idx = self.rng.integers(0, n, size=batch_size)
+        cdf = self._hard_cdf
+        if cdf is not None and cdf.size == n:
+            idx = np.searchsorted(cdf, self.rng.random(batch_size), side="right")
+            np.clip(idx, 0, n - 1, out=idx)
+        else:
+            idx = self.rng.integers(0, n, size=batch_size)
 
         jmax = int(round(self._hard_jitter_s * self.sample_rate))
         if jmax > 0 and self._seg_bounds_lut is None:
