@@ -72,6 +72,17 @@ def make_configs(detectors, export_dir, norm_type="instancenorm"):
         # Hard mining
         mine_iters = 8000              # CMA-MAE generations per mining round
         bias_replays_per_epoch = 2.0   # hard-bias 0->0.2 crossover at a 200k active bank
+        # Bank-entry / active-set bar on the ranking stat. Sits at the 200k
+        # crossover: the active pool stays large enough for near-full bias (0.197)
+        # while dropping the [0,1) windows that would soak up replay weight.
+        # Raising it further does NOT buy tail exposure -- the bias anneal is
+        # proportional to the active count, so bias*share is invariant above ~1
+        # (tail seen/epoch = bias_replays * N_tail) -- it only costs variability.
+        keep_threshold_raw = 1.0
+        # Focal replay weighting: draw a mined window with weight
+        # sigmoid(stat)**gamma. Concentrates replay on the FAR-setting tail, which
+        # the threshold alone cannot do. Bounded: <= 2**gamma spread. 0.0 = uniform.
+        hard_focal_gamma = 3.0
 
         training_iterations = int(2_000_000 / batch_size)
         validation_iterations = int(200_000 / batch_size)
