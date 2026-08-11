@@ -81,10 +81,15 @@ case "$TASK" in
 
     # --- search-grade strain, built once per observing run -----------------
     dataprep)
-        # Natural GWOSC segments, no chunking and no overlap. Resumable, so a
-        # job that ends for any reason is continued by resubmitting this.
-        #     ./submit.sh dataprep O3a "H1 L1 V1"
-        RUN="${2:-O3a}"; DETS="${3:-H1 L1 V1}"
+        # Natural GWOSC segments, no chunking and no overlap.
+        #     ./submit.sh dataprep O3a "H1 L1 V1" [chain]
+        #
+        # Submitted as a dependency chain. The build resumes from its own index,
+        # so a segment that ends for any reason -- a wall limit, or a GWOSC
+        # outage outlasting the in-process wait -- is continued by the next
+        # without anyone watching. Once the release is complete the trailing
+        # segments find nothing to do and exit in seconds.
+        RUN="${2:-O3a}"; DETS="${3:-H1 L1 V1}"; CHAIN="${4:-4}"
         # 8 fetch workers: measured on a compute node, aggregate throughput
         # peaks there (21 MB/s) and falls at 4 (11) and at 16 (8, with a third
         # of transfers abandoned as too slow). 20 GB holds every O3a segment on
@@ -94,10 +99,12 @@ case "$TASK" in
         # 32 GB holds the longest segment of every run (O4a L1 runs 74 h, which
         # needs 26 GB) on the single-pass conditioning path, so nothing falls
         # back to blocked conditioning. The nodes carry 773 GB.
-        sage_submit --partition cpu --qos long --gres none --cpus 16 --mem 64G \
-            --time 3-00:00 --job "dataprep-${RUN}" ${DEP:+--dependency "$DEP"} \
+        sage_submit_chain "$CHAIN" \
+            --partition cpu --qos long --gres none --cpus 16 --mem 64G \
+            --time 3-00:00 --job "dataprep-${RUN}" \
             "python -m sage.search.dataprep --run $RUN --detectors $DETS \
-                 --flag DATA --memory-budget-gb 32 --workers 8 --cache-files 64"
+                 --flag DATA --memory-budget-gb 32 --workers 8 --cache-files 64 \
+                 --outage-budget-s 7200"
         ;;
     dataprep-budget)
         # What it will cost, before fetching anything.

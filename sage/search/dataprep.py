@@ -133,6 +133,7 @@ class SearchDataSpec:
     cache_files: int = 24
     min_rate_mb_s: float = 2.0
     stall_grace_s: float = 20.0
+    outage_budget_s: float = 7200.0
     compression: Optional[str] = None
 
     def __post_init__(self):
@@ -434,6 +435,58 @@ class SlowTransfer(Exception):
     """Raised to abandon a transfer that is running far below the achievable rate."""
 
 
+#: Substrings identifying a failure that is the service's, not ours, and that waiting
+#: out is the correct response to. The site reaches GWOSC through an HTTP proxy which
+#: returns 503 when it is saturated, and a 503 there is indistinguishable at this level
+#: from GWOSC itself being briefly down; both clear on their own.
+_TRANSIENT_MARKERS = (
+    "proxy",
+    "tunnel connection failed",
+    "service unavailable",
+    "max retries exceeded",
+    "connection reset",
+    "connection refused",
+    "connection aborted",
+    "timed out",
+    "timeout",
+    "incompleteread",
+    "chunked",
+    "temporarily unavailable",
+    "bad gateway",
+    "gateway time-out",
+    "remote end closed",
+)
+
+
+def is_transient(exc: BaseException) -> bool:
+    """
+    Whether a failure is worth waiting out rather than giving up on.
+
+    Recognised by type where the type is specific enough, and by message otherwise:
+    ``requests`` wraps proxy and pool failures in generic ``ConnectionError`` whose only
+    distinguishing detail is the string.
+    """
+    import requests
+
+    if isinstance(exc, SlowTransfer):
+        return True
+    if isinstance(
+        exc,
+        (
+            requests.exceptions.ProxyError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+        ),
+    ):
+        return True
+    if isinstance(exc, requests.exceptions.HTTPError):
+        response = getattr(exc, "response", None)
+        return response is not None and response.status_code in (429, 500, 502, 503, 504)
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_MARKERS)
+
+
 class SourceFiles:
     """
     Staged GWOSC strain files on local disk.
@@ -458,6 +511,7 @@ class SourceFiles:
         max_files: int = 24,
         min_rate_mb_s: float = 2.0,
         stall_grace_s: float = 20.0,
+        outage_budget_s: float = 7200.0,
     ):
         self.root = Path(scratch) / observing_run
         self.root.mkdir(parents=True, exist_ok=True)
@@ -465,24 +519,85 @@ class SourceFiles:
         self.max_files = max(2, int(max_files))
         self.min_rate_bytes_s = float(min_rate_mb_s) * 1e6
         self.stall_grace_s = float(stall_grace_s)
+        self.outage_budget_s = float(outage_budget_s)
         self.abandoned = 0
+        self.outage_waited_s = 0.0
+        self._workers = max(1, int(workers))
+        self._session = self._make_session()
         self._pool = ThreadPoolExecutor(max_workers=max(1, int(workers)))
         self._inflight: Dict[Tuple[str, int], object] = {}
         self._resident: "OrderedDict[Tuple[str, int], Path]" = OrderedDict()
         self._lock = threading.Lock()
         self.bytes_fetched = 0
 
+    def _make_session(self):
+        """
+        Session whose adapter retries transport failures beneath ``requests``.
+
+        Mirrors :meth:`sage.data.primer.get_data_release.DataReleaseDownloader
+        ._make_retry_session`: the connection pool must be at least as large as the
+        worker count or urllib3 discards connections, and 5xx are retried at the adapter
+        so a brief proxy failure never reaches the caller.
+        """
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+
+        session = requests.Session()
+        retry = Retry(
+            total=6,
+            connect=6,
+            read=6,
+            backoff_factor=2.0,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=frozenset(["GET", "HEAD"]),
+            respect_retry_after_header=True,
+            raise_on_status=False,
+        )
+        pool = max(32, self._workers * 2)
+        adapter = HTTPAdapter(
+            max_retries=retry, pool_connections=pool, pool_maxsize=pool
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
+    def _reset_session(self) -> None:
+        """
+        Discard the session and build a new one.
+
+        A proxy outage leaves pooled connections that are open but dead; reusing them
+        fails instantly and looks like a fresh outage, so the pool is rebuilt before
+        waiting rather than after.
+        """
+        try:
+            self._session.close()
+        except Exception:  # noqa: BLE001 - a failed close must not mask the outage
+            pass
+        self._session = self._make_session()
+
     def close(self) -> None:
         """Shut the fetch pool down."""
         self._pool.shutdown(wait=False, cancel_futures=True)
+        try:
+            self._session.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _path(self, detector: str, file_start: int) -> Path:
         return self.root / f"{detector}-{int(file_start)}.hdf5"
 
     def _download(self, detector: str, file_start: int, retries: int = 6) -> Path:
-        """Fetch one file to the staging area, atomically."""
-        import requests
+        """
+        Fetch one file to the staging area, atomically.
 
+        Transport failures are waited out rather than given up on. The site reaches
+        GWOSC through a proxy that returns 503 under load, and an outage of a few
+        minutes is routine; a build measured in days should sit through one rather than
+        abandon a release that is most of the way finished. Waiting is capped by
+        ``outage_budget_s`` in total, so a service that is genuinely gone still ends the
+        run instead of hanging until the wall clock.
+        """
         target = self._path(detector, file_start)
         if target.exists():
             return target
@@ -490,12 +605,15 @@ class SourceFiles:
         partial = target.with_suffix(".part")
         last = None
         resolved = False
-        for attempt in range(retries + 1):
+        attempt = 0
+        waited = 0.0
+        while True:
             floor = self.min_rate_bytes_s / (attempt + 1)
+            attempt += 1
             try:
                 # Separate connect and read timeouts: a dead socket must not hold a
                 # worker for the whole transfer budget.
-                with requests.get(url, stream=True, timeout=(30, 120)) as response:
+                with self._session.get(url, stream=True, timeout=(30, 120)) as response:
                     if response.status_code == 404 and not resolved:
                         # The constructed directory was wrong for this file; ask GWOSC
                         # once, then carry on with the answer.
@@ -519,19 +637,45 @@ class SourceFiles:
                 with self._lock:
                     self.bytes_fetched += target.stat().st_size
                 return target
-            except Exception as exc:  # noqa: BLE001 - retried below, raised at the end
+            except Exception as exc:  # noqa: BLE001 - classified and retried below
                 last = exc
                 partial.unlink(missing_ok=True)
-                if attempt >= retries - 1:
-                    break
+
                 if isinstance(exc, SlowTransfer):
-                    # A fresh connection is usually fast, so retry at once.
+                    # Not a failure of the service; a fresh connection is usually fast,
+                    # so reconnect at once. Bounded by `retries`, after which whatever
+                    # rate is on offer is accepted (the floor relaxes each attempt).
                     with self._lock:
                         self.abandoned += 1
-                    continue
-                wait = 300 if "Connection refused" in str(exc) else min(60, 2**attempt)
+                    if attempt <= retries:
+                        continue
+                    raise RuntimeError(f"could not fetch {url}: {last}") from exc
+
+                if not is_transient(exc):
+                    # A missing file or a malformed request will not fix itself.
+                    raise RuntimeError(f"could not fetch {url}: {last}") from exc
+
+                if waited >= self.outage_budget_s:
+                    raise RuntimeError(
+                        f"could not fetch {url} after waiting {waited / 60:.0f} min "
+                        f"for the service to return: {last}"
+                    ) from exc
+
+                # Escalating wait, capped, so a short blip costs seconds and a long
+                # outage is not polled to death.
+                wait = min(600.0, 15.0 * 2 ** min(attempt, 6))
+                wait = min(wait, self.outage_budget_s - waited)
+                self._reset_session()
+                with self._lock:
+                    self.outage_waited_s += wait
+                waited += wait
+                print(
+                    f"    GWOSC unavailable ({type(exc).__name__}); waiting "
+                    f"{wait:.0f} s then retrying {detector}-{file_start} "
+                    f"({waited / 60:.0f}/{self.outage_budget_s / 60:.0f} min spent)",
+                    flush=True,
+                )
                 time.sleep(wait)
-        raise RuntimeError(f"could not fetch {url}: {last}")
 
     def prefetch(self, detector: str, file_starts: Sequence[int]) -> None:
         """
@@ -790,6 +934,7 @@ def prepare(
         max_files=spec.cache_files,
         min_rate_mb_s=spec.min_rate_mb_s,
         stall_grace_s=spec.stall_grace_s,
+        outage_budget_s=spec.outage_budget_s,
     )
     written: Dict[str, Path] = {}
     try:
@@ -874,7 +1019,7 @@ def _prepare_detector(
                     for f in _files_spanning(a, b)
                 ],
             )
-            record = _write_segment(
+            record = _write_segment_resiliently(
                 handle, spec, detector, index, gps_start, gps_end, cursor, files
             )
             records.append(record)
@@ -889,6 +1034,52 @@ def _prepare_detector(
                     flush=True,
                 )
     return target
+
+
+def _write_segment_resiliently(
+    handle,
+    spec: SearchDataSpec,
+    detector: str,
+    index: int,
+    gps_start: float,
+    gps_end: float,
+    sample_start_idx: int,
+    files: SourceFiles,
+) -> dict:
+    """
+    Write one segment, sitting out any service outage rather than ending the run.
+
+    The fetcher already waits out an outage per file; this is the layer above, for the
+    case where the outage outlasts even that. A segment is self-contained -- its dataset
+    is rebuilt from scratch on each attempt and its index entry is written only on
+    success -- so retrying one costs the segment and nothing else.
+
+    Segments are written in GPS order and their sample index is contiguous, so a failed
+    segment cannot be skipped and filled in later: that would reorder the release. The
+    choice is therefore to wait or to stop, and stopping is safe because the build
+    resumes from the index.
+    """
+    waited = 0.0
+    attempt = 0
+    while True:
+        try:
+            return _write_segment(
+                handle, spec, detector, index, gps_start, gps_end, sample_start_idx, files
+            )
+        except Exception as exc:  # noqa: BLE001 - classified immediately below
+            attempt += 1
+            if not is_transient(exc) or waited >= spec.outage_budget_s:
+                raise
+            wait = min(900.0, 60.0 * 2 ** min(attempt, 5))
+            wait = min(wait, spec.outage_budget_s - waited)
+            waited += wait
+            print(
+                f"    segment {index} interrupted ({type(exc).__name__}: "
+                f"{str(exc)[:120]}); retrying in {wait:.0f} s "
+                f"({waited / 60:.0f}/{spec.outage_budget_s / 60:.0f} min spent)",
+                flush=True,
+            )
+            time.sleep(wait)
 
 
 def _write_segment(
@@ -1202,6 +1393,12 @@ def _parse_args(argv=None):
     )
     parser.add_argument("--stall-grace-s", type=float, default=20.0)
     parser.add_argument(
+        "--outage-budget-s",
+        type=float,
+        default=7200.0,
+        help="how long to keep waiting out a service outage before giving up",
+    )
+    parser.add_argument(
         "--budget", action="store_true", help="report the cost and exit"
     )
     parser.add_argument("--verify", action="store_true", help="check a built release")
@@ -1252,6 +1449,7 @@ def main(argv: Optional[list] = None) -> int:
         cache_files=args.cache_files,
         min_rate_mb_s=args.min_rate_mb_s,
         stall_grace_s=args.stall_grace_s,
+        outage_budget_s=args.outage_budget_s,
     )
     redirect_temporary_files(spec.scratch())
     if args.budget:

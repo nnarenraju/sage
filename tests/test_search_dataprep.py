@@ -99,6 +99,46 @@ def _plan(monkeypatch, segments):
     monkeypatch.setattr(dataprep, "_query_timeline", lambda run, flag, **kw: segments)
 
 
+class _FakeResponse:
+    """Enough of a streaming ``requests`` response for the fetcher."""
+
+    status_code = 200
+
+    def __init__(self, payload: bytes):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size=1 << 22):
+        yield self._payload
+
+
+class _FlakySession:
+    """A session that fails a fixed number of times, then serves the file."""
+
+    def __init__(self, failures: int, exc: BaseException, payload: bytes = b"\x00" * 64):
+        self.failures = failures
+        self.exc = exc
+        self.payload = payload
+        self.calls = 0
+
+    def get(self, url, stream=True, timeout=None):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.exc
+        return _FakeResponse(self.payload)
+
+    def close(self):
+        return None
+
+
 class TestSpec:
     """The conditions, and what they imply before anything is fetched."""
 
@@ -455,6 +495,151 @@ class TestBuild:
         _plan(monkeypatch, shifted)
         with pytest.raises(ValueError, match="segment list has changed"):
             prepare(spec, progress=False)
+
+
+class TestResilience:
+    """
+    Surviving the service being unavailable.
+
+    A real build died here: the site reaches GWOSC through a proxy that answered
+    ``503 Service Unavailable``, the fetcher exhausted a 63 s retry budget, and one file
+    ended a run that was 149 segments in. Waiting out an outage is the correct response
+    at both levels, so both are tested.
+    """
+
+    @staticmethod
+    def _proxy_error():
+        import requests
+
+        return requests.exceptions.ProxyError(
+            "Unable to connect to proxy",
+            OSError("Tunnel connection failed: 503 Service Unavailable"),
+        )
+
+    def test_proxy_failure_is_transient(self):
+        """The exact exception that ended the O3a build must be recognised."""
+        assert dataprep.is_transient(self._proxy_error())
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+    def test_server_errors_are_transient(self, status):
+        import requests
+
+        response = requests.Response()
+        response.status_code = status
+        error = requests.exceptions.HTTPError(response=response)
+        assert dataprep.is_transient(error)
+
+    def test_missing_file_is_not_transient(self):
+        """A 404 will not fix itself, so waiting on it would hang the build."""
+        import requests
+
+        response = requests.Response()
+        response.status_code = 404
+        assert not dataprep.is_transient(
+            requests.exceptions.HTTPError(response=response)
+        )
+        assert not dataprep.is_transient(ValueError("segment list disagrees"))
+
+    def test_download_waits_out_an_outage_and_succeeds(self, tmp_path, monkeypatch):
+        """
+        A transient failure is retried until the service returns.
+
+        The old budget was six attempts over 63 s; an outage of a few minutes is
+        routine, so what matters is that the fetch survives many consecutive failures
+        rather than a fixed small number.
+        """
+        payload = b"\x00" * 4096
+        session = _FlakySession(failures=9, exc=self._proxy_error(), payload=payload)
+        monkeypatch.setattr(SourceFiles, "_make_session", lambda self: session)
+        slept = []
+        monkeypatch.setattr(dataprep.time, "sleep", slept.append)
+
+        files = SourceFiles(tmp_path / "s", RUN, workers=1, max_files=4)
+        try:
+            path = files._download("H1", FILE0)
+        finally:
+            files.close()
+        assert path.read_bytes() == payload
+        assert session.calls == 10, "should have retried until the service returned"
+        assert len(slept) == 9 and max(slept) <= 600.0
+
+    def test_download_gives_up_once_the_budget_is_spent(self, tmp_path, monkeypatch):
+        """A service that is genuinely gone ends the run instead of hanging forever."""
+        session = _FlakySession(failures=10**6, exc=self._proxy_error())
+        monkeypatch.setattr(SourceFiles, "_make_session", lambda self: session)
+        monkeypatch.setattr(dataprep.time, "sleep", lambda s: None)
+
+        files = SourceFiles(
+            tmp_path / "s", RUN, workers=1, max_files=4, outage_budget_s=120.0
+        )
+        try:
+            with pytest.raises(RuntimeError, match="waiting"):
+                files._download("H1", FILE0)
+        finally:
+            files.close()
+
+    def test_a_permanent_failure_is_not_waited_on(self, tmp_path, monkeypatch):
+        """Waiting on something that cannot recover would burn the whole budget."""
+        session = _FlakySession(failures=10**6, exc=ValueError("malformed"))
+        monkeypatch.setattr(SourceFiles, "_make_session", lambda self: session)
+        slept = []
+        monkeypatch.setattr(dataprep.time, "sleep", slept.append)
+
+        files = SourceFiles(tmp_path / "s", RUN, workers=1, max_files=4)
+        try:
+            with pytest.raises(RuntimeError):
+                files._download("H1", FILE0)
+        finally:
+            files.close()
+        assert slept == [], "a permanent failure must fail fast"
+
+    def test_the_session_carries_a_retry_adapter(self, tmp_path):
+        """
+        Transport-level retries sit beneath requests, as in the primer downloader.
+
+        Without an adapter every 5xx reaches the caller immediately, which is what made
+        the old budget so short in practice.
+        """
+        files = SourceFiles(tmp_path / "s", RUN, workers=8, max_files=4)
+        try:
+            adapter = files._session.get_adapter("https://gwosc.org")
+            retry = adapter.max_retries
+            assert retry.total >= 5
+            assert {500, 502, 503, 504}.issubset(set(retry.status_forcelist))
+            assert adapter._pool_maxsize >= 16, "pool must cover the worker count"
+        finally:
+            files.close()
+
+    def test_a_segment_survives_an_outage_mid_write(self, tmp_path, monkeypatch):
+        """
+        The layer above the fetcher: a failed segment is retried, not abandoned.
+
+        Segments are written in GPS order with a contiguous sample index, so one cannot
+        be skipped and filled in later without reordering the release.
+        """
+        calls = {"n": 0}
+        real = dataprep._write_segment
+
+        def flaky(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise TestResilience._proxy_error()
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(dataprep, "_write_segment", flaky)
+        monkeypatch.setattr(dataprep.time, "sleep", lambda s: None)
+
+        starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(2)]
+        _stage(tmp_path / "scratch", "H1", starts)
+        segments = [(float(FILE0), float(FILE0 + 3000))]
+        _plan(monkeypatch, segments)
+        spec = _spec(tmp_path, memory_budget_gb=64.0)
+        prepare(spec, progress=False)
+
+        assert calls["n"] == 3, "two failures then success"
+        records = load_release_segments(spec.release_dir(), "H1", RUN)
+        assert len(records) == 1
+        assert verify(spec.release_dir(), spec, checksums=True)["ok"]
 
 
 class TestPlanning:
