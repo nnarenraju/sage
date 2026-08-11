@@ -63,9 +63,15 @@ def _raw(file_start: int) -> np.ndarray:
     return rng.standard_normal(n) * 1e-20
 
 
-def _stage(scratch: Path, detector: str, file_starts, nan_span=None) -> None:
-    """Write synthetic GWOSC files where the fetcher looks for staged ones."""
-    root = scratch / RUN
+def _stage(base: Path, detector: str, file_starts, nan_span=None) -> None:
+    """
+    Publish synthetic GWOSC files to a fake remote.
+
+    Not written straight into the staging area: staged files are a cache that the
+    fetcher is free to evict and re-fetch, so a fixture that put the only copy there
+    would break the moment eviction worked correctly. ``_serve`` supplies the fetch.
+    """
+    root = base / "remote"
     root.mkdir(parents=True, exist_ok=True)
     for file_start in file_starts:
         data = _raw(file_start)
@@ -97,6 +103,29 @@ def _spec(tmp_path: Path, **kwargs) -> SearchDataSpec:
 def _plan(monkeypatch, segments):
     """Serve a fixed segment list instead of querying GWOSC."""
     monkeypatch.setattr(dataprep, "_query_timeline", lambda run, flag, **kw: segments)
+
+
+def _serve(monkeypatch, base: Path):
+    """
+    Fetch from the fake remote instead of the network.
+
+    Stands in for the HTTP transfer only; staging, eviction and re-fetching all run as
+    they do in production, so a file evicted from the cache is fetched again rather than
+    being lost.
+    """
+    import shutil
+
+    def fake_download(self, detector, file_start, retries=6):
+        target = self._path(detector, int(file_start))
+        if not target.exists():
+            source = base / "remote" / f"{detector}-{int(file_start)}.hdf5"
+            if not source.exists():
+                raise RuntimeError(f"GWOSC does not publish {source.name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        return target
+
+    monkeypatch.setattr(SourceFiles, "_download", fake_download)
 
 
 class _FakeResponse:
@@ -238,9 +267,10 @@ class TestFileLayout:
 class TestSourceFiles:
     """Assembling raw strain out of staged files."""
 
-    def test_reads_a_span_crossing_several_files(self, tmp_path):
+    def test_reads_a_span_crossing_several_files(self, tmp_path, monkeypatch):
         starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(4)]
-        _stage(tmp_path / "scratch", "H1", starts)
+        _stage(tmp_path, "H1", starts)
+        _serve(monkeypatch, tmp_path)
         files = SourceFiles(tmp_path / "scratch", RUN, workers=1, max_files=8)
         try:
             lo = FILE0 + 100
@@ -255,7 +285,7 @@ class TestSourceFiles:
         finally:
             files.close()
 
-    def test_unset_samples_are_refused(self, tmp_path):
+    def test_unset_samples_are_refused(self, tmp_path, monkeypatch):
         """
         GWOSC pads non-observing time with NaN.
 
@@ -263,7 +293,8 @@ class TestSourceFiles:
         propagates through the whole conditioning pass, so this must fail loudly rather
         than store a segment of NaN.
         """
-        _stage(tmp_path / "scratch", "H1", [FILE0], nan_span=(FILE0 + 10, FILE0 + 20))
+        _stage(tmp_path, "H1", [FILE0], nan_span=(FILE0 + 10, FILE0 + 20))
+        _serve(monkeypatch, tmp_path)
         files = SourceFiles(tmp_path / "scratch", RUN, workers=1, max_files=4)
         try:
             with pytest.raises(ValueError, match="unset samples"):
@@ -271,10 +302,40 @@ class TestSourceFiles:
         finally:
             files.close()
 
-    def test_staging_area_stays_bounded(self, tmp_path):
+    def test_a_resumed_run_adopts_what_a_previous_one_staged(self, tmp_path, monkeypatch):
+        """
+        Files left by an earlier run must come under the cap, not sit on top of it.
+
+        The eviction list is built as files are acquired, so without adopting them a
+        resumed build holds every previously-staged file for its whole life. The staging
+        area shares a storage quota with the release, so that overrun is charged against
+        the very thing being built. Measured on the real O3a build: a resumed run sat at
+        14.2 GiB against a 5.8 GiB cap until the leftovers were cleared by hand.
+        """
+        starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(10)]
+        _stage(tmp_path, "H1", starts)
+        _serve(monkeypatch, tmp_path)
+
+        # A previous run's staging area: fetched, then abandoned when it ended.
+        first = SourceFiles(tmp_path / "scratch", RUN, workers=1, max_files=10)
+        for start in starts:
+            first.acquire("H1", start)
+        first.close()
+        staged = tmp_path / "scratch" / RUN
+        assert len(list(staged.glob("H1-*.hdf5"))) == 10
+
+        resumed = SourceFiles(tmp_path / "scratch", RUN, workers=1, max_files=3)
+        try:
+            resident = list(staged.glob("H1-*.hdf5"))
+            assert len(resident) <= 3, f"{len(resident)} left staged, cap is 3"
+        finally:
+            resumed.close()
+
+    def test_staging_area_stays_bounded(self, tmp_path, monkeypatch):
         """Files are evicted once read, so the staging area does not grow with the run."""
         starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(6)]
-        _stage(tmp_path / "scratch", "H1", starts)
+        _stage(tmp_path, "H1", starts)
+        _serve(monkeypatch, tmp_path)
         files = SourceFiles(tmp_path / "scratch", RUN, workers=1, max_files=2)
         try:
             for start in starts:
@@ -294,7 +355,7 @@ class TestConditioning:
         assert out.dtype == np.float32
         assert out.size == raw.size // 2
 
-    def test_blocked_matches_single_pass_at_float32_precision(self, tmp_path):
+    def test_blocked_matches_single_pass_at_float32_precision(self, tmp_path, monkeypatch):
         """
         Blocking is a memory strategy, not a different computation.
 
@@ -308,7 +369,8 @@ class TestConditioning:
         strain itself agrees to seven digits.
         """
         starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(2)]
-        _stage(tmp_path / "scratch", "H1", starts)
+        _stage(tmp_path, "H1", starts)
+        _serve(monkeypatch, tmp_path)
         files = SourceFiles(tmp_path / "scratch", RUN, workers=1, max_files=4)
         lo, hi = float(FILE0), float(FILE0 + 6000)
         try:
@@ -333,7 +395,8 @@ class TestBuild:
     @pytest.fixture
     def built(self, tmp_path, monkeypatch):
         starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(4)]
-        _stage(tmp_path / "scratch", "H1", starts)
+        _stage(tmp_path, "H1", starts)
+        _serve(monkeypatch, tmp_path)
         segments = [
             (float(FILE0 + 100), float(FILE0 + 2000)),
             (float(FILE0 + 5000), float(FILE0 + 3 * GWOSC_FILE_DURATION_S + 500)),
@@ -433,7 +496,8 @@ class TestBuild:
         from pycbc import DYN_RANGE_FAC  # noqa: F401 - imported for the same env as build
 
         starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(2)]
-        _stage(tmp_path / "scratch", "H1", starts)
+        _stage(tmp_path, "H1", starts)
+        _serve(monkeypatch, tmp_path)
         segments = [(float(FILE0), float(FILE0 + 6000))]
         _plan(monkeypatch, segments)
 
@@ -630,7 +694,8 @@ class TestResilience:
         monkeypatch.setattr(dataprep.time, "sleep", lambda s: None)
 
         starts = [FILE0 + k * GWOSC_FILE_DURATION_S for k in range(2)]
-        _stage(tmp_path / "scratch", "H1", starts)
+        _stage(tmp_path, "H1", starts)
+        _serve(monkeypatch, tmp_path)
         segments = [(float(FILE0), float(FILE0 + 3000))]
         _plan(monkeypatch, segments)
         spec = _spec(tmp_path, memory_budget_gb=64.0)

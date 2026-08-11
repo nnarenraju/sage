@@ -524,11 +524,34 @@ class SourceFiles:
         self.outage_waited_s = 0.0
         self._workers = max(1, int(workers))
         self._session = self._make_session()
-        self._pool = ThreadPoolExecutor(max_workers=max(1, int(workers)))
+        self._pool = ThreadPoolExecutor(max_workers=self._workers)
         self._inflight: Dict[Tuple[str, int], object] = {}
         self._resident: "OrderedDict[Tuple[str, int], Path]" = OrderedDict()
         self._lock = threading.Lock()
         self.bytes_fetched = 0
+        # Last: it evicts, so it needs the lock and the resident list to exist.
+        self._adopt_staged()
+
+    def _adopt_staged(self) -> None:
+        """
+        Take ownership of files a previous run left staged.
+
+        The eviction list is built as files are acquired, so a resumed build starts
+        empty and would never evict anything staged before it. Those files are then held
+        for the life of the run on top of the cap -- which matters because the staging
+        area is inside the same storage quota as the release it is building. Adopting
+        them oldest-first puts them back under the cap immediately.
+
+        Measured on the real O3a build: a resumed run sat at 14.2 GiB of staged files
+        against a 5.8 GiB cap until they were cleared by hand.
+        """
+        staged = sorted(self.root.glob("*.hdf5"), key=lambda p: p.stat().st_mtime)
+        for path in staged:
+            name = path.stem.split("-")
+            if len(name) != 2 or not name[1].isdigit():
+                continue
+            self._resident[(name[0], int(name[1]))] = path
+        self._evict()
 
     def _make_session(self):
         """
