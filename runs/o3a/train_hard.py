@@ -133,7 +133,7 @@ def make_training_graph(seed):
         # sigmoid(ranking_stat)**gamma instead of uniformly, so the tail that
         # sets the FAR gets more of the replay budget. Bounded by construction
         # (<= 2**gamma spread across the active set); 0.0 = uniform.
-        hard_focal_gamma = float(getattr(cfg, "hard_focal_gamma", 0.0)),
+        hard_focal_gamma = float(getattr(get_cfg(), "hard_focal_gamma", 0.0)),
     )
     return signal_sampler, noise_sampler, param_sampler.bounds
 
