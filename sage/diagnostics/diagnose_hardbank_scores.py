@@ -21,6 +21,7 @@ Prints a percentile table per run. Run on CPU (login node fine).
 """
 
 import os
+import sys
 import glob
 import numpy as np
 import matplotlib
@@ -28,7 +29,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import h5py
 
-BANK_DIR = "/work/nagarajan/hard_mining"
+# Banks live PER RUN under <export_dir>/hard_mining/ (so two same-(runs,dets)
+# jobs never contend for one HDF5 lock). They therefore share a filename, and a
+# single-directory glob cannot tell them apart -- pass run dirs instead:
+#   diagnose_hardbank_scores.py <export_dir> [<export_dir> ...]
+# With no arguments the defaults below are used. The old shared
+# /work/nagarajan/hard_mining now holds only quarantined pre-2026-08-07 banks.
+DEFAULT_RUNS = [
+    "/work/nagarajan/sage_runs/o3b/prod_HL",
+    "/work/nagarajan/sage_runs/o3b/prod_HL_gn",
+]
 OUT_DIR = os.path.join(os.path.dirname(__file__), "plots")
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -46,15 +56,23 @@ def _latest_eval(f):
 
 
 def main():
-    banks = sorted(glob.glob(os.path.join(BANK_DIR, "hardbank_*.h5")))
-    banks = [b for b in banks if ".killed" not in b and ".tmp" not in b]
+    run_dirs = sys.argv[1:] or DEFAULT_RUNS
+    banks = []
+    for d in run_dirs:
+        found = sorted(glob.glob(os.path.join(d, "hard_mining", "hardbank_*.h5")))
+        if not found:                       # allow passing a bank dir directly
+            found = sorted(glob.glob(os.path.join(d, "hardbank_*.h5")))
+        banks += [(d, b) for b in found
+                  if ".killed" not in b and ".tmp" not in b]
     if not banks:
-        print(f"No banks found under {BANK_DIR}")
+        print("No banks found under: " + ", ".join(run_dirs))
         return
 
     data = {}
-    for b in banks:
-        tag = os.path.basename(b)[len("hardbank_"):-len(".h5")]   # e.g. O3b_HL
+    for d, b in banks:
+        # Label by RUN, not by the bank filename -- every run's bank is called
+        # hardbank_<runs>_<dets>.h5, so filenames collide across runs.
+        tag = os.path.basename(os.path.normpath(d))
         with h5py.File(b, "r") as f:
             found = f["start_found_score"][:].astype(np.float64)
             ev = _latest_eval(f)
