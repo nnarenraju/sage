@@ -15,6 +15,8 @@ Env:
   EVAL_OUT         fresh output dir
   EVAL_COMMON_FID  common fiducial dir for the SNR axis (default: prod o3ab)
   EVAL_PASS        noise | signal | both (default both)
+  EVAL_SNR_DIST    uniform (default, SNR~U[3,25]) | halfnorm (training prior,
+                   HalfNorm(scale=4, loc=5)); SNR always via the COMMON fiducial
   N_NOISE          noise windows   (default 1_000_000)
   N_SIG            signal windows  (default 100_000)
   EVAL_BATCH       inference batch (default 1024)
@@ -29,17 +31,24 @@ import torch
 
 importlib.import_module(os.environ["SAGE_CONFIG"]).set_configs()
 from sage.core.config import get_cfg, get_data_cfg
+from sage.core.logger import setup_logging
 
 cfg, dcfg = get_cfg(), get_data_cfg()
 
 EVAL_CKPT  = os.environ["EVAL_CKPT"]
 EVAL_OUT   = os.environ["EVAL_OUT"]; os.makedirs(EVAL_OUT, exist_ok=True)
+# Attach handlers: without this the harness's "[testing] noise x/y ... eta"
+# progress lines go nowhere (get_logger is inert by design), so a 10 h pass has
+# no way to report how far along it is and the .h5 only appears at the end.
+setup_logging(EVAL_OUT, filename="eval.log")
 COMMON_FID = os.environ.get("EVAL_COMMON_FID",
                             "/work/nagarajan/sage_runs/fiducial_psds_o3ab")
 N_NOISE    = int(float(os.environ.get("N_NOISE", "1000000")))
 N_SIG      = int(float(os.environ.get("N_SIG", "100000")))
 EVAL_BATCH = int(os.environ.get("EVAL_BATCH", "1024"))
 SNR_LO, SNR_HI = 3.0, 25.0
+SNR_DIST = os.environ.get("EVAL_SNR_DIST", "uniform").lower()
+HN_SCALE, HN_LOC = 4.0, 5.0        # the training prior (see train_hard.make_training_graph)
 SEED = 424242
 
 # Redirect output + enlarge the inference batch, and make the signal sampler emit
@@ -50,7 +59,7 @@ cfg.export_dir = EVAL_OUT
 cfg.batch_size = EVAL_BATCH
 cfg.class_balance = 1.0
 
-from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
+from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2, HalfNorm
 from sage.data.waveform.snr import OptimalSNRRescaler
 from sage.data.noise import TestNoiseSampler
 from sage.core.graph import Preprocessor
@@ -75,6 +84,24 @@ class UniformSNR:
         return v
 
 
+class RecordingHalfNorm(HalfNorm):
+    """``HalfNorm`` that records its last draw, as ``run_signal`` requires.
+
+    The training SNR prior is ``HalfNorm(scale=4, loc=5)``; the stock class does
+    not keep the draw, and it is on the training hot path, so record here rather
+    than changing it.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Must exist BEFORE the first call: run_signal gates on hasattr(.., "last").
+        self.last = None
+
+    def forward(self, batch_size):
+        v = super().forward(batch_size)
+        self.last = v
+        return v
+
+
 def load_asds(fid_dir):
     arrs = [np.fromfile(os.path.join(fid_dir, f"fiducial_{d}_psd.bin"),
                         dtype=np.float32) for d in cfg.detectors]
@@ -91,11 +118,22 @@ sd = {k.replace("_orig_mod.", ""): v for k, v in ck["model_state_dict"].items()}
 model.load_state_dict(sd)
 print(f"[{os.environ['SAGE_CONFIG']}] ckpt={EVAL_CKPT} epoch={ck.get('epoch')} "
       f"norm={cfg.norm_type} batch={EVAL_BATCH} dets={cfg.detectors} "
-      f"N_noise={N_NOISE:,} N_sig={N_SIG:,}", flush=True)
+      f"N_noise={N_NOISE:,} N_sig={N_SIG:,} snr_dist={SNR_DIST}"
+      f"{f'(scale={HN_SCALE},loc={HN_LOC})' if SNR_DIST=='halfnorm' else f'({SNR_LO},{SNR_HI})'}",
+      flush=True)
 
 # ---- signal path: uniform SNR via the COMMON fiducial ------------------------
 param_sampler = read_from_config("./gwconfig.yaml", seed=SEED)
-snrscaler = OptimalSNRRescaler(UniformSNR(SNR_LO, SNR_HI, SEED))
+# EVAL_SNR_DIST: "uniform" (default, broad flat axis for efficiency-vs-SNR) or
+# "halfnorm" (the TRAINING prior, HalfNorm(scale=4, loc=5)) -- the latter answers
+# "how does the model do on the population it was trained for", the former gives
+# clean per-SNR-bin statistics. Either way the SNR is computed with the COMMON
+# fiducial, so every run stays on one axis.
+if SNR_DIST == "halfnorm":
+    target_snr = RecordingHalfNorm(scale=HN_SCALE, loc=HN_LOC, seed=SEED)
+else:
+    target_snr = UniformSNR(SNR_LO, SNR_HI, SEED)
+snrscaler = OptimalSNRRescaler(target_snr)
 snrscaler.snr_estimator.asds = load_asds(COMMON_FID)          # COMMON SNR axis
 signal_sampler = IMRPhenomPv2(param_sampler, ConstantProjection(), augment=snrscaler)
 

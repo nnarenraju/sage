@@ -78,8 +78,13 @@ case "$TASK" in
         # e.g. ./submit.sh eval_snr config_HL /path/epoch_19.pt /path/out noise 160e6 0 2048
         CFG="${2:-config_HL}"; CKPT="$3"; OUT="$4"
         PASS="${5:-both}"; NN="${6:-1000000}"; NS="${7:-100000}"; BATCH="${8:-1024}"
-        sage_submit --time 1-00:00 --job "o3b-evalsnr-$CFG-$PASS" \
+        # Target-SNR prior: uniform (default) | halfnorm (the training prior,
+        # HalfNorm(scale=4, loc=5)). Passed through EXPLICITLY -- relying on
+        # sbatch --export=ALL to carry it would silently fall back to "uniform".
+        DIST="${EVAL_SNR_DIST:-uniform}"
+        sage_submit --time 2-00:00 --job "o3b-evalsnr-$CFG-$PASS" \
             "SAGE_CONFIG='$CFG' EVAL_CKPT='$CKPT' EVAL_OUT='$OUT' EVAL_PASS='$PASS' \
+             EVAL_SNR_DIST='$DIST' \
              N_NOISE=$NN N_SIG=$NS EVAL_BATCH=$BATCH python eval_efficiency_snr.py"
         ;;
     *)
