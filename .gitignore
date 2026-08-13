@@ -173,3 +173,5 @@ runs/o3b/*_smoke
 # Run output symlinks (checkpoints/logs live on /work/nagarajan/sage_runs)
 runs/*/run_export_*
 scratch
+# Reference PDFs for sage/search (fetched locally, not redistributed)
+docs/references/*.pdf
