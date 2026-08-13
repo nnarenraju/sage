@@ -10,7 +10,7 @@ from sage.core.base_classes import BaseConfig, BaseDataConfig
 from sage.utils.servers import get_server
 _SRV = get_server()
 class C:
-    export_dir='/home/nagarajan/research/sage/sage/diagnostics/plots'; fiducial_dir='/home/nagarajan/research/sage/runs/o3b/run_export/fiducial_psds'
+    export_dir='/home/nagarajan/research/sage/sage/diagnostics/plots'; fiducial_dir='/work/nagarajan/sage_runs/fiducial_psds_o3ab'
     batch_size=128; device='cpu'; dtype=torch.float32; detectors=['H1','L1']; train_runs=['O3b']
     do_point_estimate=['tc','mchirp']; autocast=False; class_balance=0.5; clip_norm=1.0; dropout=0.0
     num_epochs=10; training_iterations=100; validation_iterations=10

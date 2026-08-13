@@ -36,8 +36,8 @@ import h5py
 # With no arguments the defaults below are used. The old shared
 # /work/nagarajan/hard_mining now holds only quarantined pre-2026-08-07 banks.
 DEFAULT_RUNS = [
-    "/work/nagarajan/sage_runs/o3b/prod_HL",
-    "/work/nagarajan/sage_runs/o3b/prod_HL_gn",
+    "/work/nagarajan/sage_runs/o3b/production_run_HL",
+    "/work/nagarajan/sage_runs/o3b/production_run_HV",
 ]
 OUT_DIR = os.path.join(os.path.dirname(__file__), "plots")
 os.makedirs(OUT_DIR, exist_ok=True)

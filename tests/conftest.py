@@ -48,7 +48,7 @@ O3A_RELEASE = WORK_ROOT / "data_release_o3a"
 O3B_RELEASE = WORK_ROOT / "data_release"
 FIDUCIAL_O3AB = WORK_ROOT / "sage_runs" / "fiducial_psds_o3ab"
 SEARCH_CHECKPOINT = (
-    WORK_ROOT / "sage_runs" / "o3b" / "prod_HL" / "CHECKPOINTS" / "best.pt"
+    WORK_ROOT / "sage_runs" / "o3b" / "production_run_HL" / "CHECKPOINTS" / "best.pt"
 )
 
 _HAS_CUDA = torch.cuda.is_available()

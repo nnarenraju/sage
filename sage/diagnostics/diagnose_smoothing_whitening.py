@@ -33,7 +33,7 @@ _SRV = get_server()
 
 class O3bCFG:
     export_dir = OUT
-    fiducial_dir = "/home/nagarajan/research/sage/runs/o3b/run_export/fiducial_psds"
+    fiducial_dir = "/work/nagarajan/sage_runs/fiducial_psds_o3ab"
     batch_size = 64; device = "cpu"; dtype = torch.float32
     detectors = ["H1", "L1"]; train_runs = ["O3b"]
     do_point_estimate = ["tc", "mchirp"]; autocast = False

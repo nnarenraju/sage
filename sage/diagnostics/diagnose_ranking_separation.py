@@ -16,7 +16,7 @@ Prints class counts, separation, noise-tail quantiles, and sensitivity at
 fixed FAR.
 
 Usage:  python diagnose_ranking_separation.py [run_export_dir] [--epoch N]
-Default run: runs/o3b/run_export_HV.
+Default run: production_run_HL under /work.
 """
 
 import os
@@ -32,7 +32,7 @@ _HERE = os.path.dirname(__file__)
 _REPO = os.path.abspath(os.path.join(_HERE, "..", ".."))
 OUT_DIR = os.path.join(_HERE, "plots")
 os.makedirs(OUT_DIR, exist_ok=True)
-DEFAULT_RUN = os.path.join(_REPO, "runs", "o3b", "run_export_HV")
+DEFAULT_RUN = "/work/nagarajan/sage_runs/o3b/production_run_HL"
 
 
 def _sigmoid(x):

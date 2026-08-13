@@ -38,7 +38,7 @@ _SRV = get_server()
 
 class O3bCFG:
     export_dir = OUT
-    fiducial_dir = "/home/nagarajan/research/sage/runs/o3b/run_export/fiducial_psds"
+    fiducial_dir = "/work/nagarajan/sage_runs/fiducial_psds_o3ab"
     batch_size = 128
     device = "cpu"
     dtype = torch.float32

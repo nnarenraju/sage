@@ -9,7 +9,7 @@ surviving loss record on disk -- shown as a line only, not a curve).
 
 Usage:
     python diagnose_loss_curve.py [run_export_dir ...] [--target 0.185]
-Default: runs/o3b/run_export_HL and run_export_HV relative to repo root.
+Default: the production_run_HL and production_run_HV runs under /work.
 """
 
 import os
@@ -27,8 +27,8 @@ OUT_DIR = os.path.join(_HERE, "plots")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 DEFAULT_RUNS = [
-    os.path.join(_REPO, "runs", "o3b", "run_export_HL"),
-    os.path.join(_REPO, "runs", "o3b", "run_export_HV"),
+    "/work/nagarajan/sage_runs/o3b/production_run_HL",
+    "/work/nagarajan/sage_runs/o3b/production_run_HV",
 ]
 
 
