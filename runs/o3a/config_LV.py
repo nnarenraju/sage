@@ -11,4 +11,4 @@ from config_base import register
 
 def set_configs():
     register(detectors=["L1", "V1"],
-             export_dir="/work/nagarajan/sage_runs/o3a/prod_LV")
+             export_dir="/work/nagarajan/sage_runs/o3a/production_run_LV")
