@@ -207,8 +207,7 @@ def make_asds_only():
     """Generate fiducial / recolour / segment ASDs for all detectors.
 
     Assumes the noise .bin files are already downloaded. Does NOT re-download.
-    Run from this directory so the relative ``export_dir`` (./run_export)
-    resolves to runs/o3b/run_export for the fiducial ASDs.
+    Writes the fiducial ASDs under the configured (absolute) ``export_dir``.
     """
     set_configs()
     _, data_cfg = get_cfg(), get_data_cfg()
