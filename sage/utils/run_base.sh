@@ -16,6 +16,7 @@
 #   sage_run    "<cmd>"      run <cmd> now, in the foreground, env activated
 #   sage_submit "<cmd>"      SLURM: sbatch --wrap;  local: nohup background
 #                            opts: --job NAME  --time T  --gres G  --mem M  --cpus N
+#                                  --nodelist NODES
 # ===========================================================================
 
 # Resolve this file's location -> repo root (.../sage/sage/utils/run_base.sh).
@@ -100,7 +101,18 @@ sage_submit() {
 
     local job="sage" part="$SAGE_PARTITION" qos="$SAGE_QOS"
     local time="$SAGE_TIME" gres="$SAGE_GRES" mem="$SAGE_MEM" cpus="$SAGE_CPUS"
-    local dep="" parsable=""
+    # Campaign-level pins, settable from the environment so the per-run submit.sh
+    # needs no edit; the matching --opts override them per call.
+    #
+    # Prefer SAGE_GRES_OVERRIDE (a typed GRES, e.g. gpu:h100_80gb:1) over
+    # SAGE_NODELIST to confine a campaign to a subset of the GPUs. A typed GRES is
+    # a consumable the scheduler must actually reserve, so surplus jobs queue.
+    # --nodelist only constrains PLACEMENT: asking for more GPUs than the named
+    # node has was observed to place the extra jobs on it with GRES=(null) -- they
+    # start with no GPU and die on cuda:0. Use --nodelist only when the node's GPU
+    # count is not the binding constraint.
+    local dep="" parsable="" nodelist="${SAGE_NODELIST:-}"
+    [ -n "${SAGE_GRES_OVERRIDE:-}" ] && gres="$SAGE_GRES_OVERRIDE"
     while [ "$#" -gt 1 ]; do
         case "$1" in
             --job)       job="$2";  shift 2 ;;
@@ -111,6 +123,10 @@ sage_submit() {
             --gres)      gres="$2"; [ "$gres" = "none" ] && gres=""; shift 2 ;;
             --mem)       mem="$2";  shift 2 ;;
             --cpus)      cpus="$2"; shift 2 ;;
+            # Restrict the job to specific node(s), e.g. --nodelist hgc01. Used to
+            # partition the GPU pool between concurrent campaigns so one does not
+            # crowd the other off the machine.
+            --nodelist)  nodelist="$2"; shift 2 ;;
             # SLURM job dependency, e.g. "afterany:12345" (used by chaining).
             --dependency) dep="$2"; shift 2 ;;
             # Print ONLY the job id on stdout (for capturing in a chain driver);
@@ -135,6 +151,7 @@ sage_submit() {
         [ -n "$time" ]           && args+=(--time="$time")
         [ -n "$mem" ]            && args+=(--mem="$mem")
         [ -n "$dep" ]            && args+=(--dependency="$dep")
+        [ -n "$nodelist" ]       && args+=(--nodelist="$nodelist")
         [ -n "$parsable" ]       && args+=(--parsable)
         [ -n "$SAGE_ACCOUNT" ]   && args+=(--account="$SAGE_ACCOUNT")
         [ -n "$SAGE_MAIL" ]      && args+=(--mail-user="$SAGE_MAIL")
