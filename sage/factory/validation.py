@@ -24,7 +24,7 @@ from contextlib import nullcontext
 from sage.core.config import get_cfg
 from sage.core.logger import get_logger, format_duration as _fmt_duration
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
-from sage.utils.atomic_io import atomic_h5
+from sage.utils.atomic_io import append_h5
 
 logger = get_logger(__name__)
 
@@ -52,10 +52,11 @@ def save_validation(nepoch, output, target, params, signal_idx, savepath):
     savepath : str
         Path to the HDF5 output file.
     """
-    # Crash-atomic append: a mid-write kill can't corrupt validation_data.h5
-    # (which is reopened in append mode every validation and would otherwise
-    # crash the run on its next open).
-    with atomic_h5(savepath) as f:
+    # Appended in place: this file reaches ~300 MB, so snapshotting it every
+    # epoch (atomic_h5) would move tens of GB per run to protect a diagnostic
+    # that training does not read back. append_h5 instead absorbs a kill on the
+    # NEXT open, quarantining a damaged file so it cannot crash the run.
+    with append_h5(savepath) as f:
         name = f"epoch_{nepoch:04d}"
         if name in f:
             # Overwrite a re-validated / restarted epoch rather than crashing on
