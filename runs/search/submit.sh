@@ -96,6 +96,8 @@ case "$TASK" in
         # the single-pass conditioning path; --mem leaves room above it.
         # QOS "long" allows 14 days and no GPU, which is what this is; the
         # default "normal" caps at 2 days and would wall-kill a slow fetch.
+        # Staging is inside the same quota: 24 files (48 with in-flight) is ~5.8 GiB
+        # rather than ~15.5 GiB at 64, which is what the margin could not carry.
         # 32 GB holds the longest segment of every run (O4a L1 runs 74 h, which
         # needs 26 GB) on the single-pass conditioning path, so nothing falls
         # back to blocked conditioning. The nodes carry 773 GB.
@@ -103,7 +105,7 @@ case "$TASK" in
             --partition cpu --qos long --gres none --cpus 16 --mem 64G \
             --time 3-00:00 --job "dataprep-${RUN}" \
             "python -m sage.search.dataprep --run $RUN --detectors $DETS \
-                 --flag DATA --memory-budget-gb 32 --workers 8 --cache-files 64 \
+                 --flag DATA --memory-budget-gb 32 --workers 8 --cache-files 24 \
                  --outage-budget-s 7200"
         ;;
     dataprep-budget)
