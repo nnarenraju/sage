@@ -206,13 +206,6 @@ def run_hard():
     set_configs()
     cfg, data_cfg = get_cfg(), get_data_cfg()
 
-    # Logging: console + <export_dir>/logs/run.log. After set_configs, since
-    # that is what tells us where this run writes. SAGE_LOG_LEVEL=DEBUG for the
-    # verbose console format.
-    log_path = setup_logging(cfg.export_dir)
-    logger.info("Run: %s | detectors %s", cfg.export_dir, cfg.detectors)
-    logger.info("Logging to %s", log_path)
-
     os.makedirs(cfg.export_dir, exist_ok=True)
 
     # ── Resume-aware seeding ─────────────────────────────────────────────────
@@ -223,10 +216,18 @@ def run_hard():
     # model/optimiser/scheduler + global RNG and the mining bank are restored
     # *exactly* further down -- only the sampler streams advance. BASE_SEED and
     # SEED_STRIDE are module-level constants (shared with calibrate_ema).
+    # Logging: console + <export_dir>/logs/run.log. After set_configs, since
+    # that is what tells us where this run writes. SAGE_LOG_LEVEL=DEBUG for the
+    # verbose console format.
+    log_path = setup_logging(cfg.export_dir)
+    logger.info("Run: %s | detectors %s | runs %s",
+                cfg.export_dir, cfg.detectors, getattr(cfg, "train_runs", "?"))
+    logger.info("Logging to %s", log_path)
+
     start_epoch  = CheckpointManager.peek_next_epoch(cfg.export_dir)
     sampler_seed = BASE_SEED + SEED_STRIDE * start_epoch
-    print(f"[train_hard] start_epoch={start_epoch}  sampler_seed={sampler_seed}",
-          flush=True)
+    logger.info("Resume state: start_epoch=%d, sampler_seed=%d",
+                start_epoch, sampler_seed)
 
     # Seed the GLOBAL torch RNG (resume-aware) so the draws that use it -- sky
     # orientation/GMST (project.py) and the injection-slot randperm
@@ -339,6 +340,7 @@ def run_hard():
     # The flat tail is left mining-free on purpose: those epochs exist for the
     # weights/EMA to settle on a stable minimum, so the data distribution should
     # not still be shifting under them.
+    _enable_mining = getattr(cfg, "enable_mining", True)   # ablation toggle; default on
     _mine_stop = int(getattr(cfg, "mine_stop_epoch",
                              cfg.num_epochs - int(getattr(cfg, "lr_flat_tail_epochs", 4))))
     _front_load_sched = list(range(3, _mine_stop, 4))
@@ -401,8 +403,8 @@ def run_hard():
         optimiser, scheduler, scaler,
         num_iterations = cfg.training_iterations,
         num_epochs     = cfg.num_epochs,
-        callbacks      = [hard_cb, ema_cb],
-        # Step the warmup+cosine schedule once per batch across all total_steps.
+        callbacks      = ([hard_cb, ema_cb] if _enable_mining else [ema_cb]),
+        # Step the LR schedule once per batch across all total_steps.
         scheduler_mode = "batch",
         amp_dtype      = amp_dtype,
     )
@@ -419,6 +421,8 @@ def run_hard():
         cfg=cfg, data_cfg=data_cfg, model=model,
         optimizer=optimiser, scheduler=scheduler, scaler=scaler,
     )
+    # Named loss_logger, not logger: this writes the per-epoch loss array to
+    # HDF5 and is a different thing from the module's text logger.
     loss_logger = HDF5LossLogger(
         path           = os.path.join(cfg.export_dir, "losses.h5"),
         num_epochs     = cfg.num_epochs,
@@ -440,11 +444,18 @@ def run_hard():
         print(f"Resuming from epoch {start_epoch}")
         # Re-bias the (freshly-built) sampler from the persisted hard bank so we
         # don't train on purely random noise until the next scheduled mine epoch.
-        hard_cb.attach_for_resume(trainer)
+        if _enable_mining:
+            hard_cb.attach_for_resume(trainer)
 
     # ── Epoch loop (train + mine, validate every 5) ───────────────────────────
     for epoch in range(start_epoch, cfg.num_epochs):
         trainer(nepoch=epoch)
+        if epoch == start_epoch and torch.cuda.is_available():
+            print(f"[VRAM] batch_size={cfg.batch_size}  peak allocated "
+                  f"{torch.cuda.max_memory_allocated()/1e9:.1f} GB  reserved "
+                  f"{torch.cuda.max_memory_reserved()/1e9:.1f} GB  "
+                  f"(device total {torch.cuda.get_device_properties(0).total_memory/1e9:.0f} GB)",
+                  flush=True)
         loss_logger.log(trainer.loss_components, epoch, split="training")
         val_loss = None
         if epoch % 5 == 0 or epoch == cfg.num_epochs - 1:
