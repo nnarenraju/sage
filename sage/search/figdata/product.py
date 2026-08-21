@@ -50,13 +50,85 @@ class FigData:
         Raises naming every missing array at once rather than failing on the first, since
         a builder that dropped one field has usually dropped several.
         """
-        raise NotImplementedError
+        missing = [name for name in names if name not in self.arrays]
+        if missing:
+            raise KeyError(
+                f"figure {self.figure!r} is missing {missing}; it holds "
+                f"{sorted(self.arrays)}. The builder did not write everything the "
+                "declaration says this figure needs"
+            )
 
     def save(self, path: str | Path) -> Path:
-        """Write atomically, so an interrupted build leaves no half-written product."""
-        raise NotImplementedError
+        """
+        Write atomically, so an interrupted build leaves no half-written product.
+
+        Arrays and scalars are kept apart on disk as they are in memory. A scalar folded
+        into a zero-dimensional dataset reads back as an array, and a plotting function
+        that indexed it would then be indexing a number.
+        """
+        from sage.utils.atomic_io import atomic_h5
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with atomic_h5(target, mode="w") as handle:
+            handle.attrs["figure"] = str(self.figure)
+            for key, value in (self.attrs or {}).items():
+                handle.attrs[key] = value
+            arrays = handle.create_group("arrays")
+            for name, values in (self.arrays or {}).items():
+                values = np.asarray(values)
+                if values.dtype.kind in "SUO":
+                    import h5py
+
+                    values = np.asarray(
+                        [str(v) for v in values],
+                        dtype=h5py.string_dtype(encoding="utf-8"),
+                    )
+                arrays.create_dataset(name, data=values)
+            scalars = handle.create_group("scalars")
+            for name, value in (self.scalars or {}).items():
+                scalars.attrs[name] = value
+        return target
 
     @classmethod
     def load(cls, path: str | Path) -> "FigData":
-        """Read a figure data product."""
-        raise NotImplementedError
+        """
+        Read a figure data product.
+
+        The figure key is taken from the file rather than from the caller: a product
+        loaded under the wrong name would be drawn by the wrong plotting function, which
+        fails only if the arrays happen to disagree.
+        """
+        import h5py
+
+        target = Path(path)
+        if not target.is_file():
+            raise FileNotFoundError(f"no figure data at {target}")
+        with h5py.File(target, "r") as handle:
+            if "figure" not in handle.attrs:
+                raise ValueError(
+                    f"{target} records no figure key, so which figure it belongs to "
+                    "cannot be established"
+                )
+            arrays = {}
+            for name, dataset in handle.get("arrays", {}).items():
+                values = dataset[()]
+                if values.dtype.kind in "SO":
+                    values = np.asarray(
+                        [
+                            v.decode() if isinstance(v, bytes) else str(v)
+                            for v in values
+                        ]
+                    )
+                arrays[name] = values
+            scalars = dict(handle["scalars"].attrs) if "scalars" in handle else {}
+            return cls(
+                figure=str(handle.attrs["figure"]),
+                arrays=arrays,
+                scalars=scalars,
+                attrs={
+                    key: handle.attrs[key]
+                    for key in handle.attrs
+                    if key != "figure"
+                },
+            )
