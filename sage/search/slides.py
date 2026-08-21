@@ -63,9 +63,14 @@ class Slide:
     """
     One lag assignment. ``slide_id == 0`` is zero-lag.
 
-    ``offsets_s`` maps every detector in the network to its lag, including the reference
-    at zero, so a slide is self-describing and no caller has to know which detector was
-    held fixed. The mapping is a read-only view rather than the dict it was built from:
+    Two pairings are expressible, and which one is in use is told by which field is set.
+    ``offsets_s`` maps every detector to a **GPS lag**, including the reference at zero,
+    so a slide is self-describing and no caller has to know which detector was held
+    fixed. ``window_shift`` instead maps each follower to an integer **shift along the
+    analysed lattice**: follower ordinal ``(i + k) mod N`` is paired with reference
+    ordinal ``i``. Every lattice ordinal is hostable in every detector by construction,
+    so a shifted pairing loses no livetime at all, where a GPS lag drops whatever it
+    pushes into a gap. The mapping is a read-only view rather than the dict it was built from:
     ``livetime_s`` was measured for these offsets and no others, so a slide whose lags
     could be edited afterwards would report livetime belonging to a different slide.
     """
@@ -74,10 +79,15 @@ class Slide:
     offsets_s: Mapping[str, float]
     n_windows: int
     livetime_s: float
+    window_shift: Optional[Mapping[str, int]] = None
 
     def __post_init__(self) -> None:
         """Freeze the offsets, which ``frozen=True`` does not reach into."""
         object.__setattr__(self, "offsets_s", MappingProxyType(dict(self.offsets_s)))
+        if self.window_shift is not None:
+            object.__setattr__(
+                self, "window_shift", MappingProxyType(dict(self.window_shift))
+            )
 
     def __hash__(self) -> int:
         """Hashable, so slides can be collected in sets and keyed on."""
@@ -85,6 +95,7 @@ class Slide:
             (
                 self.slide_id,
                 tuple(sorted(self.offsets_s.items())),
+                tuple(sorted((self.window_shift or {}).items())),
                 self.n_windows,
                 self.livetime_s,
             )
@@ -112,6 +123,7 @@ class SlidePlan:
     min_separation_s: float
     tau_max_s: float
     keep_threshold: Optional[float] = None
+    method: str = "ladder"
 
     @classmethod
     def build(
@@ -125,6 +137,9 @@ class SlidePlan:
         guard_s: float = 4.0,
         seed: int = 0,
         keep_threshold: Optional[float] = None,
+        method: str = "ladder",
+        spacing: str = "even",
+        max_shift_s: Optional[float] = None,
     ) -> "SlidePlan":
         """
         Draw stratified lags and measure each slide's coincident livetime.
@@ -137,6 +152,19 @@ class SlidePlan:
         one. The physical floor always applies, and the value the ladder was actually
         drawn against is what the plan records, so a configuration that asked for less
         cannot be mistaken later for what was used.
+
+        ``method`` picks how the background is paired.
+
+        ``"ladder"``
+            A stratified ladder of GPS lags bounded by ``tau_max_s``. Retention falls
+            with lag, because a lag pushes some of the follower's time into a gap.
+
+        ``"roll"``
+            Shifts along the analysed lattice, as sgwc-1's background does. Every lattice
+            ordinal is hostable in every detector by construction, so **no livetime is
+            lost at any shift** -- and because a shift of ``N/(K+1)`` pairs stretches a
+            large fraction of the run apart, the slides are far closer to independent
+            than a ladder bounded at hours can be. ``tau_max_s`` does not apply.
         """
         if not segments_by_detector:
             raise ValueError("no detectors given")
@@ -161,7 +189,12 @@ class SlidePlan:
             float(min_separation_s),
             minimum_separation_s(geometry, detectors, guard_s),
         )
-        if tau_max_s <= separation_s:
+        if method not in SLIDE_METHODS:
+            raise ValueError(
+                f"unknown slide method {method!r}; known methods are "
+                f"{list(SLIDE_METHODS)}"
+            )
+        if method == "ladder" and tau_max_s <= separation_s:
             raise ValueError(
                 f"tau_max_s ({tau_max_s}) must exceed the minimum separation "
                 f"({separation_s} s, the wider of the requested {min_separation_s} s and "
@@ -196,19 +229,35 @@ class SlidePlan:
             context.measure(0, {d: 0.0 for d in ordered}),
         ]
         followers = [d for d in ordered if d != reference_detector]
-        lags = stratified_lags(
-            n_slides,
-            len(followers),
-            separation_s,
-            float(tau_max_s),
-            geometry.stride_samples,
-            geometry.sample_rate,
-            seed,
-        )
-        for index, row in enumerate(lags):
-            offsets = {d: 0.0 for d in ordered}
-            offsets.update({d: float(tau) for d, tau in zip(followers, row)})
-            slides.append(context.measure(index + 1, offsets))
+        if method == "roll":
+            slides.extend(
+                _rolled_slides(
+                    geometry,
+                    ordered,
+                    reference_detector,
+                    followers,
+                    slides[0],
+                    n_slides,
+                    separation_s,
+                    seed,
+                    spacing,
+                    max_shift_s,
+                )
+            )
+        else:
+            lags = stratified_lags(
+                n_slides,
+                len(followers),
+                separation_s,
+                float(tau_max_s),
+                geometry.stride_samples,
+                geometry.sample_rate,
+                seed,
+            )
+            for index, row in enumerate(lags):
+                offsets = {d: 0.0 for d in ordered}
+                offsets.update({d: float(tau) for d, tau in zip(followers, row)})
+                slides.append(context.measure(index + 1, offsets))
 
         if n_slides > 0 and not any(s.livetime_s > 0.0 for s in slides[1:]):
             raise ValueError(
@@ -223,6 +272,7 @@ class SlidePlan:
             min_separation_s=separation_s,
             tau_max_s=float(tau_max_s),
             keep_threshold=None if keep_threshold is None else float(keep_threshold),
+            method=str(method),
         )
 
     @property
@@ -284,6 +334,7 @@ class SlidePlan:
                     "seed": int(self.seed),
                     "min_separation_s": float(self.min_separation_s),
                     "tau_max_s": float(self.tau_max_s),
+                    "method": str(self.method),
                     "n_slides": sum(1 for s in ordered if s.slide_id != 0),
                     "n_records": len(ordered),
                     "background_livetime_s": self.background_livetime_s,
@@ -313,6 +364,18 @@ class SlidePlan:
                 data=np.array(
                     [[s.offsets_s[d] for d in detectors] for s in ordered],
                     dtype=np.float64,
+                ).reshape(len(ordered), len(detectors)),
+            )
+            # Written for every plan, zero for a ladder: a reader must not have to
+            # decide which pairing a file describes from which datasets are present.
+            handle.create_dataset(
+                "window_shift",
+                data=np.array(
+                    [
+                        [int((s.window_shift or {}).get(d, 0)) for d in detectors]
+                        for s in ordered
+                    ],
+                    dtype=np.int64,
                 ).reshape(len(ordered), len(detectors)),
             )
 
@@ -353,6 +416,12 @@ class SlidePlan:
             n_windows = np.asarray(handle["n_windows"])
             livetime_s = np.asarray(handle["livetime_s"])
             offsets_s = np.asarray(handle["offsets_s"])
+            # Absent in a plan written before the roll pairing existed, which is a ladder.
+            shifts = (
+                np.asarray(handle["window_shift"])
+                if "window_shift" in handle
+                else np.zeros_like(offsets_s, dtype=np.int64)
+            )
             sizes = {
                 "n_windows": n_windows.shape[0],
                 "livetime_s": livetime_s.shape[0],
@@ -374,6 +443,11 @@ class SlidePlan:
                         },
                         n_windows=int(n_windows[i]),
                         livetime_s=float(livetime_s[i]),
+                        window_shift=(
+                            {d: int(shifts[i, j]) for j, d in enumerate(detectors)}
+                            if shifts[i].any()
+                            else None
+                        ),
                     )
                     for i in range(slide_id.size)
                 ],
@@ -382,6 +456,7 @@ class SlidePlan:
                 min_separation_s=float(handle.attrs["min_separation_s"]),
                 tau_max_s=float(handle.attrs["tau_max_s"]),
                 keep_threshold=None if np.isnan(threshold) else threshold,
+                method=str(handle.attrs.get("method", "ladder")),
             )
             stored = float(handle.attrs["background_livetime_s"])
         measured = plan.background_livetime_s
@@ -476,6 +551,161 @@ def remeasure_livetimes(
         tau_max_s=plan.tau_max_s,
         keep_threshold=plan.keep_threshold,
     )
+
+
+SLIDE_METHODS: Tuple[str, ...] = ("ladder", "roll")
+
+
+def cache_bounded_shift(
+    budget_bytes: float,
+    n_detectors: int,
+    bytes_per_window_per_detector: int,
+    stride_s: float,
+) -> Tuple[int, float]:
+    """
+    Largest shift a frontend cache of this size can serve, in windows and in seconds.
+
+    The cache holds one block plus the halo every slide reaches into. A lag ladder's halo
+    is its largest lag, which is small. A roll's is its largest *shift*, and an unbounded
+    roll -- shifts of ``N/(K+1)``, which is what makes it decorrelate so well -- reaches
+    across the whole run, so the working set is the whole run's features and no cache can
+    hold it. Measured on the production network: features are 20.5 KB per window per
+    detector in bfloat16, so the full O3a lattice is **3.9 TB** and even the 14.5 d
+    development lattice is 526 GB.
+
+    Bounding the shift is what lets the two coexist. Every slide's shift must lie inside
+    ``[-M, +M]`` so that serving reference block ``b`` needs followers only from
+    ``[b - M, b + M]``; the halo is therefore ``2M`` and the affordable ``M`` is half of
+    what the budget holds.
+
+    Returns
+    -------
+    (max_shift_windows, max_shift_s)
+        Zero when the budget cannot hold a useful halo, which is the honest answer rather
+        than a shift of one window.
+    """
+    per_window = float(bytes_per_window_per_detector) * int(n_detectors)
+    if per_window <= 0:
+        raise ValueError("features must occupy a positive number of bytes per window")
+    halo = float(budget_bytes) / per_window
+    max_shift = int(halo // 2)
+    return max_shift, max_shift * float(stride_s)
+
+
+def rolled_shifts(
+    n_slides: int,
+    n_followers: int,
+    n_windows: int,
+    min_shift: int,
+    seed: int = 0,
+    spacing: str = "even",
+    max_shift: Optional[int] = None,
+) -> np.ndarray:
+    """
+    Integer shifts along the analysed lattice, one row per slide.
+
+    The generalisation of sgwc-1's background (``make_background_samples.py``), which
+    circularly rolls the follower detector's window list by ``N//2`` and ``N//3`` and so
+    takes exactly two slides. The same construction supports any number: ``K`` shifts
+    spread over the list give ``K`` slides, each still pairing stretches of data that are
+    a large fraction of the run apart.
+
+    ``spacing`` selects how the shifts are placed.
+
+    ``"even"``
+        Evenly over the admissible range: ``low + j * (high - low) / (K + 1)`` for
+        ``j = 1 .. K``. With no floor and no bound that is ``j * N / (K + 1)``, which is
+        sgwc-1's construction; the floor and the cache bound narrow the range rather than
+        change the shape. Deterministic, maximally spread, and every shift distinct.
+    ``"random"``
+        Drawn uniformly from the admissible range without replacement. Available because
+        an even ladder is a regular structure and a regular structure can in principle
+        resonate with a periodic artefact; there is no evidence of one here, so it is not
+        the default.
+
+    ``min_shift`` is the floor in windows. A shift of ``k`` separates the paired windows
+    by at least ``k`` strides -- exactly that inside a contiguous stretch, and more
+    wherever a gap falls between them -- so this is what enforces the minimum time
+    separation. The caller measures what was achieved regardless, because the bound holds
+    only for a sorted lattice.
+
+    Returns
+    -------
+    ndarray of int
+        ``(n_slides, n_followers)``. Each follower gets its own shift, so a
+        three-detector network does not roll two detectors together and re-pair them at
+        zero lag with each other.
+    """
+    if n_slides < 0:
+        raise ValueError(f"n_slides must not be negative, got {n_slides}")
+    if n_followers < 1 and n_slides > 0:
+        raise ValueError("a roll needs at least one follower detector to shift")
+    if n_slides == 0:
+        return np.zeros((0, max(n_followers, 0)), dtype=np.int64)
+    if spacing not in ("even", "random"):
+        raise ValueError(f"spacing must be 'even' or 'random', got {spacing!r}")
+
+    low, high = int(min_shift), int(n_windows) - int(min_shift)
+    if max_shift is not None:
+        # Bounded so a frontend cache can hold the halo every slide reaches into. Without
+        # a bound the shifts span the run and no cache is possible; see
+        # :func:`cache_bounded_shift`.
+        high = min(high, int(min_shift) + int(max_shift))
+    if high <= low:
+        raise ValueError(
+            f"a lattice of {n_windows} windows admits no shift at least {min_shift} "
+            "windows from either end; the minimum separation is too large for the data"
+        )
+    available = high - low
+    if n_slides > available:
+        raise ValueError(
+            f"{n_slides} distinct shifts were asked for but only {available} are "
+            f"admissible on a lattice of {n_windows} windows with a floor of "
+            f"{min_shift}"
+        )
+
+    rng = np.random.default_rng(seed)
+    rows = []
+    for follower in range(max(n_followers, 1)):
+        if spacing == "even":
+            # Spread over the admissible range, which is the whole lattice when nothing
+            # bounds it and the cache halo when something does.
+            shifts = np.round(
+                low + np.arange(1, n_slides + 1) * available / (n_slides + 1)
+            ).astype(np.int64)
+            # Each follower is offset by a further stride of the same ladder, so two
+            # followers are never rolled by the same amount and left at zero lag with
+            # each other.
+            shifts = low + (shifts - low + follower) % available
+        else:
+            shifts = rng.choice(available, size=n_slides, replace=False) + low
+        rows.append(np.sort(shifts.astype(np.int64)))
+    return np.column_stack(rows)
+
+
+def shifted_separations_s(
+    reference_gps: np.ndarray, shift: int, stride_s: float
+) -> float:
+    """
+    Smallest time separation a shift actually produces, in seconds.
+
+    The lattice is sorted, so a shift of ``k`` windows separates a pair by at least
+    ``k * stride`` and by more wherever a gap falls between them: skipping a gap can only
+    push the paired times further apart, never closer. The floor is therefore guaranteed
+    by the shift alone, and this measures it rather than deriving it, because the
+    guarantee rests on the lattice being sorted -- a property of how the span list was
+    assembled, not something enforced here. sgwc-1 checks the same thing the same way
+    (``|t_H1 - t_L1| >= 1.0`` s, ``make_background_samples.py``).
+
+    The wrapped pairs are included. Those are the ones the shift says nothing about: at
+    the wrap a pair is separated by the whole run minus ``k`` strides, which is large,
+    but it is large for a different reason and is worth having in the same number.
+    """
+    times = np.asarray(reference_gps, dtype=np.float64)
+    if times.size == 0:
+        raise ValueError("an empty lattice has no separations to measure")
+    rolled = np.roll(times, -int(shift))
+    return float(np.abs(rolled - times).min())
 
 
 def stratified_lags(
@@ -737,6 +967,118 @@ class _MeasurementContext:
         )
 
 
+def slides_for_background(
+    target_yr: float, foreground_s: float, retention: float = 1.0
+) -> int:
+    """
+    Slides needed to reach a target background depth, given this campaign's foreground.
+
+    The number a campaign should be described by is the depth, not the count: an O3a HL
+    search analyses 106.75 days and an O3a HLV one 80.81, so the same slide count gives
+    them different backgrounds and their false-alarm rates are not comparable at the same
+    ladder length. Asking for years gives every search the same floor.
+
+    ``retention`` is the fraction of the foreground a slide keeps. Exactly one for a roll,
+    which loses nothing; below one for a lag ladder, which needs proportionally more
+    slides for the same depth. Rounded **up**, because a campaign that asked for ten years
+    and got nine and a half has a false-alarm floor it did not ask for.
+    """
+    import math
+
+    if target_yr <= 0:
+        raise ValueError(f"target_yr must be positive, got {target_yr}")
+    if foreground_s <= 0:
+        raise ValueError(
+            "the campaign has no foreground livetime, so no depth of background can be "
+            "expressed as a multiple of it"
+        )
+    if not 0.0 < retention <= 1.0:
+        raise ValueError(f"retention must lie in (0, 1], got {retention}")
+    per_slide_yr = foreground_s * retention / _SECONDS_PER_JULIAN_YEAR
+    return max(1, math.ceil(float(target_yr) / per_slide_yr))
+
+
+def _rolled_slides(
+    geometry,
+    ordered: dict,
+    reference_detector: str,
+    followers: Sequence[str],
+    zero_lag: Slide,
+    n_slides: int,
+    separation_s: float,
+    seed: int,
+    spacing: str,
+    max_shift_s: Optional[float] = None,
+) -> List[Slide]:
+    """
+    Slides paired by shifting along the analysed lattice rather than in GPS.
+
+    The livetime of every rolled slide equals the zero-lag livetime **exactly**, and that
+    is a fact about the construction rather than an assumption worth measuring around:
+    the lattice admits only ordinals every detector can host, so re-pairing ordinal ``i``
+    with ordinal ``(i + k) mod N`` reads real data in every detector for every ``i``.
+    Nothing falls into a gap because nothing is moved in time. That is the whole
+    advantage over a lag ladder, whose retention falls with lag.
+
+    What *is* measured is the separation each shift achieves. It is bounded below by
+    ``k * stride`` on a sorted lattice, so the check confirms the floor rather than
+    discovering it -- but it confirms it over every pair, which is what sgwc-1 does too,
+    and it is the assertion that would catch a lattice assembled out of order.
+    """
+    if n_slides == 0:
+        return []
+
+    grid = AnalysisGrid.build(
+        geometry,
+        ordered,
+        coincident_intervals(ordered),
+        slide_id=0,
+        reference_detector=reference_detector,
+        coverage=False,
+    )
+    starts = np.concatenate(
+        [span.starts_gps() for span in grid.reference_spans]
+    )
+    n_windows = starts.size
+    min_shift = int(np.ceil(separation_s / geometry.stride_s))
+    max_shift = (
+        None if max_shift_s is None
+        else max(int(float(max_shift_s) / geometry.stride_s), min_shift + 1)
+    )
+    shifts = rolled_shifts(
+        n_slides, len(followers), n_windows, min_shift, seed=seed, spacing=spacing,
+        max_shift=max_shift,
+    )
+
+    out: List[Slide] = []
+    for index, row in enumerate(shifts):
+        # The reference is carried at zero, exactly as ``offsets_s`` carries it, so a
+        # slide is self-describing and a round trip through the file changes nothing.
+        shift_by_detector = {d: 0 for d in ordered}
+        shift_by_detector.update({d: int(k) for d, k in zip(followers, row)})
+        for detector, shift in shift_by_detector.items():
+            if not shift:
+                continue
+            achieved = shifted_separations_s(starts, shift, geometry.stride_s)
+            if achieved < separation_s:
+                raise ValueError(
+                    f"shifting {detector} by {shift} windows leaves a pair only "
+                    f"{achieved:.3f} s apart, inside the {separation_s} s floor. The "
+                    "lattice skips the gaps between segments, so a shift is not a fixed "
+                    "time separation; raise the floor or draw a different set"
+                )
+        out.append(
+            Slide(
+                slide_id=index + 1,
+                offsets_s={d: 0.0 for d in ordered},
+                n_windows=int(zero_lag.n_windows),
+                livetime_s=float(zero_lag.livetime_s),
+                window_shift=shift_by_detector,
+            )
+        )
+    return out
+
+
 # Local, so that reading a slide plan does not import the significance layer.
 _SECONDS_PER_JULIAN_YEAR: float = 31557600.0
 
@@ -753,6 +1095,37 @@ def _same_ladder(left: "SlidePlan", right: "SlidePlan") -> bool:
     return all(
         a.slide_id == b.slide_id and dict(a.offsets_s) == dict(b.offsets_s)
         for a, b in zip(left.slides, right.slides)
+    )
+
+
+def _requested_slides(spec, geometry, segments_by_detector) -> int:
+    """
+    How many slides this campaign wants: its explicit count, or its target depth.
+
+    The depth is turned into a count here rather than in :meth:`SlidePlan.build`, because
+    it needs the foreground livetime and that is a property of this campaign's data. A
+    roll keeps all of it and a ladder does not, so the two need different counts for the
+    same years -- the retention assumed is the method's own.
+    """
+    if spec.slides.n_slides is not None:
+        return int(spec.slides.n_slides)
+
+    zero_lag = AnalysisGrid.build(
+        geometry,
+        segments_by_detector,
+        coincident_intervals(segments_by_detector),
+        slide_id=0,
+        reference_detector=spec.slides.reference_detector,
+        coverage=False,
+    )
+    method = str(getattr(spec.slides, "method", "ladder"))
+    # A roll loses nothing. A ladder's retention depends on its lags and is not known
+    # until they are drawn, so 0.9 stands in -- deliberately pessimistic, because
+    # overshooting the target costs compute and undershooting it costs a floor the
+    # campaign asked for. The plan records what was actually achieved either way.
+    retention = 1.0 if method == "roll" else 0.9
+    return slides_for_background(
+        float(spec.slides.target_background_yr), zero_lag.livetime_s, retention
     )
 
 
@@ -784,11 +1157,14 @@ def run(spec, **kwargs) -> dict:
     plan = SlidePlan.build(
         geometry,
         segments,
-        n_slides=int(spec.slides.n_slides),
+        n_slides=_requested_slides(spec, geometry, segments),
         reference_detector=spec.slides.reference_detector,
         min_separation_s=float(spec.slides.min_separation_s),
         tau_max_s=float(spec.slides.tau_max_s),
         guard_s=float(spec.slides.guard_s),
+        method=str(getattr(spec.slides, "method", "ladder")),
+        spacing=str(getattr(spec.slides, "spacing", "even")),
+        max_shift_s=getattr(spec.slides, "max_shift_s", None),
         seed=int(spec.slides.seed),
     )
     target = spec.path("slides", "slide_plan.h5")
@@ -812,31 +1188,39 @@ def run(spec, **kwargs) -> dict:
 
     background_s = float(plan.background_livetime_s)
     foreground_s = float(plan.foreground_livetime_s)
+    # Counted off the plan rather than read back from the specification: with a target
+    # depth the count is derived, and the number of record is what was actually built.
+    n_background = sum(1 for slide in plan.slides if slide.slide_id != 0)
     retention = (
-        background_s / (int(spec.slides.n_slides) * foreground_s)
-        if foreground_s > 0 and spec.slides.n_slides
+        background_s / (n_background * foreground_s)
+        if foreground_s > 0 and n_background
         else float("nan")
     )
     return {
         "plan": str(target),
-        "n_slides": int(spec.slides.n_slides),
+        "n_slides": n_background,
+        "target_background_yr": spec.slides.target_background_yr,
         "background_livetime_s": background_s,
         "background_livetime_yr": background_s / _SECONDS_PER_JULIAN_YEAR,
         "foreground_livetime_s": foreground_s,
-        # Measured, never n * T_zerolag. Retention falls as the ladder lengthens because a
-        # lag moves a detector's data off the far end of the run, and the closed form
-        # assumes it does not.
+        # Measured, never n * T_zerolag. For a ladder the two genuinely differ: retention
+        # falls as the ladder lengthens, because a lag moves a detector's data off the far
+        # end of the run. For a roll they agree exactly, and that is a property of the
+        # construction rather than the closed form being used -- the number still comes
+        # from summing the plan.
         "mean_slide_retention": retention,
-        # Per-slide lags and per-slide livetimes, in slide_id order. The summed
-        # background livetime is invariant under reordering the ladder, so a plan whose
-        # slide_id -> lag map changed would keep the same fingerprint while every
+        # Per-slide pairings and per-slide livetimes, in slide_id order. The summed
+        # background livetime is invariant under reordering, so a plan whose
+        # slide_id -> pairing map changed would keep the same fingerprint while every
         # background shard on disk, each named by slide_id, now describes a different
-        # lag. The keep threshold is deliberately absent: background freezes it into this
+        # pairing. For a roll that is the whole of it: every rolled slide reports the
+        # same livetime and window count, so the shifts are the only thing left to tell
+        # two plans apart. The keep threshold is deliberately absent: background freezes it into this
         # same file after slides has run, and digesting it would move this stage's
         # fingerprint as a consequence of its own consumer's write.
         "fingerprint": combine(
             f"{background_s:.6f}",
-            spec.slides.n_slides,
+            n_background,
             spec.slides.seed,
             digest_values(
                 {
@@ -850,6 +1234,21 @@ def run(spec, **kwargs) -> dict:
                                 for slide in plan.slides
                             ],
                             dtype=np.float64,
+                        )
+                        for detector in sorted(spec.data.detectors)
+                    },
+                    # Carried for the same reason as the lags, and it is the *only* thing
+                    # that distinguishes two rolled plans: every rolled slide has the same
+                    # livetime and the same window count, so a reassignment of shifts to
+                    # slide_ids moves nothing else in this digest while every shard on
+                    # disk, named by slide_id, now describes a different pairing.
+                    "window_shift": {
+                        detector: np.asarray(
+                            [
+                                (slide.window_shift or {}).get(detector, 0)
+                                for slide in plan.slides
+                            ],
+                            dtype=np.int64,
                         )
                         for detector in sorted(spec.data.detectors)
                     },

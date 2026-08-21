@@ -95,6 +95,11 @@ class AnalysisGrid:
     spans_by_detector: dict
     slide_id: int = 0
     offsets_s: Optional[dict] = None
+    #: Integer shift along this lattice, per follower. When set, reference ordinal ``i``
+    #: is paired with follower ordinal ``(i + k) mod N`` instead of with the follower's
+    #: data at ``t_i + offset``. Every ordinal is hostable in every detector, so a
+    #: shifted pairing cannot fall into a gap and loses no livetime at any shift.
+    window_shift: Optional[dict] = None
     reference_detector: str = ""
     segments_by_detector: dict = field(default_factory=dict)
     coverage: Optional[object] = None
@@ -110,6 +115,7 @@ class AnalysisGrid:
         reference_detector: Optional[str] = None,
         coverage: bool = True,
         hostable_by_detector: Optional[dict] = None,
+        window_shift: Optional[dict] = None,
     ) -> "AnalysisGrid":
         """
         Construct the lattice for the given coincident intervals and slide.
@@ -175,6 +181,7 @@ class AnalysisGrid:
             spans_by_detector={reference: spans},
             slide_id=slide_id,
             offsets_s=offsets_s,
+            window_shift=window_shift,
             reference_detector=reference,
             segments_by_detector=ordered,
             coverage=report,
@@ -263,13 +270,43 @@ class AnalysisGrid:
             return
 
         offset = self.offsets_s.get(detector, 0.0) if self.offsets_s else 0.0
+        shift = (self.window_shift or {}).get(detector)
         window_s = self.geometry.window_s
         stride_s = self.geometry.stride_s
         candidates = self.segments_by_detector[detector]
+        lattice = self._lattice_starts() if shift else None
+        cursor_ordinal = self._span_ordinals()[block.span_slice[0]] if shift else 0
         for span in self.reference_spans[block.span_slice[0] : block.span_slice[1]]:
-            starts = span.starts_gps() + offset
+            if shift:
+                # Paired by position in the analysed lattice, not by time. The ordinals
+                # are contiguous, but their *times* are not: the lattice skips every gap
+                # between segments, so a rolled span lands wherever it lands and steps
+                # by one stride only until it crosses one of those gaps.
+                ordinals = (
+                    cursor_ordinal + np.arange(span.n_windows, dtype=np.int64) + shift
+                ) % lattice.size
+                starts = lattice[ordinals]
+                cursor_ordinal += span.n_windows
+                # A run marches from its first sample by a fixed stride, so it may only
+                # cover targets that really are one stride apart. Without this the run
+                # keeps marching past a jump and reads a stretch of strain that no
+                # window was ever assigned -- silently, because every index stays inside
+                # the segment.
+                steps = np.diff(starts)
+                tolerance = 0.5 / self.geometry.sample_rate
+                stops = list(
+                    np.flatnonzero(np.abs(steps - stride_s) > tolerance) + 1
+                )
+            else:
+                starts = span.starts_gps() + offset
+                stops = []
+            stops.append(starts.size)
             cursor = 0
+            stop_index = 0
             while cursor < starts.size:
+                while stops[stop_index] <= cursor:
+                    stop_index += 1
+                limit = stops[stop_index]
                 target = float(starts[cursor])
                 segment = _owning_segment(candidates, target, window_s)
                 if segment is None:
@@ -289,9 +326,10 @@ class AnalysisGrid:
                     max(first_local, 0),
                     segment.nsamples - self.geometry.window_samples,
                 )
-                # How many further windows stay inside this segment.
+                # How many further windows stay inside this segment, and inside this
+                # contiguous chunk of targets.
                 room = (segment.nsamples - self.geometry.window_samples) - first_local
-                n_here = min(starts.size - cursor, room // stride + 1) if room >= 0 else 0
+                n_here = min(limit - cursor, room // stride + 1) if room >= 0 else 0
                 if n_here <= 0:
                     raise ValueError(
                         f"{detector} segment {segment.segment_index} cannot host a "
@@ -306,6 +344,34 @@ class AnalysisGrid:
                     residual_samples=residual,
                 )
                 cursor += int(n_here)
+
+    def _lattice_starts(self) -> np.ndarray:
+        """
+        Every reference window start in this lattice, in order.
+
+        Built once and cached: a roll needs to look up an ordinal anywhere in the run,
+        and rebuilding the array per block would sweep the whole lattice per block. On
+        the O3a lattice it is 100 MB of float64 against ~12.5 million windows.
+        """
+        if getattr(self, "_lattice_cache", None) is None:
+            starts = (
+                np.concatenate([span.starts_gps() for span in self.reference_spans])
+                if self.reference_spans
+                else np.zeros(0, dtype=np.float64)
+            )
+            setattr(self, "_lattice_cache", starts)
+        return self._lattice_cache
+
+    def _span_ordinals(self) -> np.ndarray:
+        """Global ordinal of each span's first window; cached with the lattice."""
+        if getattr(self, "_ordinal_cache", None) is None:
+            counts = [span.n_windows for span in self.reference_spans]
+            setattr(
+                self,
+                "_ordinal_cache",
+                np.concatenate([[0], np.cumsum(counts)]).astype(np.int64),
+            )
+        return self._ordinal_cache
 
     def alignment_residuals(self, block: Block) -> dict:
         """

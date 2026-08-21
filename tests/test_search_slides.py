@@ -44,6 +44,7 @@ from scipy import stats
 
 from sage.search.geometry import SearchGeometry
 from sage.search.segments import Segment
+from sage.search import slides
 from sage.search.slides import (
     SlidePlan,
     minimum_separation_s,
@@ -1058,3 +1059,247 @@ class TestVetoedLivetime:
         assert vetoed.keep_threshold == 7.5
         assert vetoed.reference_detector == plan.reference_detector
         assert [s.offsets_s for s in vetoed] == [s.offsets_s for s in plan]
+
+
+class TestRolledPairing:
+    """sgwc-1's background: shift along the lattice rather than in GPS."""
+
+    def test_sgwc1_shape_at_two_slides(self):
+        """
+        sgwc-1 rolls by ``N//2`` and ``N//3`` and so takes exactly two slides. The
+        generalisation places ``K`` shifts evenly over the admissible range, which at
+        ``K = 2`` and no floor is thirds of the lattice -- the same construction, and
+        every shift a large fraction of the run.
+        """
+        assert list(slides.rolled_shifts(2, 1, 1_000_000, min_shift=0).ravel()) == [
+            333_333,
+            666_667,
+        ]
+
+        # A floor narrows the range it spreads over; it does not change the shape.
+        with_floor = slides.rolled_shifts(2, 1, 1_000_000, min_shift=1000).ravel()
+        assert list(with_floor) == [333_667, 666_333]
+
+    def test_shifts_are_distinct_per_follower(self):
+        """
+        Two followers rolled by the same amount stay at zero lag with *each other*, so a
+        three-detector background would carry a real coincidence in two of its three
+        detectors.
+        """
+        shifts = slides.rolled_shifts(4, 2, 1_000_000, min_shift=1000)
+
+        assert shifts.shape == (4, 2)
+        assert (shifts[:, 0] != shifts[:, 1]).all()
+
+    def test_floor_refused_when_unreachable(self):
+        """A lattice too short for the floor is a stated failure, not a clipped shift."""
+        with pytest.raises(ValueError, match="admits no shift"):
+            slides.rolled_shifts(2, 1, 100, min_shift=60)
+
+    def test_more_slides_than_shifts_refused(self):
+        """Distinct shifts are the resource; asking for more than exist is an error."""
+        with pytest.raises(ValueError, match="admissible"):
+            slides.rolled_shifts(500, 1, 1000, min_shift=400)
+
+    def test_separation_is_the_shift_when_contiguous(self):
+        """On an unbroken stretch a shift of k windows is exactly k strides."""
+        contiguous = np.arange(1000, dtype=np.float64) * 0.1
+
+        assert slides.shifted_separations_s(contiguous, 10, 0.1) == pytest.approx(1.0)
+
+    def test_gaps_only_widen_the_separation(self):
+        """
+        The bound the floor rests on. A sorted lattice skips every gap between segments,
+        and skipping one can only push the paired times further apart -- so ``k * stride``
+        is a lower bound rather than an approximation, and the floor cannot be undercut by
+        the data's own structure.
+        """
+        contiguous = np.arange(1000, dtype=np.float64) * 0.1
+        gapped = np.concatenate([np.arange(500) * 0.1, np.arange(500) * 0.1 + 500.0])
+
+        assert slides.shifted_separations_s(gapped, 10, 0.1) >= (
+            slides.shifted_separations_s(contiguous, 10, 0.1) - 1e-9
+        )
+
+    def test_empty_lattice_refused(self):
+        """Nothing to measure is a stated failure, not a separation of zero."""
+        with pytest.raises(ValueError, match="no separations"):
+            slides.shifted_separations_s(np.zeros(0), 5, 0.1)
+
+    def test_no_livetime_lost(self):
+        """
+        The whole advantage over a lag ladder. Every lattice ordinal is hostable in every
+        detector, so re-pairing ordinals cannot push anything into a gap; a ladder at the
+        same depth loses whatever its lags shift out of the data.
+        """
+        rolled = slides.SlidePlan.build(
+            GEOMETRY, _network(), n_slides=4, reference_detector="H1",
+            min_separation_s=20.0, seed=3, method="roll",
+        )
+        background = [s for s in rolled if s.slide_id != 0]
+
+        assert background
+        for slide in background:
+            assert slide.livetime_s == pytest.approx(rolled.foreground_livetime_s)
+            assert slide.n_windows == rolled.slides[0].n_windows
+
+    def test_ladder_loses_livetime(self):
+        """The contrast that makes the comparison meaningful, not an assumption about it."""
+        ladder = slides.SlidePlan.build(
+            GEOMETRY, _network(), n_slides=4, reference_detector="H1",
+            min_separation_s=20.0, tau_max_s=1024.0, seed=3, method="ladder",
+        )
+        background = [s for s in ladder if s.slide_id != 0]
+
+        assert any(s.livetime_s < ladder.foreground_livetime_s for s in background)
+
+    def test_reference_carried_at_zero(self):
+        """
+        As ``offsets_s`` carries it, so a slide is self-describing and a round trip
+        through the file changes nothing.
+        """
+        plan = slides.SlidePlan.build(
+            GEOMETRY, _network(), n_slides=2, reference_detector="H1",
+            min_separation_s=20.0, seed=3, method="roll",
+        )
+        slide = [s for s in plan if s.slide_id != 0][0]
+
+        assert slide.window_shift["H1"] == 0
+        assert slide.window_shift["L1"] > 0
+
+    def test_round_trip(self, tmp_path):
+        """A reloaded plan must describe the same pairing, not an equivalent one."""
+        plan = slides.SlidePlan.build(
+            GEOMETRY, _network(), n_slides=3, reference_detector="H1",
+            min_separation_s=20.0, seed=3, method="roll",
+        )
+        target = tmp_path / "plan.h5"
+        plan.save(target)
+        reloaded = slides.SlidePlan.load(target)
+
+        assert reloaded.method == "roll"
+        assert list(reloaded.slides) == list(plan.slides)
+
+    def test_unknown_method_refused(self):
+        """The background pairing is not something to fall back to a default on."""
+        with pytest.raises(ValueError, match="unknown slide method"):
+            slides.SlidePlan.build(
+                GEOMETRY, _network(), n_slides=1,
+                reference_detector="H1", method="shuffle",
+            )
+
+    def test_cache_bound_from_a_memory_budget(self):
+        """
+        The halo a frontend cache must hold is twice the largest shift, so the affordable
+        shift is half of what the budget holds. Measured on the production network at
+        20.5 KB per window per detector: 60 GB of an 80 GB card buys 0.83 days, against
+        the ladder's 2.3 hours.
+        """
+        windows, seconds = slides.cache_bounded_shift(
+            60e9, n_detectors=2, bytes_per_window_per_detector=int(20.5 * 1024),
+            stride_s=0.100098,
+        )
+
+        assert windows == pytest.approx(714_557, rel=1e-3)
+        assert seconds / 86400.0 == pytest.approx(0.83, abs=0.01)
+
+    def test_bounded_shifts_stay_inside_the_halo(self):
+        """
+        Every shift has to fit, not just the typical one: a single slide reaching past
+        the halo makes the cache miss for that slide alone, and the miss is a silent
+        recomputation rather than an error.
+        """
+        bound = 500_000
+        shifts = slides.rolled_shifts(
+            12, 1, 12_532_817, min_shift=1000, max_shift=bound
+        ).ravel()
+
+        assert shifts.max() <= 1000 + bound
+        assert shifts.min() >= 1000
+
+    def test_unbounded_shifts_span_the_run(self):
+        """
+        Which is what makes an unbounded roll decorrelate so well, and exactly why no
+        cache can serve it -- the working set becomes the whole run's features, 3.9 TB on
+        the O3a lattice.
+        """
+        n_windows = 12_532_817
+        shifts = slides.rolled_shifts(8, 1, n_windows, min_shift=1000).ravel()
+
+        assert shifts.max() > n_windows // 2
+
+    def test_bound_still_beats_the_ladder(self):
+        """
+        The bound is worth having only if it leaves the roll ahead, and it is the typical
+        separation that decides that rather than the smallest.
+
+        Measured on this campaign at eight slides: separations run 2.2 to 17.7 hours,
+        median 10.0, against a ladder whose *largest* lag is 2.3 hours. The smallest
+        bounded shift is comparable to that largest lag -- 8,047 s against 8,192 -- so a
+        claim about the minimum would be false; it is the typical separation that decides
+        whether a background is correlated, and there the roll is an order of magnitude
+        ahead.
+        """
+        separations = (
+            slides.rolled_shifts(
+                8, 1, 12_532_817, min_shift=1000, max_shift=714_557
+            ).ravel()
+            * 0.100098
+        )
+        ladder_largest_lag_s = 8192.0
+
+        assert np.median(separations) > 4 * ladder_largest_lag_s
+        assert separations.max() > 7 * ladder_largest_lag_s
+
+
+class TestBackgroundDepth:
+    """A campaign states how much background it wants, not how many slides."""
+
+    def test_depth_scales_with_the_foreground(self):
+        """
+        The reason the depth is the knob. O3a HL analyses 106.75 days and O3a HLV 80.81,
+        so a fixed slide count gives the two different backgrounds and their false-alarm
+        rates stop being comparable at the same ladder length.
+        """
+        hl = slides.slides_for_background(10.0, 106.75 * 86400)
+        hlv = slides.slides_for_background(10.0, 80.81 * 86400)
+
+        assert hl == 35
+        assert hlv == 46
+
+    def test_rounded_up(self):
+        """
+        A campaign that asked for ten years and got nine and a half has a false-alarm
+        floor it did not ask for.
+        """
+        year = 365.25 * 86400.0
+
+        assert slides.slides_for_background(10.0, year) == 10
+        assert slides.slides_for_background(10.0, year * 1.01) == 10
+        assert slides.slides_for_background(10.0, year * 0.99) == 11
+
+    def test_retention_costs_slides(self):
+        """
+        A ladder keeps less of each slide than a roll, so it needs proportionally more of
+        them for the same years. Ignoring that undershoots the depth silently.
+        """
+        full = slides.slides_for_background(10.0, 30 * 86400, retention=1.0)
+        lossy = slides.slides_for_background(10.0, 30 * 86400, retention=0.5)
+
+        assert lossy >= 2 * full - 1
+
+    def test_never_zero(self):
+        """
+        A target smaller than one slide still needs one: no background at all makes every
+        candidate's rate the same number.
+        """
+        assert slides.slides_for_background(0.01, 365.25 * 86400) == 1
+
+    def test_refusals(self):
+        """Each of these produces a plausible plan rather than an error if allowed."""
+        with pytest.raises(ValueError, match="target_yr must be positive"):
+            slides.slides_for_background(0.0, 86400.0)
+        with pytest.raises(ValueError, match="no foreground livetime"):
+            slides.slides_for_background(1.0, 0.0)
+        with pytest.raises(ValueError, match="retention"):
+            slides.slides_for_background(1.0, 86400.0, retention=1.5)

@@ -255,7 +255,12 @@ class TestProductsTracked:
         import sage.search.segments as segments
         import sage.search.slides as slides
 
+        import dataclasses
+
         spec = _campaign(tmp_path)
+        spec = dataclasses.replace(
+            spec, slides=dataclasses.replace(spec.slides, method="ladder")
+        )
         segments.run(spec)
         before = slides.run(spec)["fingerprint"]
         assert slides.run(spec)["fingerprint"] == before
@@ -263,6 +268,27 @@ class TestProductsTracked:
         original = slides.stratified_lags
         monkeypatch.setattr(
             slides, "stratified_lags", lambda *a, **k: original(*a, **k)[::-1]
+        )
+        assert slides.run(spec)["fingerprint"] != before
+
+    def test_slides_roll_order(self, tmp_path, monkeypatch):
+        """
+        The same property for the roll: the summed livetime is identical whichever order
+        the shifts come in -- it is one number per slide and they are all equal -- so only
+        a fingerprint that covers the shift assignment can tell the two plans apart.
+        """
+        import dataclasses
+
+        import sage.search.segments as segments
+        import sage.search.slides as slides
+
+        spec = _campaign(tmp_path)
+        segments.run(spec)
+        before = slides.run(spec)["fingerprint"]
+
+        original = slides.rolled_shifts
+        monkeypatch.setattr(
+            slides, "rolled_shifts", lambda *a, **k: original(*a, **k)[::-1]
         )
         assert slides.run(spec)["fingerprint"] != before
 
