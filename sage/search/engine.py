@@ -315,9 +315,7 @@ class SearchEngine:
                 windows_per_second=0.0,
                 blocks_completed=0,
             )
-        for block in grid.blocks(
-            getattr(reader, "block_seconds", None) or _reader_block_seconds(reader)
-        ):
+        for block in _blocks_of(reader, grid):
             if block.block_id in done:
                 continue
             report = self.run_block(reader, block, writer)
@@ -334,20 +332,33 @@ class SearchEngine:
         )
 
 
-def _reader_block_seconds(reader) -> float:
+def _blocks_of(reader, grid: AnalysisGrid):
     """
-    The block partition the reader was built with, so the engine walks the same one.
+    The blocks to walk: the reader's own, so both sides agree on what a block id names.
 
-    Partitioning independently would give the two different block boundaries, and the
-    resume marker -- a block id -- would then name different data in each.
+    Taken rather than recomputed. Deriving the partition from the blocks themselves --
+    ``max(block.duration_s)`` -- was wrong and silently so: ``duration_s`` is a block's
+    **wall span**, gaps included, while the partition is budgeted in **livetime**. On the
+    O3a lattice the largest wall span is 254,401 s against a 32,768 s budget, so the
+    engine re-partitioned into 5 blocks where the reader held 30.
+
+    Everything was still scored, because a block carries the span slice both sides index
+    through -- which is why nothing failed. What broke was the bookkeeping: the shard
+    recorded 5 completed blocks against an ``n_blocks`` of 30, resume granularity was a
+    fifth of the run rather than a thirtieth, and the frontend cache residency for one
+    coarse block came to 117 GB on an 80 GB card.
     """
     blocks = getattr(reader, "blocks", None)
-    if not blocks:
+    if blocks:
+        return list(blocks)
+    block_seconds = getattr(reader, "block_seconds", None)
+    if not block_seconds:
         raise ValueError(
-            "this reader exposes no blocks, so the engine cannot walk the same partition "
-            "it does; a block id would name different data in each"
+            "this reader exposes neither blocks nor the block_seconds it was built "
+            "with, so the engine cannot walk the same partition it does; a block id "
+            "would name different data in each"
         )
-    return max(block.duration_s for block in blocks)
+    return grid.blocks(float(block_seconds))
 
 
 def build_param_sampler(cfg, data_cfg, gwconfig: str | Path, seed: int):
@@ -435,6 +446,7 @@ def run_search(
     stage: str = "zerolag",
     slide_id: int = 0,
     offsets_s: Optional[dict] = None,
+    window_shift: Optional[dict] = None,
     **kwargs,
 ) -> dict:
     """
@@ -445,7 +457,8 @@ def run_search(
     is built with. The same driver serves the ``zerolag`` and ``background`` stages for
     that reason -- two drivers would be two forward paths that could drift.
 
-    ``offsets_s`` is supplied by the caller rather than read from the stored ladder. The
+    The pairing -- ``offsets_s`` for a lag ladder, ``window_shift`` for a roll along the
+    lattice -- is supplied by the caller rather than read from the stored ladder. The
     background driver owns the plan and is scheduled after ``slides``; ``zerolag`` is
     scheduled before it. An engine that loaded the plan itself would make the earliest
     scoring stage depend on a product built two stages later, which is the ordering the
@@ -489,9 +502,10 @@ def run_search(
         for detector in spec.data.detectors
     }
 
-    if slide_id != 0 and not offsets_s:
+    if slide_id != 0 and not offsets_s and not window_shift:
         raise ValueError(
-            f"slide {slide_id} was requested with no offsets; the lags come from the "
+            f"slide {slide_id} was requested with neither offsets nor a window shift; "
+            "the pairing comes from the "
             "stored ladder and are supplied by the background driver, which owns it. "
             "The engine deliberately does not read slide_plan.h5: zerolag runs before "
             "slides in the stage graph, so an engine that depended on the plan would "
@@ -503,6 +517,7 @@ def run_search(
         segments,
         coincident_intervals(segments),
         offsets_s=dict(offsets_s) if offsets_s else None,
+        window_shift=dict(window_shift) if window_shift else None,
         slide_id=int(slide_id),
         reference_detector=spec.slides.reference_detector,
     )
@@ -551,6 +566,13 @@ def run_search(
     attrs["clustered"] = False
     attrs["slide_id"] = int(slide_id)
     attrs["stage"] = str(stage)
+    # The pairing this shard was scored under, so a background collation can tell a
+    # rolled slide from a lagged one without consulting the plan. A slide_id alone is
+    # only meaningful against the plan that assigned it.
+    attrs["pairing"] = "roll" if window_shift else "lag"
+    if window_shift:
+        for detector, shift in sorted(window_shift.items()):
+            attrs[f"window_shift_{detector}"] = int(shift)
     # Part of the shard's identity, not a note about it: it decides which windows became
     # rows, so two rungs thresholded differently hold different fractions of their tails
     # and must not be collated into one background. Checked by COMPATIBILITY_KEYS.

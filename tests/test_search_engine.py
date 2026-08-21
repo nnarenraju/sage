@@ -281,3 +281,82 @@ class TestChain:
         plan = SlidePlan.load(spec.path("slides", "slide_plan.h5"))
         values = {background.freeze_keep_threshold(spec, plan) for _ in range(5)}
         assert len(values) == 1
+
+
+class TestBlockPartition:
+    """The engine and the reader must agree on what a block id names."""
+
+    class _Reader:
+        def __init__(self, blocks, block_seconds=None):
+            self.blocks = blocks
+            if block_seconds is not None:
+                self.block_seconds = block_seconds
+
+    def _blocks(self, n, span):
+        from sage.search.grid import Block
+
+        return [
+            Block(block_id=i, gps_start=i * span, gps_end=(i + 1) * span,
+                  span_slice=(i, i + 1))
+            for i in range(n)
+        ]
+
+    def test_readers_blocks_are_taken_not_rederived(self):
+        """
+        Taken, not recomputed. Deriving the partition from ``max(block.duration_s)`` reads
+        a block's *wall span* -- gaps included -- as if it were the livetime budget it was
+        built from. Measured on the O3a lattice: the largest wall span is 254,401 s
+        against a 32,768 s budget, so the engine walked 5 blocks where the reader held 30.
+        """
+        from sage.search.engine import _blocks_of
+
+        held = self._blocks(30, 32768.0)
+        walked = _blocks_of(self._Reader(held), grid=None)
+
+        assert [b.block_id for b in walked] == [b.block_id for b in held]
+
+    def test_a_gappy_block_does_not_coarsen_the_partition(self):
+        """
+        The specific shape that produced the defect: one block spanning a long gap, so its
+        wall duration dwarfs the others'. Re-partitioning at that number merges the rest.
+        """
+        from sage.search.engine import _blocks_of
+
+        from sage.search.grid import Block
+
+        held = self._blocks(4, 32768.0)
+        held[2] = Block(block_id=2, gps_start=0.0, gps_end=254_401.0, span_slice=(2, 3))
+        walked = _blocks_of(self._Reader(held), grid=None)
+
+        assert len(walked) == 4
+
+    def test_falls_back_to_the_stated_budget(self):
+        """A reader that holds no blocks may still say what it was built with."""
+        from sage.search.engine import _blocks_of
+
+        class _Grid:
+            def blocks(self, seconds):
+                return [("asked", seconds)]
+
+        walked = _blocks_of(self._Reader([], block_seconds=1024.0), _Grid())
+
+        assert walked == [("asked", 1024.0)]
+
+    def test_refuses_a_reader_that_says_neither(self):
+        """
+        Guessing a partition is what caused this; a reader that cannot state one is an
+        error rather than an occasion to infer.
+        """
+        from sage.search.engine import _blocks_of
+
+        with pytest.raises(ValueError, match="neither blocks nor the block_seconds"):
+            _blocks_of(self._Reader([]), grid=None)
+
+    def test_reader_records_its_block_seconds(self, tmp_path):
+        """
+        The attribute the engine reads. Absent, the engine had nothing to agree with and
+        inferred one instead.
+        """
+        from sage.search.reader import StreamingStrainReader
+
+        assert "block_seconds" in StreamingStrainReader.__init__.__code__.co_varnames

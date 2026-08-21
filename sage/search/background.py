@@ -1231,6 +1231,9 @@ def run(spec, slides=None, **kwargs) -> dict:
         else [int(s) for s in slides]
     )
     lags = {int(s.slide_id): dict(s.offsets_s) for s in plan}
+    shifts = {
+        int(s.slide_id): (dict(s.window_shift) if s.window_shift else None) for s in plan
+    }
     scored = []
     for slide_id in wanted:
         if slide_id not in lags:
@@ -1243,6 +1246,7 @@ def run(spec, slides=None, **kwargs) -> dict:
                 stage="background",
                 slide_id=slide_id,
                 offsets_s=lags[slide_id],
+                window_shift=shifts.get(slide_id),
                 keep_threshold=threshold,
             )
         )

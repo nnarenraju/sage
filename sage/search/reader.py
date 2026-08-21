@@ -267,6 +267,11 @@ class StreamingStrainReader:
         self.grid = grid
         self.geometry = geometry
         self.batch_size = int(batch_size)
+        # Kept so the engine can walk the same partition rather than infer one. Inferring
+        # it from the blocks was wrong in a way nothing surfaced: a block's `duration_s`
+        # is its wall span, gaps included, and re-partitioning at the largest of those
+        # gave a coarser set of blocks than the reader held.
+        self.block_seconds = float(block_seconds)
         self.prefetch = int(prefetch)
         self.pin_memory = bool(pin_memory)
         self.detectors: Tuple[str, ...] = tuple(grid.detectors)
