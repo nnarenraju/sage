@@ -34,8 +34,13 @@ from typing import Optional
 
 DEFAULT_PREFIX: str = "SGW"
 
-# <letters><YYMMDD>_<HHMMSS>, with the leading prefix optional.
-_NAME_PATTERN = re.compile(r"^(?P<prefix>[A-Za-z]*)(?P<date>\d{6})_(?P<time>\d{6})$")
+# <letters><YYMMDD>_<HHMMSS>, with the leading prefix optional and an optional
+# disambiguating suffix. The suffix exists because the stamp names a *second*: two
+# published events never shared one, but a search's candidate list runs to thousands of
+# sub-threshold triggers over a run, and clustering only guarantees they are 0.35 s apart.
+_NAME_PATTERN = re.compile(
+    r"^(?P<prefix>[A-Za-z]*)(?P<date>\d{6})_(?P<time>\d{6})(?:-(?P<suffix>\d+))?$"
+)
 
 
 def name_from_gps(gps: float, prefix: str = DEFAULT_PREFIX) -> str:
@@ -56,6 +61,41 @@ def name_from_gps(gps: float, prefix: str = DEFAULT_PREFIX) -> str:
     return f"{prefix}{stamp}"
 
 
+def disambiguate(names, gps) -> list:
+    """
+    Make a list of candidate names unique, keeping the GWTC form wherever it already is.
+
+    ``name_from_gps`` names the second an event falls in, which is unique for published
+    detections and is not unique for a search's candidate list: clustering separates
+    events by 0.35 s, so several can share a second. The name is the identity every later
+    join uses -- the trials record, the data-quality verdict, the catalogue crossmatch --
+    so a collision is not cosmetic. It makes those joins ambiguous, and
+    ``trials._records_by_name`` refuses outright rather than picking one.
+
+    The earliest candidate in a colliding second keeps the bare name and the rest take
+    ``-1``, ``-2``, ... in time order. Ordering by time rather than by position makes the
+    assignment a property of the data, so a re-run that returns the same candidates in a
+    different order gives them the same names.
+    """
+    import numpy as np
+
+    names = [str(name) for name in names]
+    gps = np.asarray(gps, dtype=np.float64)
+    if len(names) != gps.size:
+        raise ValueError(
+            f"{len(names)} names against {gps.size} times; they are paired elementwise"
+        )
+    order = np.argsort(gps, kind="stable")
+    seen: dict = {}
+    out = list(names)
+    for index in order:
+        base = names[index]
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        out[index] = base if count == 0 else f"{base}-{count}"
+    return out
+
+
 def gps_from_name(name: str) -> float:
     """
     Parse the UTC stamp in a candidate name back to GPS, to the second.
@@ -72,6 +112,8 @@ def gps_from_name(name: str) -> float:
             f"{name!r} is not a candidate name of the form <prefix>YYMMDD_HHMMSS; "
             "the short form without a time is ambiguous within a day"
         )
+    # The disambiguating suffix is deliberately ignored: it distinguishes candidates
+    # inside one second and carries no time information of its own.
     date, clock = match.group("date"), match.group("time")
     isot = (
         f"20{date[0:2]}-{date[2:4]}-{date[4:6]}T"
