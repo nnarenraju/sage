@@ -153,7 +153,17 @@ class EngineSpec:
     sampler_seed: int = 150914
     device: str = "cuda"
     amp_dtype: str = "bfloat16"
-    batch_size: int = 8192
+    #: Windows per forward pass. **Measured rather than maximised**, on an H100 with the
+    #: production O3b network: throughput is flat from 1,024 to 8,192 (4,411 to 4,589
+    #: win/s) and peaks at 4,096, which uses 16 GB. Going to 8,192 costs 2.3x the memory
+    #: for 1% less throughput, and 16,384 does not run at all -- ``max_pool2d`` indexes
+    #: with 32-bit arithmetic and overflows there.
+    #:
+    #: The card being large does not change this. A window is 32,768 samples in every
+    #: detector, so a batch of 4,096 is already a quarter of a billion samples of input;
+    #: the GPU saturates on arithmetic long before it runs out of memory. The spare VRAM
+    #: is better spent running several slides at once than one enormous batch.
+    batch_size: int = 4096
     block_seconds: float = 32768.0
     keep_stream: bool = False
     #: Reuse per-detector frontend features across slides instead of rescoring each slide
@@ -169,11 +179,55 @@ class EngineSpec:
 
 @dataclass(frozen=True)
 class SlideSpec:
-    """Time-slide ladder. Lags are stratified, seeded and stored, never stacked."""
+    """The background pairing. Seeded and stored, never stacked."""
 
-    n_slides: int = 82
+    #: How much background to make, in years. **This is the knob**, not the slide count:
+    #: a campaign's foreground differs by run and by detector network, so a fixed number
+    #: of slides gives each search a different depth. Asking for a depth gives every
+    #: search the same one, and :class:`~sage.search.slides.SlidePlan` records how many
+    #: slides that took.
+    #:
+    #: Ten years reaches a false-alarm rate of 0.1/yr, which is below every published O3a
+    #: event this search is scored against, and costs about half a day on six GPUs per
+    #: search.
+    target_background_yr: Optional[float] = 10.0
+    #: Explicit slide count, overriding :attr:`target_background_yr`. For a smoke run at
+    #: a stated depth, and for reproducing a campaign that fixed the count.
+    n_slides: Optional[int] = None
     reference_detector: str = "H1"
-    min_separation_s: float = 20.0
+    #: How the background is paired.
+    #:
+    #: ``"roll"`` (default) shifts along the analysed lattice, as sgwc-1's background
+    #: does: reference ordinal ``i`` is paired with follower ordinal ``(i + k) mod N``.
+    #: Every ordinal is hostable in every detector, so **no livetime is lost at any
+    #: shift**, and a shift of ``N/(K+1)`` pairs stretches days apart rather than hours.
+    #:
+    #: ``"ladder"`` draws a stratified ladder of GPS lags bounded by :attr:`tau_max_s`.
+    #: Retention falls with lag, and at the bound that keeps retention high the lags are
+    #: short enough that the slides are not independent: measured on O3a at
+    #: ``tau_max_s = 8192``, 72 of 82 slides re-pair noise from within two hours of
+    #: itself, which is well inside the timescale detector non-stationarity is
+    #: correlated over.
+    method: str = "roll"
+    #: ``"even"`` spaces the shifts as ``round(j*N/(K+1))``, which is sgwc-1's choice
+    #: generalised; ``"random"`` draws them uniformly without replacement. Roll only.
+    spacing: str = "even"
+    #: Floor on the time between paired windows. The physical floor -- the network's
+    #: largest light travel time -- always applies on top. sgwc-1 used 1 s; the default
+    #: here is wider because the ranking statistic's own autocorrelation, not light
+    #: travel, is what a paired coincidence has to clear to be a false alarm.
+    min_separation_s: float = 100.0
+    #: Roll only: the largest shift drawn, in **analysed** seconds. Bounds the halo a
+    #: frontend cache has to hold, and so decides whether the cache is usable at all.
+    #: Measured on the production network, features are 20.5 KB per window per detector,
+    #: which makes the full O3a lattice 3.9 TB -- an unbounded roll therefore reaches
+    #: across the whole run, the working set is the whole run, and no cache can serve it.
+    #: ``None`` leaves the roll unbounded and gives up the cache, which is 2.7x the
+    #: compute for the best decorrelation available. :func:`sage.search.slides.
+    #: cache_bounded_shift` turns a memory budget into this number: 60 GB of an 80 GB
+    #: card buys 0.83 days, against the ladder's 2.3 hours.
+    max_shift_s: Optional[float] = 71570.0
+    #: Ladder only: the largest lag drawn.
     tau_max_s: float = 8192.0
     guard_s: float = 4.0
     seed: int = 20260809
@@ -304,6 +358,24 @@ class InjectionSpec:
     assoc_window_s: float = 12.0
     match_window_s: float = 0.25
     found_far_yr: float = 1.0
+    #: How the population is fixed, in order of preference.
+    #:
+    #: ``"marginalise"`` (default) draws each block of injections under a different
+    #: hyperposterior sample, so the uncertainty on the population reaches
+    #: ``p(x | signal)`` rather than being replaced by a point. These injections *are*
+    #: the signal density, so a set drawn at one hyperparameter vector is narrower than
+    #: the population inference warrants and every candidate's p_astro inherits that.
+    #: On the GWTC-3 fit it widens the 5-95% spin and tilt intervals by 15-18%, and moves
+    #: the median spin from 0.12 to 0.20 -- because the likeliest sample sits at
+    #: ``xi_spin = 0.97``, a nearly-aligned corner of the posterior.
+    #:
+    #: ``"representative"`` conditions on the single sample the source handler chose, as
+    #: sgwc-1 did. Which sample, and by which method, is recorded in the file
+    #: :attr:`hyperposterior_path` names.
+    population_mode: str = "marginalise"
+    #: Posterior samples to marginalise over. ``None`` uses as many distinct ones as
+    #: there are injections, which is the most diversity the release can supply.
+    n_hyper: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -425,6 +497,26 @@ class SearchSpec:
                 "tens of gigabytes and must survive a reboot"
             )
 
+        from sage.search.slides import SLIDE_METHODS
+
+        if self.slides.method not in SLIDE_METHODS:
+            raise ValueError(
+                f"slides.method {self.slides.method!r} is not one of {SLIDE_METHODS}; "
+                "the background pairing is not something to fall back to a default on"
+            )
+        if self.slides.spacing not in ("even", "random"):
+            raise ValueError(
+                f"slides.spacing {self.slides.spacing!r} is not 'even' or 'random'"
+            )
+
+        modes = ("representative", "marginalise")
+        if self.injection.population_mode not in modes:
+            raise ValueError(
+                f"injection.population_mode {self.injection.population_mode!r} is not "
+                f"one of {modes}; the population injections are drawn from is not "
+                "something to fall back to a default on"
+            )
+
         detectors = tuple(self.data.detectors)
         if not detectors:
             raise ValueError("data.detectors must name at least one detector")
@@ -439,8 +531,24 @@ class SearchSpec:
                 f"in the network {detectors}; slides would be measured against a "
                 "detector the search does not read"
             )
-        if self.slides.n_slides < 0:
-            raise ValueError(f"slides.n_slides must not be negative, got {self.slides.n_slides}")
+        if self.slides.n_slides is not None and self.slides.n_slides < 0:
+            raise ValueError(
+                f"slides.n_slides must not be negative, got {self.slides.n_slides}"
+            )
+        if self.slides.n_slides is None and not self.slides.target_background_yr:
+            raise ValueError(
+                "slides needs either target_background_yr or an explicit n_slides; a "
+                "campaign with neither has no background and would report every "
+                "candidate at the same rate"
+            )
+        if (
+            self.slides.target_background_yr is not None
+            and self.slides.target_background_yr <= 0
+        ):
+            raise ValueError(
+                "slides.target_background_yr must be positive, got "
+                f"{self.slides.target_background_yr}"
+            )
         if self.slides.tau_max_s <= self.slides.min_separation_s:
             raise ValueError(
                 f"slides.tau_max_s ({self.slides.tau_max_s}) must exceed "

@@ -23,7 +23,7 @@ spectra the network was trained under, which is what makes an O3b-trained networ
 data coherent rather than a distribution shift; they are not the O3a-only spectra.
 """
 
-from config_base import make_spec
+from config_base import SEARCH_ROOT, make_spec
 
 CHECKPOINT = "/work/nagarajan/sage_runs/o3b/production_run_HL/CHECKPOINTS/best.pt"
 TRAINING_CONFIG = "runs/o3b/config_HL.py"
@@ -44,4 +44,25 @@ def get_spec():
         # it here would remove nothing and only assert a veto this campaign did not apply.
         # Stated rather than defaulted: the livetime must not claim a vetoing it did not do.
         data=dict(apply_cat1=False),
+        # Proven, not assumed. `diagnose_separability` was run against these weights on
+        # real O3a strain, on CPU and again on the GPU under bfloat16 autocast: perturbing
+        # either detector left the other's frontend output **bitwise** unchanged (worst
+        # cross-detector change exactly 0) while moving its own by 0.69, so the probe
+        # reached the network; both coupled controls were refused and the separable one
+        # accepted. Job 111697.
+        #
+        # Stated on the campaign rather than defaulted in EngineSpec, because it is a fact
+        # about *this* trained network. A different checkpoint has to earn it again --
+        # `./submit.sh separability <config>`.
+        engine=dict(use_frontend_cache=True),
+        # Built by `fetch_sources.py --source gwtc3_powerlawpeak`, which selects the
+        # sample sgwc-1 drew its population at and records the release it came from.
+        # Stated rather than defaulted: a campaign that silently found a hyperposterior
+        # somewhere would not be able to say which population it injected.
+        injection=dict(
+            hyperposterior_path=SEARCH_ROOT
+            / "o3a_HL"
+            / "injections"
+            / "hyperposterior_gwtc3_pp.json"
+        ),
     )

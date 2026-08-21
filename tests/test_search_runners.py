@@ -44,6 +44,31 @@ def _have_config():
     return Path(CONFIG).is_file()
 
 
+@pytest.fixture
+def fresh_campaign(monkeypatch, tmp_path):
+    """
+    Point the campaign at an empty directory for the duration of a test.
+
+    The plan a driver prints is a function of the specification *and* of what the
+    campaign has already recorded complete. Read from the live directory, these tests
+    pass on a fresh checkout and fail the moment anyone runs a stage for real -- which is
+    exactly backwards, since running stages is the point. Redirecting ``out_dir`` tests
+    the planner rather than the state of whatever campaign happens to be on disk.
+    """
+    import dataclasses
+
+    from sage.search import spec as spec_module
+
+    original = spec_module.load_spec
+
+    def _relocated(config_module):
+        loaded = original(config_module)
+        return dataclasses.replace(loaded, out_dir=tmp_path / loaded.tag)
+
+    monkeypatch.setattr(spec_module, "load_spec", _relocated)
+    return tmp_path
+
+
 class TestRunStageArguments:
     """What the single-stage driver accepts, and what it refuses."""
 
@@ -91,7 +116,7 @@ class TestRunStageArguments:
             runner.main(["--config", CONFIG, "--stage", "zerolagg", "--dry-run"])
 
     @pytest.mark.skipif(not _have_config(), reason="campaign config not present")
-    def test_dry_run_plans_without_running(self, capsys):
+    def test_dry_run_plans_without_running(self, capsys, fresh_campaign):
         """
         The plan is printed and nothing is executed.
 
@@ -111,7 +136,7 @@ class TestRunSearchPlan:
     """The whole-campaign driver."""
 
     @pytest.mark.skipif(not _have_config(), reason="campaign config not present")
-    def test_stop_after_truncates_the_plan(self, capsys):
+    def test_stop_after_truncates_the_plan(self, capsys, fresh_campaign):
         """
         ``--stop-after`` keeps everything its target depends on and nothing beyond it.
 

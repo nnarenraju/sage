@@ -88,7 +88,7 @@ def make_spec(
     gwconfig: str | Path = "",
     detectors: Sequence[str] = ("H1", "L1"),
     tag: Optional[str] = None,
-    n_slides: int = 82,
+    background_yr: float = 10.0,
     **overrides,
 ):
     """
@@ -112,12 +112,17 @@ def make_spec(
         fed.
     fiducial_dir : path
         Fiducial spectra for this observing run.
-    n_slides : int
-        Time slides for the background. Background livetime is measured from the
-        resulting plan, not inferred from this number.
+    background_yr : float
+        How much background to make, in years. Not a slide count: a campaign's foreground
+        depends on its run and its detector network, so a fixed count would give each
+        search a different depth and their false-alarm rates would not be comparable.
+        The count needed is derived from this and the measured foreground, and the plan
+        records what was built.
     **overrides
         Applied last, onto the assembled :class:`~sage.search.spec.SearchSpec`. Top-level
-        field names only, so a campaign can pin one thing without restating the rest.
+        field names only, so a campaign can pin one thing without restating the rest. A
+        dict given for a sub-specification updates its named fields and leaves the rest,
+        rather than replacing the object.
         ``data`` is refused: the release directory is the invariant this function exists
         to hold, and an override replacing the whole ``DataSpec`` would walk straight
         past it.
@@ -185,7 +190,7 @@ def make_spec(
         # under. Stating it here instead would let a search run a window the network was
         # never trained on, and nothing downstream would notice.
         geometry=GeometrySpec(tc_source="checkpoint"),
-        slides=SlideSpec(n_slides=int(n_slides)),
+        slides=SlideSpec(target_background_yr=float(background_yr)),
     )
     data_overrides = overrides.pop("data", None)
     if isinstance(data_overrides, dict):
@@ -217,6 +222,23 @@ def make_spec(
         )
     elif data_overrides is not None:
         overrides["data"] = data_overrides
+
+    # A dict given for a sub-specification means "change these fields", not "replace the
+    # whole object with a dict". Without this, `injection=dict(hyperposterior_path=...)`
+    # set spec.injection to a plain dict and the campaign failed several stages later at
+    # the first attribute access, with nothing pointing back here.
+    for key, value in list(overrides.items()):
+        current = getattr(spec, key, None)
+        if isinstance(value, dict) and dataclasses.is_dataclass(current):
+            unknown = sorted(
+                set(value) - {f.name for f in dataclasses.fields(current)}
+            )
+            if unknown:
+                raise ValueError(
+                    f"unknown {key} fields {unknown}; {type(current).__name__} holds "
+                    f"{sorted(f.name for f in dataclasses.fields(current))}"
+                )
+            overrides[key] = dataclasses.replace(current, **value)
 
     if overrides:
         if "data" in overrides:
