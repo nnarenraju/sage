@@ -82,7 +82,9 @@ def parse_allevents(payload: dict, key: str = "gwosc") -> ExternalCatalogue:
                     # The credible lower bound where GWOSC publishes one, which is what
                     # filter_bbh reads: an event is excluded from the BBH list only when
                     # it is confidently not one.
-                    "mass2_lower_bound": _number(record.get("mass_2_source_lower")),
+                    "mass2_lower_bound": _credible_bound(
+                        record.get("mass_2_source"), record.get("mass_2_source_lower")
+                    ),
                 },
             )
         )
@@ -100,6 +102,32 @@ def parse_allevents(payload: dict, key: str = "gwosc") -> ExternalCatalogue:
         ),
         reference="https://gwosc.org/eventapi/",
     )
+
+
+def _credible_bound(estimate, offset):
+    """
+    The lower end of a GWOSC credible interval, as a mass rather than an error bar.
+
+    ``mass_2_source_lower`` is a **signed offset** from the median, not an absolute
+    bound: ``mass_2_source = 18.5`` with ``mass_2_source_lower = -4.0`` means the
+    interval reaches down to 14.5. Reading the field directly makes every event with a
+    published error bar compare as -4.0 solar masses, so a BBH cut at 3.0 excludes the
+    entire confident catalogue and the recovery gate scores a found event as missed.
+
+    Returns ``None`` when either field is absent, which :meth:`filter_bbh` reads as "no
+    measurement" and keeps.
+    """
+    median = _number(estimate)
+    delta = _number(offset)
+    if median is None or delta is None:
+        return median
+    bound = median + delta
+    if delta > 0.0 or bound <= 0.0:
+        # The offset is signed by convention, so a positive one means the convention
+        # changed under us. Fall back to the point estimate rather than invent a bound:
+        # a wrong bound is silent, and this way the event is judged on a real mass.
+        return median
+    return bound
 
 
 def _number(value):
