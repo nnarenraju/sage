@@ -20,7 +20,9 @@ REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 source "$REPO_ROOT/sage/utils/run_base.sh"
 
 TASK="${1:-help}"
-CONFIG="${2:-config_o4a_HL}"
+# config_o3a_HL is the live campaign: an O3b-trained network searching O3a. config_o4a_HL
+# exists with the same shape but raises until a network is trained on O4a.
+CONFIG="${2:-config_o3a_HL}"
 
 # Keep scratch off the system temporary directory: pytest, tarfile, matplotlib
 # and astropy all default there, and it is not sized for this.
@@ -34,10 +36,13 @@ mkdir -p "$TMPDIR" "$MPLCONFIGDIR" "$XDG_CACHE_HOME" "$ASTROPY_CACHE_DIR"
 CPU_OPTS=(--partition cpu --qos "" --gres none --cpus 16 --mem 64G --time 2-00:00)
 GPU_OPTS=(--cpus 16 --mem 128G --time 2-00:00)
 
+# run_stage.py, not run_search.py: the two drivers do different jobs. run_search.py runs
+# a whole track and takes no --stage; run_stage.py runs one named stage, and is what a
+# staged or repeated submission wants.
 stage () {  # stage <name> <opts...>
     local name="$1"; shift
     sage_submit "$@" --job "search-${name}-${CONFIG}" \
-        "python run_search.py --config $CONFIG --stage $name"
+        "python run_stage.py --config $CONFIG --stage $name"
 }
 
 case "$TASK" in
@@ -69,7 +74,7 @@ case "$TASK" in
         # Background is the long pole; chain dependent jobs so it survives the
         # per-job wall-clock limit.
         sage_submit_chain "${3:-4}" "${GPU_OPTS[@]}" --job "search-bg-$CONFIG" \
-            "python run_search.py --config $CONFIG --stage background"
+            "python run_stage.py --config $CONFIG --stage background"
         ;;
 
     # --- per-event work, run afterwards ------------------------------------
@@ -108,6 +113,30 @@ case "$TASK" in
                  --flag DATA --memory-budget-gb 32 --workers 8 --cache-files 24 \
                  --outage-budget-s 7200"
         ;;
+    dataprep-test)
+        # A small search-grade release for exercising the pipeline, written to
+        # HOME rather than project storage.
+        #     ./submit.sh dataprep-test [run] [dets] [lo] [hi] [outdir]
+        #
+        # Same shape as the full release in every respect that the pipeline can
+        # see -- natural GWOSC segments, no chunking, no overlap, all three
+        # detectors, identical sidecar and HDF5 layout -- at ~9.5 GB instead of
+        # 288 GB. The default span is chosen to contain four published O3a events
+        # (GW190408_181802, GW190412, GW190413_052954, GW190413_134308), so
+        # recovery is testable and not just the plumbing.
+        RUN="${2:-O3a}"; DETS="${3:-H1 L1 V1}"
+        LO="${4:-1238760000}"; HI="${5:-1239295000}"
+        OUT="${6:-/home/nagarajan/o3a_test_search_data_DATA_HLV}"
+        # Its own staging area: a paused full build owns the other one, and this
+        # must not adopt or evict its staged files.
+        sage_submit --partition cpu --qos long --gres none --cpus 8 --mem 48G \
+            --time 1-00:00 --job "dataprep-test-${RUN}" \
+            "python -m sage.search.dataprep --run $RUN --detectors $DETS --flag DATA \
+                 --gps-range $LO $HI --out-dir '$OUT' \
+                 --scratch-dir /work/nagarajan/sage_scratch/dataprep_test \
+                 --memory-budget-gb 32 --workers 4 --cache-files 16 \
+                 --outage-budget-s 7200"
+        ;;
     dataprep-budget)
         # What it will cost, before fetching anything.
         python -m sage.search.dataprep --run "${2:-O3a}" \
@@ -143,7 +172,7 @@ usage: ./submit.sh <task> [config] [args]
   characterize ...    per-event vetting, spectrograms, follow-up, PE
   query ...           ask the campaign store a question
 
-config defaults to config_o4a_HL
+config defaults to config_o3a_HL
 EOF
         ;;
 esac

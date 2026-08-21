@@ -18,13 +18,36 @@ __status__      = inProgress
 
 from config_base import make_spec
 
+# Not yet configured: no network has been trained on O4a. Filling these in is all this
+# campaign needs -- the shape is identical to config_o3a_HL.py, which is live.
 CHECKPOINT = ""
 TRAINING_CONFIG = ""
 FIDUCIAL_DIR = ""
 
 
 def get_spec():
-    """The O4a campaign specification."""
+    """
+    The O4a campaign specification.
+
+    Raises until the three constants above are set. A spec assembled from empty paths
+    fails validation with a message about an unset checkpoint, which says what is wrong
+    but not why; this says why.
+    """
+    unset = [
+        name
+        for name, value in (
+            ("CHECKPOINT", CHECKPOINT),
+            ("TRAINING_CONFIG", TRAINING_CONFIG),
+            ("FIDUCIAL_DIR", FIDUCIAL_DIR),
+        )
+        if not value
+    ]
+    if unset:
+        raise NotImplementedError(
+            f"the O4a campaign is not configured: {', '.join(unset)} unset in "
+            f"{__file__}. No network has been trained on O4a yet; config_o3a_HL.py is "
+            "the live campaign and has the same shape"
+        )
     return make_spec(
         observing_run="O4a",
         checkpoint=CHECKPOINT,
