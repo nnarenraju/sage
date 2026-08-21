@@ -335,3 +335,65 @@ class TestBuilding:
                 path, ckpt.cfg, ckpt.data_cfg, device="cpu",
                 require_separable=True, factory=_toy_factory,
             )
+
+
+class TestSeparabilityDiagnostic:
+    """The gate that decides whether the frontend cache may be used at all."""
+
+    def test_controls_behave(self):
+        """
+        A gate that cannot fail proves nothing, and one that fails on everything proves
+        nothing either. Both coupled frontends must be refused and the separable one
+        accepted, before any verdict on a real network is worth reading.
+
+        ``groupnorm`` couples through a normalisation group spanning the detector axis.
+        ``sharedscale`` couples through a shift-invariant statistic, which is the case an
+        additive perturbation cannot see.
+        """
+        from sage.diagnostics.diagnose_separability import controls
+
+        verdicts = controls("cpu")
+
+        assert verdicts["groupnorm"]["accepted"] is False
+        assert verdicts["sharedscale"]["accepted"] is False
+        assert verdicts["instancenorm"]["accepted"] is True
+
+    def test_perturbation_reaches_the_network(self):
+        """
+        A cross-detector change of zero means nothing unless the probe moved something.
+        Measured on the production network with real strain: the self change is 0.68
+        while every cross change is exactly 0, so the zero is a property and not an
+        inert probe.
+        """
+        import numpy as np
+        import torch
+
+        from sage.diagnostics.diagnose_separability import perturbation_report
+        from tests.search_fixtures import ToyFrontendNet
+
+        class _Engine:
+            def __init__(self, model):
+                self.model = model
+
+            def forward_frontend(self, strain, detector):
+                from sage.search.network import SplitNetwork
+
+                with torch.inference_mode():
+                    return SplitNetwork(self.model, verify=False).frontend(
+                        torch.as_tensor(strain), detector
+                    )
+
+        rng = np.random.default_rng(4)
+        strain = rng.normal(size=(8, 2, 64)).astype(np.float32)
+
+        clean = perturbation_report(
+            _Engine(ToyFrontendNet(num_detectors=2, norm_type="instancenorm")), strain
+        )
+        assert clean["separable"]
+        assert clean["worst_self"] > 0.0
+
+        coupled = perturbation_report(
+            _Engine(ToyFrontendNet(num_detectors=2, norm_type="groupnorm")), strain
+        )
+        assert not coupled["separable"]
+        assert coupled["worst_cross"] > 0.0
