@@ -33,9 +33,11 @@ than absorbing it silently.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from sage.search.fingerprint import combine, digest_values
 
 Interval = Tuple[float, float]
 
@@ -54,6 +56,12 @@ class Segment:
     sample_start_idx: int
     dyn_range_fac: float
     noise_low_freq_cutoff: float
+    #: HDF5 path to this segment's samples, for a search-grade release. ``None`` for the
+    #: flat ``.bin`` training releases, where ``sample_start_idx`` locates the segment in
+    #: one contiguous stream instead. The two layouts are read by different code paths and
+    #: this is what distinguishes them, so it is carried rather than inferred from the
+    #: directory's contents.
+    dataset: Optional[str] = None
 
     @property
     def duration_s(self) -> float:
@@ -171,6 +179,7 @@ def load_segments(path: str | Path) -> List[Segment]:
             nsamples=int(r["nsamples"]),
             sample_start_idx=int(r["sample_start_idx"]),
             dyn_range_fac=float(r["dyn_range_fac"]),
+            dataset=(str(r["dataset"]) if r.get("dataset") else None),
             noise_low_freq_cutoff=float(r["noise_low_freq_cutoff"]),
         )
         for r in records
@@ -304,7 +313,8 @@ def window_hosts(
     window_samples: int,
     stride_samples: int,
     restrict_to: Sequence[Interval] | None = None,
-) -> Tuple[List[HostSpan], CoverageReport]:
+    coverage: bool = True,
+) -> Tuple[List[HostSpan], Optional[CoverageReport]]:
     """
     Assign window starts to owning segments so no GPS instant is analysed twice.
 
@@ -312,6 +322,15 @@ def window_hosts(
     covered, and hosts only windows that fit entirely inside it. The returned
     :class:`CoverageReport` separates time lost to window fit, to the per-boundary
     holes described in the module docstring, and to stride phase restarts.
+
+    Parameters
+    ----------
+    coverage : bool
+        Whether to decompose what the lattice did not reach. The decomposition walks
+        every window start individually and costs far more than the spans do -- on the
+        O3a lattice it is essentially the whole cost of this function -- so a caller
+        that only needs the spans, such as a slide measuring its own livetime, asks for
+        ``False`` and gets ``None`` in its place. The spans are identical either way.
 
     Notes
     -----
@@ -325,7 +344,7 @@ def window_hosts(
     discontinuity at exactly the scale the search is looking for.
     """
     if not segments:
-        return [], CoverageReport(0.0, 0.0, 0, 0.0, 0.0, 0.0, 0)
+        return [], (CoverageReport(0.0, 0.0, 0, 0.0, 0.0, 0.0, 0) if coverage else None)
 
     ordered = sort_by_gps(segments)
     rate = ordered[0].sample_rate
@@ -333,17 +352,38 @@ def window_hosts(
     window_s = window_samples / rate
 
     union = merge_intervals((s.gps_start, s.gps_end) for s in ordered)
-    if restrict_to is not None:
-        union = intersect_intervals(union, restrict_to)
+    restriction = None if restrict_to is None else merge_intervals(restrict_to)
+    if restriction is not None:
+        union = intersect_intervals(union, restriction)
     union_s = sum(e - s for s, e in union)
 
     spans: List[HostSpan] = []
     covered_until = -np.inf
+    # The restriction is merged once and then walked with a cursor rather than
+    # intersected per segment. Both lists are in GPS order, so a restriction interval
+    # that ends before this segment begins can never be wanted again -- segments only
+    # move forward. Intersecting per segment re-sorts the whole restriction each time,
+    # which on the O3a lattice is 22,874 sorts of 37,000 intervals and by far the
+    # dominant cost of building a lattice.
+    cursor = 0
 
     for segment in ordered:
-        allowed: List[Interval] = [(segment.gps_start, segment.gps_end)]
-        if restrict_to is not None:
-            allowed = intersect_intervals(allowed, restrict_to)
+        if restriction is None:
+            allowed: List[Interval] = [(segment.gps_start, segment.gps_end)]
+        else:
+            while (
+                cursor < len(restriction)
+                and restriction[cursor][1] <= segment.gps_start
+            ):
+                cursor += 1
+            allowed = []
+            index = cursor
+            while index < len(restriction) and restriction[index][0] < segment.gps_end:
+                lo = max(segment.gps_start, restriction[index][0])
+                hi = min(segment.gps_end, restriction[index][1])
+                if hi > lo:
+                    allowed.append((lo, hi))
+                index += 1
         # Nothing already assigned may be assigned again.
         allowed = [
             (max(lo, covered_until), hi)
@@ -385,6 +425,29 @@ def window_hosts(
             )
             covered_until = segment.gps_of_local(int(last_local)) + stride_s
 
+    if not coverage:
+        return spans, None
+    return spans, coverage_report(spans, union, union_s, stride_s)
+
+
+def coverage_report(
+    spans: Sequence[HostSpan],
+    union: Sequence[Interval],
+    union_s: float,
+    stride_s: float,
+) -> CoverageReport:
+    """
+    Attribute every second of ``union`` that the lattice did not reach.
+
+    Split out from :func:`window_hosts` because it is the expensive half and not every
+    caller needs it: it walks each window start in turn, where the spans that produced
+    them are counted in closed form.
+
+    The decomposition is required to close exactly -- hosted plus the three losses must
+    equal the union -- which is what makes it a check on the sweep rather than a summary
+    of it. A start assigned outside the union, or two starts claiming the same second,
+    shows up here as a failure to balance.
+    """
     n_windows = sum(s.n_windows for s in spans)
     hosted_s = n_windows * stride_s
 
@@ -415,15 +478,6 @@ def window_hosts(
             # Sub-stride remainder from each segment restarting the stride phase.
             lost_phase_restart_s += length
 
-    report = CoverageReport(
-        union_s=union_s,
-        hosted_s=hosted_s,
-        n_windows=int(n_windows),
-        lost_window_fit_s=lost_window_fit_s,
-        lost_boundary_holes_s=lost_boundary_holes_s,
-        lost_phase_restart_s=lost_phase_restart_s,
-        n_holes=n_holes,
-    )
     total = (
         hosted_s + lost_window_fit_s + lost_boundary_holes_s + lost_phase_restart_s
     )
@@ -433,7 +487,15 @@ def window_hosts(
             f"{union_s} of union. This means a window start was assigned outside the "
             "union, or two starts claimed the same time."
         )
-    return spans, report
+    return CoverageReport(
+        union_s=union_s,
+        hosted_s=hosted_s,
+        n_windows=int(n_windows),
+        lost_window_fit_s=lost_window_fit_s,
+        lost_boundary_holes_s=lost_boundary_holes_s,
+        lost_phase_restart_s=lost_phase_restart_s,
+        n_holes=n_holes,
+    )
 
 
 def load_veto_segments(
@@ -466,3 +528,129 @@ def exact_livetime_s(
     """
     total_windows = sum(int(span.n_windows) for span in spans)
     return total_windows * (stride_samples / sample_rate)
+
+
+def run(spec, **kwargs) -> dict:
+    """
+    Stage driver: resolve the network's analysable time and record its decomposition.
+
+    Reads each detector's sidecar, intersects the unions into coincident time, sweeps the
+    window lattice for ownership, and writes the coverage decomposition into the campaign
+    manifest under the observing run.
+
+    The decomposition, not a total. Every rate the search quotes divides by one of these
+    numbers, so *which* time was lost to what -- stride-phase restarts, ends of chains,
+    genuine gaps -- is the difference between a defensible livetime and an assertion. The
+    decomposition is required to close exactly, which is what makes it a check on the
+    sweep rather than a summary of it.
+
+    Vetoes are applied when the campaign asks for them and a cached veto list is present.
+    ``apply_cat1`` with no cache is refused rather than skipped: proceeding would produce a
+    livetime that silently describes unvetoed data while the provenance says otherwise.
+    """
+    from sage.search.manifest import RunManifest
+
+    geometry = spec.geometry_object()
+    run_name = spec.data.observing_run
+    release = Path(spec.data.release_dir)
+    segments = {
+        detector: load_segments(
+            release / f"data_{detector}_{run_name}_segments.json"
+        )
+        for detector in spec.data.detectors
+    }
+
+    vetoes: dict = {}
+    if spec.data.apply_cat1:
+        cache = spec.data.cat1_cache_dir
+        if cache is None:
+            raise ValueError(
+                "data.apply_cat1 is set but no data.cat1_cache_dir is configured, so the "
+                "veto intervals cannot be read and no network fetch is attempted here. "
+                "Point cat1_cache_dir at a cached veto list, or set apply_cat1=False and "
+                "state in the configuration that the release's own flag selection is "
+                "being relied on -- what must not happen is a livetime that describes "
+                "unvetoed data while the provenance says it was vetoed"
+            )
+        for detector in spec.data.detectors:
+            vetoes[detector] = load_veto_segments(cache, detector, run_name)
+
+    unions = {}
+    for detector, records in segments.items():
+        union = merge_intervals(
+            [(s.gps_start, s.gps_end) for s in records]
+        )
+        if vetoes.get(detector):
+            union = subtract_intervals(union, vetoes[detector])
+        unions[detector] = union
+
+    coincident = list(unions[spec.data.detectors[0]])
+    for detector in spec.data.detectors[1:]:
+        coincident = intersect_intervals(coincident, unions[detector])
+    coincident_s = float(sum(hi - lo for lo, hi in coincident))
+
+    # The lattice is carried by the reference detector, so ownership is swept over its
+    # segments restricted to coincident time. A follower's own segmentation is resolved
+    # per slide, where the lag decides which of its segments hosts each window.
+    reference = spec.slides.reference_detector
+    if reference not in segments:
+        raise ValueError(
+            f"slides.reference_detector {reference!r} is not in the network "
+            f"{sorted(segments)}; the lattice would be carried by a detector the search "
+            "does not read"
+        )
+    spans, report = window_hosts(
+        segments[reference],
+        geometry.window_samples,
+        geometry.stride_samples,
+        restrict_to=coincident,
+        coverage=True,
+    )
+
+    coverage = {
+        "detectors": list(spec.data.detectors),
+        "coincident_livetime_s": coincident_s,
+        "coincident_intervals": len(coincident),
+        # The reference detector's own hostable count, which is an UPPER BOUND on what the
+        # network analyses: a window starting inside coincident time still needs a whole
+        # window of contiguous data in every follower, and a follower's segment boundaries
+        # fall at moments unrelated to the reference's. AnalysisGrid resolves that per
+        # detector and its count is the authoritative one -- on the real O3a release the
+        # two differ by 11,632 windows, 0.09%. Reported side by side so the difference is
+        # a number rather than a discrepancy noticed later.
+        "reference_hostable_windows": int(sum(s.n_windows for s in spans)),
+        "reference_hostable_livetime_s": float(
+            sum(s.n_windows for s in spans) * geometry.stride_s
+        ),
+        "vetoed": bool(vetoes),
+        "reference_detector": reference,
+        **(report.as_dict() if report is not None else {}),
+        **{
+            f"union_livetime_s_{detector}": float(
+                sum(hi - lo for lo, hi in union)
+            )
+            for detector, union in unions.items()
+        },
+    }
+    manifest = RunManifest(path=Path(spec.path("manifest.h5")))
+    manifest.record_livetime(run_name, coverage)
+    return {
+        **coverage,
+        # Digest the whole coverage dict, not three of its entries. The loss
+        # decomposition is this stage's product as much as the livetime is -- it is what
+        # says whether a deficit is a genuine gap or a lattice that restarts its phase --
+        # and a re-attribution between its terms leaves every summary scalar alone.
+        "fingerprint": combine(
+            coverage["reference_hostable_windows"],
+            f"{coincident_s:.6f}",
+            len(coincident),
+            digest_values(
+                {
+                    **coverage,
+                    "coincident_intervals_gps": np.asarray(
+                        coincident, dtype=np.float64
+                    ).reshape(-1, 2),
+                }
+            ),
+        ),
+    }

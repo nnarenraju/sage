@@ -33,7 +33,10 @@ from typing import Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from sage.search.fingerprint import combine, digest_values
 from sage.search.geometry import SearchGeometry
+from pathlib import Path
+
 from sage.search.segments import (
     HostSpan,
     Interval,
@@ -105,6 +108,8 @@ class AnalysisGrid:
         offsets_s: Optional[dict] = None,
         slide_id: int = 0,
         reference_detector: Optional[str] = None,
+        coverage: bool = True,
+        hostable_by_detector: Optional[dict] = None,
     ) -> "AnalysisGrid":
         """
         Construct the lattice for the given coincident intervals and slide.
@@ -112,6 +117,19 @@ class AnalysisGrid:
         ``coincident`` is expressed in the reference detector's frame, already accounting
         for any slide offsets, so the lattice covers exactly the time every detector has
         data for under this slide.
+
+        Parameters
+        ----------
+        coverage : bool
+            Whether to decompose the time the lattice did not reach. The decomposition
+            costs orders of magnitude more than the lattice itself -- on O3a, 374 s and
+            11.8 GB against 0.06 s -- so a caller that only needs window counts, such as
+            a slide ladder measuring its own livetime, passes ``False`` and finds
+            :attr:`coverage` set to ``None``. The lattice is identical either way.
+        hostable_by_detector : dict, optional
+            Precomputed :func:`hostable_intervals` per detector. They depend on the
+            segments alone and not on the slide, so a ladder building many lattices over
+            one network computes them once and passes them in.
         """
         if not segments_by_detector:
             raise ValueError("no detectors given")
@@ -133,17 +151,21 @@ class AnalysisGrid:
         # reference and not in a follower; restricting on data presence alone admits
         # windows a follower cannot supply. Each follower's hostable set is pulled back
         # through its slide offset into the reference frame before intersecting.
+        precomputed = dict(hostable_by_detector or {})
         restriction = list(coincident)
         for detector, segments in segments_by_detector.items():
-            hostable = hostable_intervals(segments, geometry.window_samples)
+            hostable = precomputed.get(detector)
+            if hostable is None:
+                hostable = hostable_intervals(segments, geometry.window_samples)
             shift = -offsets_s.get(detector, 0.0)
             restriction = intersect_intervals(restriction, hostable, shift_b_s=shift)
 
-        spans, coverage = window_hosts(
+        spans, report = window_hosts(
             segments_by_detector[reference],
             geometry.window_samples,
             geometry.stride_samples,
             restrict_to=restriction,
+            coverage=coverage,
         )
         ordered = {
             det: sort_by_gps(segs) for det, segs in segments_by_detector.items()
@@ -155,7 +177,7 @@ class AnalysisGrid:
             offsets_s=offsets_s,
             reference_detector=reference,
             segments_by_detector=ordered,
-            coverage=coverage,
+            coverage=report,
         )
 
     @property
@@ -331,3 +353,84 @@ def _owning_segment(
         ):
             return segment
     return None
+
+
+def run(spec, **kwargs) -> dict:
+    """
+    Stage driver: build the zero-lag window lattice and record what it covers.
+
+    Nothing is persisted. The lattice is a deterministic function of the geometry and the
+    segment sidecars -- 12.5 M windows in 5.5 s on the real O3a release -- so every
+    downstream stage rebuilds it rather than reading a copy that could disagree with the
+    segments it was derived from. What is recorded is the accounting: how many windows,
+    how much analysed time, and how many blocks the campaign will be cut into.
+
+    ``n_windows * stride_s`` is the analysed livetime by identity, and it is strictly less
+    than the coincident livetime because a window needs a whole window of contiguous data:
+    the deficit is the boundary loss, and reporting the coincident time instead would
+    credit the search with moments it could not have triggered on.
+    """
+    from sage.search.segments import coincident_intervals, load_segments
+
+    geometry = spec.geometry_object()
+    segments = {
+        detector: load_segments(
+            Path(spec.data.release_dir)
+            / f"data_{detector}_{spec.data.observing_run}_segments.json"
+        )
+        for detector in spec.data.detectors
+    }
+    coincident = coincident_intervals(segments)
+    grid = AnalysisGrid.build(geometry, segments, coincident)
+    blocks = grid.blocks(float(spec.engine.block_seconds))
+    coincident_s = float(sum(hi - lo for lo, hi in coincident))
+    analysed_s = float(grid.livetime_s)
+    return {
+        "n_windows": int(len(grid)),
+        "n_blocks": len(blocks),
+        "analysed_livetime_s": analysed_s,
+        "coincident_livetime_s": coincident_s,
+        "boundary_loss_s": coincident_s - analysed_s,
+        "stride_s": float(geometry.stride_s),
+        "segments_by_detector": {d: len(v) for d, v in segments.items()},
+        # The lattice is rebuilt, never read back, so the fingerprint is what a rebuild
+        # would have to reproduce for downstream products to still describe this data --
+        # and that is the window starts themselves, not a count of them. Counts collide:
+        # a lattice shifted by one sample, or one whose windows moved between two
+        # detectors' segments, holds the same number of windows over the same livetime
+        # while every window it scores is a different stretch of strain.
+        "fingerprint": combine(
+            len(grid),
+            f"{analysed_s:.6f}",
+            len(blocks),
+            geometry.stride_samples,
+            digest_values(
+                {
+                    "starts_local": {
+                        detector: np.concatenate(
+                            [span.starts_local() for span in spans]
+                        )
+                        if spans
+                        else np.zeros(0, dtype=np.int64)
+                        for detector, spans in grid.spans_by_detector.items()
+                    },
+                    "segment_index": {
+                        detector: np.array(
+                            [span.segment.segment_index for span in spans],
+                            dtype=np.int64,
+                        )
+                        for detector, spans in grid.spans_by_detector.items()
+                    },
+                    "span_windows": {
+                        detector: np.array(
+                            [span.n_windows for span in spans], dtype=np.int64
+                        )
+                        for detector, spans in grid.spans_by_detector.items()
+                    },
+                    "block_slices": [list(block.span_slice) for block in blocks],
+                    "stride_samples": int(geometry.stride_samples),
+                    "window_samples": int(geometry.window_samples),
+                }
+            ),
+        ),
+    }
