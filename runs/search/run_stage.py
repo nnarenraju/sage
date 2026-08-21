@@ -60,6 +60,22 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Slide id for the background stage; repeatable for an array task.",
     )
     parser.add_argument(
+        "--slide-group",
+        type=int,
+        default=None,
+        help=(
+            "Array-task index, 1-based. With --slides-per-group this selects a "
+            "contiguous group of slides, which is how a background campaign is laid "
+            "across several GPUs. Slides within a group share one frontend cache build."
+        ),
+    )
+    parser.add_argument(
+        "--slides-per-group",
+        type=int,
+        default=None,
+        help="Slides each array task owns. Required with --slide-group.",
+    )
+    parser.add_argument(
         "--skip",
         action="append",
         default=[],
@@ -104,6 +120,19 @@ def main(argv: Optional[list] = None) -> int:
     args = parse_args(argv)
     spec = load_spec(args.config)
     spec.validate()
+
+    if args.slide_group is not None:
+        if not args.slides_per_group:
+            raise SystemExit("--slide-group needs --slides-per-group")
+        if args.slide:
+            raise SystemExit(
+                "--slide and --slide-group both name which slides to run; give one. "
+                "--slide lists them, --slide-group derives them from an array index"
+            )
+        # 1-based, because SLURM array indices are, and an off-by-one here silently
+        # drops the last slide of the ladder rather than failing.
+        first = (args.slide_group - 1) * args.slides_per_group + 1
+        args.slide = list(range(first, first + args.slides_per_group))
 
     if args.stage == "all":
         if args.force:

@@ -142,7 +142,12 @@ def main(argv: Optional[list] = None) -> int:
     print(f"  out_dir   {spec.out_dir}")
     print(f"  release   {spec.data.release_dir}")
     print(f"  network   {spec.engine.checkpoint}")
-    print(f"  slides    {spec.slides.n_slides}")
+    print(
+        f"  slides    {spec.slides.n_slides}"
+        if spec.slides.n_slides is not None
+        else f"  slides    derived from {spec.slides.target_background_yr} yr of "
+        f"background ({spec.slides.method})"
+    )
     print(f"  spec hash {spec.hash()}")
     if not pending:
         print("  nothing pending")

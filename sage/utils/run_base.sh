@@ -111,7 +111,7 @@ sage_submit() {
     # node has was observed to place the extra jobs on it with GRES=(null) -- they
     # start with no GPU and die on cuda:0. Use --nodelist only when the node's GPU
     # count is not the binding constraint.
-    local dep="" parsable="" nodelist="${SAGE_NODELIST:-}"
+    local dep="" parsable="" array="" nodelist="${SAGE_NODELIST:-}"
     [ -n "${SAGE_GRES_OVERRIDE:-}" ] && gres="$SAGE_GRES_OVERRIDE"
     while [ "$#" -gt 1 ]; do
         case "$1" in
@@ -129,6 +129,11 @@ sage_submit() {
             --nodelist)  nodelist="$2"; shift 2 ;;
             # SLURM job dependency, e.g. "afterany:12345" (used by chaining).
             --dependency) dep="$2"; shift 2 ;;
+            # SLURM array spec, e.g. "1-6%6" -- six tasks, six at a time. Used to
+            # spread one stage across several GPUs. Without this the flag fell
+            # through to the command position, so the array spec was submitted as
+            # the job and every task exited 127.
+            --array)     array="$2"; shift 2 ;;
             # Print ONLY the job id on stdout (for capturing in a chain driver);
             # all human-readable log lines go to stderr.
             --parsable)  parsable=1; shift ;;
@@ -151,6 +156,7 @@ sage_submit() {
         [ -n "$time" ]           && args+=(--time="$time")
         [ -n "$mem" ]            && args+=(--mem="$mem")
         [ -n "$dep" ]            && args+=(--dependency="$dep")
+        [ -n "$array" ]          && args+=(--array="$array")
         [ -n "$nodelist" ]       && args+=(--nodelist="$nodelist")
         [ -n "$parsable" ]       && args+=(--parsable)
         [ -n "$SAGE_ACCOUNT" ]   && args+=(--account="$SAGE_ACCOUNT")

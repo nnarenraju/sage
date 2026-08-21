@@ -39,10 +39,24 @@ GPU_OPTS=(--cpus 16 --mem 128G --time 2-00:00)
 # run_stage.py, not run_search.py: the two drivers do different jobs. run_search.py runs
 # a whole track and takes no --stage; run_stage.py runs one named stage, and is what a
 # staged or repeated submission wants.
+# Set SAGE_AFTER to a job id to hold a submission until that job succeeds. Background
+# follows zerolag -- the keep threshold is frozen from the *complete* zero-lag histogram
+# before any slide is scored -- so the two are queued together and SLURM orders them,
+# rather than the second being submitted by hand once the first is watched to the end.
+after_opts () {
+    [ -n "${SAGE_AFTER:-}" ] && printf -- "--dependency afterok:%s" "$SAGE_AFTER"
+}
+
+# SAGE_FORCE=1 re-runs a stage the manifest already records complete. Needed after a code
+# change or a discarded product: the manifest is the record of what ran and deliberately
+# not an inventory of the directory, so a deleted shard still reports complete and the
+# stage exits in seconds having done nothing.
 stage () {  # stage <name> <opts...>
     local name="$1"; shift
-    sage_submit "$@" --job "search-${name}-${CONFIG}" \
-        "python run_stage.py --config $CONFIG --stage $name"
+    local force=""
+    [ -n "${SAGE_FORCE:-}" ] && force=" --force"
+    sage_submit "$@" $(after_opts) --job "search-${name}-${CONFIG}" \
+        "python run_stage.py --config $CONFIG --stage $name$force"
 }
 
 case "$TASK" in
@@ -70,6 +84,48 @@ case "$TASK" in
     zerolag|background|injections)
         stage "$TASK" "${GPU_OPTS[@]}"
         ;;
+    # --- the background campaign, laid out across several GPUs -------------
+    background-array)
+        #     ./submit.sh background-array config_o3a_HL <n_slides> [gpus]
+        #
+        # One array task per contiguous group of slides, with `%GPUS` capping how
+        # many run at once, so the campaign uses exactly the cards asked for and
+        # no more. Slides within a task share one frontend cache build; slides in
+        # different tasks do not, which is why the group is the unit and not the
+        # slide.
+        #
+        # Requires, in order: zerolag complete (the keep threshold is frozen from
+        # its histogram before any slide is scored) and, for the cache to be used
+        # at all, `engine.use_frontend_cache` on with separability proven.
+        SLIDES="${3:-82}"; GPUS="${4:-6}"; FIRST="${5:-1}"
+        PER_TASK=$(( (SLIDES + GPUS - 1) / GPUS ))
+        echo "background: $SLIDES slides over $GPUS GPUs, $PER_TASK slides per task"
+        sage_submit "${GPU_OPTS[@]}" --array "1-${GPUS}%${GPUS}" $(after_opts) \
+            --job "search-bg-${CONFIG}" \
+            "python run_stage.py --config $CONFIG --stage background \
+                 --slide-group \$SLURM_ARRAY_TASK_ID --slides-per-group $PER_TASK"
+        ;;
+
+    separability)
+        # Proves the frontend cache is valid for this trained network, on the device the
+        # campaign runs on. Worth 2.7x on the background, so it is measured on the
+        # weights rather than read off the checkpoint's norm_type.
+        sage_submit "${GPU_OPTS[@]}" --time 00:30:00 \
+            --job "search-sep-${CONFIG}" \
+            "python -m sage.diagnostics.diagnose_separability --config $CONFIG"
+        ;;
+
+    # --- how to lay a campaign out: measured, not assumed -------------------
+    throughput-concurrency)
+        # Does one worker saturate a card? If the aggregate rate is flat, the
+        # right shape is one slide per GPU; if it scales, the device is waiting
+        # on the host and the same cards carry several slides each.
+        sage_submit "${GPU_OPTS[@]}" --time 01:00:00 \
+            --job "search-conc-${CONFIG}" \
+            "python -m sage.diagnostics.diagnose_search_throughput \
+                 --config $CONFIG --windows ${3:-100000} --streams 1 2 3 4"
+        ;;
+
     chain)
         # Background is the long pole; chain dependent jobs so it survives the
         # per-job wall-clock limit.
@@ -145,6 +201,30 @@ case "$TASK" in
     dataprep-verify)
         python -m sage.search.dataprep --run "${2:-O3a}" \
             --detectors ${3:-H1 L1 V1} --flag DATA --verify --checksums
+        ;;
+
+    # --- one-off measurement that sets the whole compute budget ------------
+    throughput)
+        # Measures f_full, f_front and f_back on real strain, and projects the
+        # background cost with and without the frontend cache. Needs a GPU, and is
+        # also the first time the engine touches the release -- so a failure here is
+        # the zerolag smoke test failing, which is what it is for.
+        WINDOWS="${3:-200000}"
+        sage_submit "${GPU_OPTS[@]}" --time 01:00:00 \
+            --job "search-throughput-${CONFIG}" \
+            "python -m sage.diagnostics.diagnose_search_throughput \
+                 --config $CONFIG --windows $WINDOWS"
+        ;;
+
+    throughput-sweep)
+        # Background is the expensive stage and these cards hold 80-140 GB, so the
+        # rate at the batch size the campaign will use is the number that matters.
+        WINDOWS="${3:-400000}"
+        sage_submit "${GPU_OPTS[@]}" --time 02:00:00 \
+            --job "search-sweep-${CONFIG}" \
+            "python -m sage.diagnostics.diagnose_search_throughput \
+                 --config $CONFIG --windows $WINDOWS \
+                 --sweep ${SWEEP:-1024 2048 4096 8192 12288 16384}"
         ;;
 
     query)
