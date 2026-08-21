@@ -3,7 +3,7 @@
 
 """
 Filename      : __init__.py
-Description   : Injection campaign built on the public LVK injection sets.
+Description   : Injection campaign, drawn from the GWTC-3 population.
 
 Created on 2026-08-09
 
@@ -15,10 +15,14 @@ __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
 __status__      = inProgress
 
-The injected population is taken from the published sensitivity-estimate release rather
-than regenerated. Using the same injections the reference pipelines were assessed on is
-what makes a sensitivity comparison meaningful; a locally drawn population would only
-be comparable to itself.
+Injections are drawn here, not taken from a published sensitivity-estimate release. That
+is what sgwc-1 does: ``injection_study.ipynb`` samples intrinsic parameters from the
+GWTC-3 Power-Law + Peak model at its MAP hyperposterior sample, adds extrinsic parameters
+from the PyCBC prior the network was trained under, and keeps the injections whose chirp
+mass falls inside that prior. The set is then injected into real strain and scored by the
+same engine the search uses, and its ranking statistics become ``p(x|signal)`` for
+p_astro -- which is why the draw has to match the training prior rather than an external
+release's.
 """
 
 from sage.search._lazy import lazy_exports
@@ -28,7 +32,8 @@ _EXPORTS = {
     "InjectionCampaign": "campaign",
     "InjectionRelease": "release",
     "LVKInjectionSet": "ingest",
-    "TargetPopulation": "population",
+    "sample_intrinsic": "population",
+    "sample_intrinsic_torch": "population",
     "match_injections": "matching",
 }
 
