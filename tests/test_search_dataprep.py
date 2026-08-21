@@ -138,13 +138,13 @@ class TestSpec:
         with pytest.raises(ValueError, match="Virgo"):
             _spec(tmp_path, observing_run="O4a", detectors=("H1", "L1", "V1")).validate()
 
-    def test_release_directory_states_the_conditions(self, tmp_path):
+    def test_release_dir_names_conditions(self, tmp_path):
         spec = SearchDataSpec(
             observing_run="O3a", detectors=("H1", "L1", "V1"), out_dir=None
         )
         assert spec.release_dir().name == "o3a_search_data_DATA_HLV"
 
-    def test_memory_budget_decides_the_conditioning_path(self, tmp_path):
+    def test_budget_picks_conditioning_path(self, tmp_path):
         """
         The budget is the only thing that chooses between the two paths.
 
@@ -173,7 +173,7 @@ class TestFileLayout:
     def test_a_span_inside_one_file_needs_one_file(self):
         assert _files_spanning(FILE0 + 10, FILE0 + 20) == [FILE0]
 
-    def test_a_span_ending_on_a_boundary_does_not_take_the_next_file(self):
+    def test_span_on_boundary_excludes_next_file(self):
         """
         The end is exclusive.
 
@@ -182,7 +182,7 @@ class TestFileLayout:
         """
         assert _files_spanning(FILE0, FILE0 + GWOSC_FILE_DURATION_S) == [FILE0]
 
-    def test_a_long_segment_needs_every_file_it_crosses(self):
+    def test_long_segment_spans_all_files(self):
         """
         Natural segments span many files, not one boundary.
 
@@ -259,7 +259,7 @@ class TestResilience:
         )
         assert not dataprep.is_transient(ValueError("segment list disagrees"))
 
-    def test_download_waits_out_an_outage_and_succeeds(self, tmp_path, monkeypatch):
+    def test_download_survives_outage(self, tmp_path, monkeypatch):
         """
         A transient failure is retried until the service returns.
 
@@ -282,7 +282,7 @@ class TestResilience:
         assert session.calls == 10, "should have retried until the service returned"
         assert len(slept) == 9 and max(slept) <= 600.0
 
-    def test_download_gives_up_once_the_budget_is_spent(self, tmp_path, monkeypatch):
+    def test_download_gives_up_on_budget(self, tmp_path, monkeypatch):
         """A service that is genuinely gone ends the run instead of hanging forever."""
         session = _FlakySession(failures=10**6, exc=self._proxy_error())
         monkeypatch.setattr(SourceFiles, "_make_session", lambda self: session)
@@ -333,7 +333,7 @@ class TestResilience:
 class TestPlanning:
     """What is selected, and what it costs, before anything is fetched."""
 
-    def test_segments_too_short_to_analyse_are_dropped(self, monkeypatch, tmp_path):
+    def test_short_segments_dropped(self, monkeypatch, tmp_path):
         """
         A segment that cannot host one window is not analysable time.
 

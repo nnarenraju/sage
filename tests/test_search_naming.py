@@ -121,16 +121,16 @@ class TestPrefixPolicy:
         with pytest.raises(ValueError, match="GW"):
             check_prefix_policy("GW", p_astro=0.99)
 
-    def test_sage_prefix_is_allowed_at_any_probability(self):
+    def test_sage_prefix_always_allowed(self):
         """The Sage prefix carries no claim, so no probability bar applies to it."""
         for p in (0.0, 0.5, 0.99):
             check_prefix_policy(DEFAULT_PREFIX, p_astro=p)
 
-    def test_forced_override_is_permitted_with_a_reason(self):
+    def test_override_needs_reason(self):
         """An override is possible but must be justified in writing."""
         check_prefix_policy("GW", p_astro=0.99, force_reason="reproducing GWTC-2.1")
 
-    def test_forced_override_needs_a_non_empty_reason(self):
+    def test_override_reason_non_empty(self):
         with pytest.raises(ValueError):
             check_prefix_policy("GW", p_astro=0.99, force_reason="")
 

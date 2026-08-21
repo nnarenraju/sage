@@ -82,7 +82,7 @@ def _grid(sub_sample_offset=0.0, detectors=("H1", "L1"), offsets_s=None):
 class TestConstruction:
     """The lattice is built on one detector and covers coincident time."""
 
-    def test_reference_is_the_first_detector_by_default(self):
+    def test_default_reference_is_first(self):
         assert _grid().reference_detector == "H1"
 
     def test_unknown_reference_is_refused(self):
@@ -92,7 +92,7 @@ class TestConstruction:
                 GEOMETRY, segs, coincident_intervals(segs), reference_detector="V1"
             )
 
-    def test_reference_may_not_carry_a_slide_offset(self):
+    def test_reference_offset_refused(self):
         """Slides are measured relative to the reference, so its own lag must be zero."""
         segs = _network()
         with pytest.raises(ValueError, match="reference"):
@@ -127,14 +127,14 @@ class TestBlocks:
             covered.extend(range(*block.span_slice))
         assert covered == list(range(len(grid.reference_spans)))
 
-    def test_block_window_counts_sum_to_the_lattice(self):
+    def test_block_counts_sum_to_lattice(self):
         grid = _grid()
         total = sum(
             n for block in grid.blocks(60.0) for _, _, n in grid.iter_block(block)
         )
         assert total == len(grid)
 
-    def test_block_gps_is_ordered_and_matches_the_count(self):
+    def test_block_gps_ordered(self):
         grid = _grid()
         for block in grid.blocks(60.0):
             times = grid.gps(block)
@@ -160,7 +160,7 @@ class TestCrossDetectorAlignment:
         for block in grid.blocks(120.0):
             assert grid.alignment_residuals(block)["L1"] == pytest.approx(0.0, abs=1e-9)
 
-    def test_half_sample_offset_gives_half_sample_residual(self):
+    def test_half_sample_residual(self):
         """
         The measured worst case on the real release: exactly half a sample.
 
@@ -186,7 +186,7 @@ class TestCrossDetectorAlignment:
                 assert residual <= 0.5 + 1e-9, detector
 
     @pytest.mark.parametrize("offset", [0.0, 0.25 / RATE, 0.5 / RATE, 0.9 / RATE])
-    def test_every_reference_window_is_supplied_by_every_detector(self, offset):
+    def test_all_detectors_supply_window(self, offset):
         """
         Whatever the grid offset, no window is hosted that a follower cannot supply.
 
@@ -218,7 +218,7 @@ class TestCrossDetectorAlignment:
         coincident_s = sum(e - s for s, e in coincident)
         assert 0.90 < grid.livetime_s / coincident_s <= 1.0
 
-    def test_each_detector_contributes_the_same_window_count(self):
+    def test_detector_counts_agree(self):
         """
         A coincident window exists in every detector or in none.
 

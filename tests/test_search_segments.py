@@ -80,7 +80,7 @@ class TestIntervalAlgebra:
         given = [(30.0, 40.0), (10.0, 20.0)]
         assert merge_intervals(given) == [(10.0, 20.0), (30.0, 40.0)]
 
-    def test_merge_overlapping_and_abutting(self):
+    def test_merge_overlapping(self):
         """Overlapping and exactly touching intervals combine into one."""
         assert merge_intervals([(0.0, 10.0), (5.0, 15.0)]) == [(0.0, 15.0)]
         assert merge_intervals([(0.0, 10.0), (10.0, 20.0)]) == [(0.0, 20.0)]
@@ -106,7 +106,7 @@ class TestIntervalAlgebra:
         assert intersect_intervals(a, b, shift_b_s=5.0) == [(15.0, 25.0)]
         assert intersect_intervals(a, b, shift_b_s=-5.0) == [(5.0, 15.0)]
 
-    def test_coincident_intervals_over_three_detectors(self):
+    def test_coincident_three_detectors(self):
         """Coincidence generalises past two detectors."""
         got = coincident_intervals(
             {
@@ -117,7 +117,7 @@ class TestIntervalAlgebra:
         )
         assert got == [(20.0, 80.0)]
 
-    def test_coincident_intervals_applies_per_detector_shifts(self):
+    def test_coincident_applies_shifts(self):
         """A time slide shifts one detector's segments before intersecting."""
         got = coincident_intervals(
             {"H1": [(0.0, 100.0)], "L1": [(0.0, 100.0)]}, shifts_s={"L1": 50.0}
@@ -128,14 +128,14 @@ class TestIntervalAlgebra:
 class TestOwnership:
     """Each instant is analysed once, and losses are attributable."""
 
-    def test_no_window_start_is_hosted_twice(self):
+    def test_no_start_hosted_twice(self):
         """Overlapping chunks never both host the same start time."""
         spans, _ = window_hosts(_chain(), WINDOW_SAMPLES, STRIDE_SAMPLES)
         starts = np.concatenate([s.starts_gps() for s in spans])
         assert starts.size == np.unique(starts).size
         assert np.all(np.diff(np.sort(starts)) > 0)
 
-    def test_windows_lie_within_one_chunk(self):
+    def test_window_within_one_chunk(self):
         """Every hosted window fits entirely inside its owning chunk."""
         window_s = WINDOW_SAMPLES / SAMPLE_RATE
         spans, _ = window_hosts(_chain(), WINDOW_SAMPLES, STRIDE_SAMPLES)
@@ -144,7 +144,7 @@ class TestOwnership:
             assert starts.min() >= span.segment.gps_start
             assert starts.max() + window_s <= span.segment.gps_end + 1e-9
 
-    def test_boundary_hole_equals_window_minus_overlap(self):
+    def test_hole_is_window_minus_overlap(self):
         """
         The gap at a boundary is the window length minus the chunk overlap.
 
@@ -162,7 +162,7 @@ class TestOwnership:
         mean_hole = report.lost_boundary_holes_s / report.n_holes
         assert mean_hole == pytest.approx(expected_per_hole, abs=stride_s)
 
-    def test_wider_overlap_removes_the_hole(self):
+    def test_wider_overlap_closes_hole(self):
         """
         Overlapping by more than a window leaves no unreachable band.
 
@@ -186,7 +186,7 @@ class TestOwnership:
         )
         assert total == pytest.approx(report.union_s, abs=1e-6)
 
-    def test_every_loss_term_is_non_negative(self):
+    def test_loss_terms_non_negative(self):
         """A decomposition that closes by letting a term go negative is not one."""
         _, report = window_hosts(_chain(), WINDOW_SAMPLES, STRIDE_SAMPLES)
         assert report.lost_window_fit_s >= 0.0
@@ -194,7 +194,7 @@ class TestOwnership:
         assert report.lost_phase_restart_s >= 0.0
         assert report.hosted_s >= 0.0
 
-    def test_livetime_is_exactly_n_windows_times_stride(self):
+    def test_livetime_is_windows_times_stride(self):
         """Analysed time is a count times the stride, with no accumulated error."""
         spans, report = window_hosts(_chain(), WINDOW_SAMPLES, STRIDE_SAMPLES)
         stride_s = STRIDE_SAMPLES / SAMPLE_RATE
@@ -202,7 +202,7 @@ class TestOwnership:
         assert livetime == report.n_windows * stride_s
         assert livetime == report.hosted_s
 
-    def test_segment_shorter_than_a_window_hosts_nothing(self):
+    def test_short_segment_hosts_nothing(self):
         """A chunk too short for one window contributes no starts, and says so."""
         short = _chain(n_chunks=1, chunk_s=8.0)
         spans, report = window_hosts(short, WINDOW_SAMPLES, STRIDE_SAMPLES)
@@ -210,7 +210,7 @@ class TestOwnership:
         assert report.n_windows == 0
         assert report.lost_window_fit_s == pytest.approx(8.0, abs=1e-9)
 
-    def test_restrict_to_limits_hosting(self):
+    def test_restriction_limits_hosting(self):
         """Restricting to an interval list keeps only starts inside it."""
         segments = _chain(n_chunks=2)
         lo = segments[-1].gps_start + 100.0
@@ -222,7 +222,7 @@ class TestOwnership:
         assert starts.min() >= lo
         assert starts.max() <= hi
 
-    def test_gap_between_chunks_is_not_hosted(self):
+    def test_gap_not_hosted(self):
         """Genuine missing time hosts nothing and is reported as lost."""
         a = _chain(n_chunks=1)[0]
         b = Segment(
@@ -238,6 +238,119 @@ class TestOwnership:
         # The union excludes the gap, so it is not charged as a loss.
         assert report.union_s == pytest.approx(2 * CHUNK_S, abs=1e-6)
 
+    def test_no_coverage_same_lattice(self):
+        """
+        ``coverage=False`` changes what is reported, never which windows are hosted.
+
+        The decomposition walks every window start and is by far the more expensive half
+        -- on the O3a lattice, 374 s and 11.8 GB against 0.06 s for the algebra -- so a
+        slide ladder measuring its own livetime declines it. That is only safe if the
+        spans are bit-for-bit what the full call produces, because the livetime the
+        ladder reports is read straight off them.
+        """
+        segments = _chain(n_chunks=3)
+        restrict = [(segments[0].gps_start + 60.0, segments[-1].gps_end - 60.0)]
+        for restriction in (None, restrict):
+            full, report = window_hosts(
+                segments, WINDOW_SAMPLES, STRIDE_SAMPLES, restrict_to=restriction
+            )
+            fast, none = window_hosts(
+                segments,
+                WINDOW_SAMPLES,
+                STRIDE_SAMPLES,
+                restrict_to=restriction,
+                coverage=False,
+            )
+            assert none is None
+            assert report is not None
+            assert len(fast) == len(full)
+            for quick, whole in zip(fast, full):
+                assert quick.segment.segment_index == whole.segment.segment_index
+                assert quick.first_local == whole.first_local
+                assert quick.n_windows == whole.n_windows
+                assert quick.stride_samples == whole.stride_samples
+            assert sum(s.n_windows for s in fast) == report.n_windows
+
+    def test_no_coverage_empty_input(self):
+        """The empty case answers in the same shape as the populated one."""
+        spans, report = window_hosts([], WINDOW_SAMPLES, STRIDE_SAMPLES)
+        assert spans == [] and report.n_windows == 0
+        spans, none = window_hosts([], WINDOW_SAMPLES, STRIDE_SAMPLES, coverage=False)
+        assert spans == [] and none is None
+
+    @pytest.mark.parametrize("overlap_s", [0.0, OVERLAP_S, 510.0])
+    @pytest.mark.parametrize("fragments", [1, 7, 40])
+    def test_cursor_matches_per_segment(
+        self, overlap_s, fragments
+    ):
+        """
+        Walking the restriction with a cursor gives what per-segment intersection gave.
+
+        The restriction is merged once and then walked forward, because intersecting it
+        against each segment separately re-sorts the whole list every time -- at run
+        scale, 22,874 sorts of 37,000 intervals, and by far the dominant cost of building
+        a lattice. That rewrite is only sound if the cursor never passes an interval a
+        later segment still needs, so it is checked here against a direct transcription
+        of the algorithm it replaced.
+
+        Parametrised over the overlap because that is what makes the cursor's monotonicity
+        non-obvious: segments are ordered by start, and at the 510 s overlap measured on
+        the real release consecutive chunks cover nearly the same span, so their order by
+        start says little about their order by end. Parametrised over the number of
+        restriction fragments because a single interval spanning everything exercises no
+        cursor movement at all.
+        """
+        segments = _chain(n_chunks=6, overlap_s=overlap_s)
+        lo, hi = segments[0].gps_start, segments[-1].gps_end
+        step = (hi - lo) / fragments
+        restriction = [(lo + k * step, lo + (k + 0.7) * step) for k in range(fragments)]
+
+        def reference(segs):
+            """The pre-cursor sweep: intersect the whole restriction, per segment."""
+            out = []
+            covered_until = -np.inf
+            stride_s = STRIDE_SAMPLES / SAMPLE_RATE
+            window_s = WINDOW_SAMPLES / SAMPLE_RATE
+            for segment in sort_by_gps(segs):
+                allowed = intersect_intervals(
+                    [(segment.gps_start, segment.gps_end)], restriction
+                )
+                allowed = [
+                    (max(a, covered_until), b)
+                    for a, b in allowed
+                    if b > max(a, covered_until)
+                ]
+                for a, b in allowed:
+                    upper = min(b - stride_s, segment.gps_end - window_s)
+                    if upper < a:
+                        continue
+                    needed = max(0.0, (a - segment.gps_start) * SAMPLE_RATE)
+                    first = int(np.ceil(needed / STRIDE_SAMPLES - 1e-9)) * STRIDE_SAMPLES
+                    last_allowed = min(
+                        (upper - segment.gps_start) * SAMPLE_RATE,
+                        float(segment.nsamples - WINDOW_SAMPLES),
+                    )
+                    if last_allowed < first:
+                        continue
+                    last = (
+                        int(np.floor((last_allowed - first) / STRIDE_SAMPLES + 1e-9))
+                        * STRIDE_SAMPLES
+                        + first
+                    )
+                    n = (last - first) // STRIDE_SAMPLES + 1
+                    if n <= 0:
+                        continue
+                    out.append((segment.segment_index, int(first), int(n)))
+                    covered_until = segment.gps_of_local(int(last)) + stride_s
+            return out
+
+        walked, _ = window_hosts(
+            segments, WINDOW_SAMPLES, STRIDE_SAMPLES, restrict_to=restriction
+        )
+        assert [
+            (s.segment.segment_index, s.first_local, s.n_windows) for s in walked
+        ] == reference(segments)
+
 
 class TestSidecarIngest:
     """Reading the stored layout."""
@@ -248,7 +361,7 @@ class TestSidecarIngest:
         for a, b in zip(segments, segments[1:]):
             assert a.sample_start_idx + a.nsamples == b.sample_start_idx
 
-    def test_time_ordering_is_not_assumed(self, synthetic_release):
+    def test_gps_order_not_assumed(self, synthetic_release):
         """Chunks are sorted by time on load; file order carries no meaning."""
         segments = load_segments(synthetic_release / "data_H1_O3a_segments.json")
         # The fixture numbers records against time order, as the real release does.
@@ -260,7 +373,7 @@ class TestSidecarIngest:
             s.sample_start_idx for s in segments
         }
 
-    def test_gps_maps_within_chunk_only(self):
+    def test_gps_maps_within_chunk(self):
         """Converting a time to an index requires naming the chunk."""
         segments = sort_by_gps(_chain())
         first, second = segments[0], segments[1]
@@ -274,7 +387,7 @@ class TestSidecarIngest:
         # And the two map to different absolute positions in the file.
         assert first.global_index(i0) != second.global_index(i1)
 
-    def test_time_outside_a_chunk_is_refused(self):
+    def test_time_outside_chunk_refused(self):
         """Asking for an index outside the chunk is an error, not a clamp."""
         segment = sort_by_gps(_chain())[0]
         with pytest.raises(ValueError):
@@ -282,13 +395,13 @@ class TestSidecarIngest:
         with pytest.raises(ValueError):
             segment.local_of_gps(segment.gps_start - 10.0)
 
-    def test_duration_and_sample_count_agree(self):
+    def test_duration_matches_samples(self):
         for segment in _chain():
             assert segment.duration_s == pytest.approx(
                 segment.nsamples / segment.sample_rate, abs=1e-9
             )
 
-    def test_load_rejects_a_mixed_detector_sidecar(self, tmp_path):
+    def test_mixed_detector_sidecar_refused(self, tmp_path):
         """A sidecar naming two detectors is a corrupted release, not a merge."""
         records = [
             {

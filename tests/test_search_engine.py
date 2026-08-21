@@ -1,0 +1,283 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Filename      : test_search_engine.py
+Description   : The scoring stage, executed rather than described.
+
+Created on 2026-08-20
+
+__author__      = Narenraju Nagarajan
+__copyright__   = Copyright 2026, Sage
+__license__     = GPL-3.0-or-later
+
+Every other search test exercises index arithmetic, accounting or statistics on arrays
+someone put there. This one runs the forward path: a checkpoint is loaded into a
+registered architecture, the training run's parameter prior builds the multirate binning
+and the point-estimate decode, fiducial spectra whiten, and windows read off a memmap come
+back as triggers in a shard.
+
+That is worth its own file because assembly is where this stage's failures live. The
+pieces are all borrowed from the training path and each one works there; what can be wrong
+is the order they are put together in, and the arguments passed across the joins -- a
+sampler built without its encoding buffers compiled, a config registered after the module
+that reads it, a device taken from the checkpoint instead of the campaign. None of those
+raise until the whole thing is run.
+
+Synthetic throughout: a toy network, a synthetic release, synthetic fiducial spectra. The
+production prior is real because it is configuration rather than data, and because the
+binning it fixes is the one the search actually uses.
+"""
+
+import dataclasses
+import json
+
+import pytest
+
+pytest.importorskip("torch")
+pytest.importorskip("h5py")
+
+from tests.test_search_drivers import _campaign  # noqa: E402
+
+PRODUCTION_PRIOR = "runs/o3b/gwconfig.yaml"
+
+
+@pytest.fixture(scope="module")
+def toy_architecture():
+    """Register the toy network under a name a spec can select, once per session."""
+    from sage.search.checkpoint import ARCHITECTURES, register_architecture
+    from tests.search_fixtures import ToyFrontendNet
+
+    if "toy" not in ARCHITECTURES:
+        register_architecture(
+            "toy", lambda cfg, data_cfg: ToyFrontendNet(len(cfg.detectors), cfg.norm_type)
+        )
+    return "toy"
+
+
+def _scored_campaign(tmp_path, toy_architecture, **engine_overrides):
+    """A campaign with everything the forward path needs, on the CPU."""
+    from pathlib import Path
+
+    from tests.search_fixtures import (
+        make_synthetic_checkpoint,
+        make_synthetic_fiducial,
+    )
+
+    prior = Path(PRODUCTION_PRIOR).resolve()
+    if not prior.is_file():
+        pytest.skip(f"no parameter prior at {prior}")
+
+    spec = _campaign(tmp_path)
+    make_synthetic_checkpoint(spec.engine.checkpoint, detectors=("H1", "L1"))
+    fiducial = make_synthetic_fiducial(tmp_path / "fiducial")
+    return dataclasses.replace(
+        spec,
+        data=dataclasses.replace(spec.data, fiducial_dir=fiducial),
+        engine=dataclasses.replace(
+            spec.engine,
+            device="cpu",
+            architecture=toy_architecture,
+            gwconfig=prior,
+            **engine_overrides,
+        ),
+    )
+
+
+class TestForwardPath:
+    """The engine runs, and what it wrote describes what it scored."""
+
+    def test_zerolag_scores_the_lattice(self, tmp_path, toy_architecture):
+        """
+        Every window the grid holds is scored exactly once. The count is the assertion
+        that matters: a reader that stopped at a segment boundary, or one that ran off
+        the end of a chunk, shows up here and nowhere else.
+        """
+        import sage.search.engine as engine
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        segments.run(spec)
+        lattice = grid.run(spec)
+        report = engine.run_search(spec, stage="zerolag", slide_id=0)
+        assert report["n_windows"] == lattice["n_windows"]
+        assert report["n_lattice_windows"] == lattice["n_windows"]
+        assert report["blocks_completed"] == lattice["n_blocks"]
+
+    def test_shard_is_finalised(self, tmp_path, toy_architecture):
+        """
+        A finished shard says so. The collation tells "measured, empty" from "never ran"
+        by this flag and the committed block count, and a shard that never sets them is
+        counted as covered while its slide contributed nothing.
+        """
+        import h5py
+
+        import sage.search.engine as engine
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        segments.run(spec)
+        lattice = grid.run(spec)
+        report = engine.run_search(spec, stage="zerolag", slide_id=0)
+        with h5py.File(report["shard"], "r") as handle:
+            assert bool(handle.attrs["finalised"])
+            assert int(handle.attrs["n_blocks"]) == lattice["n_blocks"]
+            assert int(handle.attrs["slide_id"]) == 0
+
+    def test_campaign_device_wins(self, tmp_path, toy_architecture):
+        """
+        The checkpoint records the device the *training* job used -- 'cuda:0' in every
+        real one. Registered unaltered it reaches the sampler's generator, and a CPU
+        campaign dies inside CUDA initialisation with an error about a driver version.
+        """
+        from sage.core.config import get_cfg
+
+        import sage.search.engine as engine
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        segments.run(spec)
+        grid.run(spec)
+        engine.run_search(spec, stage="zerolag", slide_id=0)
+        assert get_cfg().device == "cpu"
+
+
+class TestEmptySlide:
+    """A lag that analyses no time is a measurement, not a failure."""
+
+    def test_empty_lattice_still_finalises(self, tmp_path, toy_architecture):
+        """
+        A slide whose lag carries every window off the end of the run contributes zero
+        events over zero livetime. Both are already true; what must not happen is the
+        engine raising, because the collation would then see a slide the plan declares
+        and no shard for it, and refuse to collate a ladder that is in fact complete.
+        """
+        import h5py
+
+        import sage.search.engine as engine
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        segments.run(spec)
+        grid.run(spec)
+        # Longer than the release, so no window survives the shift.
+        report = engine.run_search(
+            spec, stage="background", slide_id=1, offsets_s={"H1": 0.0, "L1": 1.0e6}
+        )
+        assert report["n_windows"] == 0
+        with h5py.File(report["shard"], "r") as handle:
+            assert bool(handle.attrs["finalised"])
+
+    def test_stream_refused_for_a_slide(self, tmp_path, toy_architecture):
+        """
+        The per-window stream is one value per analysed window, so a ladder would write
+        one copy of the whole run per rung. Requested campaign-wide it applies to the
+        zero-lag pass and is dropped for the slides, rather than making the background
+        stage unrunnable.
+        """
+        import h5py
+
+        import sage.search.engine as engine
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+
+        spec = _scored_campaign(tmp_path, toy_architecture, keep_stream=True)
+        segments.run(spec)
+        grid.run(spec)
+        zerolag = engine.run_search(spec, stage="zerolag", slide_id=0)
+        slid = engine.run_search(
+            spec, stage="background", slide_id=1, offsets_s={"H1": 0.0, "L1": 40.0}
+        )
+        with h5py.File(zerolag["shard"], "r") as handle:
+            assert "stream" in handle
+        with h5py.File(slid["shard"], "r") as handle:
+            assert "stream" not in handle
+
+
+class TestChain:
+    """segments -> grid -> zerolag -> slides -> background -> far, executed."""
+
+    def test_significance_chain_runs(self, tmp_path, toy_architecture):
+        """
+        The stages after the engine consume what it wrote. Run together they check the
+        joins the individual driver tests cannot: that the shard the engine finalises is
+        the one the collation finds, that the threshold background freezes into the plan
+        is the one the slides were scored against, and that far reads a background whose
+        livetime came from the plan.
+        """
+        import sage.search.background as background
+        import sage.search.engine as engine
+        import sage.search.far as far
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+        import sage.search.slides as slides
+        from sage.search.slides import SlidePlan
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        segments.run(spec)
+        grid.run(spec)
+        engine.run_search(spec, stage="zerolag", slide_id=0)
+        slides.run(spec)
+        frozen_at = spec.path(*background.KEEP_THRESHOLD_FILE)
+        assert not frozen_at.exists()
+
+        collated = background.run(spec)
+        assert collated["collated"]
+        held = json.loads(frozen_at.read_text())["keep_threshold"]
+        assert held == collated["keep_threshold"]
+
+        report = far.run(spec)
+        assert "inclusive" in report["curves"]
+        assert report["fingerprint"]
+
+    def test_slides_rerun_leaves_the_threshold(self, tmp_path, toy_architecture):
+        """
+        The threshold is background's, and lives in its own file for that reason. Stamped
+        into slide_plan.h5 it had two owners: re-running slides rebuilt the plan and wiped
+        it, without moving the slides fingerprint, so the rungs already scored had been
+        thresholded against a value nothing on disk still held.
+        """
+        import sage.search.background as background
+        import sage.search.engine as engine
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+        import sage.search.slides as slides
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        segments.run(spec)
+        grid.run(spec)
+        engine.run_search(spec, stage="zerolag", slide_id=0)
+        before = slides.run(spec)["fingerprint"]
+        frozen = background.run(spec)["keep_threshold"]
+
+        assert slides.run(spec)["fingerprint"] == before
+        held = json.loads(
+            spec.path(*background.KEEP_THRESHOLD_FILE).read_text()
+        )["keep_threshold"]
+        assert held == frozen
+
+    def test_threshold_freeze_is_idempotent(self, tmp_path, toy_architecture):
+        """
+        Every background array task calls the freeze. The first writes the value and the
+        rest adopt it, with no ordering requirement between them -- the read-modify-write
+        over slide_plan.h5 that this replaced killed nine of ten tasks released together.
+        """
+        import sage.search.background as background
+        import sage.search.engine as engine
+        import sage.search.grid as grid
+        import sage.search.segments as segments
+        import sage.search.slides as slides
+        from sage.search.slides import SlidePlan
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        segments.run(spec)
+        grid.run(spec)
+        engine.run_search(spec, stage="zerolag", slide_id=0)
+        slides.run(spec)
+        plan = SlidePlan.load(spec.path("slides", "slide_plan.h5"))
+        values = {background.freeze_keep_threshold(spec, plan) for _ in range(5)}
+        assert len(values) == 1

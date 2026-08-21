@@ -67,7 +67,7 @@ class TestReleaseRealism:
         """
         assert not release_is_gps_sorted(synthetic_release, "H1", "O3a")
 
-    def test_sorted_variant_is_available_as_a_control(self, tmp_path):
+    def test_sorted_variant_available(self, tmp_path):
         """The sorted release exists only to show a test would have passed regardless."""
         root = make_synthetic_release(
             tmp_path / "sorted", detectors=("H1",), shuffle_index=False
@@ -83,7 +83,7 @@ class TestReleaseRealism:
         assert overlaps
         assert all(o == pytest.approx(REAL_OVERLAP_S, abs=1e-6) for o in overlaps)
 
-    def test_overlapping_samples_differ_between_chunks(self, tmp_path):
+    def test_overlap_samples_differ(self, tmp_path):
         """
         The same GPS second holds different samples in the two chunks that cover it.
 
@@ -113,7 +113,7 @@ class TestReleaseRealism:
         ]
         assert not np.allclose(tail_of_first, head_of_second)
 
-    def test_constant_fill_makes_boundary_crossing_detectable(self, synthetic_release):
+    def test_constant_fill_detects_splice(self, synthetic_release):
         """
         Every sample in a chunk carries that chunk's value, so a spliced window shows it.
 

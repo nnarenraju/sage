@@ -33,9 +33,12 @@ import sys
 import textwrap
 from pathlib import Path
 
+import dataclasses
+
 import pytest
 
 from sage.search.spec import (
+    load_spec,
     CatalogueSpec,
     ClusterSpec,
     DataSpec,
@@ -59,7 +62,10 @@ def _spec(tmp_path, **overrides):
             release_dir=tmp_path / "release",
             fiducial_dir=tmp_path / "fiducial",
         ),
-        engine=EngineSpec(checkpoint=tmp_path / "best.pt"),
+        engine=EngineSpec(
+            checkpoint=tmp_path / "best.pt",
+            gwconfig=tmp_path / "gwconfig.yaml",
+        ),
         geometry=GeometrySpec(tc_source="explicit", tc_lower_s=5.0, tc_upper_s=7.0),
     )
     base.update(overrides)
@@ -121,7 +127,7 @@ class TestValidation:
                 data=DataSpec(observing_run="O3a", detectors=("H1", "H1")),
             ).validate()
 
-    def test_reference_detector_must_be_in_the_network(self, tmp_path):
+    def test_reference_in_network(self, tmp_path):
         """
         Sliding relative to a detector the search does not read is meaningless.
 
@@ -134,7 +140,7 @@ class TestValidation:
         with pytest.raises(ValueError, match="linkage"):
             _spec(tmp_path, cluster=ClusterSpec(linkage="average")).validate()
 
-    def test_unknown_monotonicity_policy_is_refused(self, tmp_path):
+    def test_unknown_policy_refused(self, tmp_path):
         with pytest.raises(ValueError, match="monotonicity"):
             _spec(tmp_path, pastro=PastroSpec(monotonicity_policy="ignore")).validate()
 
@@ -142,7 +148,7 @@ class TestValidation:
         with pytest.raises(ValueError, match="n_slides"):
             _spec(tmp_path, slides=SlideSpec(n_slides=-1)).validate()
 
-    def test_tau_max_must_exceed_minimum_separation(self, tmp_path):
+    def test_tau_max_exceeds_floor(self, tmp_path):
         """A lag range with no room in it yields no admissible slides."""
         with pytest.raises(ValueError, match="tau_max"):
             _spec(
@@ -314,3 +320,318 @@ class TestHash:
     def test_missing_release_still_hashes(self, tmp_path):
         """A spec can be hashed before its data exists, for planning and dry runs."""
         assert isinstance(_spec(tmp_path).hash(), str)
+
+
+class TestGeometryResolution:
+    """Where the window and the coalescence-time band come from."""
+
+    def test_tc_prior_read_from_gwconfig(self, tmp_path):
+        """
+        The tc band comes from the training run's prior, not from a default.
+
+        A Sage checkpoint records the window geometry but no tc key at all, so the
+        training configuration is the only place the band exists. It is where in the window
+        a merger was placed during training, and decode.tc_to_gps inverts that placement.
+        """
+        from sage.search.spec import read_tc_prior
+
+        path = tmp_path / "gwconfig.yaml"
+        path.write_text("priors:\n  tc:\n    name: uniform\n    min: 11.0\n    max: 11.2\n")
+
+        assert read_tc_prior(path) == (11.0, 11.2)
+
+    def test_non_uniform_tc_prior_refused(self, tmp_path):
+        """
+        Only a uniform band is accepted, because only a uniform band is inverted.
+
+        decode.tc_to_gps maps a decoded tc through the band's endpoints. Another shape's
+        endpoints do not mean the same thing, and taking them anyway would decode every
+        merger time through the wrong map.
+        """
+        from sage.search.spec import read_tc_prior
+
+        path = tmp_path / "gwconfig.yaml"
+        path.write_text("priors:\n  tc:\n    name: normal\n    min: 11.0\n    max: 11.2\n")
+        with pytest.raises(ValueError, match="only 'uniform' is supported"):
+            read_tc_prior(path)
+
+    def test_missing_tc_prior_refused(self, tmp_path):
+        """A prior with no tc entry cannot place a merger in the window."""
+        from sage.search.spec import read_tc_prior
+
+        path = tmp_path / "gwconfig.yaml"
+        path.write_text("priors:\n  mass1:\n    name: uniform\n    min: 7\n    max: 50\n")
+        with pytest.raises(ValueError, match="no tc prior"):
+            read_tc_prior(path)
+
+    def test_absent_gwconfig_says_where_to_look(self):
+        """
+        An unset gwconfig names the two ways out rather than failing obscurely.
+
+        This was the blocker on every campaign: geometry_object refused every tc_source
+        but 'explicit', which is not what any config sets.
+        """
+        from sage.search.spec import read_tc_prior
+
+        with pytest.raises(ValueError, match="tc_source='explicit'"):
+            read_tc_prior("")
+
+    def test_explicit_source_does_not_read_a_file(self, tmp_path):
+        """Stated bounds are used as stated, with no configuration consulted."""
+        spec = dataclasses.replace(
+            _spec(tmp_path),
+            geometry=GeometrySpec(
+                stride_samples=205, tc_source="explicit",
+                tc_lower_s=5.0, tc_upper_s=7.0,
+            ),
+        )
+
+        assert spec.tc_prior() == (5.0, 7.0)
+        assert spec.geometry_object().tc_lower_s == 5.0
+
+    def test_window_falls_back_without_a_checkpoint(self, tmp_path):
+        """
+        A spec is buildable on a machine that does not hold the checkpoint.
+
+        Every unit test builds one that way, so the window lengths fall back to Sage's
+        defaults rather than refusing.
+        """
+        lengths = _spec(tmp_path).window_lengths()
+
+        assert lengths["sample_rate"] == 2048.0
+        assert lengths["sample_length_in_s"] == 12.0
+        assert lengths["padding_length_in_s"] == 2.0
+
+    def test_window_read_from_the_checkpoint_snapshot(self, tmp_path):
+        """
+        Where a snapshot is present the window is read from it, not assumed.
+
+        The window length and its padding are the network's input shape; assuming them
+        would hand a network trained on one length a different number of samples, whitened
+        by the wrong frequency bins.
+        """
+        import json
+
+        checkpoints = tmp_path / "CHECKPOINTS"
+        checkpoints.mkdir()
+        (checkpoints / "data_cfg_snapshot.json").write_text(
+            json.dumps({
+                "sample_rate": 4096.0,
+                "sample_length_in_s": 8.0,
+                "padding_length_in_s": 1.0,
+            })
+        )
+        spec = dataclasses.replace(
+            _spec(tmp_path), engine=EngineSpec(checkpoint=checkpoints / "best.pt")
+        )
+        lengths = spec.window_lengths()
+
+        assert lengths["sample_rate"] == 4096.0
+        assert lengths["sample_length_in_s"] == 8.0
+
+    def test_real_campaign_geometry_builds(self):
+        """
+        The shipped O3a campaign resolves a complete geometry.
+
+        The end-to-end check that matters: config -> checkpoint -> training prior ->
+        SearchGeometry, with nothing assumed along the way. The stride is exactly
+        205/2048 s; the nominal 0.1 s is 0.098% high and would drift over 92 million
+        windows.
+        """
+        import pathlib
+
+        config = pathlib.Path("runs/search/config_o3a_HL.py")
+        prior = pathlib.Path("runs/o3b/gwconfig.yaml")
+        if not (config.is_file() and prior.is_file()):
+            pytest.skip("campaign config or training prior not present in this checkout")
+        geometry = load_spec(str(config)).geometry_object()
+
+        assert geometry.window_samples == 32768
+        assert geometry.stride_samples == 205
+        assert geometry.stride_s == pytest.approx(205 / 2048.0, rel=0, abs=0)
+        assert geometry.tc_upper_s > geometry.tc_lower_s
+
+
+class TestLoadSpec:
+    """Importing a campaign configuration by name or by path."""
+
+    @staticmethod
+    def _config(tmp_path, body):
+        path = tmp_path / "config_probe.py"
+        path.write_text(body)
+        return path
+
+    _VALID = """
+from pathlib import Path
+from sage.search.spec import DataSpec, EngineSpec, GeometrySpec, SearchSpec
+
+def get_spec():
+    return SearchSpec(
+        tag="probe",
+        out_dir=Path("/work/nagarajan/sage_runs/probe"),
+        data=DataSpec(
+            observing_run="O3a",
+            detectors=("H1", "L1"),
+            release_dir=Path("/work/nagarajan/release"),
+            fiducial_dir=Path("/work/nagarajan/fiducial"),
+        ),
+        engine=EngineSpec(checkpoint=Path("/work/nagarajan/best.pt")),
+        geometry=GeometrySpec(tc_source="explicit", tc_lower_s=5.0, tc_upper_s=7.0),
+    )
+"""
+
+    def test_loads_from_a_path(self, tmp_path):
+        """
+        A submit script has the path, so the path spelling has to work.
+
+        The file's own directory is made importable while it loads, because a real config
+        imports its sibling ``config_base``.
+        """
+        spec = load_spec(str(self._config(tmp_path, self._VALID)))
+
+        assert isinstance(spec, SearchSpec)
+        assert spec.tag == "probe"
+        assert spec.data.observing_run == "O3a"
+
+    def test_load_does_not_shadow_an_installed_module(self, tmp_path):
+        """
+        A config file is not registered under its bare stem.
+
+        ``config_HL.py`` registered as ``config_HL`` would displace any installed module
+        of that name for the rest of the process -- and it is exactly how an older
+        checkpoint format became unloadable, by pickling a class from a module named
+        ``config_HL`` that no longer exists.
+        """
+        import sys
+
+        path = self._config(tmp_path, self._VALID)
+        before = set(sys.modules)
+        load_spec(str(path))
+
+        assert "config_probe" not in sys.modules
+        assert path.stem not in set(sys.modules) - before
+
+    def test_failed_load_leaves_no_module_behind(self, tmp_path):
+        """
+        A config that raises while executing does not stay in ``sys.modules``.
+
+        A half-executed module left registered is found by the next import, which then
+        sees a config missing whatever the exception interrupted -- and reports the
+        failure somewhere far from its cause.
+        """
+        import sys
+
+        path = tmp_path / "config_broken.py"
+        path.write_text("raise RuntimeError('config is broken')\n")
+        before = set(sys.modules)
+        with pytest.raises(RuntimeError, match="config is broken"):
+            load_spec(str(path))
+
+        assert set(sys.modules) - before == set()
+
+    def test_two_configs_of_one_name_are_distinct(self, tmp_path):
+        """
+        Two directories may both hold ``config_HL.py``; loading one must not serve the
+        other. The module name is derived from the resolved path for this reason.
+        """
+        first = tmp_path / "a"
+        second = tmp_path / "b"
+        for directory, out in ((first, "alpha"), (second, "beta")):
+            directory.mkdir()
+            self._config(
+                directory, self._VALID.replace('sage_runs/probe', 'sage_runs/' + out)
+            )
+
+        one = load_spec(str(first / "config_probe.py"))
+        two = load_spec(str(second / "config_probe.py"))
+
+        assert one.config_module != two.config_module
+        assert Path(one.out_dir).name == "alpha"
+        assert Path(two.out_dir).name == "beta"
+
+    def test_unknown_dotted_name_says_so(self, tmp_path):
+        """
+        A dotted name that is not importable names itself in the error.
+
+        Without this the caller sees a ModuleNotFoundError from deep inside importlib and
+        no statement that a config was what failed to load.
+        """
+        with pytest.raises(ModuleNotFoundError, match="neither an existing file"):
+            load_spec("runs.search.config_that_does_not_exist")
+
+    def test_config_module_is_stamped(self, tmp_path):
+        """
+        A config that does not name itself gets named, so products can be traced back.
+
+        ``config_module`` reaches every provenance block, and a campaign whose outputs do
+        not say which configuration produced them cannot be reproduced from them. A file
+        is stamped with its resolved path rather than its stem: two runs directories both
+        holding ``config_HL.py`` is a normal arrangement, and the stem would not say which
+        one ran.
+        """
+        path = self._config(tmp_path, self._VALID)
+        spec = load_spec(str(path))
+        assert spec.config_module == str(path.resolve())
+
+    def test_spec_attribute_accepted(self, tmp_path):
+        """A module-level SPEC is the other supported shape."""
+        body = self._VALID.replace("def get_spec():\n    return", "SPEC = (lambda:") + ")()"
+        spec = load_spec(str(self._config(tmp_path, body)))
+        assert spec.tag == "probe"
+
+    def test_module_without_an_entry_point_refused(self, tmp_path):
+        """
+        Neither entry point present is an error, not a search for something spec-shaped.
+
+        Picking one of several candidates would decide the campaign silently.
+        """
+        path = self._config(tmp_path, "VALUE = 1\n")
+        with pytest.raises(ValueError, match="neither get_spec"):
+            load_spec(str(path))
+
+    def test_wrong_type_refused(self, tmp_path):
+        """An entry point returning the wrong thing fails here, not three stages later."""
+        path = self._config(tmp_path, "def get_spec():\n    return {'tag': 'probe'}\n")
+        with pytest.raises(ValueError, match="not a SearchSpec"):
+            load_spec(str(path))
+
+    def test_missing_file_refused(self, tmp_path):
+        """A mistyped path names the path rather than failing inside importlib."""
+        with pytest.raises(FileNotFoundError):
+            load_spec(str(tmp_path / "config_absent.py"))
+
+    def test_real_campaign_config_loads(self):
+        """
+        The shipped ``runs/search/config_o3a_HL.py`` loads through this path.
+
+        Pinned against the actual configuration rather than only against fixtures: the
+        convention this function implements is the one that file uses, and a change to
+        either that breaks the pair should fail here. O3a is the live campaign -- a
+        network trained on O3b searching O3a -- so it is the one that must load.
+        """
+        import pathlib
+
+        config = pathlib.Path("runs/search/config_o3a_HL.py")
+        if not config.is_file():
+            pytest.skip("campaign config not present in this checkout")
+        spec = load_spec(str(config))
+
+        assert isinstance(spec, SearchSpec)
+        assert spec.data.observing_run == "O3a"
+        assert spec.arm == "HL"
+        assert spec.engine.training_config
+
+    def test_unconfigured_campaign_says_what_is_missing(self):
+        """
+        A campaign with no trained network refuses by name rather than by symptom.
+
+        Assembling a spec from empty paths fails validation complaining about an unset
+        checkpoint, which is true but does not say that no O4a network exists yet.
+        """
+        import pathlib
+
+        config = pathlib.Path("runs/search/config_o4a_HL.py")
+        if not config.is_file():
+            pytest.skip("campaign config not present in this checkout")
+        with pytest.raises(NotImplementedError, match="not configured"):
+            load_spec(str(config))

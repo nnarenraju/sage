@@ -81,7 +81,7 @@ class TestRunFlags:
     def test_require_passes_when_published(self):
         _run_flags().require(["DATA", "CBC_CAT1"])
 
-    def test_require_names_the_run_and_what_it_publishes(self):
+    def test_require_names_run_and_flags(self):
         """
         A missing flag reports the run and the available set.
 
@@ -104,13 +104,13 @@ class TestRunFlags:
 class TestContinuousInjectionGuard:
     """The guard that stops a policy silently emptying a dataset."""
 
-    def test_continuous_flags_are_listed_separately(self):
+    def test_continuous_flags_listed(self):
         """Continuous and transient injections are different families."""
         assert set(CONTINUOUS_INJECTION_FLAGS).isdisjoint(TRANSIENT_INJECTION_FLAGS)
         assert "NO_CW_HW_INJ" in CONTINUOUS_INJECTION_FLAGS
         assert "NO_CBC_HW_INJ" in TRANSIENT_INJECTION_FLAGS
 
-    def test_requiring_a_continuous_flag_is_refused(self):
+    def test_continuous_flag_refused(self):
         """
         Measured over 600 ks of each run, NO_CW_HW_INJ holds for zero seconds.
 
@@ -121,7 +121,7 @@ class TestContinuousInjectionGuard:
         with pytest.raises(ValueError, match="continuous"):
             policy.validate(_run_flags())
 
-    def test_requiring_a_continuous_flag_via_extra_is_also_refused(self):
+    def test_continuous_flag_refused_via_extra(self):
         """The guard covers the escape hatch too."""
         policy = FlagPolicy(extra=("NO_STOCH_HW_INJ",))
         with pytest.raises(ValueError, match="continuous"):
@@ -142,10 +142,10 @@ class TestPolicies:
     def test_search_policy_requires_category_one(self):
         assert "CBC_CAT1" in search_policy("O3a").categories
 
-    def test_search_policy_excludes_transient_injections(self):
+    def test_policy_excludes_transient_inj(self):
         assert set(search_policy("O3a").injection_flags) == set(TRANSIENT_INJECTION_FLAGS)
 
-    def test_search_policy_follows_how_each_run_was_analysed(self):
+    def test_policy_follows_run(self):
         """
         Category two was applied in the third observing run and dropped in the fourth.
 
@@ -156,7 +156,7 @@ class TestPolicies:
         assert "CBC_CAT2" in search_policy("O3b").categories
         assert "CBC_CAT2" not in search_policy("O4a").categories
 
-    def test_category_two_can_be_overridden_explicitly(self):
+    def test_cat2_override(self):
         assert "CBC_CAT2" not in search_policy("O3a", apply_cat2=False).categories
         assert "CBC_CAT2" in search_policy("O4a", apply_cat2=True).categories
 
@@ -181,7 +181,7 @@ class TestPolicies:
         assert "H1_CBC_CAT1" in names
         assert "H1_NO_CBC_HW_INJ" in names
 
-    def test_required_flags_are_validated_against_the_run(self):
+    def test_required_flags_validated(self):
         policy = FlagPolicy(categories=("CBC_CAT9",))
         with pytest.raises(ValueError):
             policy.required_flags("H1", _run_flags())
@@ -191,6 +191,6 @@ class TestPolicies:
         assert "CBC_CAT1" in text
         assert "NO_CBC_HW_INJ" in text
 
-    def test_describe_mentions_what_is_deliberately_not_required(self):
+    def test_describe_names_omissions(self):
         """The methods section should say that continuous injections are kept."""
         assert "continuous" in search_policy("O3a").describe().lower()

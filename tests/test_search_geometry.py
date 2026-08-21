@@ -142,7 +142,7 @@ class TestValidation:
         with pytest.raises(ValueError):
             SearchGeometry(**{**PRODUCTION, "stride_samples": 40000})
 
-    def test_window_must_be_a_whole_number_of_samples(self):
+    def test_window_is_whole_samples(self):
         """A window length that is not an integer sample count is refused."""
         with pytest.raises(ValueError):
             SearchGeometry(**{**PRODUCTION, "signal_length_s": 12.0001})
@@ -169,7 +169,7 @@ class TestLightTravel:
         """H1 to L1."""
         assert geometry.max_light_travel_s(("H1", "L1")) == pytest.approx(H1L1, abs=1e-12)
 
-    def test_three_detector_maximum_is_the_longest_baseline(self, geometry):
+    def test_hlv_max_is_longest_baseline(self, geometry):
         """
         Adding Virgo raises the maximum to the H1-V1 baseline, not the H1-L1 one.
 
@@ -181,7 +181,7 @@ class TestLightTravel:
         assert got == pytest.approx(H1V1, abs=1e-12)
         assert got > geometry.max_light_travel_s(("H1", "L1"))
 
-    def test_maximum_ignores_which_detector_is_listed_first(self, geometry):
+    def test_max_order_independent(self, geometry):
         """The answer is a property of the network, not of the ordering."""
         for order in (("V1", "L1", "H1"), ("L1", "V1", "H1"), ("H1", "V1", "L1")):
             assert geometry.max_light_travel_s(order) == pytest.approx(H1V1, abs=1e-12)

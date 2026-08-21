@@ -70,7 +70,7 @@ class TestDeclaredExports:
         assert len(names) == len(set(names)), f"{package}.__all__ has duplicates"
 
     @pytest.mark.parametrize("package", SEARCH_PACKAGES)
-    def test_unknown_attribute_raises_attribute_error(self, package):
+    def test_unknown_attribute_raises(self, package):
         """A typo gets AttributeError, not ImportError or a silent None."""
         import importlib
 

@@ -45,7 +45,7 @@ class TestDeclarations:
         for key, decl in F.FIGURES.items():
             assert decl.requires, key
 
-    def test_required_names_are_unique_within_a_figure(self):
+    def test_requirements_unique(self):
         for key, decl in F.FIGURES.items():
             assert len(decl.requires) == len(set(decl.requires)), key
 
@@ -58,7 +58,7 @@ class TestDeclarations:
         with pytest.raises(ValueError, match="already declared"):
             F.declare(decl)
 
-    def test_declaration_without_requirements_is_refused(self):
+    def test_no_requirements_refused(self):
         with pytest.raises(ValueError, match="required arrays"):
             F.declare(
                 F.FigureDecl(
@@ -66,7 +66,7 @@ class TestDeclarations:
                 )
             )
 
-    def test_declaration_without_a_source_is_refused(self):
+    def test_no_source_refused(self):
         with pytest.raises(ValueError, match="source stage"):
             F.declare(
                 F.FigureDecl(
@@ -150,3 +150,138 @@ class TestCoverage:
         decl = F.resolve("livetime_and_duty_cycle")
         assert "analysed_s" in decl.requires
         assert "lost_boundary_s" in decl.requires
+
+
+class TestProvenance:
+    """Every figure names where it comes from, or says it is not being built."""
+
+    def test_every_figure_is_backed_or_deferred(self):
+        """
+        The search follows sgwc-1's procedure and takes from PyCBC only what has been
+        agreed case by case. A figure with neither origin is one nobody has justified,
+        and the ruling of 2026-08-20 is that those wait rather than being built.
+
+        This is the rule made executable: adding a figure means naming its origin, or
+        saying explicitly that it is deferred. Neither is a default.
+        """
+        unbacked = sorted(
+            key
+            for key, decl in F.FIGURES.items()
+            if not decl.origin and not decl.deferred
+        )
+        assert not unbacked, (
+            "these figures have no sgwc-1 or PyCBC counterpart and are not marked "
+            f"deferred: {unbacked}"
+        )
+
+    def test_origins_name_a_known_reference(self):
+        """
+        An origin says which reference and where in it, so the claim is checkable. A
+        bare "sgwc-1" would be an assertion; "sgwc-1: pastro.ipynb, ..." is a pointer.
+        """
+        for key, decl in F.FIGURES.items():
+            if not decl.origin:
+                continue
+            assert decl.origin.startswith(("sgwc-1:", "pycbc:")), (
+                f"{key} declares origin {decl.origin!r}, which names no reference"
+            )
+            assert len(decl.origin.split(":", 1)[1].strip()) > 3, (
+                f"{key} names a reference but not where in it: {decl.origin!r}"
+            )
+
+    def test_deferred_figures_give_a_reason(self):
+        """A deferred figure records why, so the decision survives the session."""
+        for key, decl in F.FIGURES.items():
+            if decl.deferred:
+                assert len(decl.deferred) > 20, (
+                    f"{key} is deferred without a usable reason: {decl.deferred!r}"
+                )
+
+
+def _is_built(module, name: str) -> bool:
+    """
+    Whether a builder function is implemented, not merely present.
+
+    ``hasattr`` is true for a stub, so a coverage check written on it reports every
+    declared figure as built the moment its placeholder exists -- which is the opposite
+    of what the check is for.
+    """
+    import inspect
+
+    function = getattr(module, name, None)
+    if function is None:
+        return False
+    try:
+        source = inspect.getsource(function)
+    except OSError:
+        return True
+    return "raise NotImplementedError" not in source
+
+
+class TestBuilderCoverage:
+    """The declarations and the builder modules must not drift apart."""
+
+    #: Figures we intend to build whose builder has not been written yet. A list rather
+    #: than a tolerance: each entry is a specific piece of work, and the test fails when
+    #: one lands so the list is trimmed instead of quietly outliving its reason.
+    NOT_YET_BUILT = {
+        # All four are sensitivity figures, and sensitivity needs found/missed against an
+        # analysed timeline. sgwc-1's injection campaign has no timeline, so the
+        # lattice-scheduled campaign that would give one is deferred -- and these wait on
+        # it rather than on anything here.
+        "injection_recovery",
+        "sensitive_distance",
+        "vt_versus_far",
+        "range_over_time",
+        # pycbc_page_segplot's counterpart: search metadata rather than a search result,
+        # so it follows the result figures.
+        "livetime_and_duty_cycle",
+    }
+
+    def test_declared_builder_functions_exist(self):
+        """
+        A figure we intend to build must have somewhere to build it.
+
+        Dispatch is by ``builder_function``, which defaults to the figure key. Most
+        builders name the function after the key; the ones that do not declare the name
+        explicitly, because inferring it from a module's contents would pick a plausible
+        neighbour whenever a name drifted.
+        """
+        import importlib
+
+        missing = []
+        for key, decl in F.FIGURES.items():
+            if decl.deferred or key in self.NOT_YET_BUILT:
+                continue
+            try:
+                module = importlib.import_module(f"sage.search.figdata.{decl.builder}")
+            except ModuleNotFoundError:
+                missing.append(f"{key} -> module {decl.builder}")
+                continue
+            if not _is_built(module, decl.builder_function):
+                missing.append(f"{key} -> {decl.builder}.{decl.builder_function}")
+        assert not missing, (
+            "figures marked for building whose builder function does not exist: "
+            f"{sorted(missing)}"
+        )
+
+    def test_the_unbuilt_list_shrinks(self):
+        """
+        Every entry of ``NOT_YET_BUILT`` must still be unbuilt. When one lands, this
+        fails and the entry is removed -- so the list cannot outlive the work it records
+        and quietly exempt a figure that is now checkable.
+        """
+        import importlib
+
+        landed = []
+        for key in sorted(self.NOT_YET_BUILT):
+            decl = F.FIGURES[key]
+            try:
+                module = importlib.import_module(f"sage.search.figdata.{decl.builder}")
+            except ModuleNotFoundError:
+                continue
+            if _is_built(module, decl.builder_function):
+                landed.append(key)
+        assert not landed, (
+            f"these are built now and should leave NOT_YET_BUILT: {landed}"
+        )

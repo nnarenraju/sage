@@ -168,6 +168,22 @@ def release_is_gps_sorted(root: str | Path, detector: str, observing_run: str) -
 
 
 # ------------------------------------------------------------------ network fixture
+class SharedScaleNorm(nn.Module):
+    """
+    Normalisation that scales every channel by a statistic pooled over all detectors.
+
+    A negative control for :meth:`~sage.search.network.SplitNetwork.separability` that a
+    shift-based probe cannot see. The coupling is real -- every detector's frontend input
+    depends on every detector's samples -- but it enters through a standard deviation,
+    which is invariant under adding a constant to a channel. Only a probe that replaces a
+    channel's samples, as a time slide does, moves it.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Divide by the pooled standard deviation, keeping the detector axis."""
+        return x / (x.std(dim=(1, 2), keepdim=True) + 1e-5)
+
+
 class ToyFrontendNet(nn.Module):
     """
     A miniature network with the same detector-coupling structure as the real one.
@@ -179,8 +195,9 @@ class ToyFrontendNet(nn.Module):
     Under ``instancenorm`` the normalisation is per channel, so a detector's frontend
     output depends on that detector alone and features may be cached across time slides.
     Under ``groupnorm`` a single group spans the detector axis, every output depends on
-    every input, and caching is invalid. Both are built here so the check has a negative
-    control.
+    every input, and caching is invalid. ``sharedscale`` is the same invalidity reached
+    through a shift-invariant statistic, which a probe that only offsets a channel cannot
+    detect. All three are built here so the check has negative controls of both kinds.
     """
 
     def __init__(
@@ -200,6 +217,8 @@ class ToyFrontendNet(nn.Module):
             self.norm = nn.InstanceNorm1d(num_detectors)
         elif norm_type == "groupnorm":
             self.norm = nn.GroupNorm(1, num_detectors)
+        elif norm_type == "sharedscale":
+            self.norm = SharedScaleNorm()
         else:
             raise ValueError(f"unknown norm_type {norm_type!r}")
 
@@ -242,6 +261,58 @@ class ToyFrontendNet(nn.Module):
             sigma_raw = torch.cat([r[:, 1:] for r in raw], dim=1)
             point_estimates = torch.cat([mus, sigma_raw], dim=1)
         return ranking_statistic, point_estimates
+
+
+def make_synthetic_fiducial(
+    root: str | Path,
+    detectors: Sequence[str] = ("H1", "L1"),
+    num_freq_bins: int = 16385,
+    sample_rate: float = DEFAULT_SAMPLE_RATE,
+    delta_f: float = 0.0625,
+) -> Path:
+    """
+    Write fiducial ASDs in the on-disk layout ``FiducialWhitening`` reads.
+
+    Amplitude spectral densities in strain/sqrt(Hz), not power -- the ``_psd.bin``
+    filename is historical and is matched here so the whitener finds them. The shape is a
+    smooth power law with a low-frequency wall, which is enough to exercise the whitening
+    path; it is not a detector model and no sensitivity number may be taken from it.
+
+    Returns
+    -------
+    Path
+        The directory, ready to be a ``fiducial_dir``.
+    """
+    import json
+
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    freqs = np.arange(num_freq_bins, dtype=np.float64) * delta_f
+    for detector in detectors:
+        # A bucket-shaped ASD: a steep seismic wall below 15 Hz, a floor near 100 Hz and
+        # a gentle shot-noise rise above it. Clipped away from zero so dividing by it is
+        # defined at DC.
+        shape = 1e-23 * (
+            1.0 + (15.0 / np.clip(freqs, 1.0, None)) ** 6 + (freqs / 500.0) ** 2
+        )
+        asd = shape.astype(np.float32)
+        asd.tofile(root / f"fiducial_{detector}_psd.bin")
+        (root / f"fiducial_{detector}_psd.json").write_text(
+            json.dumps(
+                {
+                    "detector": detector,
+                    "num_freq_bins": int(num_freq_bins),
+                    "dtype": "float32",
+                    "byte_order": "little",
+                    "sample_rate": float(sample_rate),
+                    "delta_f": float(delta_f),
+                    "freq_start": 0.0,
+                    "freq_end": float(freqs[-1]),
+                    "psd_aggregation": "synthetic",
+                }
+            )
+        )
+    return root
 
 
 def make_synthetic_checkpoint(
