@@ -131,32 +131,66 @@ class TestPopulationModels:
             population.get_p_costilt,
         ):
             density, grid = getter(sample)
-            assert np.isclose(np.trapz(density, grid), 1.0, atol=1e-6)
+            assert np.isclose(np.trapezoid(density, grid), 1.0, atol=1e-6)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "known defect ported verbatim from sgwc-1: sample_intrinsic_torch indexes "
-            "cdfs.T[:, 0], so every injection's mass ratio is drawn from injection 0's "
-            "conditional CDF. Fixed in a separate change"
-        ),
-    )
     def test_mass_ratio_follows_its_own_primary(self):
         """
         p(q|m1) is truncated at q_min = mmin/m1, so light and heavy primaries have
-        genuinely different mass-ratio distributions. Drawing every injection's q from
-        one primary's conditional biases the whole set.
+        genuinely different mass-ratio distributions.
+
+        SB-1 until 2026-08-21: ``get_p_q_vec`` returns the (N, n_q) matrix of per-injection
+        conditionals and the next line read one row of it, so every injection's mass ratio
+        came from injection 0's. The threshold sits between the noise on the median
+        (0.0005 to 0.010) and the 0.256 the conditionals actually differ by.
         """
         pytest.importorskip("gwpopulation")
         torch = pytest.importorskip("torch")
 
+        torch.manual_seed(190521)
         sample = _hyperposterior()
         drawn = population.sample_intrinsic_torch(sample, 20_000, device="cpu").numpy()
         m1, q = drawn[:, 0], drawn[:, 1]
         light = q[m1 < np.quantile(m1, 0.25)]
         heavy = q[m1 > np.quantile(m1, 0.75)]
-        # Different conditionals must give different medians.
-        assert not np.isclose(np.median(light), np.median(heavy), atol=1e-3)
+        assert abs(np.median(light) - np.median(heavy)) > 0.05
+
+    def test_secondary_stays_in_the_population(self):
+        """
+        ``m2 = q*m1`` cannot fall below the population's own ``mmin``; the conditional is
+        truncated there. Measured before SB-1 was fixed: 8.2% of draws did, reaching
+        2.2 solar masses out of a binary-black-hole population.
+        """
+        pytest.importorskip("gwpopulation")
+        torch = pytest.importorskip("torch")
+
+        torch.manual_seed(4408)
+        sample = _hyperposterior()
+        drawn = population.sample_intrinsic_torch(sample, 20_000, device="cpu").numpy()
+        m2 = drawn[:, 1] * drawn[:, 0]
+
+        assert (m2 >= sample["mmin"] - 1e-6).all()
+
+    def test_conditional_median_matches_the_model(self):
+        """
+        The empirical median of each primary-mass band must track the analytic
+        conditional, which is the property a single shared CDF cannot have.
+        """
+        pytest.importorskip("gwpopulation")
+        torch = pytest.importorskip("torch")
+
+        torch.manual_seed(913)
+        sample = _hyperposterior()
+        drawn = population.sample_intrinsic_torch(sample, 60_000, device="cpu").numpy()
+        m1, q = drawn[:, 0], drawn[:, 1]
+
+        for centre in (10.0, 20.0, 40.0):
+            band = (m1 >= centre - 0.5) & (m1 < centre + 0.5)
+            if band.sum() < 200:
+                continue
+            density, grid = population.get_p_q(centre, sample)
+            cdf = np.concatenate([[0.0], np.cumsum(density[1:] * np.diff(grid))])
+            analytic = np.interp(0.5, cdf / cdf[-1], grid)
+            assert np.median(q[band]) == pytest.approx(analytic, abs=0.02)
 
 
 def _hyperposterior():
@@ -192,3 +226,103 @@ class _seeded:
     def __exit__(self, *exc):
         np.random.set_state(self.state)
         return False
+
+
+class TestMarginalisation:
+    """Drawing under many hyperposterior samples rather than one."""
+
+    def _hyperposterior_set(self, n=40, seed=5):
+        """A spread of PP hyperposterior samples, as the source handler returns them."""
+        rng = np.random.default_rng(seed)
+        out = []
+        for _ in range(n):
+            sample = _hyperposterior()
+            sample["alpha"] = float(rng.uniform(2.5, 4.5))
+            sample["xi_spin"] = float(rng.uniform(0.1, 0.95))
+            sample["mu_chi"] = float(rng.uniform(0.15, 0.35))
+            out.append(sample)
+        return out
+
+    def test_plan_uses_distinct_points_first(self):
+        """
+        Distinct posterior points are the scarce thing, so draws-per-point stays at the
+        minimum that reaches the count asked for.
+        """
+        assert population.plan_marginalisation(100, 11184) == (100, 1)
+        assert population.plan_marginalisation(11184, 11184) == (11184, 1)
+        assert population.plan_marginalisation(100_000, 11184) == (11184, 9)
+
+    def test_plan_refuses_an_empty_hyperposterior(self):
+        """Nothing to marginalise over is a stated failure, not an empty draw."""
+        with pytest.raises(ValueError, match="no samples"):
+            population.plan_marginalisation(10, 0)
+
+    def test_returns_exactly_the_count_asked_for(self):
+        """
+        The plan overshoots whenever the count is not a multiple of the point count, and
+        the caller gets what it asked for rather than the overshoot.
+        """
+        pytest.importorskip("gwpopulation")
+        pytest.importorskip("torch")
+
+        drawn = population.sample_intrinsic_marginalised(
+            self._hyperposterior_set(n=7), 100, n_hyper=7, device="cpu", seed=1
+        )
+        assert drawn.shape == (100, 7)
+
+    def test_points_are_distinct(self):
+        """
+        Sampled without replacement while the posterior has enough points: repeating one
+        buys none of the diversity the marginalisation exists for.
+        """
+        pytest.importorskip("gwpopulation")
+        pytest.importorskip("torch")
+
+        drawn = population.sample_intrinsic_marginalised(
+            self._hyperposterior_set(n=30), 12, n_hyper=12, device="cpu", seed=2
+        ).numpy()
+        # Twelve distinct alphas give twelve distinct primary-mass distributions, so the
+        # draw cannot collapse onto one value.
+        assert len(np.unique(drawn[:, 0])) == 12
+
+    def test_widens_the_population(self):
+        """
+        The point of it. Conditioning on one sample states a population the data merely
+        prefers; measured on the release, marginalising widens the 5-95% spin and tilt
+        intervals by 15-18%.
+        """
+        pytest.importorskip("gwpopulation")
+        torch = pytest.importorskip("torch")
+
+        samples = self._hyperposterior_set(n=40)
+        torch.manual_seed(31)
+        one = population.sample_intrinsic_torch(samples[0], 8_000, device="cpu").numpy()
+        torch.manual_seed(31)
+        many = population.sample_intrinsic_marginalised(
+            samples, 8_000, n_hyper=40, device="cpu", seed=3
+        ).numpy()
+
+        def spread(column):
+            return float(np.ptp(np.percentile(column, [5, 95])))
+
+        assert spread(many[:, 5]) > spread(one[:, 5])
+
+    def test_seed_controls_the_points(self):
+        """
+        Reproducible: the same seed picks the same posterior points, a different one does
+        not. The population a campaign injected has to be recoverable.
+        """
+        pytest.importorskip("gwpopulation")
+        torch = pytest.importorskip("torch")
+
+        samples = self._hyperposterior_set(n=40)
+        draws = []
+        for seed in (11, 11, 12):
+            torch.manual_seed(99)
+            draws.append(
+                population.sample_intrinsic_marginalised(
+                    samples, 400, n_hyper=8, device="cpu", seed=seed
+                ).numpy()
+            )
+        assert np.allclose(draws[0], draws[1])
+        assert not np.allclose(draws[0], draws[2])

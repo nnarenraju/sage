@@ -247,17 +247,39 @@ class TestSlidesDriver:
         """
         Background time is summed from the plan, never `n * T_zerolag`.
 
-        Retention falls as the ladder lengthens, because a lag moves a detector's data off
-        the end of the run. The closed form assumes it does not.
+        Asserted on the ladder, which is where the closed form is wrong: retention falls
+        as a lag moves a detector's data off the end of the run, and the closed form
+        assumes it does not.
         """
+        import dataclasses
+
         import sage.search.slides as slides
 
         spec = _campaign(tmp_path)
+        spec = dataclasses.replace(
+            spec, slides=dataclasses.replace(spec.slides, method="ladder")
+        )
         report = slides.run(spec)
         naive = report["n_slides"] * report["foreground_livetime_s"]
 
         assert report["background_livetime_s"] < naive
         assert 0.0 < report["mean_slide_retention"] < 1.0
+
+    def test_rolled_livetime_is_exact(self, tmp_path):
+        """
+        The roll's retention is exactly one, and that is a fact about the construction
+        rather than the closed form sneaking back in: every lattice ordinal is hostable
+        in every detector, so re-pairing ordinals moves nothing into a gap. The plan is
+        still summed -- what changed is the answer, not where it comes from.
+        """
+        import sage.search.slides as slides
+
+        report = slides.run(_campaign(tmp_path))
+
+        assert report["mean_slide_retention"] == pytest.approx(1.0)
+        assert report["background_livetime_s"] == pytest.approx(
+            report["n_slides"] * report["foreground_livetime_s"]
+        )
 
 
 class TestFarDriver:
@@ -513,3 +535,81 @@ class TestTrialsDriver:
             spec, trials=dataclasses.replace(spec.trials, convention="none")
         )
         assert trials.run(shifted)["fingerprint"] != before
+
+
+class TestStagedInjectionTable:
+    """The drawn parameter set is kept in the campaign that scored it."""
+
+    def _stage(self, spec, columns, attrs, table, calls):
+        from sage.search.injection.campaign import _staged_table
+
+        def build():
+            calls.append(1)
+            return table
+
+        return _staged_table(spec, 0, columns, attrs, build)
+
+    def _fixture(self, tmp_path):
+        import dataclasses
+
+        import numpy as np
+
+        spec = _campaign(tmp_path)
+        # The staged table is reloaded onto the engine's device, which is a GPU in a real
+        # campaign and absent on the login node this runs on.
+        spec = dataclasses.replace(
+            spec, engine=dataclasses.replace(spec.engine, device="cpu")
+        )
+        columns = ["mass1", "mass2", "tc"]
+        attrs = {"n_draw": 100, "draw_seed": 7, "hyperposterior": "abc123"}
+        table = np.array([[30.0, 20.0, 6.0], [40.0, 35.0, 6.5]], dtype=np.float64)
+        return spec, columns, attrs, table
+
+    def test_written_under_the_campaign(self, tmp_path):
+        """
+        Not a scratch file. The parameters behind ``p(x | signal)`` have to be readable
+        after the job that drew them has exited, or the signal density cannot be checked
+        against what was recovered.
+        """
+        spec, columns, attrs, table = self._fixture(tmp_path)
+        self._stage(spec, columns, attrs, table, [])
+
+        staged = spec.path("injections", "injection_table_00.h5")
+        assert staged.is_file()
+        assert staged.is_relative_to(spec.out_dir)
+
+    def test_reused_when_provenance_matches(self, tmp_path):
+        """Drawing is seeded, so a re-run scores the set it scored before."""
+        import numpy as np
+
+        spec, columns, attrs, table = self._fixture(tmp_path)
+        calls = []
+        self._stage(spec, columns, attrs, table, calls)
+        again = self._stage(spec, columns, attrs, table, calls)
+
+        assert len(calls) == 1
+        assert np.allclose(np.asarray(again), table)
+
+    def test_redrawn_when_population_differs(self, tmp_path):
+        """
+        A different hyperposterior is a different population under the same seed. Reusing
+        the stored table would score one population under another's name.
+        """
+        spec, columns, attrs, table = self._fixture(tmp_path)
+        calls = []
+        self._stage(spec, columns, attrs, table, calls)
+        self._stage(spec, columns, {**attrs, "hyperposterior": "def456"}, table, calls)
+
+        assert len(calls) == 2
+
+    def test_redrawn_when_columns_differ(self, tmp_path):
+        """
+        The table is positional, so a sampler whose column order changed would have its
+        masses read as spins with no error anywhere.
+        """
+        spec, columns, attrs, table = self._fixture(tmp_path)
+        calls = []
+        self._stage(spec, columns, attrs, table, calls)
+        self._stage(spec, ["tc", "mass1", "mass2"], attrs, table, calls)
+
+        assert len(calls) == 2

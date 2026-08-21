@@ -343,12 +343,19 @@ def _generator(sampler):
 
 def _hyperposterior(spec) -> dict:
     """
-    The GWTC-3 Power-Law + Peak hyperposterior sample the population is drawn at.
+    The Power-Law + Peak hyperposterior sample the population is drawn at.
 
-    sgwc-1 takes the sample nearest the marginal MAP of the published bilby
-    hyperposterior (``injection_study.ipynb`` cells 10-14). Required rather than
-    defaulted: the population is the published one, and inventing hyperparameters would
-    produce a plausible population that is not it.
+    Reads the canonical form a :mod:`sage.search.sources` handler writes -- a flat
+    mapping of hyperparameter to value, with the release it came from recorded beside
+    it. Required rather than defaulted: the population is the published one, and
+    inventing hyperparameters would produce a plausible population that is not it.
+
+    A release file is refused rather than parsed here. Every catalogue restructures
+    between versions, and the GWTC-3 and GWTC-4.0 releases already disagree on format
+    for this same model -- bilby JSON against ``popsummary`` HDF5. Keeping that knowledge
+    in one module per release is what stops a campaign from silently reading the wrong
+    level of a nested file: ``payload["posterior"]`` on a bilby result is the serialised
+    frame, not the samples, and handing it on produced a ``KeyError`` two calls later.
     """
     import json
 
@@ -356,14 +363,112 @@ def _hyperposterior(spec) -> dict:
     if not path:
         raise FileNotFoundError(
             "no injection.hyperposterior_path is set. Injections are drawn from the "
-            "GWTC-3 Power-Law + Peak model at its MAP hyperposterior sample, which comes "
-            "from the published bilby result; there is no defensible default for it"
+            "Power-Law + Peak model at its MAP hyperposterior sample; build one with "
+            "sage.search.sources.gwtc3_powerlawpeak.build() and point this at what it "
+            "wrote. There is no defensible default for it"
         )
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"no hyperposterior at {path}")
+
     payload = json.loads(path.read_text())
-    return payload.get("posterior", payload)
+    if "hyperparameters" in payload:
+        return {str(k): float(v) for k, v in payload["hyperparameters"].items()}
+    if "posterior" in payload:
+        raise ValueError(
+            f"{path.name} looks like a raw release file rather than a canonical "
+            "hyperposterior. Reduce it first -- sage.search.sources holds one handler "
+            "per release, each of which selects the sample and writes the flat form "
+            "this reads"
+        )
+    return {str(k): float(v) for k, v in payload.items()}
+
+
+def _population(spec):
+    """
+    Every hyperposterior sample, for the marginalised draw.
+
+    Read from the same canonical file as the representative, so a campaign cannot
+    marginalise over one release while quoting another as its population.
+    """
+    from sage.search.sources.gwtc3_powerlawpeak import population
+
+    path = Path(spec.injection.hyperposterior_path)
+    try:
+        return population(path)
+    except KeyError as error:
+        raise ValueError(
+            f"injection.population_mode is 'marginalise' but {path.name} carries only "
+            "its representative sample. Rebuild it with store_population=True -- "
+            "runs/search/fetch_sources.py does by default"
+        ) from error
+
+
+def _population_digest(hyperposterior) -> str:
+    """
+    Short digest of the population a set was drawn from.
+
+    Two campaigns drawing at different hyperparameters produce different populations
+    under the same seed, so the seed alone is not enough to decide a staged table is
+    still the right one. Taken over whatever was actually drawn from -- the whole
+    posterior when marginalising, the one sample when not -- because a digest of the
+    representative would let two campaigns marginalising over different releases share a
+    staged table.
+    """
+    import hashlib
+    import json
+
+    payload = json.dumps(hyperposterior, sort_keys=True, default=repr).encode()
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def _staged_table(spec, stream: int, columns, provenance_attrs, build):
+    """
+    The drawn parameter set, from the campaign's own directory where it is already there.
+
+    Drawing is seeded, so this is a cache rather than a source of truth -- but a campaign
+    that scored a set has to keep the set it scored. Without it the injections exist only
+    inside the process that scored them, and the parameters behind ``p(x | signal)``
+    cannot be read back, plotted, or compared against what was recovered.
+
+    Reused only when the stored provenance matches the one asked for: the draw count, the
+    seed, the hyperposterior it was drawn at and the sampler's column names. Any of those
+    differing describes a different population, so the set is redrawn and replaced rather
+    than a stale table being scored under the current configuration's name.
+    """
+    import h5py
+    import numpy as np
+    import torch
+
+    path = spec.injection.staged_path or spec.path(
+        "injections", f"injection_table_{stream:02d}.h5"
+    )
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.is_file():
+        with h5py.File(path, "r") as handle:
+            stored = {key: handle.attrs.get(key) for key in provenance_attrs}
+            stored_columns = [str(c) for c in handle.attrs.get("columns", ())]
+            matches = stored_columns == list(columns) and all(
+                stored.get(key) == value for key, value in provenance_attrs.items()
+            )
+            if matches:
+                return torch.as_tensor(
+                    np.asarray(handle["parameters"]), device=spec.engine.device
+                )
+
+    table = build()
+    from sage.utils.atomic_io import atomic_h5
+
+    with atomic_h5(path, mode="w") as handle:
+        handle.create_dataset(
+            "parameters", data=np.asarray(_detach(table), dtype=np.float64)
+        )
+        handle.attrs["columns"] = list(columns)
+        for key, value in provenance_attrs.items():
+            handle.attrs[key] = value
+    return table
 
 
 def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
@@ -381,7 +486,10 @@ def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
     from sage.search.decode import PEDecoder
     from sage.search.engine import SearchEngine, build_param_sampler, build_processor
     from sage.search.grid import AnalysisGrid
-    from sage.search.injection.population import sample_intrinsic_torch
+    from sage.search.injection.population import (
+        sample_intrinsic_marginalised,
+        sample_intrinsic_torch,
+    )
     from sage.search.injection.waveforms import (
         TabulatedSampler,
         build_injection_table,
@@ -411,15 +519,48 @@ def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
         cfg, data_cfg, spec.engine.gwconfig, seed=int(spec.engine.sampler_seed)
     )
 
-    intrinsic = sample_intrinsic_torch(
-        _hyperposterior(spec), int(spec.injection.n_draw), device=spec.engine.device
-    )
-    table = build_injection_table(
-        base_sampler, _detach(intrinsic), seed=int(spec.seed) + int(stream)
-    )
+    hyperposterior = _hyperposterior(spec)
+    draw_seed = int(spec.seed) + int(stream)
     low, high = base_sampler.bounds["mass1"]
-    keep = in_training_prior(table, base_sampler, float(low), float(high))
-    table = table[torch.as_tensor(np.asarray(keep), device=table.device)]
+    mode = str(spec.injection.population_mode)
+
+    def _draw():
+        n_draw = int(spec.injection.n_draw)
+        if mode == "marginalise":
+            intrinsic = sample_intrinsic_marginalised(
+                _population(spec),
+                n_draw,
+                n_hyper=spec.injection.n_hyper,
+                device=spec.engine.device,
+                seed=draw_seed,
+            )
+        else:
+            intrinsic = sample_intrinsic_torch(
+                hyperposterior, n_draw, device=spec.engine.device
+            )
+        drawn = build_injection_table(base_sampler, _detach(intrinsic), seed=draw_seed)
+        keep = in_training_prior(drawn, base_sampler, float(low), float(high))
+        return drawn[torch.as_tensor(np.asarray(keep), device=drawn.device)]
+
+    # Staged after the chirp-mass cut, so what is stored is the set that was scored.
+    columns = sorted(base_sampler.param_index, key=base_sampler.param_index.get)
+    table = _staged_table(
+        spec,
+        stream,
+        columns,
+        {
+            "n_draw": int(spec.injection.n_draw),
+            "draw_seed": draw_seed,
+            "sampler_seed": int(spec.engine.sampler_seed),
+            "hyperposterior": _population_digest(
+                _population(spec) if mode == "marginalise" else hyperposterior
+            ),
+            "population_mode": mode,
+            "n_hyper": int(spec.injection.n_hyper or 0),
+            "mass1_bounds": f"{float(low)}:{float(high)}",
+        },
+        _draw,
+    )
 
     sampler = TabulatedSampler(base_sampler, table)
     decoder = PEDecoder(

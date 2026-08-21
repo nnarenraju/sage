@@ -66,6 +66,10 @@ import numpy as np
 
 _z_max = 1.35
 
+#: Floor for a CDF normalisation. A conditional whose density integrated to zero cannot
+#: be sampled from at all, and dividing by it would put nan into every mass ratio.
+_TINY = 1.0e-300
+
 
 def _gwpopulation():
     """
@@ -300,8 +304,9 @@ def sample_intrinsic(hyperpost_samp, N):
     """
     Draw ``(m1, q, z, chi_1, chi_2, costilt_1, costilt_2)`` for N binaries.
 
-    Reference implementation. See the module warning: the mass-ratio loop keeps only its
-    last iteration, and it is O(N^2). :func:`sample_intrinsic_torch` is the path that ran.
+    Reference implementation, and slow: ``get_p_q`` is evaluated once per injection, so
+    a set of any size is better drawn with :func:`sample_intrinsic_torch`, which is the
+    path a campaign uses.
     """
     sample = np.zeros((N, 7))  # {'m1':0, 'q':0, 'z':0, 'chi_1':0, 'chi_2':0, 'costilt_1':0, 'costilt_2':0}
 
@@ -309,11 +314,10 @@ def sample_intrinsic(hyperpost_samp, N):
     p_m1, masses = get_p_m1(hyperpost_samp)
     sample[:, 0] = sample_1D(p_m1, masses, N)
 
-    # mass ratio
-    for m1 in sample[:, 0]:
+    # mass ratio, one draw per primary from that primary's own conditional
+    for i, m1 in enumerate(sample[:, 0]):
         p_q, qs = get_p_q(np.array([m1]), hyperpost_samp)
-        q = sample_1D(p_q, qs, N)
-    sample[:, 1] = q
+        sample[i, 1] = sample_1D(p_q, qs, 1)[0]
 
     # redshift
     p_z, zs = get_p_z(hyperpost_samp)
@@ -406,6 +410,52 @@ def interp1d_grid_sample(x, xp, fp):
     # Linear interpolation
     slope = (y1 - y0) / (x1 - x0)
     return y0 + slope * (x_clamped - x0)
+
+
+def interp1d_rows(x, xp_rows, fp):
+    """
+    Vectorised 1D linear interpolation with one grid **per row**.
+
+    :func:`interp1d_grid_sample` interpolates every query against a single grid. Inverse
+    transform sampling from a *conditional* density needs one grid per query, because
+    each row has its own CDF -- which is the whole point of ``p(q | m1)``.
+
+    Parameters
+    ----------
+    x : tensor of shape (N,)
+        Query points, one per row.
+    xp_rows : tensor of shape (N, M)
+        Row ``i``'s grid points, sorted ascending along the last axis.
+    fp : tensor of shape (M,)
+        Values at the grid points, shared by every row. The mass-ratio grid is common to
+        all rows; only the CDF over it differs.
+
+    Returns
+    -------
+    tensor of shape (N,)
+        Row ``i``'s interpolation of ``x[i]`` against ``xp_rows[i]``.
+    """
+    import torch
+
+    x = x.unsqueeze(-1)
+    x = torch.clamp(x, xp_rows[:, :1], xp_rows[:, -1:])
+
+    index = torch.searchsorted(xp_rows.contiguous(), x, right=False)
+    index = torch.clamp(index, 1, xp_rows.shape[-1] - 1)
+
+    x0 = xp_rows.gather(-1, index - 1)
+    x1 = xp_rows.gather(-1, index)
+    y0 = fp[index - 1]
+    y1 = fp[index]
+
+    # A conditional CDF is flat wherever the density vanishes, which for p(q | m1) is
+    # everything below q_min = mmin/m1 -- a wide interval for a heavy primary. A query
+    # landing exactly on a flat step would divide by zero, so those fall back to the
+    # left-hand grid value rather than producing a nan that survives into the waveform.
+    width = x1 - x0
+    slope = torch.where(width > 0, (y1 - y0) / torch.where(width > 0, width, width + 1.0),
+                        torch.zeros_like(width))
+    return (y0 + slope * (x - x0)).squeeze(-1)
 
 
 def get_p_m1_torch(hyperpost_samp, n=1000, device=None):
@@ -577,12 +627,10 @@ def sample_intrinsic_torch(hyperpost_samp, N, device=None):
     Draw ``(m1, q, z, chi_1, chi_2, costilt_1, costilt_2)`` for N binaries.
 
     The path ``injection_study.ipynb`` calls, and therefore the one that produced the
-    injection set behind sgwc-1's ``p(x|signal)``.
-
-    .. warning::
-
-       ``cdfs.T[:, 0]`` is row 0, so every injection's mass ratio comes from the first
-       injection's conditional CDF. Preserved deliberately -- see the module warning.
+    injection set behind sgwc-1's ``p(x|signal)`` -- with its mass-ratio defect corrected.
+    Every injection's mass ratio is drawn from *its own* ``p(q | m1)``, which is what the
+    ``(N, n_q)`` matrix ``get_p_q_vec`` returns was for; sgwc-1 computed it and then read
+    one row. See SB-1.
     """
     import torch
 
@@ -593,12 +641,16 @@ def sample_intrinsic_torch(hyperpost_samp, N, device=None):
     p_m1, masses = get_p_m1_torch(hyperpost_samp, device=device)
     sample[:, 0] = sample_1D_torch(p_m1, masses, N, device=device)
 
-    # vectorised mass ratio
+    # vectorised mass ratio, each injection against its own conditional
     pq_all, qs = get_p_q_vec(sample[:, 0], hyperpost_samp, device=device)
     rand = torch.rand(N, device=device)
     cdfs = torch.cumsum(pq_all[:, 1:] * (qs[1:] - qs[:-1]), dim=-1)
     cdfs = torch.cat([torch.zeros(N, 1, device=device), cdfs], dim=-1)
-    sample[:, 1] = interp1d_grid_sample(rand, cdfs.T[:, 0], qs)
+    # Normalised per row: the rows are integrated by rectangles while the densities were
+    # normalised by trapezoids, so a row's CDF ends near one rather than at it, and a
+    # uniform draw above that endpoint would clamp to q = 1.
+    cdfs = cdfs / cdfs[:, -1:].clamp_min(_TINY)
+    sample[:, 1] = interp1d_rows(rand, cdfs, qs)
 
     # redshift
     p_z, zs = get_p_z_torch(hyperpost_samp, device=device)
@@ -619,4 +671,103 @@ def sample_intrinsic_torch(hyperpost_samp, N, device=None):
 
 #: Column order of :func:`sample_intrinsic` and :func:`sample_intrinsic_torch`, matching
 #: the dtype ``injection_study.ipynb`` builds from them.
+def plan_marginalisation(n_samples: int, n_available: int):
+    """
+    How many hyperposterior samples to draw from, and how many injections under each.
+
+    Ported from Thyme's ``_plan_marginalisation``. Distinct posterior points are the
+    scarce thing, so it takes as many as it can and only repeats when there are fewer
+    posterior samples than injections wanted.
+
+    Returns
+    -------
+    (n_hyper, n_per_hyper)
+        ``n_hyper * n_per_hyper >= n_samples``; the caller truncates.
+    """
+    import math
+
+    if n_samples <= 0:
+        raise ValueError(f"n_samples must be positive, got {n_samples}")
+    if n_available <= 0:
+        raise ValueError("the hyperposterior holds no samples to marginalise over")
+    n_hyper = min(int(n_samples), int(n_available))
+    return n_hyper, math.ceil(int(n_samples) / n_hyper)
+
+
+def sample_intrinsic_marginalised(
+    hyperposterior, N, n_hyper=None, device=None, seed=None, progress=False
+):
+    """
+    Draw intrinsic parameters marginalised over the population hyperposterior.
+
+    Conditioning on one hyperposterior sample states a population the data merely
+    prefers, and hands the injection set a confidence the inference does not have.
+    Drawing each block of injections under a *different* posterior sample propagates that
+    uncertainty into the set instead, which is what Thyme's population pipeline defaults
+    to.
+
+    It matters here more than it might elsewhere, because these injections define
+    ``p(x | signal)`` for p_astro. A signal density built at a single hyperposterior point
+    is narrower than the astrophysical uncertainty warrants, and every candidate's
+    probability inherits that.
+
+    Parameters
+    ----------
+    hyperposterior : sequence of mapping
+        One mapping of hyperparameters per posterior sample, as
+        :func:`sage.search.sources.gwtc3_powerlawpeak.population` returns.
+    N : int
+        Injections wanted. The result is exactly this many.
+    n_hyper : int, optional
+        Posterior samples to draw from. Defaults to :func:`plan_marginalisation`, which
+        uses as many distinct ones as there are injections.
+    seed : int, optional
+        Seeds the choice of posterior samples and the shuffle. The per-injection draws
+        follow torch's global generator, as the single-sample path does.
+
+    Returns
+    -------
+    torch.Tensor
+        ``(N, 7)`` in :data:`INTRINSIC_COLUMNS` order.
+    """
+    import numpy as np
+    import torch
+
+    device = _torch_device(device)
+    samples = list(hyperposterior)
+    n_available = len(samples)
+    if n_hyper is None:
+        n_hyper, n_per = plan_marginalisation(int(N), n_available)
+    else:
+        n_hyper = int(n_hyper)
+        if n_hyper <= 0:
+            raise ValueError(f"n_hyper must be positive, got {n_hyper}")
+        n_per = int(np.ceil(int(N) / n_hyper))
+
+    rng = np.random.default_rng(seed)
+    if n_hyper <= n_available:
+        # Without replacement: every block comes from a distinct posterior point, which
+        # is the diversity the marginalisation exists to buy.
+        chosen = rng.choice(n_available, size=n_hyper, replace=False)
+    else:
+        chosen = rng.integers(0, n_available, size=n_hyper)
+
+    blocks = []
+    iterator = range(n_hyper)
+    if progress:
+        from tqdm import tqdm
+
+        iterator = tqdm(iterator, desc="hyperposterior marginalisation")
+    for i in iterator:
+        blocks.append(
+            sample_intrinsic_torch(samples[int(chosen[i])], n_per, device=device)
+        )
+    drawn = torch.cat(blocks, dim=0)
+
+    # Shuffled before truncation, so no posterior point is systematically dropped when
+    # n_hyper * n_per overshoots N -- otherwise the last blocks are the ones cut.
+    order = torch.as_tensor(rng.permutation(drawn.shape[0]), device=drawn.device)
+    return drawn[order][: int(N)]
+
+
 INTRINSIC_COLUMNS = ("m1", "q", "z", "chi_1", "chi_2", "costilt_1", "costilt_2")
