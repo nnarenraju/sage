@@ -529,6 +529,30 @@ def collate_slides(
             "candidates look more significant. A slide that ran and found nothing writes "
             "an empty shard and is not affected by this"
         )
+    # The rows' slide id and the shard's own must agree. They come from different places
+    # -- the attribute is stamped when the shard is opened, the column when each trigger
+    # is written -- and only the column is what this groups on. When the cached path
+    # first ran, every row carried 0 while every attribute was correct: `slid` then
+    # selected nothing, and the failure surfaced four hours later as a missing column
+    # rather than as the mislabelled background it was.
+    declared = _declared_slides(shard_paths)
+    present = {int(value) for value in np.unique(slide_ids)}
+    stray = present - declared - {0}
+    if declared and not present <= declared | {0}:
+        raise ValueError(
+            f"trigger rows declare slides {sorted(stray)} that no shard's attributes "
+            f"claim (the shards declare {sorted(declared)}); the row labels and the "
+            "shard labels are written at different moments and only the rows are grouped "
+            "on here, so a disagreement mislabels the background rather than failing"
+        )
+    if declared and present == {0}:
+        raise ValueError(
+            f"every trigger row is labelled slide 0 while the shards declare "
+            f"{sorted(declared)}; the whole background would be read as foreground and "
+            "collate to nothing. The cached path scores through a zero-lag lattice and "
+            "must stamp each slide's own id on its rows"
+        )
+
     slid = slide_ids != 0
     # The clusterer carries the decoded merger time through on the surviving
     # representatives, so foreground removal can compare merger time against merger time
@@ -1218,7 +1242,7 @@ def run(spec, slides=None, **kwargs) -> dict:
     complete zero-lag histogram, and this is the first stage that depends on both. It goes
     to its own file, not into the plan -- see :func:`freeze_keep_threshold`.
     """
-    from sage.search.engine import run_search
+    from sage.search.engine import run_search, run_search_group
     from sage.search.slides import SlidePlan
 
     plan_path = spec.path("slides", "slide_plan.h5")
@@ -1234,13 +1258,27 @@ def run(spec, slides=None, **kwargs) -> dict:
     shifts = {
         int(s.slide_id): (dict(s.window_shift) if s.window_shift else None) for s in plan
     }
-    scored = []
     for slide_id in wanted:
         if slide_id not in lags:
             raise ValueError(
                 f"slide {slide_id} is not in the stored ladder at {plan_path}"
             )
-        scored.append(
+
+    # A rolled ladder can share one pass over the run between every slide in this task:
+    # the frontend is computed once per window and the backend runs per slide, which is
+    # measured at 2.7x against re-running the whole network per slide. It applies only to
+    # a roll -- a lag ladder reads shifted *strain*, so there is no common pass to share
+    # -- and only when the frontend has been proven separable, which is what
+    # `use_frontend_cache` asserts at load.
+    rolled = [sid for sid in wanted if shifts.get(sid)]
+    if spec.engine.use_frontend_cache and len(rolled) == len(wanted) and rolled:
+        scored = run_search_group(
+            spec,
+            [(sid, shifts[sid]) for sid in rolled],
+            keep_threshold=threshold,
+        )
+    else:
+        scored = [
             run_search(
                 spec,
                 stage="background",
@@ -1249,7 +1287,8 @@ def run(spec, slides=None, **kwargs) -> dict:
                 window_shift=shifts.get(slide_id),
                 keep_threshold=threshold,
             )
-        )
+            for slide_id in wanted
+        ]
 
     shards = sorted(spec.path("background").glob("background_slide*.h5"))
     covered = _declared_slides(shards)

@@ -360,3 +360,219 @@ class TestBlockPartition:
         from sage.search.reader import StreamingStrainReader
 
         assert "block_seconds" in StreamingStrainReader.__init__.__code__.co_varnames
+
+
+class TestRolledCache:
+    """Scoring several rolled slides in one pass, sharing frontend features."""
+
+    def _pieces(self, tmp_path, toy_architecture):
+        """A spec, a zero-lag grid, and the engine, all on the CPU."""
+        from pathlib import Path
+
+        from sage.search.checkpoint import as_config, load_search_model
+        from sage.search.engine import (
+            SearchEngine,
+            build_param_sampler,
+            build_processor,
+        )
+        from sage.search.grid import AnalysisGrid
+        from sage.search.segments import coincident_intervals, load_segments
+
+        spec = _scored_campaign(tmp_path, toy_architecture)
+        geometry = spec.geometry_object()
+        segments = {
+            detector: load_segments(
+                Path(spec.data.release_dir)
+                / f"data_{detector}_{spec.data.observing_run}_segments.json"
+            )
+            for detector in spec.data.detectors
+        }
+        grid = AnalysisGrid.build(
+            geometry, segments, coincident_intervals(segments),
+            reference_detector="H1", coverage=False,
+        )
+        model, ckpt = load_search_model(
+            spec.engine.checkpoint, cfg=None, data_cfg=None, device="cpu",
+            architecture=spec.engine.architecture,
+        )
+        cfg, data_cfg = as_config(ckpt.cfg), as_config(ckpt.data_cfg)
+        spec.apply_shadow_overrides(cfg, data_cfg)
+        sampler = build_param_sampler(
+            cfg, data_cfg, spec.engine.gwconfig, seed=int(spec.engine.sampler_seed)
+        )
+        engine = SearchEngine(
+            model, build_processor(sampler), geometry, device="cpu",
+            amp_dtype="float32", autocast=False, keep_threshold=float("-inf"),
+        )
+        return spec, grid, geometry, engine, ckpt
+
+    def _reader(self, spec, grid, geometry, batch_size=64):
+        from sage.search.reader import StreamingStrainReader
+
+        return StreamingStrainReader(
+            spec.data.release_dir, grid, geometry,
+            batch_size=batch_size, prefetch=0,
+        )
+
+    def _writer(self, path, spec, ckpt, slide_id=0):
+        """A shard with the provenance block the writer requires of any real product."""
+        from sage.search.manifest import provenance
+        from sage.search.triggers import TriggerWriter
+
+        attrs = dict(provenance(spec, ckpt))
+        attrs.update(
+            clustered=False, slide_id=int(slide_id), stage="background",
+            keep_threshold=float("-inf"), n_blocks=1,
+        )
+        return TriggerWriter(path, attrs)
+
+    def test_matches_the_uncached_path(self, tmp_path, toy_architecture):
+        """
+        The gate. A cached slide must score **exactly** what re-running the whole network
+        on shifted strain scores -- the cache is an arrangement of the same arithmetic, so
+        anything else means features are being attributed to the wrong windows, and the
+        background would be subtly unlike the zero-lag it is compared against.
+        """
+        from pathlib import Path
+
+        import numpy as np
+
+        from sage.search.grid import AnalysisGrid
+        from sage.search.segments import coincident_intervals, load_segments
+
+        spec, grid, geometry, engine, ckpt = self._pieces(tmp_path, toy_architecture)
+        shift = 37
+
+        # Uncached: build the rolled lattice and score it the ordinary way.
+        segments = {
+            d: load_segments(
+                Path(spec.data.release_dir) / f"data_{d}_{spec.data.observing_run}"
+                "_segments.json"
+            )
+            for d in spec.data.detectors
+        }
+        rolled = AnalysisGrid.build(
+            geometry, segments, coincident_intervals(segments),
+            reference_detector="H1", coverage=False, slide_id=1,
+            window_shift={"H1": 0, "L1": shift},
+        )
+        plain_path = tmp_path / "plain.h5"
+        plain = self._writer(plain_path, spec, ckpt, 1)
+        try:
+            engine.run(self._reader(spec, rolled, geometry), rolled, plain)
+        finally:
+            plain.close()
+
+        # Cached: one zero-lag pass, the pairing applied by gathering shifted ordinals.
+        cached_path = tmp_path / "cached.h5"
+        cached = self._writer(cached_path, spec, ckpt, 1)
+        try:
+            engine.run_rolled(
+                self._reader(spec, grid, geometry),
+                [(1, {"H1": 0, "L1": shift})],
+                {1: cached},
+            )
+        finally:
+            cached.close()
+
+        import h5py
+
+        with h5py.File(plain_path) as a, h5py.File(cached_path) as b:
+            left = np.sort(np.asarray(a["triggers/stat"]))
+            right = np.sort(np.asarray(b["triggers/stat"]))
+            hist_a = np.asarray(a["histogram/counts"])
+            hist_b = np.asarray(b["histogram/counts"])
+
+        assert left.size == right.size
+        np.testing.assert_array_equal(hist_a, hist_b)
+        np.testing.assert_allclose(left, right, rtol=0, atol=1e-5)
+
+    def test_every_window_scored_for_every_slide(self, tmp_path, toy_architecture):
+        """
+        A slide that quietly scores fewer windows than the lattice holds reports a
+        livetime it did not analyse, and the false-alarm denominator is that livetime.
+        """
+        spec, grid, geometry, engine, ckpt = self._pieces(tmp_path, toy_architecture)
+        writers = {sid: self._writer(tmp_path / f"s{sid}.h5", spec, ckpt, sid)
+                   for sid in (1, 2, 3)}
+        try:
+            reports = engine.run_rolled(
+                self._reader(spec, grid, geometry),
+                [(1, {"H1": 0, "L1": 11}), (2, {"H1": 0, "L1": 29}),
+                 (3, {"H1": 0, "L1": 53})],
+                writers,
+            )
+        finally:
+            for writer in writers.values():
+                writer.close()
+
+        assert set(reports) == {1, 2, 3}
+        for report in reports.values():
+            assert report.n_windows == len(grid)
+
+    def test_zero_shift_refused(self, tmp_path, toy_architecture):
+        """
+        Nothing to share. A cache costs memory and a pass over the run; spending both to
+        rescore the zero-lag is a mistake worth naming rather than absorbing.
+        """
+        spec, grid, geometry, engine, ckpt = self._pieces(tmp_path, toy_architecture)
+
+        with pytest.raises(ValueError, match="zero-lag pass repeated"):
+            engine.run_rolled(
+                self._reader(spec, grid, geometry), [(1, {"H1": 0, "L1": 0})], {}
+            )
+
+    def test_wrapped_tail_is_scored(self, tmp_path, toy_architecture):
+        """
+        The pairing wraps: a reference ordinal near the end pairs with a follower near the
+        start, whose features were evicted. Those windows must still be scored -- dropping
+        them would shorten the background by the shift, silently.
+        """
+        spec, grid, geometry, engine, ckpt = self._pieces(tmp_path, toy_architecture)
+        # A shift large enough that the wrap covers a real share of the lattice.
+        shift = max(1, len(grid) // 4)
+        writers = {1: self._writer(tmp_path / "wrap.h5", spec, ckpt, 1)}
+        try:
+            reports = engine.run_rolled(
+                self._reader(spec, grid, geometry),
+                [(1, {"H1": 0, "L1": shift})],
+                writers,
+            )
+        finally:
+            writers[1].close()
+
+        assert reports[1].n_windows == len(grid)
+
+    def test_each_slide_stamps_its_own_id(self, tmp_path, toy_architecture):
+        """
+        The cached path reads the run once through a **zero-lag** lattice and applies each
+        slide by gathering shifted features, so every batch it produces carries
+        ``slide_id = 0``. Stamping that labels every background trigger as foreground --
+        the shard's attribute still says otherwise, and only the rows are what the
+        collation groups on, so the background collates to nothing and the failure
+        surfaces hours later as a missing column.
+        """
+        import h5py
+        import numpy as np
+
+        spec, grid, geometry, engine, ckpt = self._pieces(tmp_path, toy_architecture)
+        paths = {sid: tmp_path / f"stamp{sid}.h5" for sid in (1, 2)}
+        writers = {
+            sid: self._writer(paths[sid], spec, ckpt, sid) for sid in paths
+        }
+        try:
+            engine.run_rolled(
+                self._reader(spec, grid, geometry),
+                [(1, {"H1": 0, "L1": 13}), (2, {"H1": 0, "L1": 31})],
+                writers,
+            )
+        finally:
+            for writer in writers.values():
+                writer.close()
+
+        for slide_id, path in paths.items():
+            with h5py.File(path, "r") as handle:
+                rows = np.asarray(handle["triggers/slide_id"])
+                assert handle.attrs["slide_id"] == slide_id
+                assert rows.size, f"slide {slide_id} wrote no triggers to check"
+                assert set(np.unique(rows)) == {slide_id}

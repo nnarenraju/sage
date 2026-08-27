@@ -24,7 +24,7 @@ output cast quantises the logit at the scale where the FAR threshold sits.
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -140,13 +140,25 @@ class SearchEngine:
 
     def forward(self, strain) -> Tuple["np.ndarray", "np.ndarray"]:
         """Score a raw strain batch; returns ``(ranking_statistic, point_estimates)``."""
+        return self.forward_frequency(self._to_frequency_domain(strain))
+
+    def forward_frequency(self, spectra) -> Tuple["np.ndarray", "np.ndarray"]:
+        """
+        Score an already-transformed batch: complex ``(B, D, F)``.
+
+        The scoring path itself, which :meth:`forward` reaches through the transform. The
+        injection campaign enters here because its signals are generated in the frequency
+        domain and are added to noise there, exactly as training adds them -- so it is
+        scored by the same code as a search window rather than by a second copy of it,
+        and no round trip through the time domain is needed to reach that code.
+        """
         import torch
 
         from sage.factory.contract import forward_batch
 
         with torch.inference_mode():
             output = forward_batch(
-                self._to_frequency_domain(strain),
+                spectra,
                 self.model,
                 self.processor,
                 amp_dtype=self.amp_dtype,
@@ -271,8 +283,16 @@ class SearchEngine:
             blocks_completed=1,
         )
 
-    def _table(self, batch, stat, point, loud) -> "object":
-        """Assemble the schema columns for the windows that passed the threshold."""
+    def _table(self, batch, stat, point, loud, slide_id=None) -> "object":
+        """
+        Assemble the schema columns for the windows that passed the threshold.
+
+        ``slide_id`` overrides the batch's own. The cached path reads the run once
+        through a **zero-lag** lattice and applies each slide by gathering shifted
+        features, so every batch it produces carries ``slide_id = 0`` -- and stamping that
+        would label every background trigger as foreground. The shard's attribute would
+        still say otherwise, and only one of the two is what the collation groups on.
+        """
         from sage.search.triggers import TriggerTable
 
         columns: Dict[str, np.ndarray] = {
@@ -280,7 +300,11 @@ class SearchEngine:
             "gps": np.asarray(batch.gps, dtype=np.float64)[loud],
             "segment_index": np.asarray(batch.segment_index, dtype=np.int64)[loud],
             "local_start": np.asarray(batch.local_start, dtype=np.int64)[loud],
-            "slide_id": np.full(int(np.count_nonzero(loud)), batch.slide_id, np.int64),
+            "slide_id": np.full(
+                int(np.count_nonzero(loud)),
+                batch.slide_id if slide_id is None else int(slide_id),
+                np.int64,
+            ),
         }
         if self.decoder is not None:
             decoded = self.decoder.trigger_columns(
@@ -288,6 +312,213 @@ class SearchEngine:
             )
             columns.update(decoded)
         return TriggerTable(columns=columns, attrs={"clustered": False})
+
+    def run_rolled(
+        self,
+        reader,
+        slides,
+        writers,
+        cache=None,
+        max_resident: Optional[int] = None,
+    ) -> Dict[int, EngineReport]:
+        """
+        Score several rolled slides in one pass, computing each frontend feature once.
+
+        This is what the frontend cache is for, and it only pays across slides: within one
+        slide there is nothing to reuse. The whole network runs at 4,559 windows per second
+        and the backend alone at 12,614, so scoring ``K`` slides by re-running everything
+        costs ``K`` full passes where computing the frontend once and the backend ``K``
+        times costs one frontend pass plus ``K`` backend passes -- measured, 2.7x at any
+        useful depth.
+
+        The reader must be a **zero-lag** one. Under a roll, detector ``d``'s features for
+        lattice ordinal ``j`` are its own data at that ordinal; the pairing is applied by
+        *gathering* shifted ordinals out of the cache, not by reading shifted strain. So
+        one read of the run serves every slide, which is also why this cannot be split
+        across array tasks at slide granularity -- a task owns a group of slides, and the
+        group is what shares the pass.
+
+        Parameters
+        ----------
+        slides : sequence of (int, mapping)
+            ``(slide_id, {detector: shift})`` per slide, with the reference at zero.
+        writers : mapping
+            ``slide_id -> TriggerWriter``, one open shard each.
+        max_resident : int, optional
+            Windows of features to hold before evicting. Defaults to the largest shift
+            plus one batch, which is the least that can serve every slide. Larger costs
+            memory and buys nothing; smaller cannot serve the deepest shift and
+            :meth:`FrontendCache.gather` says so rather than zero-filling.
+
+        Notes
+        -----
+        The pairing wraps: a reference ordinal near the end of the lattice pairs with a
+        follower near the start, whose features were evicted long before. Rather than pin
+        the first ``max_shift`` windows for the whole pass -- which doubles the residency
+        for a few per cent of the work -- the wrapped tail is scored in a second, short
+        pass that recomputes them. On the O3a lattice that is 5.7% of one frontend pass.
+        """
+        import numpy as np
+        import torch
+
+        from sage.search.features import FrontendCache
+        from sage.search.triggers import histogram_stats
+
+        detectors = tuple(reader.detectors)
+        n_detectors = len(detectors)
+        slides = [(int(sid), dict(shift)) for sid, shift in slides]
+        if not slides:
+            raise ValueError("run_rolled was given no slides to score")
+        shifts = [s for _, shift in slides for s in shift.values()]
+        max_shift = max(shifts) if shifts else 0
+        if max_shift <= 0:
+            raise ValueError(
+                "every slide has a zero shift, so this is a zero-lag pass repeated; use "
+                "run() instead, which does not pay for a cache it cannot spend"
+            )
+
+        started = time.perf_counter()
+        counts = {sid: [0, 0] for sid, _ in slides}
+        lattice = int(len(reader.grid))
+
+        if cache is None:
+            probe = self._probe_features(reader)
+            cache = FrontendCache(
+                n_detectors,
+                tuple(probe.shape[1:]),
+                device="cuda" if self.device.type == "cuda" else "cpu",
+                dtype=str(self.amp_dtype).rsplit(".", 1)[-1],
+            )
+        resident = int(max_resident or (max_shift + int(reader.batch_size) * 2))
+
+        # Reference windows whose followers are not yet computed, as
+        # (ordinal, batch, block_id, last_of_block).
+        deferred: List[Tuple[int, object, int, bool]] = []
+        frontier = 0
+        blocks_done = 0
+
+        def _emit(entry) -> None:
+            """Score one deferred batch, and close its block when it is the last of one."""
+            nonlocal blocks_done
+            first, batch, block_id, last = entry
+            ids = first + np.arange(len(batch), dtype=np.int64)
+            self._score_pairings(ids, batch, slides, writers, cache, counts, lattice)
+            if last:
+                # Completed per slide, because each slide owns its own shard and a block
+                # is the unit that shard commits atomically. Deferred scoring means a
+                # block closes long after it was read, which is exactly why the flag
+                # travels with the batch rather than being inferred from the loop.
+                for slide_id, _ in slides:
+                    writers[slide_id].complete_block(int(block_id))
+                blocks_done += 1
+
+        def _drain(limit: int) -> None:
+            """Score every deferred reference window whose followers are now resident."""
+            while deferred and deferred[0][0] + max_shift < limit:
+                _emit(deferred.pop(0))
+            if deferred:
+                cache.evict_before(int(deferred[0][0]))
+
+        for block in _blocks_of(reader, reader.grid):
+            batches = list(reader.iter_block(block))
+            for position, batch in enumerate(batches):
+                ids = frontier + np.arange(len(batch), dtype=np.int64)
+                prepared = self._prepared(batch.strain)
+                with torch.inference_mode():
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=self.amp_dtype,
+                        enabled=self.autocast,
+                    ):
+                        for index in range(n_detectors):
+                            cache.put(
+                                index, ids, self._split().frontend(prepared, index)
+                            )
+                deferred.append(
+                    (frontier, batch, block.block_id, position == len(batches) - 1)
+                )
+                frontier += len(batch)
+                _drain(frontier - resident + max_shift)
+
+        # Everything still deferred pairs into the wrapped head of the lattice, which was
+        # evicted. Recompute just that head and finish.
+        if deferred:
+            self._recompute_head(reader, cache, max_shift)
+            while deferred:
+                _emit(deferred.pop(0))
+
+        elapsed = time.perf_counter() - started
+        return {
+            sid: EngineReport(
+                n_windows=counts[sid][0],
+                n_triggers=counts[sid][1],
+                wall_seconds=elapsed,
+                windows_per_second=counts[sid][0] / elapsed if elapsed > 0 else 0.0,
+                blocks_completed=blocks_done,
+            )
+            for sid, _ in slides
+        }
+
+    def _score_pairings(self, ids, batch, slides, writers, cache, counts, lattice) -> None:
+        """Run the backend for every slide over one batch of reference ordinals."""
+        import numpy as np
+
+        from sage.search.triggers import histogram_stats
+
+        detectors = tuple(batch.detectors) if batch.detectors else ()
+        for slide_id, shift in slides:
+            features = []
+            for index, detector in enumerate(detectors):
+                wanted = (ids + int(shift.get(detector, 0))) % lattice
+                features.append(cache.gather(index, wanted))
+            stat, point = self.forward_backend(features)
+            writer = writers[slide_id]
+            writer.add_histogram(histogram_stats(stat, clustered=False))
+            counts[slide_id][0] += int(stat.size)
+            loud = stat > self.keep_threshold
+            if not np.any(loud):
+                continue
+            table = self._table(batch, stat, point, loud, slide_id=slide_id)
+            writer.append(table)
+            counts[slide_id][1] += len(table)
+
+    def _probe_features(self, reader):
+        """Frontend output shape, from one real batch, so the cache is sized correctly."""
+        for block in _blocks_of(reader, reader.grid):
+            for batch in reader.iter_block(block):
+                return self.forward_frontend(batch.strain[:2], 0)
+        raise ValueError("the reader produced no windows to size the cache from")
+
+    def _recompute_head(self, reader, cache, n_windows: int) -> None:
+        """
+        Re-run the frontend over the first ``n_windows`` ordinals, for the wrapped tail.
+
+        Cheaper than pinning them for the whole pass: on the O3a lattice the head is 5.7%
+        of the run against a residency that would otherwise double.
+        """
+        import numpy as np
+        import torch
+
+        reader.seek(0)
+        placed = 0
+        for block in _blocks_of(reader, reader.grid):
+            for batch in reader.iter_block(block):
+                take = min(len(batch), n_windows - placed)
+                ids = placed + np.arange(take, dtype=np.int64)
+                prepared = self._prepared(batch.strain[:take])
+                with torch.inference_mode():
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=self.amp_dtype,
+                        enabled=self.autocast,
+                    ):
+                        for index in range(len(reader.detectors)):
+                            cache.put(
+                                index, ids, self._split().frontend(prepared, index)
+                            )
+                placed += take
+                if placed >= n_windows:
+                    return
 
     def run(self, reader, grid: AnalysisGrid, writer, resume: bool = True) -> EngineReport:
         """
@@ -330,6 +561,137 @@ class SearchEngine:
             windows_per_second=n_windows / elapsed if elapsed > 0 else 0.0,
             blocks_completed=blocks,
         )
+
+
+def run_search_group(spec: SearchSpec, slides, keep_threshold: float = 0.0) -> list:
+    """
+    Score a group of rolled slides in one pass, sharing the frontend.
+
+    The cached counterpart of :func:`run_search`. Everything is built once -- checkpoint,
+    processor, lattice, reader -- and the run is read once; each slide gets its own shard,
+    named by slide id exactly as the uncached path names it, so nothing downstream can
+    tell which path produced a background.
+
+    The lattice is the **zero-lag** one. A roll pairs by position, not by time, so
+    detector ``d``'s features at ordinal ``j`` are its own data at ``j`` whatever the
+    slide; the shift is applied by gathering shifted ordinals out of the cache. That is
+    the whole saving, and it is why the unit of work here is a group rather than a slide.
+
+    Parameters
+    ----------
+    slides : sequence of (int, mapping)
+        ``(slide_id, {detector: shift})``, the reference carried at zero.
+    """
+    from sage.search.checkpoint import as_config, load_search_model
+    from sage.search.decode import PEDecoder
+    from sage.search.grid import AnalysisGrid
+    from sage.search.manifest import provenance
+    from sage.search.reader import StreamingStrainReader
+    from sage.search.segments import coincident_intervals, load_segments
+    from sage.search.triggers import TriggerWriter
+
+    slides = [(int(sid), dict(shift)) for sid, shift in slides]
+    if not slides:
+        raise ValueError("run_search_group was given no slides")
+
+    geometry = spec.geometry_object()
+    release = Path(spec.data.release_dir)
+    segments = {
+        detector: load_segments(
+            release / f"data_{detector}_{spec.data.observing_run}_segments.json"
+        )
+        for detector in spec.data.detectors
+    }
+    grid = AnalysisGrid.build(
+        geometry,
+        segments,
+        coincident_intervals(segments),
+        slide_id=0,
+        reference_detector=spec.slides.reference_detector,
+        coverage=False,
+    )
+
+    model, ckpt = load_search_model(
+        spec.engine.checkpoint,
+        cfg=None,
+        data_cfg=None,
+        device=spec.engine.device,
+        require_separable=True,
+        architecture=spec.engine.architecture,
+    )
+    cfg, data_cfg = as_config(ckpt.cfg), as_config(ckpt.data_cfg)
+    spec.apply_shadow_overrides(cfg, data_cfg)
+    sampler = build_param_sampler(
+        cfg, data_cfg, spec.engine.gwconfig, seed=int(spec.engine.sampler_seed)
+    )
+    decoder = PEDecoder(
+        targets=tuple(ckpt.cfg.get("do_point_estimate", ("tc", "mchirp"))),
+        param_sampler=sampler,
+        pe_target_minmax=bool(ckpt.cfg.get("pe_target_minmax", False)),
+        geometry=geometry,
+    )
+    engine = SearchEngine(
+        model,
+        build_processor(sampler),
+        geometry,
+        device=spec.engine.device,
+        amp_dtype=spec.engine.amp_dtype,
+        keep_threshold=float(keep_threshold),
+        autocast=bool(ckpt.cfg.get("autocast", True)),
+        decoder=decoder,
+    )
+
+    base = dict(provenance(spec, ckpt))
+    base.update(
+        clustered=False,
+        stage="background",
+        keep_threshold=float(keep_threshold),
+        pairing="roll",
+        n_blocks=len(grid.blocks(float(spec.engine.block_seconds))),
+    )
+    directory = spec.path("background")
+    directory.mkdir(parents=True, exist_ok=True)
+
+    writers = {}
+    paths = {}
+    for slide_id, shift in slides:
+        attrs = dict(base)
+        attrs["slide_id"] = int(slide_id)
+        for detector, value in sorted(shift.items()):
+            attrs[f"window_shift_{detector}"] = int(value)
+        paths[slide_id] = directory / f"background_slide{slide_id:04d}.h5"
+        writers[slide_id] = TriggerWriter(paths[slide_id], attrs)
+
+    reader = StreamingStrainReader(
+        release,
+        grid,
+        geometry,
+        batch_size=int(spec.engine.batch_size),
+        block_seconds=float(spec.engine.block_seconds),
+        prefetch=2,
+        pin_memory=True,
+    )
+    try:
+        reports = engine.run_rolled(reader, slides, writers)
+    finally:
+        reader.close()
+        for writer in writers.values():
+            writer.close()
+
+    return [
+        {
+            "shard": str(paths[slide_id]),
+            "slide_id": slide_id,
+            **reports[slide_id].as_dict(),
+            "fingerprint": combine(
+                reports[slide_id].n_windows,
+                reports[slide_id].n_triggers,
+                slide_id,
+                digest_h5(paths[slide_id]),
+            ),
+        }
+        for slide_id, _ in slides
+    ]
 
 
 def _blocks_of(reader, grid: AnalysisGrid):
@@ -520,6 +882,7 @@ def run_search(
         window_shift=dict(window_shift) if window_shift else None,
         slide_id=int(slide_id),
         reference_detector=spec.slides.reference_detector,
+        coverage=False,
     )
 
     model, ckpt = load_search_model(

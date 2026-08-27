@@ -185,6 +185,19 @@ def read_checkpoint(path: str | Path, map_location: str = "cpu") -> LoadedCheckp
     try:
         payload = torch.load(target, map_location=map_location, weights_only=False)
     except Exception as error:  # noqa: BLE001 - re-raised with the file named
+        # Two very different failures arrive here and the diagnosis must not be guessed.
+        # A checkpoint saved from a GPU refuses to load on a machine with no CUDA, which
+        # is an ordinary thing to hit on a login node and is fixed by asking for the
+        # right device. Blaming a refactored config class for that sends the reader to
+        # look for a class that was never the problem.
+        text = str(error)
+        if "CUDA" in text and "map_location" in text:
+            raise ValueError(
+                f"{target} was saved from a GPU and this machine has no CUDA "
+                f"({type(error).__name__}: {text.splitlines()[0]}). Load it with "
+                "map_location='cpu', or run where a GPU is visible. The checkpoint "
+                "itself is fine"
+            ) from error
         raise ValueError(
             f"{target} could not be unpickled ({type(error).__name__}: {error}). A "
             "checkpoint that stored a live config object cannot be reopened once that "
