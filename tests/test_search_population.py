@@ -326,3 +326,170 @@ class TestMarginalisation:
             )
         assert np.allclose(draws[0], draws[1])
         assert not np.allclose(draws[0], draws[2])
+
+
+class TestOutOfDistribution:
+    """Posterior mass inside the box the network was trained on."""
+
+    def test_sgwc1_box_and_ordering(self):
+        """
+        sgwc-1's ``check_is_ood`` (``catalogue.ipynb`` cell 16): 7 to 50 solar masses on
+        both components, *and* ``mass2 <= mass1``. The ordering term is part of the
+        reference formula rather than a tidy-up -- a no-op for a posterior that already
+        orders its components, and not for one that does not.
+        """
+        from sage.search.ood import id_fraction
+
+        ordered = id_fraction(
+            np.array([30.0, 30.0]), np.array([20.0, 20.0]), n_subsample=None
+        )
+        assert ordered.id_fraction == pytest.approx(1.0)
+
+        # Same masses, components the wrong way round: inside the box, outside the model.
+        swapped = id_fraction(
+            np.array([20.0, 20.0]), np.array([30.0, 30.0]), n_subsample=None
+        )
+        assert swapped.id_fraction == pytest.approx(0.0)
+
+    def test_box_edges_are_inclusive(self):
+        """As sgwc-1 writes them: ``>=`` and ``<=``, so an event exactly at 7 or 50 is in."""
+        from sage.search.ood import id_fraction
+
+        edges = id_fraction(
+            np.array([50.0, 7.0]), np.array([7.0, 7.0]), n_subsample=None
+        )
+        assert edges.id_fraction == pytest.approx(1.0)
+
+    def test_half_the_mass_is_the_threshold(self):
+        """
+        sgwc-1's rule in the same cell: out of distribution below half the posterior mass
+        inside. Checked on both sides of it, since a threshold written the wrong way round
+        classifies every event as its opposite and nothing downstream notices.
+        """
+        from sage.search.ood import id_fraction
+
+        inside = np.array([30.0] * 6 + [100.0] * 4)
+        secondary = np.array([20.0] * 6 + [90.0] * 4)
+        assert not id_fraction(inside, secondary, n_subsample=None).is_ood
+
+        mostly_out = np.array([30.0] * 4 + [100.0] * 6)
+        secondary_out = np.array([20.0] * 4 + [90.0] * 6)
+        assert id_fraction(mostly_out, secondary_out, n_subsample=None).is_ood
+
+    def test_subsample_is_random_not_a_head(self):
+        """
+        The one departure from sgwc-1, and the reason for it: posterior files are not
+        always stored in a random order, so truncating to the first N samples measures a
+        different region of the posterior than the posterior has. Here the file is sorted,
+        and a head truncation would report every sample outside the box.
+        """
+        from sage.search.ood import id_fraction
+
+        # Sorted ascending: the first 100 are all below the box, the rest inside it.
+        mass1 = np.concatenate([np.full(100, 2.0), np.full(900, 30.0)])
+        mass2 = np.concatenate([np.full(100, 1.5), np.full(900, 20.0)])
+
+        drawn = id_fraction(mass1, mass2, n_subsample=100, seed=3)
+        assert drawn.n_samples == 100
+        assert drawn.id_fraction > 0.5
+
+    def test_empty_posterior_refused(self):
+        """
+        A read that returned nothing must not be reported as a verdict. sgwc-1 classifies
+        an unreadable file as out of distribution; that conflates a failure with a finding,
+        and the count of out-of-distribution events then includes files nobody could open.
+        """
+        from sage.search.ood import id_fraction
+
+        with pytest.raises(ValueError, match="empty posterior"):
+            id_fraction(np.array([]), np.array([]))
+
+    def test_mismatched_lengths_refused(self):
+        """Paired componentwise, unequal arrays describe binaries neither posterior holds."""
+        from sage.search.ood import id_fraction
+
+        with pytest.raises(ValueError, match="against"):
+            id_fraction(np.array([30.0, 40.0]), np.array([20.0]))
+
+
+class TestDrawReproducibility:
+    """
+    The same configuration draws the same injections.
+
+    These injections define ``p(x | signal)``, so a set nothing can reproduce is a density
+    nothing can reproduce. The inverse-CDF lookups fell through to torch's global
+    generator, which the seed does not reach: two calls with identical arguments returned
+    different binaries. Only the stream is pinned here -- the population each block is
+    drawn from is untouched, so the distribution is unchanged.
+    """
+
+    def _samples(self, n=12):
+        rng = np.random.default_rng(5)
+        out = []
+        for _ in range(n):
+            sample = _hyperposterior()
+            sample["alpha"] = float(rng.uniform(2.0, 4.0))
+            sample["beta"] = float(rng.uniform(0.0, 2.0))
+            out.append(sample)
+        return out
+
+    def test_marginalised_draw_repeats(self):
+        """Same seed, same injections."""
+        import torch
+
+        from sage.search.injection.population import sample_intrinsic_marginalised
+
+        samples = self._samples()
+        first, second = (
+            sample_intrinsic_marginalised(
+                samples, 40, n_hyper=4, device="cpu", seed=17
+            )
+            for _ in range(2)
+        )
+        assert torch.equal(first, second)
+
+    def test_a_different_seed_draws_differently(self):
+        """Otherwise the seed is decorative and the set is fixed for the wrong reason."""
+        import torch
+
+        from sage.search.injection.population import sample_intrinsic_marginalised
+
+        samples = self._samples()
+        first = sample_intrinsic_marginalised(
+            samples, 40, n_hyper=4, device="cpu", seed=17
+        )
+        other = sample_intrinsic_marginalised(
+            samples, 40, n_hyper=4, device="cpu", seed=18
+        )
+        assert not torch.equal(first, other)
+
+    def test_single_sample_draw_repeats(self):
+        """The non-marginalised path takes a seed for the same reason."""
+        import torch
+
+        from sage.search.injection.population import sample_intrinsic_torch
+
+        sample = _hyperposterior()
+        first, second = (
+            sample_intrinsic_torch(sample, 32, device="cpu", seed=4) for _ in range(2)
+        )
+        assert torch.equal(first, second)
+
+    def test_unseeded_draw_still_follows_the_global_generator(self):
+        """
+        Left unseeded the behaviour is sgwc-1's, and is not quietly pinned to a default.
+
+        A seed silently substituted for "no seed" would make every unseeded caller draw
+        one fixed set, which is a different defect from the one being fixed.
+        """
+        import torch
+
+        from sage.search.injection.population import sample_intrinsic_torch
+
+        sample = _hyperposterior()
+        torch.manual_seed(1)
+        first = sample_intrinsic_torch(sample, 16, device="cpu")
+        second = sample_intrinsic_torch(sample, 16, device="cpu")
+        assert not torch.equal(first, second)
+        torch.manual_seed(1)
+        assert torch.equal(sample_intrinsic_torch(sample, 16, device="cpu"), first)

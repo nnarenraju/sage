@@ -102,9 +102,19 @@ class TabulatedSampler:
         object.__setattr__(self, "_cursor", 0)
 
     def __call__(self, n: int):
-        """The next ``n`` rows, wrapping is refused rather than silently repeating."""
+        """
+        The next ``n`` rows, wrapping is refused rather than silently repeating.
+
+        Returned in the wrapped sampler's dtype and on its device. The population is drawn
+        in float64 and staged to disk, which is right for the draw, but the approximant
+        multiplies the parameter batch against coefficient tables registered in the
+        sampler's dtype -- so handing it float64 raised ``expected mat1 and mat2 to have
+        the same dtype`` in the first matmul of ``IMRPhenomD.get_coeffs``. Training
+        samples in that dtype, so casting here is what the network was fitted against.
+        """
         cursor = object.__getattribute__(self, "_cursor")
         table = object.__getattribute__(self, "_table")
+        base = object.__getattribute__(self, "_base")
         if cursor + int(n) > table.shape[0]:
             raise IndexError(
                 f"the campaign asked for {n} injections from row {cursor} of a table "
@@ -112,7 +122,8 @@ class TabulatedSampler:
                 "and put them into p(x | signal) twice"
             )
         object.__setattr__(self, "_cursor", cursor + int(n))
-        return table[cursor : cursor + int(n)]
+        rows = table[cursor : cursor + int(n)]
+        return rows.to(device=base.device, dtype=base.dtype)
 
     def seek(self, row: int) -> None:
         """Rewind or advance to a row, for resuming a batch-committed campaign."""
@@ -146,6 +157,13 @@ def build_injection_table(base_sampler, intrinsic, seed: int = 0):
     different one would place a population defined in one cosmology at distances from
     another.
 
+    **The table is detector frame**, which is PyCBC's convention and therefore this one.
+    The population model states source-frame masses; the columns written here are
+    ``m_source * (1 + z)``, because that is what a waveform generator is handed. The two
+    were previously mixed -- the redshift was spent on the distance and withheld from the
+    masses -- which placed a source-frame binary at its correct luminosity distance while
+    keeping it too light for that distance by a median factor of 2.06. See SB-50.
+
     Returns
     -------
     torch.Tensor
@@ -167,9 +185,30 @@ def build_injection_table(base_sampler, intrinsic, seed: int = 0):
     table = base_sampler(n).clone()
     index = base_sampler.param_index
 
-    m1, q, z = intrinsic[:, 0], intrinsic[:, 1], intrinsic[:, 2]
+    m1_source, q, z = intrinsic[:, 0], intrinsic[:, 1], intrinsic[:, 2]
     chi1, chi2 = intrinsic[:, 3], intrinsic[:, 4]
     cos1, cos2 = intrinsic[:, 5], intrinsic[:, 6]
+
+    # Source frame to detector frame. The Power-Law + Peak model is a statement about
+    # source-frame masses; a waveform generator is handed detector-frame ones, and the
+    # two differ by (1 + z) -- which on this population is a median factor of 2.06, so it
+    # is not a correction that can be left implicit.
+    #
+    # PyCBC's convention, which this follows: `mass1`/`mass2` are unqualified and are what
+    # the generator receives, while `srcmass1`/`srcmass2`/`srcmchirp` are separate,
+    # explicitly source-frame parameters filed under "derived parameters (these are not
+    # used for waveform generation)" (pycbc/waveform/parameters.py:167-174, 203, 216-231).
+    # The relation is `pycbc.mchirp_area.src_mass_from_z_det_mass`, `msrc = mdet / (1 + z)`
+    # (mchirp_area.py:134), and `transforms.LambdaFromTOVFile` states it directly: "the
+    # mass values to be transformed are assumed to be detector frame masses ... a distance
+    # should be provided along with the mass for transformation to the source frame mass".
+    #
+    # A PyCBC injection file stores detector-frame masses and a luminosity distance and
+    # nothing else -- `population/scale_injections.py:13` enumerates exactly what is
+    # saved, and neither a redshift nor a source-frame mass is in it. The redshift is
+    # recovered downstream by inverting the distance (`cosmology.redshift`), so the table
+    # written here carries the same information under the same convention.
+    m1 = m1_source * (1.0 + z)
 
     rng = np.random.default_rng(int(seed))
     phi1 = rng.uniform(0.0, 2.0 * np.pi, n)

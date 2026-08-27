@@ -611,18 +611,18 @@ def CDF_torch(distr, theta, device=None):
     return cdf_vals, theta
 
 
-def sample_1D_torch(distr, theta, N, device=None):
+def sample_1D_torch(distr, theta, N, device=None, generator=None):
     """Inverse-CDF samples from a gridded density."""
     import torch
 
     device = _torch_device(device)
-    rand = torch.rand(N, device=device)
+    rand = torch.rand(N, device=device, generator=generator)
     CDF_theta, theta = CDF_torch(distr, theta, device=device)
     samps = interp1d_grid_sample(rand, CDF_theta, theta)
     return samps
 
 
-def sample_intrinsic_torch(hyperpost_samp, N, device=None):
+def sample_intrinsic_torch(hyperpost_samp, N, device=None, seed=None, generator=None):
     """
     Draw ``(m1, q, z, chi_1, chi_2, costilt_1, costilt_2)`` for N binaries.
 
@@ -631,19 +631,35 @@ def sample_intrinsic_torch(hyperpost_samp, N, device=None):
     Every injection's mass ratio is drawn from *its own* ``p(q | m1)``, which is what the
     ``(N, n_q)`` matrix ``get_p_q_vec`` returns was for; sgwc-1 computed it and then read
     one row. See SB-1.
+
+    Parameters
+    ----------
+    seed : int, optional
+        Pins the draw. Without one the inverse-CDF lookups consume torch's global
+        generator, so two calls with identical arguments return different injections --
+        which is what sgwc-1 does, and it makes the injection set behind ``p(x | signal)``
+        unreproducible. The distribution is unchanged either way; only which stream of
+        uniforms is consumed. See SB-56.
+    generator : torch.Generator, optional
+        Used instead of ``seed``, for a caller drawing many blocks from one stream.
     """
     import torch
 
     device = _torch_device(device)
+    if generator is None and seed is not None:
+        generator = torch.Generator(device=device)
+        generator.manual_seed(int(seed))
     sample = torch.zeros((N, 7), device=device)
 
     # mass model
     p_m1, masses = get_p_m1_torch(hyperpost_samp, device=device)
-    sample[:, 0] = sample_1D_torch(p_m1, masses, N, device=device)
+    sample[:, 0] = sample_1D_torch(
+        p_m1, masses, N, device=device, generator=generator
+    )
 
     # vectorised mass ratio, each injection against its own conditional
     pq_all, qs = get_p_q_vec(sample[:, 0], hyperpost_samp, device=device)
-    rand = torch.rand(N, device=device)
+    rand = torch.rand(N, device=device, generator=generator)
     cdfs = torch.cumsum(pq_all[:, 1:] * (qs[1:] - qs[:-1]), dim=-1)
     cdfs = torch.cat([torch.zeros(N, 1, device=device), cdfs], dim=-1)
     # Normalised per row: the rows are integrated by rectangles while the densities were
@@ -654,17 +670,21 @@ def sample_intrinsic_torch(hyperpost_samp, N, device=None):
 
     # redshift
     p_z, zs = get_p_z_torch(hyperpost_samp, device=device)
-    sample[:, 2] = sample_1D_torch(p_z, zs, N, device=device)
+    sample[:, 2] = sample_1D_torch(p_z, zs, N, device=device, generator=generator)
 
     # spin magnitudes
     p_chi, chis = get_p_chi_torch(hyperpost_samp, device=device)
-    sample[:, 3] = sample_1D_torch(p_chi, chis, N, device=device)
-    sample[:, 4] = sample_1D_torch(p_chi, chis, N, device=device)
+    sample[:, 3] = sample_1D_torch(p_chi, chis, N, device=device, generator=generator)
+    sample[:, 4] = sample_1D_torch(p_chi, chis, N, device=device, generator=generator)
 
     # spin tilts
     p_costilt, costilts = get_p_costilt_torch(hyperpost_samp, device=device)
-    sample[:, 5] = sample_1D_torch(p_costilt, costilts, N, device=device)
-    sample[:, 6] = sample_1D_torch(p_costilt, costilts, N, device=device)
+    sample[:, 5] = sample_1D_torch(
+        p_costilt, costilts, N, device=device, generator=generator
+    )
+    sample[:, 6] = sample_1D_torch(
+        p_costilt, costilts, N, device=device, generator=generator
+    )
 
     return sample
 
@@ -722,8 +742,8 @@ def sample_intrinsic_marginalised(
         Posterior samples to draw from. Defaults to :func:`plan_marginalisation`, which
         uses as many distinct ones as there are injections.
     seed : int, optional
-        Seeds the choice of posterior samples and the shuffle. The per-injection draws
-        follow torch's global generator, as the single-sample path does.
+        Seeds the choice of posterior samples, the shuffle and the per-injection draws,
+        so the same configuration draws the same injections. See SB-56.
 
     Returns
     -------
@@ -752,6 +772,14 @@ def sample_intrinsic_marginalised(
     else:
         chosen = rng.integers(0, n_available, size=n_hyper)
 
+    # One stream across every block, seeded from the campaign's seed. Without it the
+    # per-injection draws fall through to torch's global generator and the injection set
+    # differs between two runs of the same configuration -- so p(x | signal) would be
+    # fitted on a set nothing could reproduce. Only the stream is pinned; the population
+    # each block is drawn from is unchanged.
+    stream = torch.Generator(device=_torch_device(device))
+    stream.manual_seed(int(seed) if seed is not None else 0)
+
     blocks = []
     iterator = range(n_hyper)
     if progress:
@@ -760,7 +788,9 @@ def sample_intrinsic_marginalised(
         iterator = tqdm(iterator, desc="hyperposterior marginalisation")
     for i in iterator:
         blocks.append(
-            sample_intrinsic_torch(samples[int(chosen[i])], n_per, device=device)
+            sample_intrinsic_torch(
+                samples[int(chosen[i])], n_per, device=device, generator=stream
+            )
         )
     drawn = torch.cat(blocks, dim=0)
 

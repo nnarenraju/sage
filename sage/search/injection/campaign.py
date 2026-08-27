@@ -88,6 +88,16 @@ class CampaignReport:
         }
 
 
+#: Injections per committed block, rounded down to a whole number of generator batches.
+#:
+#: A commit is crash-atomic: it snapshots the shard, appends to the copy and renames. The
+#: snapshot costs the *whole* shard, so committing every generator batch made the campaign
+#: quadratic in its own length -- 4.4 M injections at a 2,048 batch is 2,129 commits of a
+#: shard growing to 235 MB, about 250 GB copied to protect 235 MB of work. At this size it
+#: is ~33 commits and 4 GB, and a killed job replays at most this many injections.
+COMMIT_ROWS = 131_072
+
+
 class InjectionCampaign:
     """
     Score one injection stream against one observing run's noise.
@@ -114,25 +124,37 @@ class InjectionCampaign:
         """
         Generate, inject and score every injection in the stream.
 
-        Batched, and each batch is committed as one block, so a requeued job resumes at a
-        batch boundary and cannot rescore an injection it already wrote -- which would put
-        the same signal into ``p(x | signal)`` twice.
+        Scored in the approximant's own batches and committed in larger blocks, so a
+        requeued job resumes at a block boundary and cannot rescore an injection it
+        already wrote -- which would put the same signal into ``p(x | signal)`` twice.
+
+        The two sizes are separate because they are bounded by different things. A batch
+        is what the generator emits and what fits on the card. A commit snapshots the
+        shard before appending to it, so its cost grows with the shard while the work it
+        protects does not: committing every batch made the campaign quadratic in its own
+        length. See :data:`COMMIT_ROWS`.
         """
         started = time.perf_counter()
-        batch_size = int(self.spec.engine.batch_size)
+        # The approximant's batch is fixed when its frequency grid is built, and
+        # `forward` takes no size -- it returns `generator.B` signals whatever is asked
+        # of it. Batching at anything else silently misaligns signals against noise.
+        batch_size = int(self.injections.batch_size)
+        per_block = max(1, COMMIT_ROWS // batch_size) * batch_size
         done = set(self.writer.completed_blocks()) if resume else set()
         total = len(self.injections)
         scored = 0
 
-        for block_id, lo in enumerate(range(0, total, batch_size)):
+        for block_id, block_lo in enumerate(range(0, total, per_block)):
             if block_id in done:
                 continue
-            hi = min(lo + batch_size, total)
-            strain, params = self.injections.build(lo, hi, self.noise)
-            stat, point = self.engine.forward(strain)
-            self.writer.append(_table(lo, stat, point, params, self.engine))
+            block_hi = min(block_lo + per_block, total)
+            for lo in range(block_lo, block_hi, batch_size):
+                hi = min(lo + batch_size, block_hi)
+                spectra, params = self.injections.build(lo, hi, self.noise)
+                stat, point = self.engine.forward_frequency(spectra)
+                self.writer.append(_table(lo, stat, point, params, self.engine))
+                scored += int(stat.size)
             self.writer.complete_block(block_id)
-            scored += int(stat.size)
 
         return CampaignReport(
             stream=int(self.injections.stream),
@@ -160,9 +182,6 @@ class NoiseSlices:
     """
 
     def __init__(self, spec, grid, seed: int = 0) -> None:
-        from sage.search.reader import read_segment_span
-
-        self._read = read_segment_span
         self._grid = grid
         self._geometry = spec.geometry_object()
         self._detectors = tuple(spec.data.detectors)
@@ -170,12 +189,16 @@ class NoiseSlices:
         self._release = Path(spec.data.release_dir)
         self._run = str(spec.data.observing_run)
         self._maps = {}
-        # One flat list of (segment, first_local) per detector, so a draw is an index.
+        # One flat list of (segment, first_local, n_windows) per detector, so a draw is
+        # an index. Taken from the lattice's own per-detector runs rather than from
+        # grid.spans_by_detector, which holds the reference detector alone: a follower's
+        # windows live on its own segments at its own local offsets, and there is no
+        # entry there to read them from.
         self._spans = {
             detector: [
-                (span.segment, span.first_local, span.n_windows)
-                for span in grid.spans_by_detector[detector]
-                if span.n_windows
+                (run.segment, run.first_local, run.n_windows)
+                for run in grid.runs_for_detector(detector)
+                if run.n_windows
             ]
             for detector in self._detectors
         }
@@ -191,16 +214,21 @@ class NoiseSlices:
                 )
             self._weights[detector] = weights / weights.sum()
 
-    def _mmap(self, detector: str):
-        """The detector's sample stream, opened once."""
+    def _stream(self, detector: str):
+        """
+        The detector's strain, opened once.
+
+        Opened through the reader's own chooser so that the noise an injection is added to
+        comes off the release by the same route the search reads it. The layout is decided
+        by the sidecar, and the search-grade release is one HDF5 dataset per segment
+        rather than the training releases' flat stream.
+        """
         if detector not in self._maps:
-            path = self._release / f"data_{detector}_{self._run}.bin"
-            if not path.is_file():
-                raise FileNotFoundError(
-                    f"no strain for {detector} at {path}; injections are added to real "
-                    "noise from the search release, which must be built first"
-                )
-            self._maps[detector] = np.memmap(path, dtype=np.float32, mode="r")
+            from sage.search.reader import open_stream
+
+            self._maps[detector] = open_stream(
+                self._release, detector, self._grid.segments_by_detector.get(detector)
+            )
         return self._maps[detector]
 
     def draw(self, n: int) -> "tuple":
@@ -214,7 +242,10 @@ class NoiseSlices:
         """
         window = int(self._geometry.window_samples)
         stride = int(self._geometry.stride_samples)
-        noise = np.empty((n, len(self._detectors), window), dtype=np.float64)
+        # float32, which is what the release stores and what the engine transforms in.
+        # A float64 buffer here widened every window on the way in only for the signal
+        # addition to narrow it again, at 1 GB allocated and freed per batch.
+        noise = np.empty((n, len(self._detectors), window), dtype=np.float32)
         segment_index = np.empty(n, dtype=np.int64)
         local_start = np.empty(n, dtype=np.int64)
 
@@ -226,8 +257,8 @@ class NoiseSlices:
                 )
                 segment, first_local, n_windows = spans[choice]
                 offset = first_local + stride * int(self._rng.integers(0, n_windows))
-                noise[row, column] = self._read(
-                    self._mmap(detector), segment, offset, window
+                noise[row, column] = self._stream(detector).read(
+                    segment, offset, window
                 )
                 if column == 0:
                     segment_index[row] = int(segment.segment_index)
@@ -235,8 +266,52 @@ class NoiseSlices:
         return noise, segment_index, local_start
 
     def close(self) -> None:
-        """Release the memory maps."""
+        """Release the open strain streams."""
+        for stream in self._maps.values():
+            stream.close()
         self._maps.clear()
+
+
+def scored_shards(spec):
+    """
+    The injection shards this campaign declares, in stream order.
+
+    One shard per stream, named where they are written. Two readers had each spelled the
+    name themselves and both spelled it without the stream, so p_astro and its figure
+    looked for a file no campaign has ever produced.
+    """
+    return [
+        spec.path("injections", f"injection_triggers_{int(stream):02d}.h5")
+        for stream in tuple(spec.injection.streams or (0,))
+    ]
+
+
+def scored_stats(spec) -> np.ndarray:
+    """
+    Ranking statistics of every scored injection, which are ``p(x | signal)``.
+
+    All streams together. A campaign is split across streams so it can be spread over
+    array tasks, and every stream draws from the same population into the same run's
+    noise, so reading one would fit the signal density on a fraction of the injections
+    while reporting the whole campaign.
+    """
+    from sage.search.triggers import read_shard
+
+    shards = scored_shards(spec)
+    missing = [str(path) for path in shards if not Path(path).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"no scored injections at {', '.join(missing)}; p(x | signal) is the "
+            "distribution of the ranking statistic over recovered injections, so the "
+            "injections stage must run first -- for every stream the campaign declares, "
+            "since the density is fitted on all of them. It is not a sensitive volume "
+            "and cannot be substituted by one"
+        )
+    stats = [
+        np.asarray(read_shard(shard)[0].columns["stat"], dtype=np.float64)
+        for shard in shards
+    ]
+    return np.concatenate(stats) if stats else np.zeros(0, dtype=np.float64)
 
 
 def _table(first: int, stat, point, params, engine):
@@ -284,13 +359,26 @@ class InjectionSet:
         """Number of injections in the stream."""
         return int(self.table.shape[0])
 
+    @property
+    def batch_size(self) -> int:
+        """
+        Injections per forward pass, fixed by the approximant.
+
+        The frequency grid the approximant is built on carries the batch dimension, so
+        ``forward`` returns that many signals and takes no count. Reading it here is what
+        keeps the campaign's batching and the generator's agreeing.
+        """
+        return int(self.generator.B)
+
     def build(self, lo: int, hi: int, noise):
         """
-        Signal plus real noise, for injections ``[lo, hi)``.
+        Signal plus real noise, for injections ``[lo, hi)``, as spectra.
 
         The signal is generated through the same approximant, projection and SNR
-        convention the network was trained under, and added to the noise in the strain
-        domain -- which is where a signal is actually added to a detector's output. The
+        convention the network was trained under. The approximant emits the projected
+        strain in the frequency domain, and the noise is transformed with the engine's own
+        convention before the two are added -- which is where training adds them, and the
+        transform is linear, so this is adding a signal to a detector's output. The
         whitening and multirate binning then run inside the engine, on the sum, exactly as
         they do for a search window.
 
@@ -299,22 +387,76 @@ class InjectionSet:
         """
         import torch
 
-        self.sampler.seek(int(lo))
         n = int(hi) - int(lo)
+        size = self.batch_size
+        total = len(self)
+        if n > size:
+            raise ValueError(
+                f"asked for {n} injections in one batch against a generator that "
+                f"produces {size}; the campaign batches at generator.B"
+            )
+        if n == size:
+            self.sampler.seek(int(lo))
+            keep = slice(0, size)
+        else:
+            # The table's last rows do not fill a batch, and the approximant emits a whole
+            # one whatever is asked. Rather than drop the remainder from p(x | signal),
+            # the generator is run over the batch that *ends* at the table's end and only
+            # its last `n` rows are kept. The rows before them were scored by the previous
+            # batch and are discarded here, so nothing is counted twice and nothing is
+            # lost.
+            if int(hi) != total:
+                raise ValueError(
+                    f"a short batch of {n} ends at row {hi} of {total}; only the table's "
+                    "last batch may be short, and the rows kept from a short batch are "
+                    "taken from the end of the table"
+                )
+            if total < size:
+                raise ValueError(
+                    f"the campaign drew {total} injections against a generator batch of "
+                    f"{size}; a stream shorter than one batch cannot be scored, so raise "
+                    "n_draw or lower the training batch the approximant was built with"
+                )
+            self.sampler.seek(total - size)
+            keep = slice(size - n, size)
         strain_noise, segment_index, local_start = noise.draw(n)
         with torch.no_grad():
-            signal = _detach(self.generator(n))
-        signal = np.asarray(signal, dtype=np.float64)
-        if signal.shape != strain_noise.shape:
+            # No count: `forward`'s only positional argument is `return_theta`, so a size
+            # passed here was read as a truthy flag and quietly returned a third tensor.
+            signal = _tensor(self.generator())[keep]
+        spectra = self.noise_spectra(strain_noise, signal)
+        if signal.shape[0] != n:
             raise ValueError(
-                f"the generator returned {signal.shape} against noise of "
-                f"{strain_noise.shape}; the two are added sample by sample, so a "
-                "mismatch would broadcast a signal across the wrong detectors or times"
+                f"the generator produced {signal.shape[0]} signals for a batch of {n}; "
+                "the campaign batches at generator.B so that every injection meets its "
+                "own noise, and a mismatch would pair them off by position"
+            )
+        if signal.shape != spectra.shape:
+            raise ValueError(
+                f"the generator returned {tuple(signal.shape)} against noise of "
+                f"{tuple(spectra.shape)}; the two are added bin by bin, so a mismatch "
+                "would broadcast a signal across the wrong detectors or frequencies"
             )
         return (
-            strain_noise + signal,
+            spectra + signal.to(spectra.dtype),
             {"segment_index": segment_index, "local_start": local_start},
         )
+
+    def noise_spectra(self, strain_noise, like):
+        """
+        Real noise in the domain the signal is generated in.
+
+        ``norm="forward"`` and float32, matching :meth:`SearchEngine._to_frequency_domain`
+        exactly: the fiducial whitening buffer is scaled to that convention, and an
+        unnormalised transform gives an output that looks reasonable and is wrong by a
+        factor of N.
+        """
+        import torch
+
+        noise = torch.as_tensor(
+            np.ascontiguousarray(strain_noise), device=like.device, dtype=torch.float32
+        )
+        return torch.fft.rfft(noise, dim=-1, norm="forward")
 
 
 def _detach(value):
@@ -326,6 +468,19 @@ def _detach(value):
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().numpy()
     return np.asarray(value)
+
+
+def _tensor(value):
+    """
+    The strain a generator returned, still a tensor and still on its device.
+
+    ``forward`` returns ``(hf, targets)``; only the first is strain. Kept on the device
+    and in the complex dtype it was generated in, because the noise is transformed to meet
+    it rather than the other way round.
+    """
+    if isinstance(value, (tuple, list)):
+        value = value[0]
+    return value
 
 
 def _generator(sampler):
@@ -432,9 +587,18 @@ def _staged_table(spec, stream: int, columns, provenance_attrs, build):
     cannot be read back, plotted, or compared against what was recovered.
 
     Reused only when the stored provenance matches the one asked for: the draw count, the
-    seed, the hyperposterior it was drawn at and the sampler's column names. Any of those
-    differing describes a different population, so the set is redrawn and replaced rather
-    than a stale table being scored under the current configuration's name.
+    seed, the hyperposterior it was drawn at, the mass frame it was built in and the
+    sampler's column names. Any of those differing describes a different population, so
+    the set is redrawn and replaced rather than a stale table being scored under the
+    current configuration's name.
+
+    Returns
+    -------
+    (table, reused)
+        ``reused`` is False when the set was redrawn. The caller needs it: a shard's rows
+        are indexed by row number into this table, so if the table changed then every row
+        already scored describes a different binary, and resuming onto it would build
+        ``p(x | signal)`` out of two different populations.
     """
     import h5py
     import numpy as np
@@ -454,8 +618,11 @@ def _staged_table(spec, stream: int, columns, provenance_attrs, build):
                 stored.get(key) == value for key, value in provenance_attrs.items()
             )
             if matches:
-                return torch.as_tensor(
-                    np.asarray(handle["parameters"]), device=spec.engine.device
+                return (
+                    torch.as_tensor(
+                        np.asarray(handle["parameters"]), device=spec.engine.device
+                    ),
+                    True,
                 )
 
     table = build()
@@ -468,7 +635,7 @@ def _staged_table(spec, stream: int, columns, provenance_attrs, build):
         handle.attrs["columns"] = list(columns)
         for key, value in provenance_attrs.items():
             handle.attrs[key] = value
-    return table
+    return table, False
 
 
 def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
@@ -507,7 +674,13 @@ def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
         )
         for detector in spec.data.detectors
     }
-    grid = AnalysisGrid.build(geometry, segments, coincident_intervals(segments))
+    grid = AnalysisGrid.build(
+        geometry,
+        segments,
+        coincident_intervals(segments),
+        reference_detector=spec.slides.reference_detector,
+        coverage=False,
+    )
 
     model, ckpt = load_search_model(
         spec.engine.checkpoint, cfg=None, data_cfg=None,
@@ -536,7 +709,7 @@ def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
             )
         else:
             intrinsic = sample_intrinsic_torch(
-                hyperposterior, n_draw, device=spec.engine.device
+                hyperposterior, n_draw, device=spec.engine.device, seed=draw_seed
             )
         drawn = build_injection_table(base_sampler, _detach(intrinsic), seed=draw_seed)
         keep = in_training_prior(drawn, base_sampler, float(low), float(high))
@@ -544,11 +717,16 @@ def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
 
     # Staged after the chirp-mass cut, so what is stored is the set that was scored.
     columns = sorted(base_sampler.param_index, key=base_sampler.param_index.get)
-    table = _staged_table(
+    table, reused = _staged_table(
         spec,
         stream,
         columns,
         {
+            # The convention the masses were written in. Not decoration: the same draw
+            # count, seed and hyperposterior describe a different table either side of
+            # the source-to-detector frame fix, so without this a campaign would reuse a
+            # source-frame table under the current configuration's name. See SB-50.
+            "mass_frame": "detector",
             "n_draw": int(spec.injection.n_draw),
             "draw_seed": draw_seed,
             "sampler_seed": int(spec.engine.sampler_seed),
@@ -579,6 +757,13 @@ def run_campaign(spec, stream: int = 0, **kwargs) -> CampaignReport:
 
     shard = spec.path("injections", f"injection_triggers_{stream:02d}.h5")
     shard.parent.mkdir(parents=True, exist_ok=True)
+    if not reused and shard.is_file():
+        # A shard's rows are indexed by row number into the staged table. The table was
+        # just redrawn, so every row already in the shard describes a different binary,
+        # and TriggerWriter would resume onto it -- reporting a complete campaign whose
+        # statistics came from two different populations. The stage is idempotent on an
+        # unchanged configuration precisely because this case is the one that is not.
+        shard.unlink()
     attrs = dict(provenance(spec))
     attrs.update(
         clustered=False, slide_id=0, stage="injections", stream=int(stream),
