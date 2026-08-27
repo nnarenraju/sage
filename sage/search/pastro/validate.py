@@ -211,6 +211,12 @@ def threshold_invariance(
     }
 
 
+#: Fractional allowance when comparing two credible-interval widths, or two steps in the
+#: value. Both are compared across background depths whose estimates differ by Poisson
+#: noise, so an exactly-monotone requirement would be a statement about that noise.
+_REL_TOL = 0.05
+
+
 def convergence_with_background(
     triggers, background_subsets: Sequence[np.ndarray], densities_builder
 ) -> Dict[str, object]:
@@ -242,8 +248,20 @@ def convergence_with_background(
         sizes.append(int(np.asarray(subset).size))
     values, widths = np.asarray(values), np.asarray(widths)
     steps = np.abs(np.diff(values))
-    settling = bool(steps.size < 2 or steps[-1] <= steps[0] + 1e-12)
-    narrowing = bool(widths.size < 2 or widths[-1] <= widths[0] + 1e-12)
+    # Relative, not absolute. The width of a credible interval spans orders of magnitude
+    # between a marginal candidate and a saturated one -- 1e-1 against 6e-8 on the same
+    # campaign -- so a fixed 1e-12 allowance asks a saturated probe to narrow to one part
+    # in 1e4 while letting a marginal one widen by half. The tolerance has to be a
+    # fraction of what is being compared.
+    scale = float(widths[0]) if widths.size else 0.0
+    settling = bool(steps.size < 2 or steps[-1] <= steps[0] * (1.0 + _REL_TOL) + 1e-12)
+    narrowing = bool(
+        widths.size < 2 or widths[-1] <= widths[0] * (1.0 + _REL_TOL) + 1e-12
+    )
+    # A probe pinned at zero or one carries no information about convergence: its interval
+    # is float noise, and whether that noise happens to shrink says nothing about the
+    # density estimate. Reported so a caller cannot read a pass off a saturated candidate.
+    saturated = bool(np.all(values > 1.0 - 1e-6) or np.all(values < 1e-6))
     return {
         "n_background": sizes,
         "values": values.tolist(),
@@ -251,6 +269,8 @@ def convergence_with_background(
         "steps": steps.tolist(),
         "settling": settling,
         "narrowing": narrowing,
+        "saturated": saturated,
+        "informative": not saturated,
         "passed": bool(settling and narrowing),
     }
 

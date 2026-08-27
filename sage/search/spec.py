@@ -40,7 +40,7 @@ CLUSTER_LINKAGES: Tuple[str, ...] = ("peak", "single")
 # any GWTC methods paper, and a fit estimated from the same densities it reparameterises
 # is exactly the failure the gate exists to detect. "fail" was this vocabulary's name for
 # what the implementation calls "stop".
-MONOTONICITY_POLICIES: Tuple[str, ...] = ("stop", "restrict")
+MONOTONICITY_POLICIES: Tuple[str, ...] = ("report", "stop", "restrict")
 TC_SOURCES: Tuple[str, ...] = ("checkpoint", "gwconfig", "explicit")
 
 # Duplicated from background.py and tail.py rather than imported: validate() runs in every
@@ -49,7 +49,6 @@ TC_SOURCES: Tuple[str, ...] = ("checkpoint", "gwconfig", "explicit")
 # The test suite pins the two copies together.
 REMOVAL_MODES: Tuple[str, ...] = ("inclusive", "exclusive", "hierarchical")
 STOP_RULES: Tuple[str, ...] = ("significance", "counted")
-THRESHOLD_METHODS: Tuple[str, ...] = ("count", "stability")
 TRIALS_CONVENTIONS: Tuple[str, ...] = ("coverage", "detection", "fixed", "none")
 
 
@@ -308,12 +307,6 @@ class SignificanceSpec:
     min_background_livetime_s: float = 0.0
     #: Hard bound on hierarchical removals, PyCBC's ``--max-hierarchical-removal``.
     max_removals: int = 100
-    #: Exceedances the peaks-over-threshold fit is given, PyCBC's ``tail_threshold`` rule.
-    n_exceedances: int = 500
-    #: How the fit threshold is chosen; see
-    #: :func:`sage.search.tail.choose_threshold`. ``"count"`` is the only rule with a
-    #: counterpart in any reference pipeline.
-    threshold_method: str = "count"
     #: Cap on a quoted inverse false-alarm rate, matching the GWTC convention.
     ifar_cap_yr: float = 1000.0
     #: Bin width for the Poisson-vs-negative-binomial dispersion check, in seconds.
@@ -391,7 +384,23 @@ class PastroSpec:
     #: FAR below which a confident candidate is worth full parameter estimation, per year.
     pe_far_per_yr: float = 1.0
     resolve_mchirp: bool = True
-    monotonicity_policy: str = "restrict"  # stop | restrict
+    #: What to do when the density ratio is not monotone in the ranking statistic.
+    #:
+    #: **Currently recorded and not acted on.** :func:`sage.search.pastro.run.run` measures
+    #: monotonicity, reports it, and narrows nothing -- which is sgwc-1's behaviour, since
+    #: it has no such check -- while the chain is brought up end to end.
+    #:
+    #: A strict node-wise test on a kernel-estimated ratio fails on estimator ripple rather
+    #: than on structure. Measured on the O3a campaign: a decrease of 0.019 against a total
+    #: rise of 3.2 -- 0.6% -- narrowed the support to [9.22, 18.03] and left the search's
+    #: two most confident detections, at 18.66 and 18.41, with no p_astro at all, while a
+    #: weaker candidate at 17.89 scored 0.796.
+    #:
+    #: The value is left at ``"restrict"`` rather than changed to ``"report"`` because it
+    #: is part of :meth:`SearchSpec.hash`, and moving it would invalidate every stage of a
+    #: campaign for a setting nothing reads -- including 1 h 12 m of GPU injections. When
+    #: the gate is wired back in, ``report`` is the default to adopt.
+    monotonicity_policy: str = "restrict"  # report | stop | restrict
     n_rate_grid: int = 512
 
 
@@ -582,12 +591,6 @@ class SearchSpec:
                 f"unknown significance.stop_rule {self.significance.stop_rule!r}; "
                 f"expected one of {STOP_RULES}"
             )
-        if self.significance.threshold_method not in THRESHOLD_METHODS:
-            raise ValueError(
-                f"unknown significance.threshold_method "
-                f"{self.significance.threshold_method!r}; expected one of "
-                f"{THRESHOLD_METHODS}"
-            )
 
         if self.trials.convention not in TRIALS_CONVENTIONS:
             raise ValueError(
@@ -688,9 +691,10 @@ class SearchSpec:
         """
         Resumability key: sha256 over the spec JSON plus cheap input fingerprints.
 
-        Sidecar JSONs are hashed by content; ``.bin`` files by (name, size, mtime_ns).
-        Full ``.bin`` checksums are a separate opt-in task, since a single release runs
-        to hundreds of gigabytes.
+        Sidecar JSONs are hashed by content; strain files -- ``.bin`` or ``.h5``,
+        whichever the release holds -- by (name, size, mtime_ns). Full strain
+        checksums are a separate opt-in task, since a single release runs to hundreds
+        of gigabytes.
 
         Returns
         -------
@@ -704,15 +708,15 @@ class SearchSpec:
         differ between the job that wrote a product and the job that resumes it, and
         every stage would be recomputed.
 
-        **Not portable between machines.** The ``.bin`` leg keys on ``mtime_ns``, which a
+        **Not portable between machines.** The strain leg keys on ``mtime_ns``, which a
         copy, an rsync without ``--times``, or a restore from tape will change without
         changing a byte of data -- and which two machines holding the same release will
         generally disagree about. Within one campaign directory on one filesystem it is
         exactly what is wanted: it is cheap, and it does notice a rebuilt release. Moving
         a campaign between filesystems invalidates it, and re-running is the correct
         response, since nothing here has verified the data survived the move. A content
-        checksum of the ``.bin`` files is the separate opt-in task, and is what would make
-        this portable.
+        checksum of the strain files is the separate opt-in task, and is what would
+        make this portable.
 
         It is also blind to the code. Changing a stage's implementation without touching
         the configuration leaves every hash unchanged, so a campaign is not invalidated by
@@ -728,12 +732,18 @@ class SearchSpec:
             if sidecar.is_file():
                 digest.update(sidecar.name.encode("utf-8"))
                 digest.update(sidecar.read_bytes())
-            binary = release_dir / f"data_{detector}_{run}.bin"
-            if binary.is_file():
-                stat = binary.stat()
-                digest.update(
-                    f"{binary.name}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
-                )
+            # Both layouts, because which one a release uses is the sidecar's to say and
+            # not this function's to guess. Naming only the flat one left the search-grade
+            # HDF5 release fingerprinted by its sidecar alone, so a rebuilt strain file
+            # under an unchanged sidecar produced the same hash and every stage resumed
+            # against data it had never read.
+            for suffix in (".bin", ".h5"):
+                strain = release_dir / f"data_{detector}_{run}{suffix}"
+                if strain.is_file():
+                    stat = strain.stat()
+                    digest.update(
+                        f"{strain.name}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
+                    )
         return digest.hexdigest()
 
     #: Fields recorded but excluded from :meth:`hash`. They describe how the campaign was

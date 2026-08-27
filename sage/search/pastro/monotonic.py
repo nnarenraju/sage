@@ -150,14 +150,16 @@ def apply_policy(report: MonotonicityReport, policy: str = "restrict"):
     """
     Act on a failed gate according to the configured policy.
 
-    ``stop`` raises and ``restrict`` returns the monotone region to narrow the support to.
-    A passing report returns ``None`` under either policy: there is nothing to act on, and
-    a policy that changed the analysis anyway would make the gate a transformation rather
-    than a check.
+    ``report`` acts on nothing, ``stop`` raises, and ``restrict`` returns the monotone
+    region to narrow the support to. A passing report returns ``None`` under any policy:
+    there is nothing to act on, and a policy that changed the analysis anyway would make
+    the gate a transformation rather than a check.
 
-    ``restrict`` is the default. It throws data away and fits nothing, so the result is
-    still a statement about the region it covers -- which is the property that makes it
-    safe to apply automatically.
+    ``report`` is the default, and is what sgwc-1 does -- it has no such check. A strict
+    node-wise test on a kernel-estimated ratio fails on estimator ripple rather than on
+    structure, and under ``restrict`` that ripple throws away the top of the support, which
+    is where the detections are. See :attr:`~sage.search.spec.PastroSpec.monotonicity_policy`
+    for the measured cost.
 
     There is deliberately no third policy that reparameterises the statistic. An earlier
     revision offered one, fitting a monotone regression to the observed density ratio and
@@ -169,9 +171,11 @@ def apply_policy(report: MonotonicityReport, policy: str = "restrict"):
     where the answer can come from the model instead of the data, and the gate exists to
     detect exactly that failure rather than to repair it.
     """
-    if policy not in ("stop", "restrict"):
-        raise ValueError(f"unknown policy {policy!r}, expected stop or restrict")
-    if report.is_monotone:
+    if policy not in ("report", "stop", "restrict"):
+        raise ValueError(
+            f"unknown policy {policy!r}, expected report, stop or restrict"
+        )
+    if report.is_monotone or policy == "report":
         return None
     if policy == "stop":
         raise ValueError(

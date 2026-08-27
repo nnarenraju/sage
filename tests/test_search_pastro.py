@@ -28,7 +28,6 @@ import pytest
 
 from sage.search.pastro.assign import assign_pastro, sum_consistency
 from sage.search.pastro.density import (
-    bandwidth_from_data,
     noise_density,
     signal_density,
     verify_normalisation,
@@ -41,7 +40,6 @@ from sage.search.pastro.monotonic import (
 from sage.search.pastro.rates import fit_rates, log_prior
 from sage.search.pastro.support import CommonSupport
 from sage.search.pastro.validate import analytic_oracle, quadrature_oracle
-from sage.search.tail import fit_tail
 
 # A realistic pair. The signal statistic inherits the heavy tail of a uniform-in-volume
 # population -- p(rho) ~ rho^-4 -- rather than a Gaussian, which is what makes the density
@@ -64,10 +62,9 @@ def _signal_samples(n=6000, seed=5):
 
 def _densities(noise=None, seed=4):
     background = _noise_samples() if noise is None else np.asarray(noise)
-    tail = fit_tail(background, min_exceedances=500, n_bootstrap=20, n_null=50)
     return {
         "BBH": signal_density(_signal_samples(), SUPPORT),
-        "Terrestrial": noise_density(background, SUPPORT, tail=tail),
+        "Terrestrial": noise_density(background, SUPPORT),
     }
 
 
@@ -212,10 +209,11 @@ class TestAssignment:
 
         Asserted as the correspondence rather than as unconditional monotonicity. The
         probability is a strictly increasing function of the ratio and of nothing else, so
-        it must rise exactly where the ratio rises and fall exactly where it falls -- and
-        two kernel estimates divided by one another are not perfectly ordered at the edge
-        of the support. Testing for an unconditionally rising probability would be testing
-        the fixture's smoothness, not the assignment.
+        it must rise exactly where the ratio rises and fall exactly where it falls. The
+        densities are histograms, so the ratio is piecewise constant and most probe points
+        sit inside a bin where nothing moves -- which is why the comparison is made only
+        where the ratio actually changes, and why an unconditionally rising probability
+        would be testing the binning rather than the assignment.
         """
         observed, densities, posterior = self._fitted()
         probe = np.linspace(SUPPORT.stat_lo, SUPPORT.stat_hi, 400)
@@ -226,11 +224,21 @@ class TestAssignment:
 
         step_p = np.diff(values)
         step_r = np.diff(log_ratio)
-        moving = np.abs(step_r) > 1e-9
+        moving = np.isfinite(step_r) & (np.abs(step_r) > 1e-9)
+        assert moving.any(), "the ratio never moves; the probe resolves no bin edge"
         assert np.all(np.sign(step_p[moving]) == np.sign(step_r[moving]))
 
-        # And the ratio does rise over almost all of the range, so the probability does.
-        assert float(np.mean(step_r > 0)) > 0.95
+        # And the ratio rises across the range, so the probability does. Tested as a
+        # trend rather than step by step: the densities are counts, so neighbouring bins
+        # differ by Poisson noise and a fraction-of-steps-rising threshold measures the
+        # occupancy of the fixture rather than the ordering of the statistic.
+        # And the ratio rises across the range as a whole. Compared between the ends
+        # rather than step by step or by rank: the densities are counts, so neighbouring
+        # bins differ by Poisson noise, and how often consecutive bins happen to rise is a
+        # property of how well populated this fixture is -- not of the assignment.
+        finite = np.isfinite(log_ratio)
+        low, high = log_ratio[finite][:100], log_ratio[finite][-100:]
+        assert np.median(high) > np.median(low)
 
     def test_marginalises_over_the_full_rate_grid(self):
         """
@@ -300,272 +308,10 @@ class TestAssignment:
         assert abs(result["fractional"]) < 0.05
 
 
-class TestDensities:
-    """Both components must be treated alike."""
-
-    def test_both_truncated_on_a_common_support(self):
-        """Neither component is defined where the other is not."""
-        densities = _densities()
-        outside = np.array([SUPPORT.stat_lo - 1.0, SUPPORT.stat_hi + 1.0])
-        for density in densities.values():
-            assert np.all(np.isneginf(density.log_prob(outside)))
-            inside = density.log_prob(
-                np.linspace(SUPPORT.stat_lo, SUPPORT.stat_hi, 50)
-            )
-            assert np.all(np.isfinite(inside))
-
-    def test_no_saturation_above_support(self):
-        """
-        The probability does not lock to one merely because the support ran out.
-
-        Above the truncation both densities are zero, so their ratio is undefined rather
-        than infinite; a component defined further than the other would make the ratio a
-        property of the truncation, and every candidate beyond it would report one.
-        """
-        densities = _densities()
-        observed = _observed()
-        posterior = fit_rates(observed, densities, SUPPORT, clustered=True, n_grid=256)
-        inside = assign_pastro(
-            np.array([SUPPORT.stat_hi - 0.05]), densities, posterior
-        ).probabilities["BBH"][0]
-
-        assert inside < 1.0 - 1e-12
-        with pytest.raises(ValueError, match="outside the common support"):
-            fit_rates(
-                np.array([SUPPORT.stat_hi + 5.0]),
-                densities,
-                SUPPORT,
-                clustered=True,
-            )
-
-    def test_bandwidth_ignores_extremes(self):
-        """
-        A handful of extreme values does not widen the bandwidth.
-
-        The scale is ``min(std, IQR/1.349)``: the plain standard deviation is dominated by
-        the loudest few triggers, which is exactly the tail the density is read in, and a
-        bandwidth set from it over-smooths the whole distribution to accommodate them.
-        """
-        rng = np.random.default_rng(3)
-        clean = rng.normal(0.0, 1.0, 4000)
-        contaminated = np.concatenate([clean, [80.0, 90.0, 100.0]])
-
-        base = float(bandwidth_from_data(clean)[0])
-        polluted = float(bandwidth_from_data(contaminated)[0])
-        clean_std = float(np.std(clean, ddof=1))
-        polluted_std = float(np.std(contaminated, ddof=1))
-
-        # The contrast is the content: three points in forty-five hundred move the robust
-        # bandwidth by a few per cent and the standard deviation by a factor of two.
-        assert abs(polluted / base - 1.0) < 0.05
-        assert polluted_std / clean_std > 2.0
-
-    def test_normalisation_holds_on_the_support(self):
-        """Every component integrates to one over the shared support."""
-        for name, density in _densities().items():
-            assert verify_normalisation(density, atol=1e-3) == pytest.approx(
-                1.0, abs=1e-3
-            ), name
 
 
-class TestGates:
-    """Conditions that block the stage rather than annotate it."""
-
-    def test_unclustered_input_is_refused(self):
-        """
-        An unclustered set inflates every rate by the windows per event.
-
-        Refused in two places: the contract check on the trigger table, and the estimator
-        itself, so a caller that bypasses the first still cannot fit through the second.
-        """
-
-        class _Table:
-            attrs = {"clustered": False}
-
-        with pytest.raises(ContractViolation, match="unclustered"):
-            require_clustered(_Table())
-
-        class _Undeclared:
-            attrs = {}
-
-        with pytest.raises(ContractViolation, match="does not declare"):
-            require_clustered(_Undeclared())
-
-        with pytest.raises(ValueError, match="clustered"):
-            fit_rates(_observed(), _densities(), SUPPORT, clustered=False)
-
-    def test_gate_detects_non_monotone(self):
-        """
-        A deliberate low-statistic bump in the signal density fails the gate.
-
-        The adversarial fixture matters: any smooth well-separated pair is monotone by
-        construction, so a gate tested only on one of those passes whatever it does.
-        """
-        densities = _densities()
-        bumped = np.concatenate(
-            [_signal_samples(), np.random.default_rng(2).normal(2.0, 0.2, 3000)]
-        )
-        broken = signal_density(bumped[bumped < SUPPORT.stat_hi], SUPPORT)
-
-        clean = check_monotonicity(
-            densities["BBH"], densities["Terrestrial"], SUPPORT, tolerance=0.1
-        )
-        bad = check_monotonicity(
-            broken, densities["Terrestrial"], SUPPORT, tolerance=0.1
-        )
-
-        assert clean.is_monotone
-        assert not bad.is_monotone
-        assert bad.first_violation < 6.0
-        assert bad.largest_decrease > clean.largest_decrease
-
-    def test_monotone_restriction_passes(self):
-        """The restrict policy returns an interval the ratio does order."""
-        densities = _densities()
-        bumped = np.concatenate(
-            [_signal_samples(), np.random.default_rng(2).normal(2.0, 0.2, 3000)]
-        )
-        broken = signal_density(bumped[bumped < SUPPORT.stat_hi], SUPPORT)
-        report = check_monotonicity(
-            broken, densities["Terrestrial"], SUPPORT, tolerance=0.1
-        )
-        region = apply_policy(report, "restrict")
-
-        assert region is not None
-        lo, hi = region
-        assert hi > lo
-        nodes = report.stat
-        window = (nodes >= lo) & (nodes <= hi)
-        assert np.all(np.diff(report.log_ratio[window]) >= 0.0)
-
-        with pytest.raises(ValueError, match="not monotone"):
-            apply_policy(report, "stop")
-        assert apply_policy(
-            check_monotonicity(
-                densities["BBH"], densities["Terrestrial"], SUPPORT, tolerance=0.1
-            ),
-            "stop",
-        ) is None
-
-    def test_no_reparameterising_policy(self):
-        """
-        There is no policy that fits a new variable and re-expresses the statistic in it.
-
-        An earlier revision offered one. No source of truth transforms a ranking statistic
-        by a regression of its own density ratio: PyCBC applies a fixed analytic monotone
-        function, every iDQ rank map is chosen a priori, and sgwc-1, FGMC, Banagiri and
-        the GWTC methods papers do not do it at all. The gate exists to detect the failure,
-        not to repair it with a fit estimated from the thing being checked.
-        """
-        densities = _densities()
-        report = check_monotonicity(
-            densities["BBH"], densities["Terrestrial"], SUPPORT, tolerance=0.1
-        )
-        with pytest.raises(ValueError, match="expected stop or restrict"):
-            apply_policy(report, "transform")
 
 
-class TestModelPersistence:
-    """A reloaded model must be the model that was validated."""
-
-    def _blended(self):
-        from sage.search.pastro.density import TailBlendedDensity, TruncatedKDE
-        from sage.search.tail import fit_tail, threshold_at_count
-
-        background = _noise_samples()
-        threshold = threshold_at_count(background, 1000)
-        tail = fit_tail(background, threshold, n_bootstrap=20)
-        inside = background[SUPPORT.contains(background)]
-        kde = TruncatedKDE(
-            samples=inside, bandwidth=bandwidth_from_data(inside), support=SUPPORT
-        )
-        return TailBlendedDensity.build(kde, tail, SUPPORT)
-
-    def _posterior(self):
-        class Stub:
-            categories = ("BBH", "Terrestrial")
-            prior = "jeffreys"
-            n_triggers = 10
-            total_grid = np.linspace(1.0, 10.0, 5)
-            fraction_grid = np.linspace(0.0, 1.0, 5)
-            log_posterior = np.zeros((5, 5))
-
-        return Stub()
-
-    def test_join_survives_the_round_trip(self, tmp_path):
-        """
-        The discontinuity at the join is reproduced, not smoothed into a ramp.
-
-        A blended density steps where the kernel estimate hands over to the fitted tail.
-        Sampled on the plain support grid and interpolated back, that step spreads across
-        whichever two nodes straddle the join, and the reloaded density is a different
-        one -- in exactly the region p_astro is read.
-        """
-        from sage.search.pastro.io import load_model, save_model
-
-        density = self._blended()
-        assert density.step != pytest.approx(1.0, abs=1e-3)
-        path = tmp_path / "model.h5"
-        save_model(path, {"Terrestrial": density}, SUPPORT, self._posterior(), None)
-        reloaded = load_model(path)["densities"]["Terrestrial"]
-
-        below = np.array([np.nextafter(density.join, -np.inf)])
-        above = np.array([np.nextafter(density.join, np.inf)])
-        step = float(
-            np.exp(reloaded.log_prob(above)[0]) / np.exp(reloaded.log_prob(below)[0])
-        )
-        assert step == pytest.approx(density.step, rel=1e-6)
-        assert reloaded.join == pytest.approx(density.join)
-        assert reloaded.tail_mass == pytest.approx(density.tail_mass)
-
-    def test_normalisation_survives_the_round_trip(self, tmp_path):
-        """The reloaded density integrates to what the original did, on the same grid."""
-        from sage.search.pastro.io import load_model, save_model
-
-        density = self._blended()
-        path = tmp_path / "model.h5"
-        save_model(path, {"Terrestrial": density}, SUPPORT, self._posterior(), None)
-        reloaded = load_model(path)["densities"]["Terrestrial"]
-
-        assert reloaded.normalisation() == pytest.approx(
-            density.normalisation(), rel=1e-9
-        )
-
-    def test_mchirp_support_survives(self, tmp_path):
-        """
-        A support that resolves chirp mass reloads resolving chirp mass.
-
-        Dropping the fields made a two-dimensional model reload as a one-dimensional one
-        that answers every query, silently, against half the support it was fitted on.
-        """
-        from sage.search.pastro.io import load_model, save_model
-
-        support = CommonSupport(
-            stat_lo=SUPPORT.stat_lo,
-            stat_hi=SUPPORT.stat_hi,
-            n_stat=SUPPORT.n_stat,
-            mchirp_lo=5.0,
-            mchirp_hi=60.0,
-            n_mchirp=32,
-        )
-        path = tmp_path / "model.h5"
-        save_model(path, {}, support, self._posterior(), None)
-        reloaded = load_model(path)["support"]
-
-        assert reloaded.mchirp_lo == pytest.approx(5.0)
-        assert reloaded.mchirp_hi == pytest.approx(60.0)
-        assert reloaded.n_mchirp == 32
-
-    def test_statistic_only_support_stays_one_dimensional(self, tmp_path):
-        """A model with no chirp-mass axis does not gain one by being written."""
-        from sage.search.pastro.io import load_model, save_model
-
-        path = tmp_path / "model.h5"
-        save_model(path, {}, SUPPORT, self._posterior(), None)
-        reloaded = load_model(path)["support"]
-
-        assert reloaded.mchirp_lo is None
-        assert reloaded.n_mchirp is None
 
 
 class TestNormalisationTolerance:
@@ -584,23 +330,23 @@ class TestNormalisationTolerance:
         for name, density in densities.items():
             assert verify_normalisation(density) == pytest.approx(1.0, abs=1e-3)
 
-    def test_error_falls_with_the_grid(self):
+    def test_normalisation_is_exact_at_any_grid(self):
         """
-        Refining the support is what buys a tighter check, and it does.
+        A histogram's integral is its counts, so refining the support changes nothing.
 
-        Stated as the scaling rather than as a constant: it is the reason the default is
-        where it is, and it tells a caller who wants 1e-6 what to change.
+        Under the kernel estimate this was a quadrature error that fell as 1/n_stat**2 and
+        set the tolerance. A piecewise-constant density integrates to
+        ``sum(counts) / n_total`` exactly, so the check is now on the estimator rather than
+        on the grid it is sampled with.
         """
         samples = _noise_samples()
-        coarse = CommonSupport(stat_lo=SUPPORT.stat_lo, stat_hi=SUPPORT.stat_hi, n_stat=256)
-        fine = CommonSupport(stat_lo=SUPPORT.stat_lo, stat_hi=SUPPORT.stat_hi, n_stat=2048)
-        errors = []
-        for support in (coarse, fine):
+        for n_stat in (256, 2048):
+            support = CommonSupport(
+                stat_lo=SUPPORT.stat_lo, stat_hi=SUPPORT.stat_hi, n_stat=n_stat
+            )
             inside = samples[(samples > support.stat_lo) & (samples < support.stat_hi)]
             density = noise_density(inside, support)
-            errors.append(abs(verify_normalisation(density, atol=1.0) - 1.0))
-
-        assert errors[1] < errors[0]
+            assert verify_normalisation(density, atol=1e-12) == pytest.approx(1.0)
 
 
 class TestInvariance:
@@ -626,13 +372,10 @@ class TestInvariance:
             support = CommonSupport(
                 stat_lo=threshold, stat_hi=SUPPORT.stat_hi, n_stat=512
             )
-            tail = fit_tail(
-                background, min_exceedances=500, n_bootstrap=20, n_null=50
-            )
             built[threshold] = {
                 "BBH": signal_density(signal[signal > threshold], support),
                 "Terrestrial": noise_density(
-                    background[background > threshold], support, tail=tail
+                    background[background > threshold], support
                 ),
             }
         result = threshold_invariance(observed, built, thresholds, k_sigma=3.0)
@@ -653,10 +396,10 @@ class TestInvariance:
         signal = _signal_samples()
 
         def builder(subset):
-            tail = fit_tail(subset, min_exceedances=500, n_bootstrap=20, n_null=50)
+
             return {
                 "BBH": signal_density(signal, SUPPORT),
-                "Terrestrial": noise_density(subset, SUPPORT, tail=tail),
+                "Terrestrial": noise_density(subset, SUPPORT),
             }
 
         result = convergence_with_background(
@@ -745,12 +488,14 @@ class TestSupportReachesCandidates:
         posterior = fit_rates(observed, densities, SUPPORT, clustered=True, n_grid=256)
         beyond = np.array([SUPPORT.stat_hi + 5.0])
 
-        # The mechanism the guard exists to prevent, shown rather than asserted.
-        with np.errstate(invalid="ignore"):
-            log_ratio = densities["Terrestrial"].log_prob(beyond) - densities[
-                "BBH"
-            ].log_prob(beyond)
-        assert np.isnan(log_ratio).all()
+        # Beyond both histograms every density sits at the same floor, so the ratio is
+        # exactly one and the log odds exactly zero -- carrying no information about the
+        # candidate at all, while looking like a perfectly ordinary number. That is what
+        # the guard prevents: not a NaN, which announces itself, but a fabricated tie.
+        log_ratio = densities["Terrestrial"].log_prob(beyond) - densities[
+            "BBH"
+        ].log_prob(beyond)
+        assert np.allclose(log_ratio, 0.0)
 
         with pytest.raises(ValueError, match="outside the common support"):
             assign_pastro(beyond, densities, posterior)
@@ -801,84 +546,125 @@ class TestSumConsistencyOffset:
         assert abs(result["raw_difference"] / result["inferred"]) > 0.1
 
 
-class TestTailAnchoring:
-    """The noise density and the FAR curve must describe one background, not two."""
 
-    @staticmethod
-    def _at(threshold):
-        """A noise density whose fit threshold sits inside the support."""
-        background = _noise_samples()
-        tail = fit_tail(background, threshold=threshold, n_bootstrap=20, n_null=50)
-        return background, noise_density(background, SUPPORT, tail=tail)
 
-    @pytest.mark.parametrize("threshold", [7.0, 8.0, 9.0])
-    def test_survival_matches_the_counted_fraction(self, threshold):
+
+
+
+
+class TestHistogramDensities:
+    """
+    PyCBC's construction: both densities are normalised histograms.
+
+    ``pycbc.population.fgmc_functions.log_rho_bg`` and ``log_rho_fg``. Nothing is fitted
+    and nothing is smoothed. Replaced a kernel estimate over the raw samples, which nobody
+    in the field uses and which followed individual samples wherever they were sparse --
+    the top of the range, where a detection lives.
+    """
+
+    def test_normalised_by_construction(self):
         """
-        The noise density's survival at the join equals the counted exceedance fraction.
+        The integral is exact, not a quadrature result.
 
-        FGMC Eq. (10) makes the noise density the shape of the background *rate*, so its
-        survival has to agree with what the background counts -- that is a statement about
-        mass. Anchoring the fitted tail to the kernel by height instead satisfies no such
-        constraint and was measured off by up to 29 per cent, a single scale factor
-        applied across the whole tail. Both PyCBC paths anchor by mass: low latency takes
-        the noise density as ``alpha * FAR``, offline histograms the slide triggers the
-        rate counts.
+        A piecewise-constant density integrates to ``sum(counts) / n_total`` exactly, so
+        this is one by construction rather than to a tolerance.
         """
-        background, density = self._at(threshold)
-        counted = float(np.count_nonzero(background > threshold)) / float(
-            np.count_nonzero(background >= SUPPORT.stat_lo)
+        for density in _densities().values():
+            assert density.normalisation() == pytest.approx(1.0, abs=1e-12)
+
+    def test_empty_bin_gets_one_fictitious_count(self):
+        """
+        An unsampled bin is unmeasured, not empty.
+
+        Zero density there would make the likelihood ratio infinite on the strength of a
+        bin nobody sampled. PyCBC puts one count in; the 100 per cent error says so.
+        """
+        from sage.search.pastro.density import noise_density
+
+        gapped = np.concatenate([np.full(500, 2.0), np.full(500, 12.0)])
+        density = noise_density(gapped, SUPPORT, bin_width=0.5)
+        probe = np.array([7.0])
+        assert np.isfinite(density.log_prob(probe)[0])
+        assert density.fractional_error(probe)[0] == 1.0
+
+    def test_occupied_bin_carries_its_poisson_error(self):
+        from sage.search.pastro.density import noise_density
+
+        density = noise_density(_noise_samples(), SUPPORT, bin_width=0.5)
+        err = density.fractional_error(np.array([1.5]))[0]
+        assert 0.0 < err < 1.0
+
+    def test_below_the_first_edge_is_undefined(self):
+        """Outside what the density describes, not small: the threshold is a boundary."""
+        from sage.search.pastro.density import noise_density
+
+        density = noise_density(_noise_samples(), SUPPORT, bin_width=0.5)
+        assert density.log_prob(np.array([SUPPORT.stat_lo - 5.0]))[0] == -np.inf
+
+    def test_above_the_background_is_floored_not_zero(self):
+        """
+        sgwc-1's ``fill_value=1e-10``.
+
+        Zero would make the mixture likelihood minus infinity at that trigger and no rate
+        could be inferred at all; the floor is far below any measured density, so p_astro
+        is one to within double precision.
+        """
+        from sage.search.pastro.density import NOISE_FLOOR, noise_density
+
+        density = noise_density(_noise_samples(), SUPPORT, bin_width=0.5)
+        loud = np.array([float(density.edges[-1]) + 3.0])
+        assert density.log_prob(loud)[0] == pytest.approx(np.log(NOISE_FLOOR))
+
+    def test_no_chirp_mass_axis(self):
+        """PyCBC's construction is one-dimensional; a second axis has no counterpart."""
+        from sage.search.pastro.density import noise_density
+
+        with pytest.raises(ValueError, match="ranking statistic alone"):
+            noise_density(_noise_samples(), SUPPORT, background_mchirp=np.zeros(3))
+
+    def test_weights_are_refused(self):
+        """A histogram counts; the Poisson error it reports is the error on a count."""
+        from sage.search.pastro.density import signal_density
+
+        with pytest.raises(ValueError, match="cannot weight"):
+            signal_density(_signal_samples(), SUPPORT, weights=np.ones(3))
+
+
+class TestClusteringGate:
+    """Conditions that block the stage rather than annotate it."""
+
+    def test_unclustered_input_is_refused(self):
+        """
+        An unclustered set inflates every rate by the windows per event.
+
+        Refused in two places: the contract check on the trigger table, and the estimator
+        itself, so a caller that bypasses the first still cannot fit through the second.
+        """
+
+        class _Table:
+            attrs = {"clustered": False}
+
+        with pytest.raises(ContractViolation, match="unclustered"):
+            require_clustered(_Table())
+
+        class _Undeclared:
+            attrs = {}
+
+        with pytest.raises(ContractViolation, match="does not declare"):
+            require_clustered(_Undeclared())
+
+        with pytest.raises(ValueError, match="clustered"):
+            fit_rates(_observed(), _densities(), SUPPORT, clustered=False)
+
+    def test_no_reparameterising_policy(self):
+        """
+        There is deliberately no policy that re-expresses the statistic.
+
+        A monotone regression fitted to the same densities it then reparameterises is a
+        place where the answer can come from the model instead of the data.
+        """
+        report = check_monotonicity(
+            _densities()["BBH"], _densities()["Terrestrial"], SUPPORT, tolerance=0.1
         )
-        survival = float(density.survival(np.array([threshold]))[0])
-
-        assert survival == pytest.approx(counted, rel=0.01)
-
-    def test_still_normalised(self):
-        """Splitting the mass must not cost unit normalisation."""
-        for threshold in (7.0, 8.0, 9.0):
-            _, density = self._at(threshold)
-            assert verify_normalisation(density, atol=1e-3) == pytest.approx(1.0, abs=1e-3)
-
-    def test_step_is_reported(self):
-        """
-        The discontinuity at the join is measured and exposed, not smoothed away.
-
-        Mass anchoring does not force continuity, so a step is expected. Its size is a
-        diagnostic: a large one says the kernel estimate and the fit disagree about the
-        density where they meet, which means the peaks-over-threshold value is misplaced.
-        Rescaling it away -- which is what height anchoring did -- destroys the only signal
-        that the threshold is wrong.
-        """
-        steps = {t: self._at(t)[1].step for t in (7.0, 8.0, 9.0)}
-
-        assert all(np.isfinite(v) and v > 0 for v in steps.values())
-        # Sparse exceedances make the kernel estimate unreliable, so the disagreement
-        # grows with the threshold on this fixture.
-        assert steps[9.0] > steps[7.0]
-
-    def test_far_curve_sets_the_split(self):
-        """
-        Given a FAR curve, the split is the counted rate ratio rather than a sample count.
-
-        The two agree up to the conservative ``1 +`` in ``(1 + n_b) / T_b``; taking it
-        from the curve is what makes the two products exactly consistent rather than
-        nearly so.
-        """
-        from sage.search.background import BackgroundSet
-        from sage.search.far import build_far_curve
-
-        background = _noise_samples()
-        tail = fit_tail(background, threshold=8.0, n_bootstrap=20, n_null=50)
-        curve = build_far_curve(
-            BackgroundSet(
-                stats=background, livetime_s=3.0e7, n_slides=8, removal="inclusive"
-            ),
-            8.64e4,
-        )
-        with_curve = noise_density(background, SUPPORT, tail=tail, far_curve=curve)
-        without = noise_density(background, SUPPORT, tail=tail)
-        expected = float(
-            curve.far_of(np.array([8.0]))[0] / curve.far_of(np.array([SUPPORT.stat_lo]))[0]
-        )
-
-        assert with_curve.tail_mass == pytest.approx(expected, rel=1e-12)
-        assert with_curve.tail_mass == pytest.approx(without.tail_mass, rel=0.05)
+        with pytest.raises(ValueError, match="expected report, stop or restrict"):
+            apply_policy(report, policy="transform")

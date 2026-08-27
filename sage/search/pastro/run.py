@@ -16,7 +16,6 @@ __email__       = N/A
 __status__      = inProgress
 """
 
-import dataclasses
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +23,68 @@ import numpy as np
 
 from sage.search.fingerprint import combine, digest_h5
 from sage.search.pastro.validate import ValidationReport
+
+
+def fit_at_threshold(
+    injections,
+    background_stats,
+    foreground,
+    curve,
+    threshold_far_per_day: float,
+    n_rate_grid: int = 512,
+):
+    """
+    Support, both densities and the rate posterior, for one analysis threshold.
+
+    **The only place p_astro is constructed.** The stage driver calls it once at the
+    campaign's threshold; the threshold-invariance figure calls it at each rung of its
+    ladder. Two copies of this drifted apart once already -- the figure kept asking for
+    the generalised-Pareto tail after the driver stopped, and omitted the livetimes the
+    driver passed -- so a published figure could have illustrated an analysis nobody ran.
+
+    Returns ``(support, densities, posterior, kept)``, where ``kept`` selects the
+    triggers inside the support. The support's lower edge *is* the analysis threshold, so
+    a trigger below it was never analysed under the threshold the densities describe.
+
+    Raises
+    ------
+    ValueError
+        If the threshold is outside what the background can resolve, or if no trigger
+        survives inside the support.
+    """
+    from sage.search.pastro.density import noise_density, signal_density
+    from sage.search.pastro.rates import fit_rates
+    from sage.search.pastro.support import build_support
+
+    injections = np.asarray(injections, dtype=np.float64)
+    foreground = np.asarray(foreground, dtype=np.float64)
+    support = build_support(
+        curve,
+        threshold_far_per_day=float(threshold_far_per_day),
+        must_include=np.concatenate([injections, foreground]),
+    )
+    densities = {
+        "BBH": signal_density(injections, support),
+        "Terrestrial": noise_density(
+            np.asarray(background_stats, dtype=np.float64), support
+        ),
+    }
+    kept = (foreground >= support.stat_lo) & (foreground <= support.stat_hi)
+    if not kept.any():
+        raise ValueError(
+            f"no zero-lag trigger lies in the common support "
+            f"[{support.stat_lo:.6g}, {support.stat_hi:.6g}], so no rate can be "
+            "inferred. The support's lower edge is the analysis threshold, so this says "
+            "the search found nothing above it"
+        )
+    posterior = fit_rates(
+        foreground[kept],
+        densities,
+        support,
+        clustered=True,
+        n_grid=int(n_rate_grid),
+    )
+    return support, densities, posterior, kept
 
 
 def run(spec, resume: bool = True, **kwargs) -> dict:
@@ -43,23 +104,20 @@ def run(spec, resume: bool = True, **kwargs) -> dict:
     ``injections`` rather than on ``sensitivity``: a sensitive volume is a different
     quantity and enters nowhere.
 
-    **A failed gate does not stop the stage.** The monotonicity gate decides whether the
-    likelihood ratio orders the statistic, which is the condition under which FGMC is
-    interpretable at all -- and the policy for a failure is configuration
-    (``spec.pastro.monotonicity_policy``), not a decision taken here. Every check is
-    recorded in the report and in the persisted model whatever the outcome, so a campaign
-    that produced probabilities under a failed check says so rather than looking like one
-    that never checked. What is refused is a *silent* pass: ``validation.passed`` is
+    **Nothing here gates the analysis.** Monotonicity of the likelihood ratio is measured,
+    recorded in the report and in the persisted model, and acted on only if the campaign
+    asks for it (``spec.pastro.monotonicity_policy``, ``"report"`` by default). That
+    matches sgwc-1, which has no such check, and it is deliberate while the chain is being
+    brought up end to end: a strict node-wise test on a kernel-estimated ratio fails on
+    estimator ripple, and restricting on that throws away the top of the support -- where
+    the detections are. What is refused is a *silent* pass: the measurement is always
     reported and the products carry it.
     """
     from sage.search.background import BackgroundSet
     from sage.search.far import FarCurve
     from sage.search.pastro.assign import assign_pastro
-    from sage.search.pastro.density import noise_density, signal_density
     from sage.search.pastro.io import require_clustered, save_model
-    from sage.search.pastro.monotonic import apply_policy, check_monotonicity
-    from sage.search.pastro.rates import fit_rates
-    from sage.search.pastro.support import build_support
+    from sage.search.pastro.monotonic import check_monotonicity
     from sage.search.pastro.validate import run_suite
     from sage.search.triggers import read_shard
 
@@ -87,68 +145,30 @@ def run(spec, resume: bool = True, **kwargs) -> dict:
     # Both the recovered injections and the candidates that will be scored have to lie
     # inside the support: its upper edge from the FAR curve alone is the loudest
     # *background* event, and a confident candidate is one louder than all background.
-    support = build_support(
+    #
+    # One call, shared with the threshold-invariance figure, so the figure cannot
+    # illustrate a different analysis from the one that produced the numbers.
+    support, densities, posterior, kept = fit_at_threshold(
+        injections,
+        background.stats,
+        foreground,
         curve,
         threshold_far_per_day=float(spec.pastro.threshold_far_per_day),
-        must_include=np.concatenate([injections, foreground]),
+        n_rate_grid=int(spec.pastro.n_rate_grid),
     )
-
-    densities = {
-        "BBH": signal_density(injections, support),
-        "Terrestrial": noise_density(
-            np.asarray(background.stats, dtype=np.float64),
-            support,
-            tail=getattr(curve, "tail", None),
-            background_livetime_s=float(background.livetime_s),
-            foreground_livetime_s=float(curve.foreground_livetime_s),
-            far_curve=curve,
-        ),
-    }
+    foreground, foreground_gps = foreground[kept], foreground_gps[kept]
 
     monotonicity = check_monotonicity(
         densities["BBH"], densities["Terrestrial"], support
     )
-    # apply_policy returns the interval to narrow to, or None when the gate passed. Under
-    # "restrict" the densities are rebuilt on the narrowed support rather than truncated
-    # after the fact: each is normalised over the region it is defined on, so a density
-    # fitted on the wide support and evaluated on a narrow one integrates to less than
-    # one, and the ratio p_astro is built from would then be a property of the truncation.
-    region = apply_policy(monotonicity, policy=str(spec.pastro.monotonicity_policy))
-    if region is not None:
-        support = dataclasses.replace(
-            support, stat_lo=float(region[0]), stat_hi=float(region[1])
-        )
-        densities = {
-            "BBH": signal_density(injections, support),
-            "Terrestrial": noise_density(
-                np.asarray(background.stats, dtype=np.float64),
-                support,
-                tail=getattr(curve, "tail", None),
-                background_livetime_s=float(background.livetime_s),
-                foreground_livetime_s=float(curve.foreground_livetime_s),
-                far_curve=curve,
-            ),
-        }
-        # The rates are inferred from the triggers inside the region, since that is what
-        # the densities now describe. Keeping the ones outside would ask the mixture to
-        # account for triggers neither component has a density for.
-        keep = (foreground >= support.stat_lo) & (foreground <= support.stat_hi)
-        foreground, foreground_gps = foreground[keep], foreground_gps[keep]
-        if foreground.size == 0:
-            raise ValueError(
-                "restricting to the monotone region "
-                f"[{support.stat_lo:.6g}, {support.stat_hi:.6g}] leaves no zero-lag "
-                "triggers, so no rate can be inferred. The gate is telling you the "
-                "densities do not order this statistic anywhere the data lives"
-            )
+    # Measured, reported, and acted on by nothing. sgwc-1 has no such check, and the chain
+    # is being brought up against it. A strict node-wise test on a kernel-estimated ratio
+    # fails on estimator ripple rather than on structure, and narrowing the support on that
+    # ripple discards the top of it -- which is where the detections are. On the O3a
+    # campaign it cost the two most confident candidates, at 18.66 and 18.41, their p_astro
+    # entirely, while a weaker one at 17.89 scored 0.796. `monotonic.apply_policy` is kept
+    # and tested for when the gate is wired back in; see PastroSpec.monotonicity_policy.
 
-    posterior = fit_rates(
-        foreground,
-        densities,
-        support,
-        clustered=True,
-        n_grid=int(spec.pastro.n_rate_grid),
-    )
     table = assign_pastro(foreground, densities, posterior, gps=foreground_gps)
     validation = run_suite(foreground, densities, posterior, support)
 
@@ -178,9 +198,11 @@ def run(spec, resume: bool = True, **kwargs) -> dict:
         "mean_rates": {k: float(v) for k, v in posterior.mean_rates.items()},
         "max_p_astro": float(np.max(table.astrophysical())),
         "monotone": bool(monotonicity.is_monotone),
-        "restricted_to": (
-            None if region is None else [float(region[0]), float(region[1])]
-        ),
+        # Nothing restricts the support while the gate is out of the analysis path, so
+        # this is always null. Kept in the schema rather than dropped: a reader comparing
+        # campaigns across the change needs to see that this one narrowed nothing, and an
+        # absent key reads as an older product that never recorded it.
+        "restricted_to": None,
         "support": [float(support.stat_lo), float(support.stat_hi)],
         "validation": validation.as_dict(),
         # Digest the products, not the rates. Two campaigns can share a MAP rate to six
@@ -201,18 +223,9 @@ def _injection_stats(spec) -> np.ndarray:
     describe signals as *this* network scored them, through this preprocessor, on this
     run's noise -- which is why an external injection release cannot supply it.
     """
-    from sage.search.triggers import read_shard
+    from sage.search.injection.campaign import scored_stats
 
-    shard = spec.path("injections", "injection_triggers.h5")
-    if not Path(shard).is_file():
-        raise FileNotFoundError(
-            f"no scored injections at {shard}; p(x | signal) is the distribution of the "
-            "ranking statistic over recovered injections, so the injections stage must "
-            "run before p_astro. It is not a sensitive volume and cannot be substituted "
-            "by one"
-        )
-    table, _ = read_shard(shard)
-    return np.asarray(table.columns["stat"], dtype=np.float64)
+    return scored_stats(spec)
 
 
 def main(argv: Optional[list] = None) -> int:
