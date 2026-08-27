@@ -57,6 +57,26 @@ class MatchResult:
 _NS: int = 1_000_000_000
 
 
+def merger_times(columns) -> np.ndarray:
+    """
+    The times a candidate is matched to a published event on.
+
+    ``tc_gps`` -- the decoded coalescence time -- not ``gps``, which is where the analysis
+    window starts. A catalogue publishes a merger time, so joining on the window start
+    compares two different quantities: measured on the O3a smoke campaign the two differ
+    by **13.05 s**, twenty times the 1.0 s match tolerance, and every one of the five
+    published events the search had actually recovered was reported as new. Against
+    ``tc_gps`` the same five match to between 0.009 and 0.094 s.
+
+    ``gps`` is the fallback, for a campaign whose engine carried no decoder and therefore
+    estimated no coalescence time. Such a campaign cannot place a candidate to better than
+    a window, and matching it on the window start is the honest thing left to do.
+    """
+    if "tc_gps" in columns:
+        return np.asarray(columns["tc_gps"], dtype=np.float64).ravel()
+    return np.asarray(columns["gps"], dtype=np.float64).ravel()
+
+
 def match_on_gps(
     gps_left: np.ndarray,
     gps_right: np.ndarray,
@@ -159,7 +179,7 @@ def classify(
     invents discoveries at the edge of somebody else's parameter space.
     """
     columns = getattr(candidates, "columns", candidates)
-    gps = np.asarray(columns["gps"], dtype=np.float64).ravel()
+    gps = merger_times(columns)
     mchirp = (
         np.asarray(columns["mchirp"], dtype=np.float64).ravel()
         if "mchirp" in columns
@@ -330,7 +350,7 @@ def comparison_table(
     would be a claim, and this refuses to make it.
     """
     columns = getattr(candidates, "columns", candidates)
-    gps = np.asarray(columns["gps"], dtype=np.float64).ravel()
+    gps = merger_times(columns)
 
     times = {key: cat.gps() for key, cat in catalogues.items()}
     times["_sage"] = gps
@@ -567,7 +587,8 @@ def run(spec, **kwargs) -> dict:
         "new_events": [
             {
                 "name": str(columns["name"][i]),
-                "gps": float(columns["gps"][i]),
+                # The merger time, as a catalogue would quote it -- not the window start.
+                "gps": float(merger_times(columns)[i]),
                 "ifar_yr": float(columns["ifar_yr"][i]),
                 "p_astro": (
                     float(columns["p_astro"][i]) if "p_astro" in columns else None

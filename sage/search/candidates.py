@@ -616,6 +616,14 @@ def expected_contamination(table: CandidateTable) -> dict:
     Reported per tier as well as overall, because that is how the claim is made: "N
     confident candidates, of which an expected M are terrestrial" is a statement about the
     confident subset, and the number for the broad list does not bound it.
+
+    **Unscored candidates are counted, not summed over.** ``p_astro`` is nan wherever a
+    candidate fell outside the support the densities were fitted on, and a plain sum turns
+    one such candidate into ``expected_terrestrial = nan`` for the whole set -- a headline
+    number that reads as zero or gets skipped rather than as "this could not be
+    computed". The sums run over the scored candidates and ``n_unscored`` says how many
+    were left out, per tier, so the number quoted is always a number and never silently
+    covers less than it claims.
     """
     if "p_astro" not in table.columns:
         raise ValueError(
@@ -624,10 +632,12 @@ def expected_contamination(table: CandidateTable) -> dict:
         )
     probability = np.asarray(table.columns["p_astro"], dtype=np.float64)
     tiers = np.asarray(table.columns["tier"], dtype=np.int64)
+    scored = np.isfinite(probability)
     out = {
         "n_candidates": int(probability.size),
-        "expected_terrestrial": float(np.sum(1.0 - probability)),
-        "expected_astrophysical": float(np.sum(probability)),
+        "n_unscored": int(np.count_nonzero(~scored)),
+        "expected_terrestrial": float(np.sum(1.0 - probability[scored])),
+        "expected_astrophysical": float(np.sum(probability[scored])),
     }
     for name, tier in (
         ("candidate", TIER_CANDIDATE),
@@ -636,8 +646,9 @@ def expected_contamination(table: CandidateTable) -> dict:
     ):
         mask = tiers >= tier
         out[f"n_{name}"] = int(np.count_nonzero(mask))
+        out[f"n_unscored_{name}"] = int(np.count_nonzero(mask & ~scored))
         out[f"expected_terrestrial_{name}"] = float(
-            np.sum(1.0 - probability[mask])
+            np.sum(1.0 - probability[mask & scored])
         )
     return out
 

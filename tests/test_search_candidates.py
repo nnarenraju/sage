@@ -52,7 +52,6 @@ def _curve(seed=2, livetime_yr=50.0, foreground_yr=0.3):
     return build_far_curve(
         background,
         foreground_livetime_s=3.15576e7 * foreground_yr,
-        tail=None,
         ifar_cap_yr=1000.0,
     )
 
@@ -252,3 +251,75 @@ class TestDerived:
         again = recompute_far(table, _curve(livetime_yr=100.0))
         assert np.all(again.columns["tier"] == TIER_UNDETERMINED)
         assert again.attrs["provisional_tiers"]
+
+
+class TestPurityAgreement:
+    """The contamination statement has one arithmetic, in two places."""
+
+    def test_purity_matches_expected_contamination(self):
+        """
+        ``sensitivity.purity`` is the array-level primitive and
+        ``candidates.expected_contamination`` the table-level report. They sum the same
+        two things, and a candidate list disagreeing with its own stated contamination is
+        an error no reader can catch -- so the agreement is pinned rather than trusted.
+        """
+        import numpy as np
+
+        from sage.search.candidates import CandidateTable, expected_contamination
+        from sage.search.sensitivity.purity import purity
+
+        probability = np.array([0.99, 0.05, 0.5, 0.87])
+        table = CandidateTable(
+            columns={
+                "name": np.array([f"SGW20000{i}_000000" for i in range(4)]),
+                "gps": np.arange(4.0),
+                "p_astro": probability,
+                "tier": np.zeros(4, dtype=np.int64),
+            },
+            attrs={},
+        )
+
+        table_level = expected_contamination(table)
+        array_level = purity(probability)
+
+        assert array_level.expected_signals == pytest.approx(
+            table_level["expected_astrophysical"]
+        )
+        assert array_level.expected_terrestrial == pytest.approx(
+            table_level["expected_terrestrial"]
+        )
+        assert array_level.n_candidates == table_level["n_candidates"]
+
+    def test_purity_refuses_non_probabilities(self):
+        """
+        A value outside [0, 1] is not a probability, and its sum is not an expected count
+        -- it is a number that will be quoted as one.
+        """
+        import numpy as np
+
+        from sage.search.sensitivity.purity import purity
+
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            purity(np.array([0.5, 1.4]))
+
+    def test_empty_set_has_no_purity(self):
+        """Nothing was claimed, so there is no fraction of it that is real."""
+        import numpy as np
+
+        from sage.search.sensitivity.purity import purity
+
+        result = purity(np.array([]))
+        assert result.n_candidates == 0
+        assert result.purity != result.purity  # nan
+
+    def test_scaled_purity_refuses_rather_than_guesses(self):
+        """
+        It scales by a ratio of sensitive volume-times, and VT is deferred. A purity
+        scaled by a guessed ratio is a contamination statement that reads as measured.
+        """
+        import numpy as np
+
+        from sage.search.sensitivity.purity import scaled_purity
+
+        with pytest.raises(NotImplementedError, match="deferred"):
+            scaled_purity(np.array([0.9]), 1.0, 2.0)

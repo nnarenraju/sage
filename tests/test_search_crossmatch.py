@@ -361,3 +361,56 @@ class TestOfflineCache:
         assert all(cache.verify(manifest).values())
         entry.path.write_bytes(b"tampered")
         assert not any(cache.verify(manifest).values())
+
+
+class TestMatchTime:
+    """
+    Which of a candidate's two times a catalogue is joined on.
+
+    A published event's GPS is a *merger* time. A candidate carries both the analysis
+    window's start (``gps``) and the decoded coalescence time (``tc_gps``), and on the O3a
+    smoke campaign those differ by 13.05 s -- twenty times the 1.0 s tolerance. Joining on
+    the window start reported every recovered event as a new discovery.
+    """
+
+    def _pair(self, offset=13.05):
+        """One candidate whose window starts well before the merger it contains."""
+        return {
+            "gps": np.array([1238782687.24]),
+            "tc_gps": np.array([1238782687.24 + offset]),
+            "mchirp": np.array([25.0]),
+        }
+
+    def test_joined_on_the_merger_time(self):
+        candidates = self._pair()
+        catalogue = _catalogue(
+            "gwtc", [float(candidates["tc_gps"][0])], ["GW190408_181802"]
+        )
+        out = classify(candidates, {"gwtc": catalogue}, tolerance_s=1.0)
+        assert out["known"].tolist() == [True]
+        assert out["catalogue_match"][0] == "GW190408_181802"
+
+    def test_window_start_does_not_match(self):
+        """The negative control: the same event at the window start is 13 s away."""
+        candidates = self._pair()
+        catalogue = _catalogue("gwtc", [float(candidates["gps"][0])], ["GW190408_181802"])
+        out = classify(candidates, {"gwtc": catalogue}, tolerance_s=1.0)
+        assert out["known"].tolist() == [False]
+
+    def test_falls_back_to_the_window_start(self):
+        """
+        A campaign whose engine carried no decoder estimated no coalescence time.
+
+        It cannot place a candidate to better than a window, and matching on the window
+        start is the honest thing left to do -- but it must not silently raise.
+        """
+        from sage.search.crossmatch import merger_times
+
+        columns = {"gps": np.array([100.0, 200.0])}
+        assert merger_times(columns).tolist() == [100.0, 200.0]
+
+    def test_prefers_tc_when_both_are_present(self):
+        from sage.search.crossmatch import merger_times
+
+        columns = {"gps": np.array([100.0]), "tc_gps": np.array([113.05])}
+        assert merger_times(columns).tolist() == [113.05]
