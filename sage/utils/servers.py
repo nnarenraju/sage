@@ -154,7 +154,9 @@ SERVERS: dict[str, Server] = {
         # (see recolour.py). 2-det ~33 GB, 3-det (HLV) ~49 GB, + segment banks +
         # torch/compile overhead. 128 GB covers all networks; nodes have ~770 GB.
         mem="128G",
-        mail="nagarajan@uni-potsdam.de",
+        # Empty: no mail. Set SAGE_MAIL in the environment to turn it back on for a
+        # session, and SAGE_MAIL_TYPE to choose what it reports (FAIL by default).
+        mail="",
     ),
 
     # Glasgow WIAY. Fill SLURM details if/when batch jobs are run there.

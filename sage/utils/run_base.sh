@@ -148,8 +148,7 @@ sage_submit() {
         # submitting environment (SAGE_SERVER etc.) is also inherited by SLURM.
         local wrap="export SAGE_SERVER='$SAGE_SERVER'; source '$_SAGE_RUN_BASE'; sage_activate; cd '$PWD'; $cmd"
         local args=(--job-name="$job" --chdir="$PWD" --nodes=1 --ntasks=1
-                    --cpus-per-task="$cpus" --output="%x-%j.out"
-                    --mail-type=ALL)
+                    --cpus-per-task="$cpus" --output="%x-%j.out")
         [ -n "$part" ]           && args+=(--partition="$part")
         [ -n "$qos" ]            && args+=(--qos="$qos")
         [ -n "$gres" ]           && args+=(--gres="$gres")
@@ -160,7 +159,10 @@ sage_submit() {
         [ -n "$nodelist" ]       && args+=(--nodelist="$nodelist")
         [ -n "$parsable" ]       && args+=(--parsable)
         [ -n "$SAGE_ACCOUNT" ]   && args+=(--account="$SAGE_ACCOUNT")
-        [ -n "$SAGE_MAIL" ]      && args+=(--mail-user="$SAGE_MAIL")
+        # Mail is off unless SAGE_MAIL is set. A campaign is submitted as chains and
+        # arrays -- one background run is 252 slide groups -- so --mail-type=ALL on every
+        # one of them is hundreds of messages for work nobody reads a message about.
+        [ -n "$SAGE_MAIL" ] && args+=(--mail-user="$SAGE_MAIL" --mail-type="${SAGE_MAIL_TYPE:-FAIL}")
         # stderr, so `--parsable` leaves only the job id on stdout.
         echo "[run_base] sbatch ${args[*]}" >&2
         sbatch "${args[@]}" --wrap "$wrap"
@@ -180,11 +182,19 @@ sage_submit() {
 # segments resume, find no epochs left, and exit in seconds. Only ONE segment
 # ever runs at a time (serial chain) -> holds at most one GPU. Echoes the last
 # segment's job id.
+#
+# Honours SAGE_AFTER for the FIRST segment, so a chain can be hung off something
+# already queued -- two dataprep builds sharing one GWOSC connection want to run
+# back to back rather than at once, and 16 concurrent fetch workers measure 8 MB/s
+# against 21 at 8, with a third of transfers abandoned. Without this the helper
+# could chain its own segments but not be chained onto anything, which `sage_submit`
+# has always supported through `after_opts`.
 sage_submit_chain() {
     local n="$1"; shift
     case "$n" in ''|*[!0-9]*) echo "[run_base] sage_submit_chain: first arg must be N>=1" >&2; return 2 ;; esac
     [ "$n" -ge 1 ] || { echo "[run_base] sage_submit_chain: N must be >=1" >&2; return 2; }
-    local prev="" jid dep_arg
+    local prev="${SAGE_AFTER:-}" jid dep_arg
+    [ -n "$prev" ] && echo "[run_base] chain starts after job $prev" >&2
     local i
     for i in $(seq 1 "$n"); do
         dep_arg=()
