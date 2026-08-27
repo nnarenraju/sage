@@ -176,3 +176,64 @@ class TestRunSearchPlan:
 
         for field in ("out_dir", "release", "network", "spec hash"):
             assert field in out
+
+
+class TestSubmitTargets:
+    """
+    Every core stage is reachable from ``submit.sh``.
+
+    ``trials`` was declared in ``CORE_STAGES`` and depended on by ``candidates``, but the
+    case arm listing the per-stage targets omitted it -- so ``./submit.sh trials`` printed
+    the usage text and exited **0**. Silent success is the dangerous outcome: a chain
+    built around it captured no job id, and the next stage went in with an empty
+    ``--dependency`` and started immediately against the products of the run it was meant
+    to follow.
+    """
+
+    @staticmethod
+    def _targets():
+        import re
+
+        text = (
+            Path(__file__).resolve().parents[1] / "runs" / "search" / "submit.sh"
+        ).read_text()
+        targets = set()
+        for line in text.splitlines():
+            match = re.match(r"\s{4}([a-z0-9|_-]+)\)\s*$", line)
+            if match:
+                targets.update(match.group(1).split("|"))
+        return targets
+
+    def test_every_core_stage_has_a_target(self):
+        from sage.search.stages import CORE_STAGES
+
+        targets = self._targets()
+        missing = [stage.name for stage in CORE_STAGES if stage.name not in targets]
+        assert not missing, missing
+
+    def test_every_core_stage_is_listed_in_the_usage(self):
+        """A target nobody can discover is only half a target."""
+        from sage.search.stages import CORE_STAGES
+
+        text = (
+            Path(__file__).resolve().parents[1] / "runs" / "search" / "submit.sh"
+        ).read_text()
+        usage = text[text.index("usage: ./submit.sh") :]
+        missing = [s.name for s in CORE_STAGES if s.name not in usage]
+        assert not missing, missing
+
+    def test_chain_helper_refuses_to_drop_a_dependency(self):
+        """
+        The chain script must fail rather than submit a link without its dependency.
+
+        That is the failure this class exists for: a stage that submits nothing still
+        exits 0, and the loop around it then has no id to depend on.
+        """
+        chain = (
+            Path(__file__).resolve().parents[1] / "runs" / "search" / "chain_stages.sh"
+        )
+        assert chain.is_file() and chain.stat().st_mode & 0o111
+        body = chain.read_text()
+        assert "set -euo pipefail" in body
+        assert 'if [ -z "$JOB" ]; then' in body
+        assert "exit 1" in body

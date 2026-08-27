@@ -60,6 +60,15 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Slide id for the background stage; repeatable for an array task.",
     )
     parser.add_argument(
+        "--collate-only",
+        action="store_true",
+        help=(
+            "Background only: collate the shards already on disk and score no slides. "
+            "For re-collating after a clustering change, or after repairing shards, "
+            "without spending the GPU-hours the scoring cost."
+        ),
+    )
+    parser.add_argument(
         "--slide-group",
         type=int,
         default=None,
@@ -121,6 +130,16 @@ def main(argv: Optional[list] = None) -> int:
     spec = load_spec(args.config)
     spec.validate()
 
+    if args.collate_only:
+        if args.stage != "background":
+            raise SystemExit(
+                f"--collate-only applies to the background stage, not {args.stage!r}; "
+                "no other stage collates shards"
+            )
+        # An empty slide list is what the driver reads as "score nothing"; it then
+        # proceeds to collate whatever the shards hold.
+        args.slide = []
+
     if args.slide_group is not None:
         if not args.slides_per_group:
             raise SystemExit("--slide-group needs --slides-per-group")
@@ -180,8 +199,8 @@ def main(argv: Optional[list] = None) -> int:
     for name in plan:
         if args.force or not S.is_complete(spec, name):
             extra = {}
-            if args.slide and name == "background":
-                extra["slides"] = list(args.slide)
+            if name == "background" and (args.slide or args.collate_only):
+                extra["slides"] = list(args.slide or [])
             report = S.run_stage(spec, name, cascade=cascade, **extra)
             print(f"{name}: {_summarise(report)}")
         else:

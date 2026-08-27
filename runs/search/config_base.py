@@ -43,8 +43,35 @@ SEARCH_ROOT = Path("/work/nagarajan/sage_runs/search")
 #: A run with no search-grade release yet is absent rather than pointed at its training
 #: release, so ``make_spec`` refuses it by name instead of silently searching data with
 #: the answers cut out.
+def _search_release(run: str) -> Path:
+    """
+    Where the search-grade release for one observing run lives.
+
+    Derived from the same naming :mod:`sage.search.dataprep` writes it under, rather than
+    listed here. A hardcoded table has to be edited every time a run is built, and the
+    edit is invisible until a campaign refuses -- which is a manual step standing between
+    a finished download and a runnable campaign, for no information the code does not
+    already have.
+
+    Always the three-detector release. One HLV build serves every arm of a run: an HL
+    search reads H1 and L1 out of it and ignores V1, so a two-detector arm needs no
+    release of its own.
+    """
+    from sage.search.dataprep import SearchDataSpec
+
+    return SearchDataSpec(
+        observing_run=run, detectors=("H1", "L1", "V1"), dq_flag="DATA"
+    ).release_dir()
+
+
+#: Search-grade releases, keyed by observing run. Present here means *built*: the value is
+#: derived, so what this records is which releases exist on disk, and a run whose download
+#: has not finished is absent for exactly that reason.
 RELEASE_DIRS = {
-    "O3a": Path("/work/nagarajan/o3a_search_data_DATA_HLV"),
+    run: path
+    for run in ("O3a", "O3b", "O4a", "O4b")
+    for path in (_search_release(run),)
+    if path.is_dir()
 }
 
 #: Training releases, kept for provenance and for tooling that compares the two. Never
@@ -190,7 +217,15 @@ def make_spec(
         # under. Stating it here instead would let a search run a window the network was
         # never trained on, and nothing downstream would notice.
         geometry=GeometrySpec(tc_source="checkpoint"),
-        slides=SlideSpec(target_background_yr=float(background_yr)),
+        # Reference detector from the network, not a fixed "H1". Slides are measured
+        # relative to it and it must be in the network, so an LV campaign built on the
+        # old default failed at construction -- correctly, but it meant every two-detector
+        # arm without Hanford needed the field stated by hand, and stating it by hand is
+        # how it comes to disagree with the network it belongs to.
+        slides=SlideSpec(
+            target_background_yr=float(background_yr),
+            reference_detector=detectors[0],
+        ),
     )
     data_overrides = overrides.pop("data", None)
     if isinstance(data_overrides, dict):
@@ -333,3 +368,92 @@ def register(spec):
     spec.apply_shadow_overrides(cfg, data_cfg)
     register_configs(cfg, data_cfg)
     return cfg, data_cfg
+
+
+#: Which run's network searches which run.
+#:
+#: Out of domain by default, which is the whole point: a network validated on the run it
+#: was trained on measures how well it fits its own noise, and the O3a and O3b noise
+#: differ enough that the distinction is not academic. Searching O3a with the O3b-trained
+#: weights, and O3b with the O3a-trained ones, keeps every reported sensitivity a
+#: statement about generalisation.
+#:
+#: A campaign may override it with ``network_run=``, and must for a run with no
+#: counterpart.
+SEARCH_NETWORK = {"O3a": "O3b", "O3b": "O3a"}
+
+#: Fiducial spectra per *network* run, not per searched run. Whitening follows the weights:
+#: the network was trained against these buffers and a search that whitened against others
+#: would present the model with a distribution it never saw. The O3 networks share the
+#: combined O3a+O3b fiducial, which is what makes an O3b-trained network on O3a strain
+#: coherent rather than a domain shift.
+FIDUCIAL_DIRS = {
+    "O3a": Path("/work/nagarajan/sage_runs/fiducial_psds_o3ab"),
+    "O3b": Path("/work/nagarajan/sage_runs/fiducial_psds_o3ab"),
+}
+
+#: Where the training runs export their weights.
+SAGE_RUNS = Path("/work/nagarajan/sage_runs")
+
+
+def search_spec(observing_run, detectors, network_run=None, **overrides):
+    """
+    One search campaign, with everything derivable derived.
+
+    The thin-wrapper half of the pattern the training runs use: a per-arm config states
+    the run and the network and nothing else, and every path that follows from those two
+    is built here. What a per-arm config still states is what it has *earned* -- the
+    frontend cache is a measured property of a particular set of weights, not a default.
+
+    Derived: the checkpoint and its training config from the network run and the detector
+    set, the fiducial spectra from the network run, the campaign tag and directory from
+    the searched run and the detector set, the hyperposterior from the campaign directory,
+    and the slide reference detector from the network.
+
+    Parameters
+    ----------
+    observing_run : str
+        The run being *searched*.
+    network_run : str, optional
+        The run whose network does the searching. Defaults to :data:`SEARCH_NETWORK`.
+    """
+    detectors = tuple(detectors)
+    arm = "".join(d[0] for d in detectors)
+    net = str(network_run or SEARCH_NETWORK.get(str(observing_run), ""))
+    if not net:
+        raise ValueError(
+            f"no network run registered for a search of {observing_run}; SEARCH_NETWORK "
+            f"holds {sorted(SEARCH_NETWORK)}. Pass network_run= to say which trained "
+            "network should search it"
+        )
+    if net not in FIDUCIAL_DIRS:
+        raise ValueError(
+            f"no fiducial spectra registered for the {net} networks; FIDUCIAL_DIRS holds "
+            f"{sorted(FIDUCIAL_DIRS)}. Whitening follows the weights, so this cannot be "
+            "guessed from the run being searched"
+        )
+    name = str(overrides.pop("tag", None) or f"{str(observing_run).lower()}_{arm}")
+
+    # CBC_CAT1 was measured against DATA over 600 ks of each run and coincides with it
+    # exactly (100.0%), so requiring it would remove nothing and only assert a veto the
+    # release did not apply. Stated rather than defaulted: the livetime must not claim a
+    # vetoing it did not do.
+    data = {"apply_cat1": False, **(overrides.pop("data", None) or {})}
+    injection = {
+        "hyperposterior_path": SEARCH_ROOT
+        / name
+        / "injections"
+        / "hyperposterior_gwtc3_pp.json",
+        **(overrides.pop("injection", None) or {}),
+    }
+    return make_spec(
+        observing_run=observing_run,
+        checkpoint=SAGE_RUNS / net.lower() / f"production_run_{arm}" / "CHECKPOINTS" / "best.pt",
+        training_config=f"runs/{net.lower()}/config_{arm}.py",
+        fiducial_dir=FIDUCIAL_DIRS[net],
+        detectors=detectors,
+        tag=name,
+        data=data,
+        injection=injection,
+        **overrides,
+    )

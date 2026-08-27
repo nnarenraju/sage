@@ -77,7 +77,7 @@ def _campaign(tmp_path, detectors=("H1", "L1"), release=None, **overrides):
             seed=5,
         ),
         significance=SignificanceSpec(
-            n_exceedances=200, removal_modes=("inclusive",)
+            removal_modes=("inclusive",)
         ),
     )
     return dataclasses.replace(spec, **overrides)
@@ -303,55 +303,59 @@ class TestFarDriver:
         assert set(report["curves"]) == {"inclusive"}
         assert spec.path("far", "far_curve_O3a_inclusive.h5").is_file()
 
-    def test_shape_is_reported(self, tmp_path):
+    def test_the_curve_is_the_count(self, tmp_path):
         """
-        The fitted xi travels with the curve it produced.
+        Nothing is fitted and nothing continues the curve past the count.
 
-        Reading it is how the extrapolation's character is known rather than assumed:
-        positive is heavier than exponential and runs away above the threshold, negative
-        is bounded above at `u - scale/xi`.
+        sgwc-1 fits no tail anywhere and reads its reporting thresholds straight off the
+        background. `far_of` counts, so nothing in the analysis path needs one.
         """
         import sage.search.far as far
+        from sage.search.far import FarCurve
 
-        detail = far.run(self._prepared(tmp_path))["checks"]["inclusive"]
+        report = far.run(self._prepared(tmp_path))
+        detail = report["checks"]["inclusive"]
 
-        assert np.isfinite(detail["tail_shape"])
-        assert detail["tail_n_exceedances"] == 200
-        assert len(detail["ladder_shape"]) == len(detail["ladder_threshold"])
+        assert "tail_shape" not in detail
+        assert "tail_threshold" not in detail
+        curve = FarCurve.load(report["curves"]["inclusive"])
+        assert not hasattr(curve, "tail")
+        assert not hasattr(curve, "far_extrapolated_of")
+        assert np.all(np.isfinite(curve.far_of(np.array([2.0, 4.0, 8.0, 20.0]))))
 
-    def test_goodness_of_fit_reported_not_acted_on(self, tmp_path):
+    def test_curve_round_trips(self, tmp_path):
+        """A reloaded curve answers identically to the one that was written."""
+        import sage.search.far as far
+        from sage.search.far import FarCurve
+
+        report = far.run(self._prepared(tmp_path))
+        curve = FarCurve.load(report["curves"]["inclusive"])
+        probe = np.array([2.0, 4.0, 8.0, 20.0])
+
+        assert np.all(np.isfinite(curve.far_of(probe)))
+        assert np.all(np.isfinite(curve.ifar_of(probe)))
+
+    def test_dispersion_reported_not_acted_on(self, tmp_path):
         """
-        The p-values are recorded beside the fit; nothing branches on them.
+        The over-dispersion check is recorded beside the curve; nothing branches on it.
 
         A driver that silently switched behaviour on a test outcome would make the
         published curve depend on a result nobody saw.
         """
         import sage.search.far as far
 
-        detail = far.run(self._prepared(tmp_path))["checks"]["inclusive"]
+        checks = far.run(self._prepared(tmp_path))["checks"]
+        # Reported only when the background carries event times to bin; a fixture built
+        # from statistics alone has none, and omission is the honest outcome there.
+        dispersion = checks.get("overdispersion")
+        if dispersion is not None and "p_value" in dispersion:
+            assert 0.0 <= float(dispersion["p_value"]) <= 1.0
+        assert "tail_shape" not in checks["inclusive"]
 
-        for name in ("ad_p_value", "ks_p_value", "lrt_p_value"):
-            assert 0.0 <= detail[name] <= 1.0
 
-    def test_curve_round_trips(self, tmp_path):
-        """
-        A reloaded curve answers identically, extrapolation included.
 
-        The tail is embedded rather than referenced: a curve stored without it would lose
-        the ability to separate "1 in 2 yr" from "1 in 100 yr", and would raise at the
-        point of use one stage later.
-        """
-        import sage.search.far as far
-        from sage.search.far import FarCurve
 
-        spec = self._prepared(tmp_path)
-        report = far.run(spec)
-        curve = FarCurve.load(report["curves"]["inclusive"])
-        probe = np.array([2.0, 4.0, 8.0, 20.0])
 
-        assert curve.tail is not None
-        assert np.all(np.isfinite(curve.far_of(probe)))
-        assert np.all(np.isfinite(curve.far_extrapolated_of(probe)))
 
     def test_missing_background_named(self, tmp_path):
         """A mode the background stage never built is named, not guessed at."""
@@ -363,23 +367,28 @@ class TestFarDriver:
         with pytest.raises(FileNotFoundError, match="inclusive background"):
             far.run(spec)
 
-    def test_small_background_is_not_fitted(self, tmp_path):
+    def test_small_background_still_counts(self, tmp_path):
         """
-        Too few events to leave the requested exceedances means no tail, stated as such.
+        A short background gives a coarse curve, not a modelled one.
 
-        The alternative -- fitting anyway on whatever is there -- produces a shape from a
-        handful of points and an extrapolation that looks like a measurement.
+        Nothing is fitted, so there is no "too few events to fit" branch to fall down:
+        the rate is the count, and a background of fifty events simply measures fifty
+        distinct rates.
         """
         import sage.search.far as far
         import sage.search.slides as slides
+        from sage.search.far import FarCurve
 
         spec = _campaign(tmp_path)
         slides.run(spec)
         _background(spec, size=50)
-        detail = far.run(spec)["checks"]["inclusive"]
+        report = far.run(spec)
+        detail = report["checks"]["inclusive"]
 
-        assert "tail_shape" not in detail
-        assert "not fitted" in detail["tail"]
+        assert detail["n_background"] == 50
+        curve = FarCurve.load(report["curves"]["inclusive"])
+        assert curve.stat.size <= 50
+        assert np.all(np.diff(curve.far_per_yr) <= 0)
 
 
 def _to_far(tmp_path, **kwargs):
@@ -588,7 +597,8 @@ class TestStagedInjectionTable:
         again = self._stage(spec, columns, attrs, table, calls)
 
         assert len(calls) == 1
-        assert np.allclose(np.asarray(again), table)
+        assert np.allclose(np.asarray(again[0]), table)
+        assert again[1] is True
 
     def test_redrawn_when_population_differs(self, tmp_path):
         """
@@ -612,4 +622,43 @@ class TestStagedInjectionTable:
         self._stage(spec, columns, attrs, table, calls)
         self._stage(spec, ["tc", "mass1", "mass2"], attrs, table, calls)
 
+        assert len(calls) == 2
+
+    def test_reports_whether_it_redrew(self, tmp_path):
+        """
+        The caller discards the shard when the table changed.
+
+        A shard's rows are indexed by row number into this table, so a redraw makes every
+        already-scored row describe a different binary. Resuming onto it would report a
+        complete campaign whose statistics came from two populations.
+        """
+        spec, columns, attrs, table = self._fixture(tmp_path)
+        assert self._stage(spec, columns, attrs, table, [])[1] is False
+        assert self._stage(spec, columns, attrs, table, [])[1] is True
+        assert self._stage(spec, columns, {**attrs, "n_draw": 200}, table, [])[1] is False
+
+    def test_mass_frame_is_part_of_the_provenance(self, tmp_path):
+        """
+        The convention the masses were written in identifies the table.
+
+        The same draw count, seed and hyperposterior describe a different set either side
+        of the source-to-detector frame conversion, so without this a campaign would
+        silently reuse a source-frame table under the current configuration's name.
+        """
+        import h5py
+
+        from sage.search.injection.campaign import run_campaign
+        import inspect
+
+        source = inspect.getsource(run_campaign)
+        assert '"mass_frame": "detector"' in source
+
+        spec, columns, attrs, table = self._fixture(tmp_path)
+        framed = {**attrs, "mass_frame": "detector"}
+        calls = []
+        self._stage(spec, columns, framed, table, calls)
+        staged = spec.path("injections", "injection_table_00.h5")
+        with h5py.File(staged, "r") as handle:
+            assert str(handle.attrs["mass_frame"]) == "detector"
+        self._stage(spec, columns, {**framed, "mass_frame": "source"}, table, calls)
         assert len(calls) == 2

@@ -1,68 +1,27 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-"""
-Filename      : config_o3a_HL.py
-Description   : Search campaign over O3a, Hanford-Livingston.
+"""O3a HL search -- thin wrapper; all settings live in config_base.py.
 
-Created on 2026-08-19
+Searched with the O3b-trained HL network, which is the out-of-domain pairing
+config_base.SEARCH_NETWORK sets. Every path follows from those two facts and is derived
+there; what is stated here is what this campaign has *earned*.
 
-__author__      = Narenraju Nagarajan
-__copyright__   = Copyright 2026, Sage
-__license__     = GPL-3.0-or-later
-__version__     = 0.0.1
-__maintainer__  = Narenraju Nagarajan
-__email__       = N/A
-__status__      = inProgress
-
-The development campaign: a network trained on O3b, searching O3a. The two runs do not
-overlap, so no strain the network was trained on is searched.
-
-The fiducial spectra follow the network, not the strain. These are the combined O3a+O3b
-spectra the network was trained under, which is what makes an O3b-trained network on O3a
-data coherent rather than a distribution shift; they are not the O3a-only spectra.
+__license__ = GPL-3.0-or-later
 """
 
-from config_base import SEARCH_ROOT, make_spec
-
-CHECKPOINT = "/work/nagarajan/sage_runs/o3b/production_run_HL/CHECKPOINTS/best.pt"
-TRAINING_CONFIG = "runs/o3b/config_HL.py"
-FIDUCIAL_DIR = "/work/nagarajan/sage_runs/fiducial_psds_o3ab"
+from config_base import search_spec
 
 
 def get_spec():
-    """The O3a campaign specification."""
-    return make_spec(
+    """The O3a HL campaign specification."""
+    return search_spec(
         observing_run="O3a",
-        checkpoint=CHECKPOINT,
-        training_config=TRAINING_CONFIG,
-        fiducial_dir=FIDUCIAL_DIR,
-        detectors=("H1", "L1"),
-        tag="o3a_HL",
-        # The release was built on the DATA flag alone. CBC_CAT1 was measured against it
-        # over 600 ks of each run and coincides with DATA exactly (100.0%), so requiring
-        # it here would remove nothing and only assert a veto this campaign did not apply.
-        # Stated rather than defaulted: the livetime must not claim a vetoing it did not do.
-        data=dict(apply_cat1=False),
+        detectors=['H1', 'L1'],
         # Proven, not assumed. `diagnose_separability` was run against these weights on
-        # real O3a strain, on CPU and again on the GPU under bfloat16 autocast: perturbing
-        # either detector left the other's frontend output **bitwise** unchanged (worst
-        # cross-detector change exactly 0) while moving its own by 0.69, so the probe
-        # reached the network; both coupled controls were refused and the separable one
-        # accepted. Job 111697.
-        #
-        # Stated on the campaign rather than defaulted in EngineSpec, because it is a fact
-        # about *this* trained network. A different checkpoint has to earn it again --
-        # `./submit.sh separability <config>`.
+        # real strain, on CPU and again on the GPU under bfloat16 autocast: perturbing one
+        # detector left every other detector's frontend output **bitwise** unchanged while
+        # moving its own, so the probe reached the network. A different checkpoint has to
+        # earn this again -- `./submit.sh separability <config>`.
         engine=dict(use_frontend_cache=True),
-        # Built by `fetch_sources.py --source gwtc3_powerlawpeak`, which selects the
-        # sample sgwc-1 drew its population at and records the release it came from.
-        # Stated rather than defaulted: a campaign that silently found a hyperposterior
-        # somewhere would not be able to say which population it injected.
-        injection=dict(
-            hyperposterior_path=SEARCH_ROOT
-            / "o3a_HL"
-            / "injections"
-            / "hyperposterior_gwtc3_pp.json"
-        ),
     )

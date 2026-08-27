@@ -56,7 +56,7 @@ stage () {  # stage <name> <opts...>
     local force=""
     [ -n "${SAGE_FORCE:-}" ] && force=" --force"
     sage_submit "$@" $(after_opts) --job "search-${name}-${CONFIG}" \
-        "python run_stage.py --config $CONFIG --stage $name$force"
+        "python -u run_stage.py --config $CONFIG --stage $name$force"
 }
 
 case "$TASK" in
@@ -65,20 +65,29 @@ case "$TASK" in
         # Everything: score the run, background, rates, injections, sensitivity,
         # probabilities, candidates, catalogue comparison, figures and tables.
         sage_submit "${GPU_OPTS[@]}" --job "search-$CONFIG" \
-            "python run_search.py --config $CONFIG"
+            "python -u run_search.py --config $CONFIG"
         ;;
     smoke)
         # Same sequence with a shallow background, to exercise every step first.
         sage_submit "${GPU_OPTS[@]}" --time 12:00 --job "search-smoke-$CONFIG" \
-            "python run_search.py --config $CONFIG --n-slides 8"
+            "python -u run_search.py --config $CONFIG --n-slides 8"
         ;;
+    # --- every stage end to end at a shallow depth -------------------------
+    shakedown)
+        # Answers "does each stage run, and does what it writes satisfy the next".
+        # Stops at catalogue: everything after it is still a stub.
+        sage_submit "${GPU_OPTS[@]}" --time 12:00:00 \
+            --job "search-shakedown-${CONFIG}" \
+            "python -u run_search.py --config $CONFIG --stop-after catalogue"
+        ;;
+
     plan)
         # Steps that would run and the projected cost. No submission.
         python run_search.py --config "$CONFIG" --dry-run
         ;;
 
     # --- individual stages, for staged or repeat running -------------------
-    segments|grid|slides|far|sensitivity|pastro|candidates|catalogue|store|figdata|figures|tables)
+    segments|grid|slides|far|sensitivity|pastro|trials|candidates|catalogue|store|figdata|figures|tables)
         stage "$TASK" "${CPU_OPTS[@]}"
         ;;
     zerolag|background|injections)
@@ -102,7 +111,7 @@ case "$TASK" in
         echo "background: $SLIDES slides over $GPUS GPUs, $PER_TASK slides per task"
         sage_submit "${GPU_OPTS[@]}" --array "1-${GPUS}%${GPUS}" $(after_opts) \
             --job "search-bg-${CONFIG}" \
-            "python run_stage.py --config $CONFIG --stage background \
+            "python -u run_stage.py --config $CONFIG --stage background \
                  --slide-group \$SLURM_ARRAY_TASK_ID --slides-per-group $PER_TASK"
         ;;
 
@@ -130,7 +139,7 @@ case "$TASK" in
         # Background is the long pole; chain dependent jobs so it survives the
         # per-job wall-clock limit.
         sage_submit_chain "${3:-4}" "${GPU_OPTS[@]}" --job "search-bg-$CONFIG" \
-            "python run_stage.py --config $CONFIG --stage background"
+            "python -u run_stage.py --config $CONFIG --stage background"
         ;;
 
     # --- per-event work, run afterwards ------------------------------------
@@ -245,8 +254,8 @@ usage: ./submit.sh <task> [config] [args]
   dataprep-verify [run]      check a built release, checksums included
 
   stages              segments grid zerolag slides background far
-                      injections sensitivity pastro candidates catalogue
-                      store figdata figures tables
+                      injections sensitivity pastro trials candidates
+                      catalogue store figdata figures tables
   chain [n]           background as n dependent jobs
 
   characterize ...    per-event vetting, spectrograms, follow-up, PE
