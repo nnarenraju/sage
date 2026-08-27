@@ -623,11 +623,6 @@ class TestExport:
         with pytest.raises(ValueError, match="hdf5"):
             store.export(out / "candidates.parquet", fmt="parquet")
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=NotImplementedError,
-        reason="comparison_matrix is a layer-9 aggregate",
-    )
     def test_matrix_marks_uncovered(self, store):
         """
         Not found and not searched are distinct states.
@@ -653,3 +648,192 @@ class TestExport:
         assert matrix.loc[LOUD, "GWTC-3"] == "found"
         assert matrix.loc[QUIET, "GWTC-3"] == "not found"
         assert matrix.loc[QUIET, "IAS-O3a"] == "not searched"
+
+
+class TestStageAdapters:
+    """Stage products into the store, without either knowing the other's shape."""
+
+    def _candidates(self):
+        """A candidate table as the candidates stage writes one."""
+        import numpy as np
+
+        from sage.search.candidates import CandidateTable
+
+        return CandidateTable(
+            columns={
+                "name": np.array([LOUD, QUIET]),
+                "gps": np.array([LOUD_GPS, QUIET_GPS]),
+                "stat": np.array([12.5, 8.1]),
+                "far_per_yr": np.array([0.002, 5.0]),
+                "ifar_yr": np.array([500.0, 0.2]),
+                "p_astro": np.array([0.99, 0.05]),
+                "p_astro_lo": np.array([0.97, 0.01]),
+                "p_astro_hi": np.array([1.0, 0.20]),
+                # A column the store does not hold, which must be dropped rather than
+                # refused: the candidate table gains columns for new conventions long
+                # before anyone decides they belong here.
+                "trials_convention": np.array(["per-candidate", "per-candidate"]),
+            },
+            attrs={},
+        )
+
+    def test_events_take_only_known_columns(self, tmp_path):
+        """A surplus column is left behind, not refused and not smuggled in."""
+        with _fresh(tmp_path) as opened:
+            opened.put_events(self._candidates())
+
+            assert opened.count("events") == 2
+            assert opened.event(LOUD).gps == pytest.approx(LOUD_GPS)
+
+    def test_pastro_column_is_translated(self, tmp_path):
+        """
+        The candidate table follows the papers (``p_astro``); the store follows what a
+        condition is typed as at a prompt (``pastro``). The adapter is where they meet.
+        """
+        with _fresh(tmp_path) as opened:
+            opened.put_events(self._candidates())
+            opened.put_pastro(self._candidates())
+
+            assert opened.event(LOUD).fields["pastro"] == pytest.approx(0.99)
+            assert opened.select(where="pastro > 0.9")["name"].tolist() == [LOUD]
+
+    def test_significance_records_its_exposure(self, tmp_path):
+        """
+        A rate whose exposure has to be looked up elsewhere is a rate that will be quoted
+        against the wrong one, so the livetimes are stamped beside it.
+        """
+        import numpy as np
+
+        from sage.search.far import FarCurve
+
+        curve = FarCurve(
+            stat=np.array([1.0, 2.0, 3.0]),
+            far_per_yr=np.array([10.0, 1.0, 0.1]),
+            n_louder=np.array([100, 10, 1]),
+            background_livetime_s=3.15576e8,
+            foreground_livetime_s=1.2e6,
+            removal="inclusive",
+        )
+        with _fresh(tmp_path) as opened:
+            opened.put_events(self._candidates())
+            opened.put_significance(self._candidates(), curve)
+
+            assert opened.event(LOUD).fields["ifar_yr"] == pytest.approx(500.0)
+            import json
+
+            stamped = opened.query(
+                "SELECT attrs FROM provenance WHERE stage = 'significance'"
+            )
+            attrs = json.loads(stamped["attrs"].tolist()[0])
+            assert attrs["background_livetime_s"] == pytest.approx(3.15576e8)
+            assert attrs["removal"] == "inclusive"
+
+    def test_nested_reports_become_rows(self, tmp_path):
+        """
+        A per-candidate stage accumulates ``{name: {task: fields}}``; the store holds one
+        row per pair. The adapter is what spares every such stage from flattening its own.
+        """
+        with _fresh(tmp_path) as opened:
+            opened.put_events(self._candidates())
+            opened.put_dataquality(
+                {
+                    LOUD: {"stationarity": {"p_value": 0.62, "passed": 1}},
+                    QUIET: {"stationarity": {"p_value": 0.001, "passed": 0}},
+                }
+            )
+
+            assert opened.count("dataquality") == 2
+            assert opened.event(QUIET).dataquality["stationarity"]["passed"] == 0
+
+    def test_rerun_drops_a_removed_task(self, tmp_path):
+        """
+        Written with a widened key, because the set of tasks is part of what a re-run
+        changes and merging cannot remove. A task dropped from the suite must not survive
+        as a verdict nothing produced.
+        """
+        with _fresh(tmp_path) as opened:
+            opened.put_events(self._candidates())
+            opened.put_dataquality(
+                {LOUD: {"stationarity": {"passed": 1}, "excess_power": {"passed": 1}}}
+            )
+            assert len(opened.event(LOUD).dataquality) == 2
+
+            opened.put_dataquality({LOUD: {"stationarity": {"passed": 0}}})
+            remaining = opened.event(LOUD).dataquality
+            assert set(remaining) == {"stationarity"}
+
+    def test_empty_product_writes_nothing(self, tmp_path):
+        """
+        Most of a campaign is empty most of the time. A stage that has not run must leave
+        the table absent rather than filling it with placeholder rows.
+        """
+        with _fresh(tmp_path) as opened:
+            assert opened.put_dataquality(None) == 0
+            assert opened.put_consistency({}) == 0
+            assert opened.count("dataquality") == 0
+
+
+class TestAggregates:
+    """Views over a finished campaign."""
+
+    def test_compare_is_quantities_by_candidate(self, store):
+        """
+        Transposed, because a handful of candidates is read down a row: one column each,
+        so the eye runs across a quantity rather than down a record.
+        """
+        frame = store.compare([LOUD, QUIET])
+
+        assert list(frame.columns) == [LOUD, QUIET]
+        assert "ifar_yr" in frame.index
+        assert frame.loc["ifar_yr", LOUD] == pytest.approx(500.0)
+
+    def test_compare_refuses_an_unknown_name(self, store):
+        """
+        A candidate silently missing from a comparison reads as one that did not stand
+        out, which is the opposite of what its absence means.
+        """
+        with pytest.raises(UnknownEvent):
+            store.compare([LOUD, "SGW000000_000000"])
+
+    def test_tier_counts_report_both_views(self, store):
+        """
+        The trials correction moves candidates between tiers, and the set it moves is the
+        one worth looking at -- so reporting only the corrected count hides it.
+        """
+        frame = store.tier_counts()
+
+        assert {"tier", "n", "n_trials_corrected"} <= set(frame.columns)
+        assert frame["n"].sum() == 2
+
+
+class TestRebuild:
+    """The store is a presentation of products, and can be rebuilt from them."""
+
+    def test_absent_products_are_skipped(self, tmp_path, toy_spec):
+        """
+        A rebuild that insisted on the whole chain would be unusable exactly when it is
+        most wanted: while the campaign is still running.
+        """
+        from sage.search.store import build_from_products
+
+        rebuilt = build_from_products(toy_spec)
+        try:
+            assert rebuilt.count("campaign") == 1
+            assert rebuilt.count("events") == 0
+        finally:
+            rebuilt.close()
+
+
+@pytest.fixture
+def toy_spec(tmp_path):
+    """A spec whose campaign directory holds nothing yet."""
+    import dataclasses
+
+    from sage.search.spec import DataSpec, SearchSpec
+
+    return SearchSpec(
+        tag="toy",
+        config_module="toy",
+        out_dir=tmp_path / "campaign",
+        data=DataSpec(observing_run="O3a", detectors=("H1", "L1")),
+    )

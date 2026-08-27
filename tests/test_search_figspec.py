@@ -233,9 +233,6 @@ class TestBuilderCoverage:
         "sensitive_distance",
         "vt_versus_far",
         "range_over_time",
-        # pycbc_page_segplot's counterpart: search metadata rather than a search result,
-        # so it follows the result figures.
-        "livetime_and_duty_cycle",
     }
 
     def test_declared_builder_functions_exist(self):

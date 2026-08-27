@@ -640,6 +640,102 @@ def _unnull(value: Any) -> Any:
     return None if value is None or _is_na(value) else value
 
 
+def _optional_float(value):
+    """A float, or ``None`` for an absent one -- never a nan."""
+    if value is None or _is_na(value):
+        return None
+    return float(value)
+
+
+def _columnar_of(product) -> Dict[str, Any]:
+    """
+    A product's columns, whatever shape it arrived in.
+
+    Stage products are variously a table object carrying a ``columns`` mapping, a plain
+    mapping of arrays, a sequence of row mappings, or a data frame. Adapters should not
+    each learn all four.
+    """
+    columns = getattr(product, "columns", None)
+    if isinstance(columns, Mapping):
+        return dict(columns)
+    if isinstance(product, Mapping):
+        return dict(product)
+    if hasattr(product, "to_dict") and hasattr(product, "columns"):
+        return {str(name): product[name].tolist() for name in product.columns}
+    return {}
+
+
+def _table_rows(product, wanted: Sequence[str], aliases: Optional[Mapping[str, str]] = None):
+    """
+    Rows for one table, taking the columns it holds and leaving the rest.
+
+    Filtering rather than refusing a surplus column is what lets a product and the store
+    evolve apart: a candidate table gains a column for a new convention long before
+    anyone decides it belongs here. A *missing* column is left absent rather than filled
+    with a null, so a stage that has not run reads as unrecorded rather than as measured
+    and empty.
+    """
+    columns = _columnar_of(product)
+    if not columns:
+        return []
+    aliases = dict(aliases or {})
+    taken = {}
+    for name in wanted:
+        source = aliases.get(name, name)
+        if source in columns:
+            taken[name] = columns[source]
+    if not taken:
+        return []
+    length = max(len(list(values)) for values in taken.values())
+    rows = []
+    for index in range(length):
+        row = {}
+        for name, values in taken.items():
+            value = list(values)[index]
+            if not _is_na(value):
+                row[name] = value
+        if row:
+            rows.append(row)
+    return rows
+
+
+def _rows_of(product, wanted: Sequence[str]):
+    """Rows from a sequence of mappings or a columnar product, keeping known columns."""
+    if isinstance(product, Sequence) and not isinstance(product, (str, bytes)):
+        return [
+            {k: v for k, v in dict(row).items() if k in set(wanted) and not _is_na(v)}
+            for row in product
+        ]
+    return _table_rows(product, wanted)
+
+
+def _long_rows(reports, label: str, wanted: Sequence[str]):
+    """
+    One row per (candidate, ``label``), from the nested form these stages report in.
+
+    Accepts ``{name: {label_value: {field: value}}}`` as well as a flat sequence of rows,
+    because a per-candidate stage naturally accumulates the first and a collated one the
+    second.
+    """
+    if reports is None:
+        return []
+    if isinstance(reports, Mapping):
+        rows = []
+        for name, entries in reports.items():
+            for value, fields in dict(entries).items():
+                row = {"name": str(name), label: str(value)}
+                row.update(
+                    {
+                        k: v
+                        for k, v in dict(fields).items()
+                        if k in set(wanted) and not _is_na(v)
+                    }
+                )
+                rows.append(row)
+        return rows
+    return _rows_of(reports, wanted)
+
+
 def _is_na(value: Any) -> bool:
     """Whether a scalar is one of pandas' missing markers, without importing pandas."""
     if isinstance(value, (str, bytes)) or isinstance(value, (list, tuple, dict)):
@@ -981,6 +1077,16 @@ class SearchStore:
             )
         return "\n".join(lines)
 
+    def table_columns(self, table: str) -> Tuple[str, ...]:
+        """
+        A table's declared columns, from the schema rather than from the open file.
+
+        Read by the stage adapters to decide what of a product belongs in the store. From
+        the schema, so it answers before the file exists and does not depend on which
+        stages have run.
+        """
+        return tuple(name for name, _ in self._spec(table).columns)
+
     def columns(self, table: Optional[str] = None) -> Dict[str, Tuple[str, ...]]:
         """Available column names, for discovering what can be queried."""
         if table is not None:
@@ -1136,36 +1242,143 @@ class SearchStore:
             )
 
     def put_events(self, candidates) -> int:
-        """Record the candidate table."""
-        raise NotImplementedError
+        """
+        Record the candidate table.
+
+        The columns are taken as the candidate table declares them, filtered to those the
+        ``events`` table holds. Filtering rather than failing on a surplus column is what
+        lets the two evolve apart: the candidate table gains a column for a new
+        significance convention long before anyone decides it belongs in the store.
+        """
+        rows = _table_rows(candidates, self.table_columns("events"))
+        return self.put("events", rows)
 
     def put_significance(self, candidates, far_curve) -> int:
-        """Record false-alarm rate, inverse rate and p-value per candidate."""
-        raise NotImplementedError
+        """
+        Record false-alarm rate, inverse rate and p-value per candidate.
+
+        The per-candidate rates come from the candidate table, which is where they were
+        assigned; the curve supplies the livetimes they were measured against. Those
+        livetimes are the denominator of every rate here, so they are stored beside the
+        rates rather than left to be looked up -- a rate whose exposure has to be found
+        elsewhere is a rate that will be quoted against the wrong one.
+        """
+        rows = _table_rows(candidates, self.table_columns("significance"))
+        written = self.put("significance", rows)
+        if far_curve is not None:
+            self.put_provenance(
+                "significance",
+                {
+                    "background_livetime_s": float(far_curve.background_livetime_s),
+                    "foreground_livetime_s": float(far_curve.foreground_livetime_s),
+                    "removal": str(far_curve.removal),
+                    "ifar_cap_yr": float(far_curve.ifar_cap_yr),
+                },
+            )
+        return written
 
     def put_pastro(self, table) -> int:
-        """Record astrophysical probability and its credible interval."""
-        raise NotImplementedError
+        """
+        Record astrophysical probability and its credible interval.
+
+        Named ``pastro`` in the store against ``p_astro`` in the candidate table: the
+        store's column names are what a condition is written in at a prompt, and the
+        underscore was a recurring mistype. Translated here rather than renamed there,
+        because the candidate table's names follow the papers.
+        """
+        wanted = self.table_columns("pastro")
+        rows = _table_rows(
+            table,
+            wanted,
+            aliases={"pastro": "p_astro", "pastro_lo": "p_astro_lo",
+                     "pastro_hi": "p_astro_hi"},
+        )
+        return self.put("pastro", rows)
 
     def put_dataquality(self, reports) -> int:
-        """Record each data-quality task's outcome per candidate."""
-        raise NotImplementedError
+        """
+        Record each data-quality task's outcome per candidate.
+
+        One row per candidate and task, keyed on both. Written with ``key=["name"]`` so a
+        re-run that drops a task leaves no orphan row behind: the set of tasks is part of
+        what a re-run changes, and merging cannot remove.
+        """
+        rows = _long_rows(reports, "task", self.table_columns("dataquality"))
+        return self.put("dataquality", rows, key=["name"]) if rows else 0
 
     def put_consistency(self, results) -> int:
-        """Record each consistency test's outcome per candidate."""
-        raise NotImplementedError
+        """
+        Record each consistency test's outcome per candidate.
+
+        As :meth:`put_dataquality`, keyed on the test rather than the task.
+        """
+        rows = _long_rows(results, "test", self.table_columns("consistency"))
+        return self.put("consistency", rows, key=["name"]) if rows else 0
 
     def put_parameters(self, pe_results, level: float = 0.9) -> int:
-        """Record parameter medians and credible intervals, with their provenance."""
-        raise NotImplementedError
+        """
+        Record parameter medians and credible intervals, with their provenance.
+
+        ``level`` is stored on the row rather than assumed by a reader: a median with an
+        interval whose credibility is not stated is a number nobody can quote.
+
+        The waveform is likewise carried per row. Estimates from two waveform families
+        sit in the same table and differ systematically, and a table that cannot say
+        which produced a row invites them to be averaged.
+        """
+        rows = _long_rows(pe_results, "parameter", self.table_columns("parameters"))
+        for row in rows:
+            row.setdefault("level", float(level))
+        return self.put("parameters", rows, key=["name"]) if rows else 0
 
     def put_catalogue(self, catalogues, matches, coverage) -> int:
-        """Record external events, their matches and each catalogue's coverage."""
-        raise NotImplementedError
+        """
+        Record external events, their matches and each catalogue's coverage.
+
+        Three tables, because they answer three different questions and only the first
+        two are about candidates. ``catalogue_coverage`` is what separates "this
+        catalogue looked here and found nothing" from "this catalogue never looked", and
+        without it a comparison presents the second as the first.
+        """
+        written = 0
+        events = []
+        for key, catalogue in dict(catalogues or {}).items():
+            for event in getattr(catalogue, "events", ()) or ():
+                events.append(
+                    {
+                        "catalogue": str(key),
+                        "event_name": str(event.name),
+                        "gps": float(event.gps),
+                        "far_per_yr": _optional_float(event.far_per_yr),
+                        "pastro": _optional_float(event.p_astro),
+                    }
+                )
+        if events:
+            written += self.put("catalogue_events", events, key=["catalogue"])
+        if matches:
+            written += self.put(
+                "catalogue_matches",
+                _rows_of(matches, self.table_columns("catalogue_matches")),
+                key=["name"],
+            )
+        if coverage:
+            written += self.put(
+                "catalogue_coverage",
+                _rows_of(coverage, self.table_columns("catalogue_coverage")),
+                key=["catalogue"],
+            )
+        return written
 
     def put_sensitivity(self, results) -> int:
-        """Record sensitivity at each threshold and reference point."""
-        raise NotImplementedError
+        """
+        Record sensitivity at each threshold and reference point.
+
+        One row per (threshold, reference point) rather than a single summary number: a
+        sensitive volume quoted without the false-alarm rate it was measured at cannot be
+        compared with anyone else's.
+        """
+        rows = _rows_of(results, self.table_columns("sensitivity"))
+        return self.put("sensitivity", rows, key=["arm"]) if rows else 0
 
     def put_artefact(self, name: str, kind: str, path: str | Path, **attrs) -> None:
         """
@@ -1381,21 +1594,116 @@ class SearchStore:
     # -- comparison and export ---------------------------------------------
 
     def compare(self, names: Sequence[str], columns: Optional[Sequence[str]] = None):
-        """Place several candidates side by side on the same quantities."""
-        raise NotImplementedError
+        """
+        Place several candidates side by side on the same quantities.
 
-    def comparison_matrix(self, tolerance_s: float = 1.0):
+        Candidates transposed against quantities, which is the orientation a handful of
+        candidates is actually read in -- a column each, so the eye runs down a row to
+        compare one quantity. An unknown name is refused rather than dropped: a candidate
+        silently missing from a comparison reads as one that did not stand out.
+        """
+        records = [self.event(name) for name in names]
+        if columns is None:
+            seen: List[str] = []
+            for record in records:
+                for field, value in record.fields.items():
+                    if value is not None and field not in seen:
+                        seen.append(field)
+            columns = seen
+        columns = [c for c in columns if c != "name"]
+
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            {
+                record.name: [record.fields.get(column) for column in columns]
+                for record in records
+            },
+            index=list(columns),
+        )
+        frame.index.name = "quantity"
+        return frame
+
+    def comparison_matrix(self):
         """
         Candidates against catalogues.
 
         Distinguishes found, searched but not found, and outside a catalogue's searched
         region, since the last says nothing about the candidate.
+
+        Cells are ``"found"``, ``"not found"`` and ``"not searched"`` rather than 1/0/nan.
+        A matrix read by eye is the one place the three-way distinction is most easily
+        lost: a blank cell reads as a zero, and a zero asserts a non-detection on the
+        strength of a catalogue that never looked. Naming the third state makes that
+        impossible to misread and impossible to average.
+
+        Coverage is per candidate rather than per time span, because a catalogue's reach
+        is not only temporal -- a search covering the same days over a narrower chirp-mass
+        range has not searched where a heavy candidate lies. The reason is carried on the
+        coverage row for exactly that case.
         """
-        raise NotImplementedError
+        import pandas as pd
+
+        events = self.table("events")
+        coverage = self.table("catalogue_coverage")
+        matches = self.table("catalogue_matches")
+        catalogues = sorted(
+            set(coverage["catalogue"].tolist() if len(coverage) else [])
+            | set(matches["catalogue"].tolist() if len(matches) else [])
+        )
+        index = pd.Index(events["name"].tolist() if len(events) else [], name="name")
+        if not len(index) or not catalogues:
+            return pd.DataFrame(index=index, columns=catalogues, dtype=object)
+
+        matched = {
+            (str(row["name"]), str(row["catalogue"]))
+            for _, row in matches.iterrows()
+            if row.get("matched")
+        }
+        # Absent from the coverage table means the question was never recorded, which is
+        # not the same as recorded uncovered. Treated as searched, because the matches
+        # table is then the only evidence there is -- and a campaign that records matches
+        # without recording coverage is the ordinary case before the coverage stage runs.
+        uncovered = {
+            (str(row["name"]), str(row["catalogue"]))
+            for _, row in coverage.iterrows()
+            if not row.get("covered")
+        }
+
+        cells = {
+            catalogue: [
+                "not searched"
+                if (name, catalogue) in uncovered
+                else ("found" if (name, catalogue) in matched else "not found")
+                for name in index
+            ]
+            for catalogue in catalogues
+        }
+        return pd.DataFrame(cells, index=index, dtype=object)
 
     def tier_counts(self):
-        """How many candidates fall in each inclusion tier."""
-        raise NotImplementedError
+        """
+        How many candidates fall in each inclusion tier.
+
+        Both views: the tier assigned from a single arm's significance and the one after
+        the trials correction. Reporting only the corrected count would hide the
+        candidates the correction moved, which is the set worth looking at.
+        """
+        import pandas as pd
+
+        frame = self.table("events")
+        if not len(frame):
+            return pd.DataFrame(columns=["tier", "n", "n_trials_corrected"])
+        plain = frame["tier"].value_counts()
+        corrected = frame["tier_trials"].value_counts()
+        tiers = sorted(set(plain.index) | set(corrected.index))
+        return pd.DataFrame(
+            {
+                "tier": tiers,
+                "n": [int(plain.get(tier, 0)) for tier in tiers],
+                "n_trials_corrected": [int(corrected.get(tier, 0)) for tier in tiers],
+            }
+        )
 
     def export(self, path: str | Path, fmt: str = "csv", where: Optional[str] = None) -> Path:
         """Write a selection out as csv, markdown, latex or hdf5."""
@@ -1558,14 +1866,116 @@ def _write_hdf5(path: Path, frame) -> None:
 
 
 def open_store(spec, read_only: bool = False) -> SearchStore:
-    """Open the campaign store for a spec."""
-    raise NotImplementedError
+    """
+    Open the campaign store for a spec.
+
+    Delegates to :meth:`SearchStore.open` rather than resolving a path of its own. Two
+    entry points naming two files would give a campaign two stores, and the one a reader
+    opened would depend on which name they had happened to see.
+    """
+    return SearchStore.open(spec, read_only=read_only)
 
 
 def build_from_products(spec, overwrite: bool = False) -> SearchStore:
     """
     Populate a store from the products a campaign has already written.
 
-    Lets a store be rebuilt from stage outputs without re-running the analysis.
+    Lets a store be rebuilt from stage outputs without re-running the analysis, which is
+    what makes the store safe to change: its schema is a presentation of products that
+    already exist on disk, so a schema change costs a rebuild rather than a campaign.
+
+    Products absent from the campaign are skipped rather than refused. The store is
+    queried while a campaign is running and most of it is empty most of the time; a
+    rebuild that insisted on the whole chain would be unusable exactly when it is most
+    wanted.
     """
-    raise NotImplementedError
+    import json
+
+    store = open_store(spec)
+    if overwrite:
+        # Rebuilt from products, so discarding is safe and is what `overwrite` asks for.
+        store.close()
+        Path(store.path).unlink(missing_ok=True)
+        store = SearchStore.open(spec)
+    store.initialise()
+
+    store.put(
+        "campaign",
+        [
+            {
+                "tag": str(spec.tag),
+                "spec_hash": spec.hash(),
+                "config_module": str(spec.config_module),
+                "observing_run": str(spec.data.observing_run),
+            }
+        ],
+    )
+    store.put(
+        "arms",
+        [{"arm": spec.arm, "detectors": ",".join(spec.data.detectors)}],
+    )
+
+    candidates_path = spec.path("candidates", "candidates.h5")
+    if candidates_path.is_file():
+        from sage.search.candidates import CandidateTable
+
+        table = CandidateTable.load(candidates_path, allow_undetermined=True)
+        store.put_events(table)
+        store.put_significance(table, None)
+        store.put_pastro(table)
+        store.put_provenance(
+            "events", {"spec_hash": spec.hash(), "source": str(candidates_path)}
+        )
+
+    livetime = spec.path("slides", "slide_plan.h5")
+    if livetime.is_file():
+        from sage.search.slides import SlidePlan
+
+        plan = SlidePlan.load(livetime)
+        store.put(
+            "livetime",
+            [
+                {
+                    "arm": spec.arm,
+                    "observing_run": str(spec.data.observing_run),
+                    "foreground_s": float(plan.foreground_livetime_s),
+                    "background_s": float(plan.background_livetime_s),
+                    "n_slides": sum(1 for s in plan.slides if s.slide_id != 0),
+                }
+            ],
+            key=["arm"],
+        )
+
+    report = spec.path("catalogue", "comparison.json")
+    if report.is_file():
+        payload = json.loads(report.read_text())
+        store.put_provenance("catalogue", {"sources": ",".join(payload.get("sources", []))})
+
+    return store
+
+
+def run(spec, **kwargs) -> dict:
+    """
+    Stage driver: build the campaign store from what the campaign has written.
+
+    Reads products rather than recomputing anything, so re-running this stage cannot
+    change a result -- it can only change how one is presented. That is the property that
+    makes the schema safe to alter after a campaign has finished.
+    """
+    from sage.search.fingerprint import combine
+
+    store = build_from_products(spec, overwrite=bool(kwargs.get("overwrite", False)))
+    try:
+        counts = {table: store.count(table) for table in TABLES}
+        filled = {name: n for name, n in counts.items() if n}
+        return {
+            "store": str(store.path),
+            "n_events": counts.get("events", 0),
+            "tables_filled": len(filled),
+            "rows": sum(counts.values()),
+            "fingerprint": combine(
+                counts.get("events", 0), sum(counts.values()), len(filled)
+            ),
+        }
+    finally:
+        store.close()

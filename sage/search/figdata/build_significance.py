@@ -194,22 +194,18 @@ def pastro_threshold_invariance(spec) -> FigData:
     precision achieved rather than against a fixed allowance: an estimate that is stable
     to within a wide interval has not demonstrated much.
     """
-    from sage.search.background import BackgroundSet
+    from sage.search.background import BackgroundSet, cluster_zerolag
     from sage.search.far import FarCurve
+    from sage.search.injection.campaign import scored_stats
     from sage.search.pastro.assign import assign_pastro
-    from sage.search.pastro.density import noise_density, signal_density
-    from sage.search.pastro.rates import fit_rates
-    from sage.search.pastro.support import build_support
+    from sage.search.pastro.run import fit_at_threshold
     from sage.search.triggers import read_shard
 
     background = BackgroundSet.load(spec.path("background", "bg_inclusive.h5"))
     curve = FarCurve.load(
         spec.path("far", f"far_curve_{spec.data.observing_run}_inclusive.h5")
     )
-    injections, _ = read_shard(spec.path("injections", "injection_triggers.h5"))
-    injection_stats = np.asarray(injections.columns["stat"], dtype=np.float64)
-    from sage.search.background import cluster_zerolag
-
+    injection_stats = scored_stats(spec)
     zerolag, _ = read_shard(spec.path("zerolag", "zerolag_slide0000.h5"))
     clustered = cluster_zerolag(
         zerolag, window_s=float(spec.cluster.window_s), linkage=spec.cluster.linkage
@@ -232,31 +228,22 @@ def pastro_threshold_invariance(spec) -> FigData:
     thresholds, values, sigmas, names = [], [], [], []
     for far_per_day in ladder:
         try:
-            support = build_support(
+            # The same construction the pastro stage runs, called rather than repeated.
+            # Two copies drifted apart once: this one kept asking for the generalised-
+            # Pareto tail after the driver stopped, so the figure could have illustrated
+            # an analysis nobody ran.
+            support, densities, posterior, _ = fit_at_threshold(
+                injection_stats,
+                background.stats,
+                stats,
                 curve,
                 threshold_far_per_day=float(far_per_day),
-                must_include=np.concatenate([injection_stats, stats]),
+                n_rate_grid=int(spec.pastro.n_rate_grid),
             )
         except ValueError:
-            # Outside what this background can resolve; recorded by omission rather than
-            # by a fabricated point.
+            # Outside what this background can resolve, or leaving no trigger inside the
+            # support. Recorded by omission rather than by a fabricated point.
             continue
-        densities = {
-            "BBH": signal_density(injection_stats, support),
-            "Terrestrial": noise_density(
-                np.asarray(background.stats, dtype=np.float64),
-                support,
-                tail=getattr(curve, "tail", None),
-                far_curve=curve,
-            ),
-        }
-        inside = (stats >= support.stat_lo) & (stats <= support.stat_hi)
-        if not inside.any():
-            continue
-        posterior = fit_rates(
-            stats[inside], densities, support, clustered=True,
-            n_grid=int(spec.pastro.n_rate_grid),
-        )
         # Only the tracked candidates this threshold's support actually covers. A
         # candidate below the cut was not in this fit, and both densities are zero there
         # -- assessing it anyway would ask for a ratio that does not exist, and plotting
@@ -300,56 +287,46 @@ def pastro_threshold_invariance(spec) -> FigData:
 
 def far_versus_statistic(spec) -> FigData:
     """
-    The statistic-to-rate mapping, with the fitted tail.
+    The statistic-to-rate mapping.
 
-    ``pycbc_page_fars_vs_stat``. The measured range and the extrapolated range are
-    carried separately so the figure can mark where counting ends and the fit begins --
-    which is the one thing a reader of this plot needs to know, since a rate quoted past
-    the loudest background event is a property of the fitted tail rather than of anything
-    that was counted.
+    ``pycbc_page_fars_vs_stat``. The rate is counted, and above the loudest background
+    event it holds flat at the counting floor ``(1 + 1) / T_b`` -- ``is_extrapolated``
+    marks exactly where that begins, because a reader has to be able to tell a measured
+    rate from the floor the counting saturates at. Nothing is fitted past the count.
     """
-    from sage.search.far import FarCurve
+    from sage.search.far import FarCurve, poisson_band
 
     curve = FarCurve.load(
         spec.path("far", f"far_curve_{spec.data.observing_run}_inclusive.h5")
     )
     stat = np.asarray(curve.stat, dtype=np.float64)
-    tail = getattr(curve, "tail", None)
-    scalars = {
-        "background_livetime_s": float(curve.background_livetime_s),
-        "foreground_livetime_s": float(curve.foreground_livetime_s),
-        "n_background": int(stat.size),
-    }
-    if tail is not None:
-        scalars.update(
-            tail_threshold=float(tail.threshold),
-            tail_shape=float(tail.shape),
-            tail_scale=float(tail.scale),
-            tail_n_exceedances=int(tail.n_exceedances),
-        )
-    else:
-        # Stated, not omitted: a figure with no tail fields could be one where the fit
-        # failed or one where it was never attempted, and those are different.
-        scalars["tail"] = "not fitted"
 
     # The band is the counting uncertainty on the rate: n counted above a statistic is
     # Poisson, so the rate inherits that spread. Only where counting happened.
-    from sage.search.far import poisson_band
-
     counted = np.asarray(curve.n_louder, dtype=np.float64)
     lo, hi = poisson_band(np.clip(counted, 0.0, None), 1)
-    scale = np.where(counted > 0, np.asarray(curve.far_per_yr) / np.maximum(counted, 1.0), np.nan)
+    scale = np.where(
+        counted > 0, np.asarray(curve.far_per_yr) / np.maximum(counted, 1.0), np.nan
+    )
     return FigData(
         figure="far_versus_statistic",
         arrays={
             "stat": stat,
             "far_per_yr": np.asarray(curve.far_per_yr, dtype=np.float64),
-            "is_extrapolated": np.asarray(curve.is_extrapolated, dtype=bool),
+            # Called, not read. `is_extrapolated` is a method taking the statistics to
+            # test; handing the bound method to `np.asarray` produced an object array
+            # that no reader could have used and no test caught, because this builder
+            # had never run.
+            "is_extrapolated": np.asarray(curve.is_extrapolated(stat), dtype=bool),
             "n_louder": np.asarray(curve.n_louder, dtype=np.int64),
-            "tail_band_lo": np.asarray(lo, dtype=np.float64) * scale,
-            "tail_band_hi": np.asarray(hi, dtype=np.float64) * scale,
+            "count_band_lo": np.asarray(lo, dtype=np.float64) * scale,
+            "count_band_hi": np.asarray(hi, dtype=np.float64) * scale,
         },
-        scalars=scalars,
+        scalars={
+            "background_livetime_s": float(curve.background_livetime_s),
+            "foreground_livetime_s": float(curve.foreground_livetime_s),
+            "n_background": int(stat.size),
+        },
         attrs={"observing_run": str(spec.data.observing_run), "arm": str(spec.arm)},
     )
 

@@ -206,42 +206,13 @@ declare(
             "stat",
             "far_per_yr",
             "is_extrapolated",
-            "tail_band_lo",
-            "tail_band_hi",
             "background_livetime_s",
-            "tail_threshold",
-            "tail_shape",
-            "tail_scale",
         ),
         sources=("far",),
         note=(
-            "The fitted shape travels with the curve it produced. xi > 0 is a heavier "
-            "tail than exponential and the extrapolation runs away above the threshold; "
-            "xi < 0 is bounded above at u - scale/xi. Reading it is how the "
-            "extrapolation's character is known rather than assumed."
-        ),
-    )
-)
-declare(
-    FigureDecl(
-        key="tail_shape_stability",
-        origin="",
-        deferred="no counterpart in sgwc-1 or PyCBC; deferred by ruling of 2026-08-20 -- keep what those two produce, revisit the rest later",
-        title="Fitted tail shape against threshold",
-        builder="build_significance",
-        requires=(
-            "ladder_threshold",
-            "ladder_shape",
-            "ladder_std_error",
-            "ladder_n_exceedances",
-            "chosen_threshold",
-        ),
-        sources=("far",),
-        note=(
-            "PyCBC's threshold diagnostic: pycbc_fit_sngl_trigs takes a list of "
-            "thresholds, fits at each, and plots the shape with its standard error "
-            "against threshold. Read, not selected from -- the threshold in use is the "
-            "count rule's, marked on the axis for comparison."
+            "The counted rate, and only the counted rate. Above the loudest background "
+            "event it holds flat at (1 + 1) / T_b and `is_extrapolated` marks where, so "
+            "the floor is never read as a measurement. Nothing is fitted past the count."
         ),
     )
 )
