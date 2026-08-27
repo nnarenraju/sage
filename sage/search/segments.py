@@ -501,8 +501,52 @@ def coverage_report(
 def load_veto_segments(
     run: str, detector: str, category: int = 1, cache_dir: str | Path | None = None
 ) -> List[Interval]:
-    """Fetch CAT-N veto intervals (cached on /work; never /tmp)."""
-    raise NotImplementedError
+    """
+    Fetch CAT-N veto intervals (cached on /work; never /tmp).
+
+    Through :func:`pycbc.dq.query_flag`, which is where the awkward part already lives.
+    GWOSC publishes a veto flag with the opposite sense to the LIGO convention -- its
+    ``*_CAT n_VETO`` timeline marks the time that is *good* -- and PyCBC handles the
+    inversion explicitly (``pycbc/dq.py:161``, "Special cases as the GWOSC convention is
+    backwards from normal LIGO / Virgo operation"). Reimplementing that here would be one
+    more place for the sense to be got backwards, and a veto applied with the wrong sense
+    removes exactly the time it was meant to keep.
+
+    Returned as intervals to subtract, not as the time to keep, so it composes with
+    :func:`subtract_intervals` the way every other exclusion in this module does.
+
+    Parameters
+    ----------
+    category : int
+        Veto category. 1 is the mandatory pre-analysis removal; higher categories are
+        trigger-level and are not a data cut.
+    cache_dir : path, optional
+        Where the fetched timeline is kept. Never under the system temporary directory:
+        a campaign is re-run months later and a veto list that has silently vanished
+        would be re-fetched from a service that may by then answer differently.
+    """
+    import os
+
+    from pycbc.dq import query_flag
+
+    from sage.search.dataprep import run_span
+
+    span = run_span(run)
+    flag = f"CBC_CAT{int(category)}_VETO"
+    if cache_dir is not None:
+        cache_dir = Path(cache_dir)
+        if str(cache_dir) == "/tmp" or "/tmp/" in f"{cache_dir}/":
+            raise ValueError(
+                f"cache_dir must not be under /tmp, got {cache_dir}; a veto list that "
+                "vanishes between runs makes the livetime irreproducible"
+            )
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
+
+    vetoed = query_flag(
+        detector, flag, int(span[0]), int(span[1]), cache=cache_dir is not None
+    )
+    return merge_intervals((float(s.start), float(s.end)) for s in vetoed)
 
 
 def verify_cat1_applied(
@@ -513,8 +557,27 @@ def verify_cat1_applied(
 
     CAT1 removal is mandatory before analysis; this proves whether the release
     already has it rather than assuming either way.
+
+    The two states are told apart by *how much* vetoed time the release still covers, not
+    by whether any is present: a release built from GWOSC's ``DATA`` flag already excludes
+    category 1 by construction, so an overlap of a few seconds at a boundary is rounding
+    and an overlap of hours is a release that never applied it.
     """
-    raise NotImplementedError
+    covered = merge_intervals((s.gps_start, s.gps_end) for s in segments)
+    vetoed = merge_intervals(vetoes)
+    remaining = intersect_intervals(covered, vetoed)
+    covered_s = sum(b - a for a, b in covered)
+    vetoed_s = sum(b - a for a, b in vetoed)
+    remaining_s = sum(b - a for a, b in remaining)
+    return {
+        "release_livetime_s": covered_s,
+        "veto_livetime_s": vetoed_s,
+        "vetoed_time_still_covered_s": remaining_s,
+        "fraction_of_release": remaining_s / covered_s if covered_s else 0.0,
+        "applied": remaining_s == 0.0,
+        "intervals": remaining,
+    }
+
 
 
 def exact_livetime_s(

@@ -789,3 +789,88 @@ class TestStreamingReaderResume:
             assert reader.blocks
         with pytest.raises(ValueError, match="closed"):
             list(reader)
+
+
+class TestSegmentedLayout:
+    """
+    The search-grade release: one HDF5 dataset per segment.
+
+    The layout the search actually reads, and the one nothing exercised until an injection
+    campaign opened it as a flat ``.bin`` that does not exist. Which reader a release gets
+    is decided by its sidecar, so both layouts are built from the same samples here and
+    asserted to return the same strain.
+    """
+
+    @pytest.fixture(scope="class")
+    def both(self, tmp_path_factory):
+        from tests.search_fixtures import make_synthetic_release
+
+        root = tmp_path_factory.mktemp("layouts")
+        flat = make_synthetic_release(
+            root / "flat", detectors=("H1", "L1"), chunk_s=64.0, fill="noise"
+        )
+        segmented = make_synthetic_release(
+            root / "segmented",
+            detectors=("H1", "L1"),
+            chunk_s=64.0,
+            fill="noise",
+            layout="segmented",
+        )
+        return flat, segmented
+
+    def test_layout_is_read_from_the_sidecar(self, both):
+        """A record naming a dataset selects the HDF5 reader, and one without does not."""
+        from sage.search.reader import _FlatStream, _SegmentedStream, open_stream
+
+        flat, segmented = both
+        for release, expected in ((flat, _FlatStream), (segmented, _SegmentedStream)):
+            segments = load_segments(release / "data_H1_O3a_segments.json")
+            stream = open_stream(release, "H1", segments)
+            try:
+                assert isinstance(stream, expected)
+            finally:
+                stream.close()
+
+    def test_both_layouts_read_the_same_strain(self, both):
+        """
+        Same samples, same sidecar geometry, so the two must agree exactly.
+
+        Not ``allclose``: both divide out the same ``dyn_range_fac`` from the same stored
+        float32, so any difference is an addressing bug rather than arithmetic.
+        """
+        from sage.search.reader import open_stream
+
+        flat, segmented = both
+        for detector in ("H1", "L1"):
+            a = load_segments(flat / f"data_{detector}_O3a_segments.json")
+            b = load_segments(segmented / f"data_{detector}_O3a_segments.json")
+            sa = open_stream(flat, detector, a)
+            sb = open_stream(segmented, detector, b)
+            try:
+                for one, two in zip(a, b):
+                    assert one.segment_index == two.segment_index
+                    assert np.array_equal(
+                        sa.read(one, 17, 4096), sb.read(two, 17, 4096)
+                    )
+            finally:
+                sa.close()
+                sb.close()
+
+    def test_missing_stream_names_the_sidecar(self, both):
+        """A release whose strain is absent is refused by name, not at first read."""
+        from sage.search.reader import open_stream
+
+        flat, segmented = both
+        segments = load_segments(segmented / "data_H1_O3a_segments.json")
+        with pytest.raises(FileNotFoundError, match="no strain for H1"):
+            open_stream(flat, "H1", segments)
+
+    def test_mixed_sidecar_is_refused(self, both):
+        """Half the records naming a dataset belongs to neither reader."""
+        from sage.search.reader import open_stream
+
+        _, segmented = both
+        segments = load_segments(segmented / "data_H1_O3a_segments.json")
+        mixed = [dataclasses.replace(segments[0], dataset=None), *segments[1:]]
+        with pytest.raises(ValueError, match="some segments and not others"):
+            open_stream(segmented, "H1", mixed)

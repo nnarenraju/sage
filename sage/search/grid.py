@@ -345,6 +345,24 @@ class AnalysisGrid:
                 )
                 cursor += int(n_here)
 
+    def runs_for_detector(self, detector: str) -> Iterator[DetectorRun]:
+        """
+        Yield the runs one detector contributes to the whole lattice.
+
+        :meth:`iter_block_detector` over every block, without the caller having to choose
+        a block length it does not otherwise need. Only the reference detector's spans are
+        stored; a follower's are derived by mapping the reference lattice through the
+        slide offset onto that detector's own segments, so they are the only description
+        of which of its samples this lattice actually reads.
+        """
+        whole = Block(
+            block_id=0,
+            gps_start=0.0,
+            gps_end=0.0,
+            span_slice=(0, len(self.reference_spans)),
+        )
+        yield from self.iter_block_detector(whole, detector)
+
     def _lattice_starts(self) -> np.ndarray:
         """
         Every reference window start in this lattice, in order.
@@ -447,7 +465,12 @@ def run(spec, **kwargs) -> dict:
         for detector in spec.data.detectors
     }
     coincident = coincident_intervals(segments)
-    grid = AnalysisGrid.build(geometry, segments, coincident)
+    grid = AnalysisGrid.build(
+        geometry,
+        segments,
+        coincident,
+        reference_detector=spec.slides.reference_detector,
+    )
     blocks = grid.blocks(float(spec.engine.block_seconds))
     coincident_s = float(sum(hi - lo for lo, hi in coincident))
     analysed_s = float(grid.livetime_s)

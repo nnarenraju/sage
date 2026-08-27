@@ -69,6 +69,7 @@ def make_synthetic_release(
     fill: str = "constant",
     shuffle_index: bool = True,
     seed: int = 20260809,
+    layout: str = "flat",
 ) -> Path:
     """
     Write a miniature strain release in the real on-disk format.
@@ -84,6 +85,13 @@ def make_synthetic_release(
         Number the records in an order anti-correlated with GPS, as the real releases do.
         Setting this false produces a GPS-sorted release, which is useful only to confirm
         that a test would have passed for the wrong reason.
+    layout : {"flat", "segmented"}
+        ``"flat"`` writes the training releases' single ``.bin`` per detector, every
+        segment placed at its ``sample_start_idx``. ``"segmented"`` writes the
+        search-grade ``.h5``, one dataset per segment and a ``dataset`` key on each
+        record, which is the layout the search release uses and the one that lets it keep
+        the events the training release removed. Both are produced from the same samples,
+        so a test may assert the two read identically.
 
     Returns
     -------
@@ -92,10 +100,14 @@ def make_synthetic_release(
 
     Notes
     -----
-    The layout matches what :mod:`sage.data.noise.real_noise` reads: a flat little-endian
-    float32 ``.bin`` per detector and a JSON sidecar whose records carry ``sample_start_idx``
-    and ``nsamples`` into it. Records are contiguous in the file and shuffled in time.
+    The flat layout matches what :mod:`sage.data.noise.real_noise` reads: a little-endian
+    float32 ``.bin`` per detector and a JSON sidecar whose records carry
+    ``sample_start_idx`` and ``nsamples`` into it. Records are contiguous in the file and
+    shuffled in time. The segmented layout matches the search release: the same records,
+    each naming its own HDF5 dataset.
     """
+    if layout not in ("flat", "segmented"):
+        raise ValueError(f"unknown layout {layout!r}")
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
@@ -112,11 +124,17 @@ def make_synthetic_release(
         if shuffle_index:
             order = order[::-1]
 
-        bin_path = root / f"data_{detector}_{observing_run}.bin"
+        segmented = layout == "segmented"
         records = []
         cursor_samples = 0
         cursor_bytes = 0
-        with open(bin_path, "wb") as fh:
+        if segmented:
+            import h5py
+
+            sink = h5py.File(root / f"data_{detector}_{observing_run}.h5", "w")
+        else:
+            sink = open(root / f"data_{detector}_{observing_run}.bin", "wb")
+        with sink as fh:
             for position, chunk in enumerate(order):
                 if fill == "constant":
                     values = np.full(n_samples, float(position + 1), dtype=np.float64)
@@ -126,7 +144,11 @@ def make_synthetic_release(
                     raise ValueError(f"unknown fill {fill!r}")
                 stored = (values * DYN_RANGE_FAC).astype("<f4")
                 payload = stored.tobytes()
-                fh.write(payload)
+                dataset = f"segments/{position:06d}"
+                if segmented:
+                    fh.create_dataset(dataset, data=stored)
+                else:
+                    fh.write(payload)
                 records.append(
                     {
                         "segment_index": position,
@@ -147,6 +169,8 @@ def make_synthetic_release(
                         "noise_low_freq_cutoff": 15.0,
                     }
                 )
+                if segmented:
+                    records[-1]["dataset"] = dataset
                 cursor_samples += n_samples
                 cursor_bytes += len(payload)
 

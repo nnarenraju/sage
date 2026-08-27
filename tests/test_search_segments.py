@@ -421,3 +421,67 @@ class TestSidecarIngest:
         path.write_text(json.dumps(records))
         with pytest.raises(ValueError, match="detector"):
             load_segments(path)
+
+
+class TestVetoVerification:
+    """Whether a release already had category 1 removed, measured rather than assumed."""
+
+    def _release(self, spans):
+        from sage.search.segments import Segment
+
+        return [
+            Segment(
+                segment_index=index,
+                detector="H1",
+                observing_run="O3a",
+                gps_start=float(start),
+                gps_end=float(end),
+                sample_rate=2048.0,
+                nsamples=int((end - start) * 2048),
+                sample_start_idx=0,
+                dyn_range_fac=5.9e20,
+                noise_low_freq_cutoff=15.0,
+            )
+            for index, (start, end) in enumerate(spans)
+        ]
+
+    def test_disjoint_veto_reads_as_applied(self):
+        """
+        A release built on GWOSC's ``DATA`` flag already excludes category 1, so the two
+        sets do not meet and the check has to say so rather than reporting an absence of
+        evidence.
+        """
+        from sage.search.segments import verify_cat1_applied
+
+        report = verify_cat1_applied(self._release([(0.0, 1000.0)]), [(2000.0, 3000.0)])
+
+        assert report["applied"]
+        assert report["vetoed_time_still_covered_s"] == 0.0
+
+    def test_overlap_is_reported_as_time_not_a_flag(self):
+        """
+        How much vetoed time a release still covers is what separates rounding at a
+        boundary from a release that never applied the veto. A boolean alone cannot.
+        """
+        from sage.search.segments import verify_cat1_applied
+
+        report = verify_cat1_applied(self._release([(0.0, 1000.0)]), [(100.0, 200.0)])
+
+        assert not report["applied"]
+        assert report["vetoed_time_still_covered_s"] == pytest.approx(100.0)
+        assert report["fraction_of_release"] == pytest.approx(0.1)
+        assert report["intervals"] == [(100.0, 200.0)]
+
+    def test_counts_only_the_overlap(self):
+        """
+        A veto reaching outside the release is not time the release covers, so it must
+        not inflate the overlap -- which would report an applied veto as unapplied.
+        """
+        from sage.search.segments import verify_cat1_applied
+
+        report = verify_cat1_applied(
+            self._release([(0.0, 100.0)]), [(50.0, 5000.0)]
+        )
+
+        assert report["veto_livetime_s"] == pytest.approx(4950.0)
+        assert report["vetoed_time_still_covered_s"] == pytest.approx(50.0)

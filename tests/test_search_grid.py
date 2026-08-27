@@ -259,3 +259,82 @@ class TestCrossDetectorAlignment:
         block = grid.blocks(1e9)[0]
         with pytest.raises(ValueError, match="unknown detector"):
             list(grid.iter_block_detector(block, "K1"))
+
+    def test_whole_lattice_runs_match_blockwise(self):
+        """
+        ``runs_for_detector`` yields every block's runs, for followers too.
+
+        The follower path is the one that matters: only the reference detector has stored
+        spans, so a caller needing a follower's analysed windows has nothing to read and
+        must derive them here.
+        """
+        grid = _grid(sub_sample_offset=0.5 / RATE, detectors=("H1", "L1", "V1"))
+        for detector in grid.detectors:
+            whole = list(grid.runs_for_detector(detector))
+            blockwise = [
+                run
+                for block in grid.blocks(90.0)
+                for run in grid.iter_block_detector(block, detector)
+            ]
+            assert sum(r.n_windows for r in whole) == len(grid)
+            assert [
+                (r.segment.segment_index, r.first_local, r.n_windows) for r in whole
+            ] == [
+                (r.segment.segment_index, r.first_local, r.n_windows) for r in blockwise
+            ]
+
+
+class TestBuildCallSites:
+    """
+    Every lattice in the package is built the same way.
+
+    Not a behavioural test: the call sites live in stage drivers that need a checkpoint
+    and a GPU, so the property is checked where it is actually decided. Both halves were
+    violated -- the injection campaign and the trials stage each took the reference
+    detector from whichever detector happened to be first in the segment dict, and four
+    sites paid for a coverage decomposition nobody reads.
+    """
+
+    @staticmethod
+    def _calls():
+        """Every ``AnalysisGrid.build`` call in the package, as an AST node."""
+        import ast
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1] / "sage" / "search"
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "build"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "AnalysisGrid"
+                ):
+                    yield path, node
+
+    def test_reference_detector_is_always_given(self):
+        """
+        Left to the default it is whichever detector the segment dict lists first.
+
+        The lattice is defined in the reference detector's frame, so two stages that
+        disagree about it describe different windows while reporting the same livetime and
+        the same count.
+        """
+        offenders = [
+            f"{path.name}:{node.lineno}"
+            for path, node in self._calls()
+            if "reference_detector" not in {kw.arg for kw in node.keywords}
+        ]
+        assert not offenders, offenders
+
+    def test_coverage_is_requested_only_where_it_is_read(self):
+        """Only the ``grid`` stage reports the decomposition; it costs 374 s on O3a."""
+        offenders = [
+            f"{path.name}:{node.lineno}"
+            for path, node in self._calls()
+            if path.name != "grid.py"
+            and "coverage" not in {kw.arg for kw in node.keywords}
+        ]
+        assert not offenders, offenders

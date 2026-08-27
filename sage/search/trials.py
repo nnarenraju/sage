@@ -1305,7 +1305,13 @@ def analysed_intervals(spec) -> Tuple[np.ndarray, float]:
         )
         for detector in spec.data.detectors
     }
-    grid = AnalysisGrid.build(geometry, segments, coincident_intervals(segments))
+    grid = AnalysisGrid.build(
+        geometry,
+        segments,
+        coincident_intervals(segments),
+        reference_detector=spec.slides.reference_detector,
+        coverage=False,
+    )
     stride = float(geometry.stride_s)
     spans = grid.reference_spans
     intervals = np.array(

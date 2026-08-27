@@ -283,50 +283,10 @@ class StreamingStrainReader:
             self._streams[detector] = self._open(detector)
 
     def _open(self, detector: str):
-        """
-        Open one detector's strain, refusing a release the sidecar disagrees with.
-
-        Two layouts are supported and are told apart by what the sidecar carries, not by
-        what the directory happens to contain. A segment naming a ``dataset`` belongs to a
-        search-grade HDF5 release, one dataset per segment; one that does not belongs to a
-        flat ``.bin`` training release, where ``sample_start_idx`` locates it in a single
-        stream. Guessing from the filenames would pick the wrong reader for a directory
-        holding both.
-
-        Checked at construction rather than at first read: a mismatch discovered part way
-        through a block has already written triggers from whatever the earlier reads
-        returned, and those are indistinguishable from real ones afterwards.
-        """
-        segments = self.grid.segments_by_detector.get(detector)
-        if not segments:
-            raise ValueError(
-                f"the lattice names detector {detector!r} but carries no segments for it"
-            )
-        run = segments[0].observing_run
-        mixed = {segment.observing_run for segment in segments}
-        if len(mixed) != 1:
-            raise ValueError(
-                f"{detector} segments span observing runs {sorted(mixed)}; one campaign "
-                "covers one run, and the release file is named for it"
-            )
-        segmented = any(segment.dataset for segment in segments)
-        if segmented and not all(segment.dataset for segment in segments):
-            raise ValueError(
-                f"{detector}'s sidecar names a dataset for some segments and not others, "
-                "so the release is half one layout and half the other and neither reader "
-                "can address all of it"
-            )
-        stem = self.release_dir / f"data_{detector}_{run}"
-        path = stem.with_suffix(".h5" if segmented else ".bin")
-        if not path.is_file():
-            raise FileNotFoundError(
-                f"no strain for {detector} at {path}; the lattice was built from "
-                f"{stem}_segments.json, so the release is missing the stream its own "
-                "sidecar indexes into"
-            )
-        if segmented:
-            return _SegmentedStream(path, segments)
-        return _FlatStream(path, segments)
+        """Open one detector's strain for this lattice."""
+        return open_stream(
+            self.release_dir, detector, self.grid.segments_by_detector.get(detector)
+        )
 
     def _require_open(self) -> None:
         if self._closed:
@@ -473,6 +433,57 @@ class StreamingStrainReader:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+def open_stream(release_dir: str | Path, detector: str, segments):
+    """
+    Open one detector's strain, refusing a release the sidecar disagrees with.
+
+    Two layouts are supported and are told apart by what the sidecar carries, not by what
+    the directory happens to contain. A segment naming a ``dataset`` belongs to a
+    search-grade HDF5 release, one dataset per segment; one that does not belongs to a
+    flat ``.bin`` training release, where ``sample_start_idx`` locates it in a single
+    stream. Guessing from the filenames would pick the wrong reader for a directory
+    holding both.
+
+    Checked when the stream is opened rather than at first read: a mismatch discovered
+    part way through a block has already written triggers from whatever the earlier reads
+    returned, and those are indistinguishable from real ones afterwards.
+
+    Module level rather than a reader method because the injection campaign draws its
+    noise from the same release and must open it the same way. Reimplementing the choice
+    there hardcoded the flat layout, while the search release is the segmented one.
+    """
+    release_dir = Path(release_dir)
+    if not segments:
+        raise ValueError(
+            f"the lattice names detector {detector!r} but carries no segments for it"
+        )
+    run = segments[0].observing_run
+    mixed = {segment.observing_run for segment in segments}
+    if len(mixed) != 1:
+        raise ValueError(
+            f"{detector} segments span observing runs {sorted(mixed)}; one campaign "
+            "covers one run, and the release file is named for it"
+        )
+    segmented = any(segment.dataset for segment in segments)
+    if segmented and not all(segment.dataset for segment in segments):
+        raise ValueError(
+            f"{detector}'s sidecar names a dataset for some segments and not others, "
+            "so the release is half one layout and half the other and neither reader "
+            "can address all of it"
+        )
+    stem = release_dir / f"data_{detector}_{run}"
+    path = stem.with_suffix(".h5" if segmented else ".bin")
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"no strain for {detector} at {path}; the lattice was built from "
+            f"{stem}_segments.json, so the release is missing the stream its own "
+            "sidecar indexes into"
+        )
+    if segmented:
+        return _SegmentedStream(path, segments)
+    return _FlatStream(path, segments)
 
 
 _SENTINEL = object()
