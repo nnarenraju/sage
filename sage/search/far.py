@@ -17,7 +17,7 @@ __status__      = inProgress
 
 FAR uses the conservative ``(1 + n_b) / T_b`` counting. ``T_b`` is always the summed
 per-slide livetime from the slide plan; there is no closed form for it. Beyond the
-measured background the curve is continued by the fitted tail, and the extrapolated
+measured background the curve holds flat at the counting floor, and the
 region is reported with its uncertainty band rather than silently.
 """
 
@@ -34,7 +34,6 @@ from sage.search.background import (
     n_louder,
 )
 from sage.search.fingerprint import combine, digest_h5
-from sage.search.tail import TailFit
 
 __all__ = [
     "SECONDS_PER_JULIAN_YEAR",
@@ -49,17 +48,6 @@ __all__ = [
 ]
 
 
-# Scalar fields of a TailFit, stored as attrs beside its covariance. Named explicitly
-# rather than derived from the dataclass so that adding a field to TailFit fails the
-# round-trip test rather than being silently dropped on write.
-_TAIL_SCALARS: Tuple[str, ...] = (
-    "threshold",
-    "scale",
-    "shape",
-    "lrt_p_value",
-    "ad_p_value",
-)
-
 
 @dataclass
 class FarCurve:
@@ -71,7 +59,6 @@ class FarCurve:
     background_livetime_s: float
     foreground_livetime_s: float
     removal: str
-    tail: Optional[TailFit] = None
     ifar_cap_yr: float = 1000.0
 
     def __post_init__(self) -> None:
@@ -107,8 +94,8 @@ class FarCurve:
         floor is ``(1 + 1) / T_b`` -- the counting is inclusive, so the loudest background
         event counts itself. The background ran out, and every candidate above it is
         reported at the same rate because the counting cannot tell them apart. Separating
-        them is what :meth:`far_extrapolated_of` is for, and it is deliberately a
-        different number with a different name.
+        There is no extrapolated counterpart: continuing the curve past the count with a
+        fitted tail is what this package used to do, and see SB-64 for what it cost.
         """
         stat = np.asarray(stat, dtype=np.float64)
         if self.stat.size == 0:
@@ -123,41 +110,6 @@ class FarCurve:
             )
         )
 
-    def far_extrapolated_of(self, stat: np.ndarray) -> np.ndarray:
-        """
-        The fitted FAR, continuing the curve past the loudest background event.
-
-        Never a substitute for :meth:`far_of`. The counted rate saturates at ``1 / T_b``
-        once the background runs out, so a one-in-two-year and a one-in-a-hundred-year
-        candidate are assigned the same number by counting alone; this separates them
-        using the fitted tail. It is a model extrapolated beyond its data, which is
-        exactly the region no measurement can check, so it is reported under its own name
-        and never written into a column called ``far``.
-
-        Below the fit threshold the tail's survival is one by construction, so this
-        returns the measured rate there and joins :meth:`far_of` without a step.
-
-        Raises
-        ------
-        ValueError
-            No tail was fitted. There is then nothing to extrapolate with, and returning
-            the counted rate under this name would present the floor as a fitted value.
-        """
-        if self.tail is None:
-            raise ValueError(
-                "this curve carries no tail fit, so no extrapolated rate exists; "
-                "far_of gives the counted rate, which saturates at 1 / T_b"
-            )
-        stat = np.asarray(stat, dtype=np.float64)
-        measured = self.far_of(stat)
-        # The tail gives the exceedance probability above its own threshold; the rate is
-        # that probability times the measured rate at the threshold.
-        anchor = float(
-            np.exp(np.interp(self.tail.threshold, self.stat, np.log(self.far_per_yr)))
-        )
-        survival = np.asarray(self.tail.survival(stat), dtype=np.float64)
-        beyond = stat > self.tail.threshold
-        return np.where(beyond, anchor * survival, measured)
 
     def ifar_of(self, stat: np.ndarray) -> np.ndarray:
         """
@@ -173,18 +125,6 @@ class FarCurve:
             ifar = np.where(far > 0, 1.0 / far, np.inf)
         return np.minimum(ifar, self.ifar_cap_yr)
 
-    def ifar_extrapolated_of(self, stat: np.ndarray) -> np.ndarray:
-        """
-        Inverse of :meth:`far_extrapolated_of`, in years, under the same cap.
-
-        The cap is what keeps the extrapolation honest: a fitted tail will happily return
-        a rate implying a million years from a background that ran for twenty, and the
-        cap says plainly that what produced such a number is the model and not the data.
-        """
-        far = self.far_extrapolated_of(stat)
-        with np.errstate(divide="ignore"):
-            ifar = np.where(far > 0, 1.0 / far, np.inf)
-        return np.minimum(ifar, self.ifar_cap_yr)
 
     def is_extrapolated(self, stat: np.ndarray) -> np.ndarray:
         """
@@ -207,8 +147,7 @@ class FarCurve:
         somewhere else is the exact error the exclusive and hierarchical modes exist to
         avoid, and it is invisible afterwards because both numbers look ordinary.
 
-        The tail fit is embedded rather than referenced. It is what
-        :meth:`far_extrapolated_of` continues the counted curve with, so a curve stored
+        A curve is the count and the exposure it was counted over, so a stored curve
         without it would silently lose the ability to separate "1 in 2 yr" from "1 in
         100 yr" -- and would raise at the point of use, one stage later.
 
@@ -231,25 +170,16 @@ class FarCurve:
             handle.create_dataset(
                 "n_louder", data=np.asarray(self.n_louder, dtype=np.int64)
             )
-            if self.tail is not None:
-                group = handle.create_group("tail")
-                for name in _TAIL_SCALARS:
-                    group.attrs[name] = float(getattr(self.tail, name))
-                group.attrs["n_exceedances"] = int(self.tail.n_exceedances)
-                group.create_dataset(
-                    "covariance",
-                    data=np.asarray(self.tail.covariance, dtype=np.float64),
-                )
 
     @classmethod
     def load(cls, path: str | Path) -> "FarCurve":
         """
-        Read a persisted FAR curve, tail fit included.
+        Read a persisted FAR curve.
 
-        The tail is reconstructed as a :class:`~sage.search.tail.TailFit` rather than as a
-        bag of numbers, so a reloaded curve extrapolates through the same code the fit was
-        validated with. A curve whose file carries no tail comes back with ``tail=None``
-        and refuses to extrapolate, which is what a curve fitted to nothing should do.
+        The curve is the counted rate and nothing else, so what comes back is what was
+        counted. Older files may carry a ``tail`` group from the generalised-Pareto fit
+        this package no longer makes; it is ignored rather than read, since nothing can
+        consume it any more.
         """
         import h5py
 
@@ -257,15 +187,6 @@ class FarCurve:
         if not target.is_file():
             raise FileNotFoundError(f"no FAR curve at {target}")
         with h5py.File(target, "r") as handle:
-            tail = None
-            if "tail" in handle:
-                group = handle["tail"]
-                fields = {name: float(group.attrs[name]) for name in _TAIL_SCALARS}
-                tail = TailFit(
-                    covariance=np.asarray(group["covariance"], dtype=np.float64),
-                    n_exceedances=int(group.attrs["n_exceedances"]),
-                    **fields,
-                )
             return cls(
                 stat=np.asarray(handle["stat"], dtype=np.float64),
                 far_per_yr=np.asarray(handle["far_per_yr"], dtype=np.float64),
@@ -274,7 +195,6 @@ class FarCurve:
                 foreground_livetime_s=float(handle.attrs["foreground_livetime_s"]),
                 removal=str(handle.attrs["removal"]),
                 ifar_cap_yr=float(handle.attrs["ifar_cap_yr"]),
-                tail=tail,
             )
 
 
@@ -290,7 +210,6 @@ class FarCurve:
 def build_far_curve(
     background: BackgroundSet,
     foreground_livetime_s: float,
-    tail: Optional[TailFit] = None,
     ifar_cap_yr: float = 1000.0,
 ) -> FarCurve:
     """
@@ -328,7 +247,6 @@ def build_far_curve(
         background_livetime_s=float(background.livetime_s),
         foreground_livetime_s=float(foreground_livetime_s),
         removal=background.removal,
-        tail=tail,
         ifar_cap_yr=float(ifar_cap_yr),
     )
 
@@ -482,27 +400,19 @@ def _time_binned_counts(background, bin_width_s: float):
 
 def run(spec, **kwargs) -> dict:
     """
-    Stage driver: build a FAR curve per removal mode, fit its tail, and validate it.
+    Stage driver: build a counted FAR curve per removal mode.
 
-    The counted curve is the rate of record. The fit is a *continuation* of it above the
-    loudest background event, reported under a distinct name so a table can never present
-    an extrapolated rate as a measured one, and it decides nothing: the campaign's FAR is
-    the count.
+    The count is the rate, and the only rate. Nothing is fitted and nothing is continued
+    past the loudest background event, which is sgwc-1's construction -- it reads its
+    reporting thresholds straight off the background (``search.ipynb`` cell 297: 1/month
+    at 11.640625 for HL) and fits no tail anywhere.
 
-    The validity checks are recorded next to the fit rather than acted on. Over-dispersion
-    relative to Poisson, and the goodness-of-fit p-values, are what a reader needs to judge
-    whether the tail model is adequate; a driver that silently switched behaviour on them
-    would make the reported curve depend on a test outcome nobody saw.
+    Over-dispersion relative to Poisson is measured and recorded beside the curve rather
+    than acted on: simple order-statistic counting assumes independence, and a reader needs
+    to know whether the background supports that. A driver that silently switched behaviour
+    on a test outcome would make the reported curve depend on a result nobody saw.
     """
     from sage.search.background import BackgroundSet, overdispersion_lrt
-    from sage.search.tail import (
-        anderson_darling,
-        choose_threshold,
-        exponential_lrt,
-        fit_tail,
-        ks_test,
-        threshold_ladder,
-    )
 
     foreground_s = kwargs.pop("foreground_livetime_s", None)
     if foreground_s is None:
@@ -535,48 +445,15 @@ def run(spec, **kwargs) -> dict:
             else float(foreground_s)
         )
 
-        tail = None
         detail = {
             "n_background": int(stats.size),
             "foreground_livetime_s": mode_foreground_s,
             "foreground_reduced": background.foreground_livetime_s is not None,
         }
-        if stats.size > int(spec.significance.n_exceedances):
-            threshold = choose_threshold(
-                stats,
-                min_exceedances=int(spec.significance.n_exceedances),
-                method=spec.significance.threshold_method,
-            )
-            tail = fit_tail(stats, threshold)
-            ladder = threshold_ladder(
-                stats, min_exceedances=int(spec.significance.n_exceedances)
-            )
-            detail.update(
-                {
-                    "tail_threshold": float(tail.threshold),
-                    # xi. Positive is heavier than exponential and the extrapolation runs
-                    # away above the threshold; negative is bounded above at u - scale/xi.
-                    "tail_shape": float(tail.shape),
-                    "tail_scale": float(tail.scale),
-                    "tail_n_exceedances": int(tail.n_exceedances),
-                    "ladder_shape": ladder["shape"].tolist(),
-                    "ladder_threshold": ladder["threshold"].tolist(),
-                    "ladder_std_error": ladder["std_error"].tolist(),
-                    "ad_p_value": float(anderson_darling(stats, threshold)[1]),
-                    "ks_p_value": float(ks_test(stats, threshold)[1]),
-                    "lrt_p_value": float(exponential_lrt(stats, threshold)[1]),
-                }
-            )
-        else:
-            detail["tail"] = (
-                f"not fitted: {stats.size} background events cannot leave "
-                f"{spec.significance.n_exceedances} exceedances"
-            )
 
         curve = build_far_curve(
             background,
             mode_foreground_s,
-            tail=tail,
             ifar_cap_yr=float(spec.significance.ifar_cap_yr),
         )
         target = spec.path(

@@ -614,88 +614,44 @@ class TestHierarchicalRemoval:
             )
 
 
-class TestCountedVersusExtrapolated:
-    """The counted rate and the fitted one are different numbers with different names."""
+class TestCountedRate:
+    """
+    The curve is the count, and nothing continues it.
 
-    @staticmethod
-    def _curve_pair():
-        """The same background, with and without a fitted tail attached."""
-        from sage.search.tail import fit_tail
+    The generalised-Pareto continuation this class used to exercise is gone: it was used
+    only by the p_astro noise density, where extrapolating it past the loudest background
+    inverted the likelihood ratio. See SB-64.
+    """
 
-        rng = np.random.default_rng(4)
-        stats = rng.exponential(1.0, size=4000)
-        background = _background(stats=stats)
-        tail = fit_tail(stats, min_exceedances=500, n_bootstrap=20, n_null=50)
-        return (
-            build_far_curve(background, 50.0),
-            build_far_curve(background, 50.0, tail=tail),
-        )
+    def _curve(self):
+        from sage.search.far import build_far_curve
 
-    def test_counted_far_ignores_tail(self):
+        background = _background(np.random.default_rng(3).exponential(1.0, 4000))
+        return build_far_curve(background, foreground_livetime_s=1000.0)
+
+    def test_saturates_at_the_counting_floor(self):
         """
-        ``far_of`` returns the same rate whether or not a tail was fitted.
+        Above the loudest background event every statistic reports the same rate.
 
-        The FAR of record is counting and nothing else. If a fitted tail could reach into
-        it, the number in the ``far`` column would depend on a model of the region beyond
-        the data, and no reader of that column could tell which candidates were counted
-        and which were extrapolated.
+        That floor is (1 + 1) / T_b: the counting is inclusive, so the loudest background
+        event counts itself. Nothing separates candidates above it, and nothing pretends to.
         """
-        plain, with_tail = self._curve_pair()
-        queries = np.linspace(plain.stat[0] - 1.0, plain.stat[-1] + 5.0, 400)
+        curve = self._curve()
+        loudest = float(curve.stat[-1])
+        floor = 2.0 / curve.background_livetime_s * SECONDS_PER_JULIAN_YEAR
+        assert curve.far_of(np.array([loudest + 1.0]))[0] == pytest.approx(floor)
+        assert curve.far_of(np.array([loudest + 50.0]))[0] == pytest.approx(floor)
 
-        assert np.array_equal(plain.far_of(queries), with_tail.far_of(queries))
+    def test_extrapolation_is_marked(self):
+        """A reader must be able to tell the floor from a measurement."""
+        curve = self._curve()
+        loudest = float(curve.stat[-1])
+        probe = np.array([loudest - 1.0, loudest + 1.0])
+        assert curve.is_extrapolated(probe).tolist() == [False, True]
 
-    def test_counted_far_saturates(self):
-        """
-        Past the loudest background event the counted rate is flat at the floor.
-
-        The floor is the rate at that event, ``(1 + 1) / T_b`` -- the counting is
-        inclusive, so the loudest background event counts itself. It is all counting can
-        say once the background runs out, so a one-in-two-year and a one-in-a-hundred-year
-        candidate get the same number here. Separating them is the extrapolation's job,
-        under its own name.
-        """
-        _, curve = self._curve_pair()
-        beyond = curve.stat[-1] + np.array([0.5, 5.0, 50.0])
-        counted = curve.far_of(beyond)
-        floor = 2.0 * SECONDS_PER_JULIAN_YEAR / curve.background_livetime_s
-
-        assert counted == pytest.approx(floor, rel=1e-12)
-        assert counted == pytest.approx(curve.far_per_yr[-1], rel=1e-12)
-
-    def test_extrapolated_far_separates_them(self):
-        """
-        The fitted rate keeps falling where the counted rate cannot.
-
-        This is the whole reason the tail is fitted: to say which of two candidates above
-        the loudest background event is the rarer one.
-        """
-        _, curve = self._curve_pair()
-        beyond = curve.stat[-1] + np.array([0.5, 5.0, 50.0])
-        fitted = curve.far_extrapolated_of(beyond)
-
-        assert np.all(np.diff(fitted) < 0.0)
-        assert np.all(fitted <= curve.far_of(beyond) * (1.0 + 1e-12))
-
-    def test_extrapolated_joins_the_measured_curve(self):
-        """
-        Below the fit threshold the extrapolation is the measured rate, so there is no step.
-
-        The tail's survival is one at its own threshold by construction, which is what
-        makes the two curves meet rather than cross.
-        """
-        _, curve = self._curve_pair()
-        below = np.linspace(curve.stat[0], curve.tail.threshold, 50)
-
-        assert np.allclose(curve.far_extrapolated_of(below), curve.far_of(below))
-
-    def test_extrapolated_requires_a_tail(self):
-        """
-        Without a fit there is no extrapolated rate, and the floor must not stand in for one.
-
-        Returning the counted rate under this name would present the saturated floor as a
-        fitted value, which is the one confusion the split exists to prevent.
-        """
-        plain, _ = self._curve_pair()
-        with pytest.raises(ValueError, match="no tail fit"):
-            plain.far_extrapolated_of(np.array([1.0]))
+    def test_no_extrapolated_rate_exists(self):
+        """The method is gone, not merely disabled."""
+        curve = self._curve()
+        assert not hasattr(curve, "far_extrapolated_of")
+        assert not hasattr(curve, "ifar_extrapolated_of")
+        assert not hasattr(curve, "tail")
