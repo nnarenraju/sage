@@ -1034,14 +1034,22 @@ def _prepare_detector(
 
         for offset, (gps_start, gps_end) in enumerate(todo):
             index = done + offset
-            files.prefetch(
-                detector,
-                [
-                    f
-                    for a, b in segments[index : index + 3]
-                    for f in _files_spanning(a, b)
-                ],
-            )
+            # Look ahead by FILES, not by segments. A fixed three-segment window fills
+            # the pipeline when a segment spans the median four files and starves it when
+            # segments are short: O3a's L1 runs through stretches of 0.16 h segments
+            # needing a single file each, where three segments queued three files against
+            # eight fetch workers and measured 1.12 MB/s against a 21 MB/s ceiling.
+            #
+            # Bounded by the staging area, which is what `prefetch` already truncates to
+            # -- fetching further ahead than the cache holds evicts files before they are
+            # read and fetches them twice. The loop stops as soon as it has that many, so
+            # it walks at most `max_files` segments however short they are.
+            ahead: List[int] = []
+            for a, b in segments[index:]:
+                ahead.extend(_files_spanning(a, b))
+                if len(ahead) >= files.max_files:
+                    break
+            files.prefetch(detector, ahead)
             record = _write_segment_resiliently(
                 handle, spec, detector, index, gps_start, gps_end, cursor, files
             )
