@@ -175,3 +175,5 @@ runs/*/run_export_*
 scratch
 # Reference PDFs for sage/search (fetched locally, not redistributed)
 docs/references/*.pdf
+references/*.pdf
+runs/
