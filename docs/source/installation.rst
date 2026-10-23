@@ -4,7 +4,7 @@ Installation
 Sage is currently intended for local editable installs. A CUDA-capable GPU is strongly
 recommended for on-the-fly waveform generation, training, and large injection studies.
 
-**Requirements**: Python ≥ 3.9, PyTorch ≥ 2.1, CUDA (optional but recommended).
+**Requirements**: Python ≥ 3.10, PyTorch ≥ 2.1, CUDA (optional but recommended).
 
 Option A — conda (recommended for GPU clusters)
 ------------------------------------------------
