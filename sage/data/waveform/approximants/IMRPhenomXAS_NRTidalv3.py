@@ -33,16 +33,10 @@ Description   : GPU-native batched IMRPhenomXAS_NRTidalv3 aligned-spin BNS/NSBH
 
                 Parameters (theta columns)
                 --------------------------
-                0  : m1          (solar masses, m1 >= m2)
-                1  : m2          (solar masses)
-                2  : chi1z       (dimensionless aligned spin, body 1)
-                3  : chi2z       (dimensionless aligned spin, body 2)
-                4  : distance    (Mpc)
-                5  : tc          (s, time of coalescence)
-                6  : phic        (rad, reference orbital phase)
-                7  : inclination (rad)
-                8  : lambda1     (dimensionless tidal deformability Lambda_1 >= 0)
-                9  : lambda2     (dimensionless tidal deformability Lambda_2 >= 0)
+                waveform_utils.WAVEFORM_PARAMETERS (PyCBC names): mass1,
+                mass2, spin1x, spin1y, spin1z, spin2x, spin2y, spin2z,
+                distance, tc, coa_phase, inclination, lambda1, lambda2,
+                polarization, ra, dec.
 
 Created on 2026-05-28
 
@@ -133,25 +127,6 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             return ProcessingState(Grid.FD_COARSE)
         return ProcessingState(Grid.FD_UNIFORM)
 
-    # Ordered parameter names fed to get_hphc (first 10) and to the
-    # projection module (last 3).  Must match the theta column layout
-    # documented in the class docstring of get_hphc.
-    WAVEFORM_PARAM_NAMES = [
-        "mass1",        # 0
-        "mass2",        # 1
-        "chi1z",        # 2
-        "chi2z",        # 3
-        "distance",     # 4
-        "tc",           # 5
-        "coa_phase",    # 6
-        "inclination",  # 7
-        "lambda1",      # 8
-        "lambda2",      # 9
-        "polarization", # 10 — projection only
-        "ra",           # 11 — projection only
-        "dec",          # 12 — projection only
-    ]
-
     def __init__(
         self,
         param_sampler=None,
@@ -205,9 +180,10 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             self.data_cfg.padded_length_in_s,
             self.signal_batch_size,
             self.cfg.device,
-            self.cfg.dtype,
+            torch.float64,
         )
         self.f_ref = f_ref
+        self._out_cdtype = torch.promote_types(self.cfg.dtype, torch.complex64)
 
         # Initialise the BBH backbone with the full-resolution grid.
         # IMRPhenomXAS.__init__ sets self.df via the endpoint formula
@@ -246,7 +222,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             # Replace the uniform signal-band frequency grid with the coarse
             # grid so that all waveform computations run at N_coarse points and
             # the full-resolution waveform is never materialised.
-            coarse_freqs = self.selector.coarse_freqs.to(self.cfg.dtype)  # (N_coarse,)
+            coarse_freqs = self.selector.coarse_freqs.to(torch.float64)  # (N_coarse,)
             self.f = coarse_freqs.unsqueeze(0).expand(self.signal_batch_size, -1)  # (B, N_coarse)
             self.f_numel = int(self.f[0].numel())   # N_coarse
             self.n_pad   = 0   # no DC-to-f_min region in the coarse representation
@@ -260,7 +236,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
 
         self.hp_buffer = torch.empty(
             (self.B, self.n_pad + self.f_numel),
-            dtype=torch.complex64,
+            dtype=torch.complex128,
             device=self.cfg.device,
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
@@ -284,17 +260,12 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
                 snr_est.mask = snr_est.mask[:, :, idx]    # (1, 1, N_coarse)
 
         if self.param_sampler is not None:
-            get_idx = self.param_sampler.param_index
-            self.req_idx = torch.tensor(
-                [get_idx[key] for key in self.WAVEFORM_PARAM_NAMES],
-                device=self.cfg.device,
-                dtype=torch.int32,
-            )
+            param_index = self.param_sampler.param_index
+            self.source, self.target = waveform_utils.layout_columns(param_index)
             # Column of "distance" in the full all_theta tensor — used
             # by the SNR-rescaling augmentation to keep distance consistent.
-            self.dist_col = int(self.req_idx[4].item())
+            self.dist_col = param_index["distance"]
 
-            self.param_sampler.req_idx = self.req_idx
             self.param_sampler._compile_batch_normaliser()
             self.param_sampler._compile_batch_standardiser()
             self.param_sampler.to(self.cfg.device)
@@ -318,10 +289,11 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             Full raw parameter batch (only when ``return_theta=True``).
         """
         all_theta = self.param_sampler(self.B)
-        req_theta = all_theta[:, self.req_idx]
+        theta = waveform_utils.to_layout(all_theta, self.source, self.target)
 
-        # First 10 columns are the waveform parameters; last 3 are for projection.
-        hp, hc = self.get_hphc(req_theta[:, :10])
+        hp, hc = self.get_hphc(theta)
+        hp = hp.to(self._out_cdtype)
+        hc = hc.to(self._out_cdtype)
 
         if self.multiband_mode == self.MULTIBAND_WORST_CASE:
             # hp, hc are (B, N_coarse) at the coarse frequencies.
@@ -330,18 +302,18 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             hf = self.waveform_project(
                 hp,
                 hc,
-                ra=req_theta[:, 11],
-                dec=req_theta[:, 12],
-                polarization=req_theta[:, 10],
-                freqs=self.f[0],  # (N_coarse,) — 1D coarse freq array
+                ra=theta[:, -2],
+                dec=theta[:, -1],
+                polarization=theta[:, -3],
+                freqs=self.f[0].to(self.cfg.dtype),  # (N_coarse,)
             )
         else:
             hf = self.waveform_project(
                 hp,
                 hc,
-                ra=req_theta[:, 11],
-                dec=req_theta[:, 12],
-                polarization=req_theta[:, 10],
+                ra=theta[:, -2],
+                dec=theta[:, -1],
+                polarization=theta[:, -3],
             )
 
         if self.augment:
@@ -359,20 +331,6 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             return hf, targets, all_theta
         return hf, targets
 
-    def apply_tc(self, hp, hc, tc):
-        """
-        Apply tc phase shift using the analysis-window convention.
-
-        ``tc`` is measured from the START of the analysis window (same
-        convention as IMRPhenomPv2).  Adding ``padding_length_in_s``
-        converts it to the padded-segment frame before computing the FD
-        phase ramp, so gwconfig tc values are directly interpretable as
-        "seconds into the analysis window."
-        """
-        _tc = (tc + self.data_cfg.padding_length_in_s) - self.sample_length_in_s
-        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
-        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
-        return hp, hc
 
     # ------------------------------------------------------------------
     # Static tidal helpers — all operate on (B, 1) tensors unless noted
@@ -1045,11 +1003,8 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
 
         Parameters
         ----------
-        theta : torch.Tensor, shape (B, 10+)
-            Columns: [m1, m2, chi1z, chi2z, distance, tc, phic,
-                      inclination, lambda1, lambda2]
-            Masses in solar masses, distance in Mpc, angles in radians,
-            tidal deformabilities dimensionless (>= 0).
+        theta : torch.Tensor, shape (B, 17)
+            Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
         reproduce_lal : bool
             If True, skip FD tapering, tc shift, and df normalisation so
             the output can be compared directly with raw LALSim output.
@@ -1057,10 +1012,18 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         Returns
         -------
         hp, hc : torch.Tensor, shape (B, n_pad + F), complex128
+
+        Raises
+        ------
+        ValueError
+            If any transverse spin is non-zero.
         """
         # ----------------------------------------------------------------
         # 1. Extract intrinsic + extrinsic parameters
         # ----------------------------------------------------------------
+        # [m1, m2, chi1, chi2, distance, tc, phic, inclination, lambda1,
+        #  lambda2]
+        theta = waveform_utils.aligned_layout(theta, waveform_utils.TIDAL_COLUMNS)
         m1       = theta[:, 0:1]
         m2       = theta[:, 1:2]
         dist_Mpc = theta[:, 4:5]
