@@ -114,7 +114,7 @@ class MSCNN1D_2DResNetCBAM(nn.Module):
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
         self.backend = resnet_factories[backend_resnet_size](
-            pretrained=False, dropout=dropout,
+            pretrained=False, in_channels=self.num_detectors, dropout=dropout,
             use_blurpool=use_blurpool, use_resnet_cd=use_resnet_cd,
         )
 
@@ -235,7 +235,7 @@ class MSCNN1D_2DResNetCBAM_Heteroscedastic(nn.Module):
         if backend_resnet_size not in resnet_factories:
             raise ValueError("resnet_size must be one of 18, 34, 50, 101, 152")
         self.backend = resnet_factories[backend_resnet_size](
-            pretrained=False, dropout=dropout,
+            pretrained=False, in_channels=self.num_detectors, dropout=dropout,
             use_blurpool=use_blurpool, use_resnet_cd=use_resnet_cd,
         )
 

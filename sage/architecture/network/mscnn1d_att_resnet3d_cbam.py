@@ -69,9 +69,9 @@ class MSCNN1Datt_3DResNetCBAM(nn.Module):
 
         # Normalization layer
         norm_layers = {
-            "batchnorm": nn.BatchNorm1d(2),
-            "layernorm": nn.LayerNorm(2),
-            "instancenorm": nn.InstanceNorm1d(2, affine=True),
+            "batchnorm": nn.BatchNorm1d(self.num_detectors),
+            "layernorm": nn.LayerNorm(self.num_detectors),
+            "instancenorm": nn.InstanceNorm1d(self.num_detectors, affine=True),
         }
         self.norm = norm_layers[norm_type]
 

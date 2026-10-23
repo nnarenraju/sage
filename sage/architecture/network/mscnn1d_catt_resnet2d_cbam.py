@@ -73,6 +73,11 @@ class MSCNN1D_catt_2DResNetCBAM(nn.Module):
         cfg = get_cfg()
 
         self.num_detectors = len(cfg.detectors)
+        if self.num_detectors != 2:
+            raise ValueError(
+                "MSCNN1D_catt_2DResNetCBAM cross-attends exactly two detectors, "
+                f"got {cfg.detectors}"
+            )
 
         # Normalization layer
         norm_layers = {
