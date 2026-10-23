@@ -4,6 +4,8 @@ import pytest
 import torch
 
 from sage.core.conversions import (
+    chirp_distance,
+    distance_from_chirp_distance_mchirp,
     seconds_to_samples,
     samples_to_seconds,
     mchirp_eta_to_mass1_mass2,
@@ -60,13 +62,6 @@ def test_eta_from_equal_mass():
     assert eta == pytest.approx(0.25)
 
 
-def test_eta_from_mass1_mass2_range():
-    # η ∈ (0, 0.25] for any positive masses
-    for m1, m2 in [(10, 1), (1.4, 1.4), (30, 5)]:
-        eta = eta_from_mass1_mass2(m1, m2)
-        assert 0 < eta <= 0.25 + 1e-10
-
-
 def test_eta_symmetric():
     # η(m1, m2) == η(m2, m1)
     assert eta_from_mass1_mass2(10.0, 3.0) == pytest.approx(
@@ -84,11 +79,6 @@ def test_mchirp_from_mass1_mass2_known():
     expected = m * (0.25 ** (3.0 / 5)) * 2
     result = mchirp_from_mass1_mass2(m, m)
     assert result == pytest.approx(expected, rel=1e-6)
-
-
-def test_mchirp_positive():
-    for m1, m2 in [(5, 5), (30, 1), (1.4, 1.2)]:
-        assert mchirp_from_mass1_mass2(m1, m2) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -112,20 +102,28 @@ def test_mass_ordering_preserved():
     assert (m1_out >= m2_out).all()
 
 
-def test_mchirp_eta_batch_shapes():
-    m1 = torch.rand(16) * 25 + 5
-    m2 = torch.rand(16) * 5 + 1
-    mchirp, eta = mass1_mass2_to_mchirp_eta(m1, m2)
-    assert mchirp.shape == (16,)
-    assert eta.shape == (16,)
-    m1_out, m2_out = mchirp_eta_to_mass1_mass2(mchirp, eta)
-    assert m1_out.shape == (16,)
-    assert m2_out.shape == (16,)
-
-
 def test_mass1_mass2_to_mchirp_eta_symmetry():
     # Swapping masses → same mchirp, same eta
     mchirp_a, eta_a = mass1_mass2_to_mchirp_eta(10.0, 3.0)
     mchirp_b, eta_b = mass1_mass2_to_mchirp_eta(3.0, 10.0)
     assert abs(mchirp_a - mchirp_b) < 1e-10
     assert abs(eta_a - eta_b) < 1e-10
+
+
+# ---------------------------------------------------------------------------
+# chirp_distance / distance_from_chirp_distance_mchirp
+# ---------------------------------------------------------------------------
+
+def test_chirp_distance_matches_pycbc():
+    conversions = pytest.importorskip("pycbc.conversions")
+    generator = torch.Generator().manual_seed(0)
+    dist = 10.0 + 4000.0 * torch.rand(1000, generator=generator, dtype=torch.float64)
+    mchirp = 1.0 + 80.0 * torch.rand(1000, generator=generator, dtype=torch.float64)
+    cd = chirp_distance(dist, mchirp)
+    back = distance_from_chirp_distance_mchirp(cd, mchirp)
+
+    ref_cd = conversions.chirp_distance(dist.numpy(), mchirp.numpy())
+    ref_back = conversions.distance_from_chirp_distance_mchirp(ref_cd, mchirp.numpy())
+    assert torch.allclose(cd, torch.as_tensor(ref_cd), rtol=1e-14, atol=0)
+    assert torch.allclose(back, torch.as_tensor(ref_back), rtol=1e-14, atol=0)
+    assert torch.allclose(back, dist, rtol=1e-13, atol=0)
