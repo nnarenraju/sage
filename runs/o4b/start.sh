@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===========================================================================
-# runs/o3b/start.sh -- run a task NOW, in the foreground (no scheduler).
+# runs/o4b/start.sh -- run a task NOW, in the foreground (no scheduler).
 #
 # Use this on an interactive/GPU node. It activates the server's conda env and
 # paths via the shared library, then runs the chosen task in this shell.
