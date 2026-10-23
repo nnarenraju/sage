@@ -10,6 +10,8 @@ from pycbc.conversions import mass1_from_mchirp_q, mass2_from_mchirp_q
 
 import lal
 
+from sage.core.constants import GM
+
 
 """ Conversions """
 
@@ -38,11 +40,9 @@ def chirp_mass_from_signal_duration(tau, signal_low_freq_cutoff):
     """
     # Calculate chirp mass from signal duration
     lf = signal_low_freq_cutoff  # Hz
-    G = 6.67e-11  # Nm^2/Kg^2
-    c = 3.0e8  # ms^-1
     chirp_mass_from_tau = ((tau / 5.0) * (8.0 * np.pi * lf) ** (8.0 / 3.0)) ** (
         -3.0 / 5.0
-    ) * (c**3.0 / (G * 1.989e30))
+    ) * (1.0 / GM)
     return chirp_mass_from_tau
 
 
@@ -63,12 +63,10 @@ def signal_duration_from_chirp_mass(mchirp, signal_low_freq_cutoff):
         Expected signal duration in seconds.
     """
     lf = signal_low_freq_cutoff  # Hz
-    G = 6.67e-11  # Nm^2/Kg^2
-    c = 3.0e8  # ms^-1
     tau_from_chirp_mass = (
         5.0
         * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-        * (mchirp * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+        * (mchirp * GM) ** (-5.0 / 3.0)
     )
     return tau_from_chirp_mass
 
@@ -117,12 +115,10 @@ def get_tau_priors(ml, mu, lf):
     # Range for mchirp
     min_mchirp, max_mchirp = get_mchirp_priors(ml, mu)
     # Tau priors
-    G = 6.67e-11  # Nm^2/Kg^2
-    c = 3.0e8  # ms^-1
     tau = (
         lambda mc: 5.0
         * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-        * (mc * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+        * (mc * GM) ** (-5.0 / 3.0)
     )
     tau_lower = tau(max_mchirp)
     tau_upper = tau(min_mchirp)
@@ -178,10 +174,8 @@ class BoundedPriors:
         self.mu = mu
         self.ml = ml
         # Constants
-        G = 6.67e-11  # Nm^2/Kg^2
-        c = 3.0e8  # ms^-1
         self.const = (5.0 * (8.0 * np.pi * lf) ** (-8.0 / 3.0)) * (
-            1.989e30 * G / c**3.0
+            GM
         ) ** (-5.0 / 3.0)
 
         # Boundaries on tau0 and tau3
@@ -349,13 +343,11 @@ class BoundedPriors:
         plaw_mchirp = (
             np.random.power(0.5, 1) * (mchirp_upper - mchirp_lower)
         ) + mchirp_lower
-        G = 6.67e-11  # Nm^2kg^-2
-        c = 3.0e8  # ms^-1
         lf = 20.0  # Hz
         tau = (
             5.0
             * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-            * (plaw_mchirp * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+            * (plaw_mchirp * GM) ** (-5.0 / 3.0)
         )
         # Common steps
         mass1, mass2, q, mchirp = self._common_umc_utau(tau)

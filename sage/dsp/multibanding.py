@@ -15,6 +15,8 @@ from typing import Literal, Sequence
 import torch
 from torch import Tensor
 
+from sage.core.constants import MSUN
+
 
 PoolMode = Literal["sample", "mean"]
 
@@ -373,9 +375,8 @@ def make_prior_informed_frequency_bands(
     """
     import lalsimulation as lalsim
 
-    _MSUN_KG = 1.989e30
-    m1_kg = m1 * _MSUN_KG
-    m2_kg = m2 * _MSUN_KG
+    m1_kg = m1 * MSUN
+    m2_kg = m2 * MSUN
 
     k_min = int(math.ceil(f_min * duration))
     k_max = int(math.floor(f_max * duration))

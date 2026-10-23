@@ -22,6 +22,8 @@ plt.rcParams.update({"font.size": 18})
 # Prettification
 from tqdm import tqdm
 
+from sage.core.constants import GM
+
 
 def find_injection_times(fgfiles, injfile, padding_start=0, padding_end=0):
     """
@@ -197,12 +199,10 @@ def param_vs_param(output_dir, injparams, found_injections):
 
     # Signal duration
     lf = 20.0  # Hz
-    G = 6.67e-11
-    c = 3.0e8
     plot_signal_duration = (
         5.0
         * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-        * (plot_mchirp * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+        * (plot_mchirp * GM) ** (-5.0 / 3.0)
     )
 
     ## Other related plots
@@ -397,12 +397,10 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
     # plotting param vs param for bad signals
     # Calculate signal duration
     lf = 20.0  # Hz
-    G = 6.67e-11
-    c = 3.0e8
     duration = (
         lambda mchirp: 5.0
         * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-        * (mchirp * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+        * (mchirp * GM) ** (-5.0 / 3.0)
     )
     team = {}
     team.update(highsnr_badfar_params)
@@ -513,12 +511,10 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
         key: injparams[key][found_injections[0].astype(int)] for key in injparams.keys()
     }
     lf = 20.0  # Hz
-    G = 6.67e-11
-    c = 3.0e8
     source_params["signal_duration"] = (
         5.0
         * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-        * (source_params["mchirp"] * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+        * (source_params["mchirp"] * GM) ** (-5.0 / 3.0)
     )
     predicted_outputs = found_injections[1]
     save_name = "raw_value"
@@ -762,12 +758,10 @@ def compare_plot_2(team_1, team_2, save_dir):
     # Plot 2 (Scatter plot of param vs param (unique finds from both teams are coloured))
     # Calculate signal duration
     lf = 20.0  # Hz
-    G = 6.67e-11
-    c = 3.0e8
     duration = (
         lambda mchirp: 5.0
         * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-        * (mchirp * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+        * (mchirp * GM) ** (-5.0 / 3.0)
     )
     team_1["duration"] = duration(team_1["mchirp"])
     team_2["duration"] = duration(team_2["mchirp"])
@@ -898,12 +892,10 @@ def compare_plot_3(team_1, team_2, save_dir):
 
     # Calculate signal duration
     lf = 20.0  # Hz
-    G = 6.67e-11
-    c = 3.0e8
     duration = (
         lambda mchirp: 5.0
         * (8.0 * np.pi * lf) ** (-8.0 / 3.0)
-        * (mchirp * 1.989e30 * G / c**3.0) ** (-5.0 / 3.0)
+        * (mchirp * GM) ** (-5.0 / 3.0)
     )
     team_1["duration"] = duration(team_1["mchirp"])
     team_2["duration"] = duration(team_2["mchirp"])

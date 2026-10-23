@@ -44,6 +44,7 @@ from pycbc import pnutils
 
 # LOCAL
 from sage.core.config import get_cfg, get_data_cfg
+from sage.core.constants import GM, MSUN
 from sage.core.pipeline import GWBatch, ProcessingState
 
 
@@ -411,9 +412,6 @@ class DyadicPyramidBinning:
         Columns: ``[start_sample, end_sample, sample_rate]``.
         Both indices are relative to the start of the full-rate segment.
     """
-    MTSUN_SI = 4.92549102554e-06
-    MSUN_SI = 1.989e30
-
     def __init__(
         self,
         param_bounds,
@@ -468,7 +466,7 @@ class DyadicPyramidBinning:
             self.verify_nyquist_condition()
 
     def _velocity_to_frequency(self, v, M):
-        return v**3 / (M * self.MTSUN_SI * np.pi)
+        return v**3 / (M * GM * np.pi)
 
     def _f_schwarzschild_isco(self, M):
         return self._velocity_to_frequency((1.0 / 6.0) ** 0.5, M)
@@ -543,7 +541,7 @@ class DyadicPyramidBinning:
     def get_imr_chirp_time(self, m1, m2, s1z, s2z, fl):
         """Return 1.1× the IMRPhenomD chirp time (seconds) for the given parameters."""
         return 1.1 * lalsim.SimIMRPhenomDChirpTime(
-            m1 * 1.989e30, m2 * 1.989e30, s1z, s2z, fl
+            m1 * MSUN, m2 * MSUN, s1z, s2z, fl
         )
 
     def plot_multirate_tf(self):

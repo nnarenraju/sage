@@ -36,11 +36,7 @@ from typing import List
 
 import numpy as np
 
-# ── Physical constants ────────────────────────────────────────────────────
-_MSUN_SI = 1.989e30          # kg
-_G_SI    = 6.67430e-11       # m^3 kg^-1 s^-2
-_C_SI    = 2.99792458e8      # m s^-1
-_MTSUN_SI = _G_SI * _MSUN_SI / _C_SI**3  # 1 solar mass in seconds (≈ 4.9255e-6 s)
+from sage.core.constants import GM
 
 
 # ── Sub-grid data structure ───────────────────────────────────────────────
@@ -207,7 +203,7 @@ def multibanding_grid(
     Grid is assembled in dimensionless Mf = f × (m1+m2) × G_SI/(c_SI)³ units,
     then converted back to Hz at the end — identical to the LAL convention.
     """
-    M_total_s  = (m1_msun + m2_msun) * _MTSUN_SI  # total mass in seconds
+    M_total_s  = (m1_msun + m2_msun) * GM  # total mass in seconds
     eta        = m1_msun * m2_msun / (m1_msun + m2_msun) ** 2
 
     # ── Convert inputs to Mf (dimensionless NR units) ────────────────────
@@ -424,7 +420,7 @@ def multibanding_grid_info(
     """
     freqs    = multibanding_grid(f_min, f_max, delta_f, m1_msun, m2_msun,
                                  res_test=res_test)
-    M_total_s = (m1_msun + m2_msun) * _MTSUN_SI
+    M_total_s = (m1_msun + m2_msun) * GM
     eta       = m1_msun * m2_msun / (m1_msun + m2_msun) ** 2
     n_unif    = int(round((f_max - f_min) / delta_f)) + 1
 
