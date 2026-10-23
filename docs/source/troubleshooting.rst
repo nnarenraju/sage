@@ -33,21 +33,14 @@ Troubleshooting
 
    **Symptoms:** ``ModuleNotFoundError: No module named 'lal'`` or similar at import.
 
-   **Fix:** LALSuite and PyCBC are optional dependencies not installed by default.
-   Install them via conda (strongly recommended over pip):
+   **Fix:** LALSuite and PyCBC are core dependencies, installed with Sage. If the
+   pip install of them fails on your system, install them via conda first and then
+   install Sage:
 
    .. code-block:: bash
 
       conda install -c conda-forge lalsuite pycbc
-
-   Or via pip (may fail on some systems):
-
-   .. code-block:: bash
-
-      pip install sage-gw[lal]
-
-   These are only required for waveform validation against LALSuite and for PyCBC
-   benchmarking. Core training does not need them.
+      pip install -e .
 
 .. dropdown:: Data download timeouts or failures
 

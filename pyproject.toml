@@ -50,13 +50,13 @@ dependencies = [
   # Read by sage.data.waveform.sampler.read_from_config, which parses the
   # gwconfig.yaml on the main training path — not optional.
   "pyyaml>=6.0",
-]
-
-[project.optional-dependencies]
-lal = [
+  # Imported at module level on the training path (sage.dsp.filters,
+  # sage.dsp.multirate_sampling) and by the search -- not optional.
   "lalsuite>=7.0",
   "pycbc>=2.2",
 ]
+
+[project.optional-dependencies]
 # GWOSC data download and segment preparation (sage.data.primer).
 download = [
   "requests>=2.28",
