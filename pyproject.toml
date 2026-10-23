@@ -106,8 +106,6 @@ omit = [
     "sage/plotting/*",
     "sage/benchmark/*",
     "sage/data/primer/*",
-    # Standalone scripts run by hand, never imported by the pipeline.
-    "sage/diagnostics/*",
 ]
 
 [tool.coverage.report]
