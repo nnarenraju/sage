@@ -50,10 +50,8 @@ from sage.core.math import Normalise
 from sage.core.config import get_cfg, get_data_cfg
 
 # Conversions
-from sage.data.waveform.conversions import (
-    mass1_mass2_to_mchirp_q,
-    chirp_distance_to_distance,
-)
+from sage.core.conversions import distance_from_chirp_distance_mchirp
+from sage.data.waveform.conversions import mass1_mass2_to_mchirp_q
 
 # Transformation constraints
 import sage.data.waveform.constraints as constraints
@@ -240,7 +238,6 @@ class DistributionSampler(torch.nn.Module):
         self.param_names = sorted(self.param_names)
         self.param_index = {name: i for i, name in enumerate(self.param_names)}
         self.num_params = len(self.param_names)
-        self.req_idx = None
 
         self._build_distributions()
         self._build_transforms()
@@ -382,7 +379,7 @@ class DistributionSampler(torch.nn.Module):
                 cd = params[:, self.param_index["chirp_distance"]]
                 mc = params[:, self.param_index["mchirp"]]
 
-                d = chirp_distance_to_distance(cd, mc)
+                d = distance_from_chirp_distance_mchirp(cd, mc)
 
                 params[:, self.param_index["distance"]] = d
 
@@ -493,8 +490,8 @@ class DistributionSampler(torch.nn.Module):
             mc_min, mc_max = bounds["mchirp"]
 
             # distance from chirp distance
-            d_min = chirp_distance_to_distance(cd_min, mc_min)
-            d_max = chirp_distance_to_distance(cd_max, mc_max)
+            d_min = distance_from_chirp_distance_mchirp(cd_min, mc_min)
+            d_max = distance_from_chirp_distance_mchirp(cd_max, mc_max)
 
             bounds["distance"] = (d_min, d_max)
 
@@ -551,8 +548,7 @@ class DistributionSampler(torch.nn.Module):
 
     def _compile_batch_normaliser(self):
         """
-        Precompute tensors used for fast batch normalisation,
-        adjusted for the sliced parameter subset (self.req_idx).
+        Precompute tensors used for fast batch normalisation.
         """
 
         selected_names = self.sage_cfg.do_point_estimate
