@@ -31,7 +31,6 @@ The repository contains the research code used for the Sage pipeline, including:
 - Realistic noise simulation: real strain, coloured, recoloured, and glitch-injected noise.
 - Binary black hole waveform generation (IMRPhenomD/PhenomPv2), multi-detector projection, and SNR utilities.
 - Signal processing: whitening, inverse spectrum truncation, time-domain multirate sampling, frequency-domain multibanding, and prior-median heterodyning.
-- Hard noise mining for low-FAR robustness: brute-force, MAP-Elites, and Cross-Entropy Method strategies.
 - Modular neural network architectures with interchangeable frontends, backends, and attention mechanisms.
 - Training loops with on-the-fly data generation, schedulers, callbacks, and checkpointing.
 - Google Colab tutorials, reproducibility notebooks, and run scripts for paper-style experiments.
