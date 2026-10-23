@@ -14,11 +14,10 @@ from gwosc.datasets import run_segment
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from sage.core.hardcode import _GWOSC_ARCHIVE_URL, _GWOSC_TIMELINE_URL
+
 Interval = Tuple[float, float]
 
-_TIMELINE_URL = (
-    "https://gwosc.org/timeline/segments/json/{run}/{flag}/{start}/{duration}/"
-)
 
 
 def make_session(workers: int) -> requests.Session:
@@ -92,7 +91,7 @@ def fetch_segments(
         Segment start and end GPS times.
     """
     start, end = run_span(run)
-    url = _TIMELINE_URL.format(
+    url = _GWOSC_TIMELINE_URL.format(
         run=run,
         flag=f"{detector}_{dq_flag}",
         start=int(start),
@@ -152,8 +151,8 @@ def file_url(
     parent = (file_start // 65536) * 65536
     tag = f"{run}_4KHZ_R1"
     return (
-        f"https://gwosc.org/archive/data/{tag}/{parent}/"
-        f"{detector[0]}-{detector}_GWOSC_{tag}-{file_start}-{file_duration}.hdf5"
+        _GWOSC_ARCHIVE_URL.format(tag=tag, parent=parent)
+        + f"{detector[0]}-{detector}_GWOSC_{tag}-{file_start}-{file_duration}.hdf5"
     )
 
 

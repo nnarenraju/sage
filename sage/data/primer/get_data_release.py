@@ -60,6 +60,7 @@ from gwpy.timeseries import TimeSeries
 from pycbc import DYN_RANGE_FAC
 
 # LOCAL
+from sage.core.hardcode import _GWOSC_ARCHIVE_URL
 from sage.dsp.filters import pycbc_downsample
 
 # from sage.core.logger import get_logger, setup_logging
@@ -453,8 +454,8 @@ class DataReleaseDownloader:
         parent = (int(f0) // 65536) * 65536
         tag = f"{observing_run}_4KHZ_R1"
         return (
-            f"https://gwosc.org/archive/data/{tag}/{parent}/"
-            f"{prefix}-{det}_GWOSC_{tag}-{int(f0)}-4096.hdf5"
+            _GWOSC_ARCHIVE_URL.format(tag=tag, parent=parent)
+            + f"{prefix}-{det}_GWOSC_{tag}-{int(f0)}-4096.hdf5"
         )
 
     def _resolve_and_group(self, segments, det, run):

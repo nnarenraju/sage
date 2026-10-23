@@ -48,6 +48,11 @@ from sage.core.utils import to_sequence
 # Storing as a set is immutable and fine for torch
 _DETECTORS = {"H1", "H2", "L1", "V1", "G1", "K1"}
 
+# GWOSC endpoints shared by every downloader.
+_GWOSC_HOST = "https://gwosc.org"
+_GWOSC_TIMELINE_URL = _GWOSC_HOST + "/timeline/segments/json/{run}/{flag}/{start}/{duration}/"
+_GWOSC_ARCHIVE_URL = _GWOSC_HOST + "/archive/data/{tag}/{parent}/"
+
 
 def _check_detector_prefixes(dets: Union[str, Sequence[str]]):
     """Checking if detector prefixes are known

@@ -40,6 +40,7 @@ from itertools import product
 from typing import Union, List, Sequence
 
 # LOCAL
+from sage.core.hardcode import _GWOSC_HOST
 from sage.core.errors import safe_call
 from sage.core.utils import to_sequence
 from sage.core.typing import SEGMENT_DTYPE
@@ -63,7 +64,7 @@ def get_all_runnames():
 
 def get_all_events():
     """Return all events as JSON from GWOSC"""
-    return _fetch_allevents_json(full=True, host="https://gwosc.org")
+    return _fetch_allevents_json(full=True, host=_GWOSC_HOST)
 
 
 class TimelineQuery:

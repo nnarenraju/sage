@@ -14,10 +14,9 @@ from gwosc.datasets import run_segment
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from sage.core.hardcode import _GWOSC_TIMELINE_URL
+
 Interval = Tuple[float, float]
-_TIMELINE_URL = (
-    "https://gwosc.org/timeline/segments/json/{run}/{flag}/{start}/{duration}/"
-)
 
 
 def get_segments(
@@ -41,7 +40,7 @@ def get_segments(
     list of tuple of float
         Sorted segments.
     """
-    url = _TIMELINE_URL.format(run=run, flag=flag, start=start, duration=end - start)
+    url = _GWOSC_TIMELINE_URL.format(run=run, flag=flag, start=start, duration=end - start)
     response = session.get(url, timeout=300)
     response.raise_for_status()
     return [tuple(segment) for segment in response.json()["segments"]]
