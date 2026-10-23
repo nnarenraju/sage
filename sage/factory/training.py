@@ -187,6 +187,18 @@ class SageVanillaTraining(torch.nn.Module):
 
         return noise_data + signal_pad, noise_targets + target_pad
 
+    def metric_step(self, metric):
+        """
+        Advance a ``"metric"``-mode scheduler after a validation pass.
+
+        Parameters
+        ----------
+        metric : float
+            Validation metric, e.g. the validation loss.
+        """
+        if self.scheduler.mode == "metric":
+            self.scheduler.epoch_step(metric)
+
     def forward(self, nepoch):
 
         self.model.train()
@@ -321,6 +333,10 @@ class SageVanillaTraining(torch.nn.Module):
         # ── End-of-epoch callback hook (e.g. hard-noise mining) ───────────
         for cb in self.callbacks:
             cb.on_epoch_end(nepoch, self)
+
+        # "metric" mode steps in metric_step, once a validation metric exists.
+        if self.scheduler.mode == "epoch":
+            self.scheduler.epoch_step()
 
         self.loss_components[nepoch] /= self.num_iterations
 

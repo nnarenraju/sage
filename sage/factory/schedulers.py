@@ -64,7 +64,13 @@ class ManageScheduler:
           (e.g. :class:`torch.optim.lr_scheduler.ReduceLROnPlateau`).
     """
 
+    MODES = ("batch", "fractional", "epoch", "metric")
+
     def __init__(self, scheduler, mode="batch"):
+        if mode not in self.MODES:
+            raise ValueError(
+                f"unknown scheduler mode {mode!r}; expected one of {self.MODES}"
+            )
         self.scheduler = scheduler
         self.mode = mode
 
@@ -107,4 +113,6 @@ class ManageScheduler:
             self.scheduler.step()
 
         elif self.mode == "metric":
+            if metric is None:
+                raise ValueError("scheduler mode 'metric' needs a validation metric")
             self.scheduler.step(metric)
