@@ -18,6 +18,7 @@ import torch
 
 # Configs
 from sage.core.config import register_configs
+from sage.data.noise.real_noise import register_noise_bad_segments
 from sage.core.base_classes import BaseConfig, BaseDataConfig
 
 # Server-specific paths (one switch: SAGE_SERVER). See sage/utils/servers.py.
@@ -29,7 +30,16 @@ _SRV = get_server()
 FIDUCIAL_DIR = "/work/nagarajan/sage_runs/fiducial_psds_o3ab"
 
 
-def make_configs(detectors, export_dir, norm_type="instancenorm"):
+# Second production generation (``version=2``): identical to the first except that
+# hard-noise mining is off.
+
+# Third generation (``version=3``): the second with the training SNR floor raised
+# from 5 to 6.5, i.e. HalfNorm(scale 4, loc 6.5). Validation keeps loc 5, so its
+# loss stays directly comparable with the second generation's.
+SNR_LOC_V3 = 6.5
+
+
+def make_configs(detectors, export_dir, norm_type="instancenorm", version=1):
     """Build the (training, data) config classes for one detector-set network."""
 
     class O3bCFG:
@@ -86,6 +96,13 @@ def make_configs(detectors, export_dir, norm_type="instancenorm"):
     O3bCFG.detectors = list(detectors)
     O3bCFG.export_dir = export_dir
     O3bCFG.norm_type = norm_type    # backend norm; "instancenorm" (default) | "groupnorm"
+    if version in (2, 3):
+        O3bCFG.config_version = version
+        O3bCFG.enable_mining = False
+        if version == 3:
+            O3bCFG.snr_loc = SNR_LOC_V3
+    elif version != 1:
+        raise ValueError(f"unknown config version {version}")
 
     class O3bDataCFG:
 
@@ -107,9 +124,10 @@ def make_configs(detectors, export_dir, norm_type="instancenorm"):
     return O3bCFG, O3bDataCFG
 
 
-def register(detectors, export_dir, norm_type="instancenorm"):
+def register(detectors, export_dir, norm_type="instancenorm", version=1):
     """Instantiate + register the (training, data) configs for one network."""
-    cfg_cls, data_cfg_cls = make_configs(detectors, export_dir, norm_type)
+    cfg_cls, data_cfg_cls = make_configs(detectors, export_dir, norm_type, version)
     register_configs(BaseConfig(cfg_cls()), BaseDataConfig(data_cfg_cls()))
+    register_noise_bad_segments()
     print(f"Registered cfg and data_cfg! (detectors={list(detectors)}, "
-          f"export_dir={export_dir})")
+          f"export_dir={export_dir}, version={version})")

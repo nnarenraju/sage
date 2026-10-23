@@ -90,8 +90,12 @@ def make_training_graph():
     # Make the signal sampler
     training_param_sampler = read_from_config("./gwconfig.yaml", seed=150914)
     waveform_project = ConstantProjection()
-    target_snr_sampler = HalfNorm(scale=4.0, loc=5.0, seed=150914)
-    snrscaler = OptimalSNRRescaler(target_snr_sampler)
+    target_snr_sampler = HalfNorm(
+        scale=4.0, loc=getattr(get_cfg(), "snr_loc", 5.0), seed=150914
+    )
+    snrscaler = OptimalSNRRescaler(
+        target_snr_sampler,
+    )
     training_signal_sampler = IMRPhenomPv2(
         training_param_sampler,
         waveform_project,
@@ -120,7 +124,9 @@ def make_validation_graph():
     validation_param_sampler = read_from_config("./gwconfig.yaml", seed=170817)
     waveform_project = ConstantProjection()
     target_snr_sampler = HalfNorm(scale=4.0, loc=5.0, seed=170817)
-    snrscaler = OptimalSNRRescaler(target_snr_sampler)
+    snrscaler = OptimalSNRRescaler(
+        target_snr_sampler,
+    )
     validation_signal_sampler = IMRPhenomPv2(
         validation_param_sampler,
         waveform_project,

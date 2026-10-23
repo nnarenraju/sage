@@ -108,7 +108,11 @@ def make_training_graph(seed):
     # `seed` is resume-aware (derived from the resume epoch in run_hard) so the
     # noise/parameter/SNR RNGs never replay their pre-crash draws on restart.
     param_sampler  = read_from_config("./gwconfig.yaml", seed=seed)
-    snrscaler      = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=seed))
+    snrscaler      = OptimalSNRRescaler(
+        HalfNorm(
+            scale=4.0, loc=getattr(get_cfg(), "snr_loc", 5.0), seed=seed
+        ),
+    )
     signal_sampler = IMRPhenomPv2(
         param_sampler, ConstantProjection(), augment=snrscaler,
     )
@@ -140,7 +144,9 @@ def make_training_graph(seed):
 
 def make_validation_graph():
     param_sampler  = read_from_config("./gwconfig.yaml", seed=170817)
-    snrscaler      = OptimalSNRRescaler(HalfNorm(scale=4.0, loc=5.0, seed=170817))
+    snrscaler      = OptimalSNRRescaler(
+        HalfNorm(scale=4.0, loc=5.0, seed=170817),
+    )
     signal_sampler = IMRPhenomPv2(
         param_sampler, ConstantProjection(), augment=snrscaler,
     )
@@ -154,6 +160,7 @@ def make_processor(bounds):
     whitener = FiducialWhitening()
     mrsampler = MultirateSampler(binning_method=DyadicPyramidBinning(bounds))
     return Preprocessor([whitener, mrsampler])
+
 
 
 def calibrate_ema():
