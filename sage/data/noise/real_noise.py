@@ -751,7 +751,7 @@ class MemmapNoiseSampler(torch.nn.Module):
             lut.append(m)
         self._seg_bounds_lut = lut
 
-    def _sample_starts_batch(self, batch_size: int):
+    def _sample_starts_batch(self, batch_size: int, rng=None):
         """
         Draw random start indices for one batch.
 
@@ -767,6 +767,9 @@ class MemmapNoiseSampler(torch.nn.Module):
         ----------
         batch_size : int
             Number of windows to sample.
+        rng : numpy.random.Generator, optional
+            Draw from this instead of ``self.rng``. Safe from any thread, since
+            the prefetch stream is left untouched.
 
         Returns
         -------
@@ -781,6 +784,7 @@ class MemmapNoiseSampler(torch.nn.Module):
             from; indexes ``self.mmaps[d]`` and the recolour segment bank),
             shape ``(batch_size,)``.
         """
+        rng = self.rng if rng is None else rng
         start_indices = []
         segment_indices = []
         run_indices = []
@@ -788,7 +792,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         for d in range(self.n_detectors):
             seg_idx = self.seg_index[d]
             probs = self.segment_probs[d]
-            chosen_segments = self.rng.choice(len(seg_idx), size=batch_size, p=probs)
+            chosen_segments = rng.choice(len(seg_idx), size=batch_size, p=probs)
 
             starts = np.empty(batch_size, dtype=np.int64)
             seg_ids = np.empty(batch_size, dtype=np.int64)
@@ -796,7 +800,7 @@ class MemmapNoiseSampler(torch.nn.Module):
             for i, seg_i in enumerate(chosen_segments):
                 seg = seg_idx[seg_i]
                 max_offset = seg["nsamples"] - self.seq_len
-                offset = self.rng.integers(0, max_offset + 1) if max_offset > 0 else 0
+                offset = rng.integers(0, max_offset + 1) if max_offset > 0 else 0
                 starts[i] = seg["start"] + offset
                 seg_ids[i] = seg["idx"]
                 run_ids[i] = seg["run"]
@@ -806,6 +810,20 @@ class MemmapNoiseSampler(torch.nn.Module):
             run_indices.append(run_ids)
 
         return start_indices, segment_indices, run_indices
+
+    def sample_segments(self, batch_size: int, rng):
+        """
+        Segment and run ids of ``batch_size`` windows, ``(B, D)`` int64 each.
+
+        Drawn the way a batch draws its windows (segments weighted by usable
+        duration, independently per detector) but from ``rng``, without reading
+        any strain.
+        """
+        _, segment_indices, run_indices = self._sample_starts_batch(batch_size, rng)
+        return (
+            torch.from_numpy(np.stack(segment_indices, axis=1)),
+            torch.from_numpy(np.stack(run_indices, axis=1)),
+        )
 
     def _read_batch(self, batch_size: int):
         """

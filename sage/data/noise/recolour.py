@@ -36,6 +36,52 @@ from sage.core.config import get_cfg, get_data_cfg
 from sage.core.interpolation import torch_linear_interp
 
 
+def load_segment_asds(data_dir, detectors):
+    """
+    Read a release's per-segment ASD banks from ``<data_dir>/segment_psds``.
+
+    Returns one ``(N_seg, F)`` float32 array per detector, in sidecar order, and
+    ``F``. Every detector must share one frequency grid.
+    """
+    asd_dir = Path(data_dir) / "segment_psds"
+    banks = []
+    n_freq = None
+    for det in detectors:
+        bin_path = asd_dir / f"data_{det}_psds.bin"
+        meta_path = asd_dir / f"data_{det}_psds_segments.json"
+
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+
+        n_seg = len(meta)
+        det_n_freq = int(meta[0]["psd_len"])  # interpolated to a fixed F
+        if n_freq is None:
+            n_freq = det_n_freq
+        elif det_n_freq != n_freq:
+            raise ValueError(
+                f"segment ASD bank {bin_path}: psd_len {det_n_freq} != {n_freq} "
+                f"of the other detectors; one release must share one grid"
+            )
+        expected = n_seg * det_n_freq * 4
+        actual = os.path.getsize(bin_path)
+        if actual != expected:
+            raise ValueError(
+                f"segment ASD bank {bin_path}: size {actual} != expected "
+                f"{expected} ({n_seg} x {det_n_freq} float32) — non-uniform psd_len?"
+            )
+
+        # Read straight into a pre-allocated buffer (no intermediate copy).
+        bank = np.empty((n_seg, det_n_freq), dtype=np.float32)
+        with open(bin_path, "rb") as fh:
+            nread = fh.readinto(memoryview(bank).cast("B"))
+        if nread != expected:
+            raise ValueError(
+                f"segment ASD bank {bin_path}: read {nread} of {expected} bytes"
+            )
+        banks.append(bank)
+    return banks, n_freq
+
+
 class RecolourPostprocess(torch.nn.Module):
     """
     GPU postprocessing step: stochastic ASD recolouring from one noise epoch
@@ -204,52 +250,23 @@ class RecolourPostprocess(torch.nn.Module):
         seg_n_freq = None   # all pooled runs must share one segment-ASD grid
 
         for run in self._runs:
-            data_dir = Path(run["data_dir"])
-            det_banks = []
-            for det in self.detectors:
-                # Segment ASDs are from THIS run's training noise.
-                asd_dir = data_dir / "segment_psds"
-                bin_path = asd_dir / f"data_{det}_psds.bin"
-                meta_path = asd_dir / f"data_{det}_psds_segments.json"
-
-                with open(meta_path, "r") as f:
-                    meta = json.load(f)
-
-                n_seg = len(meta)
-                n_freq = int(meta[0]["psd_len"])  # interpolated to a fixed F
-                # Pooled runs are gathered into one buffer allocated at the first
-                # run's grid (see _gather_segment), so a run whose segment ASDs
-                # live on a different frequency grid would silently broadcast-fail.
-                # Require one shared grid across all pooled runs.
-                if seg_n_freq is None:
-                    seg_n_freq = n_freq
-                elif n_freq != seg_n_freq:
-                    raise ValueError(
-                        f"segment ASD bank {bin_path}: psd_len {n_freq} != {seg_n_freq} "
-                        f"from an earlier pooled run; all runs' segment ASDs must share one "
-                        f"frequency grid to be pooled for recolour."
-                    )
-                expected = n_seg * n_freq * 4
-                actual = os.path.getsize(bin_path)
-                if actual != expected:
-                    raise ValueError(
-                        f"segment ASD bank {bin_path}: size {actual} != expected "
-                        f"{expected} ({n_seg} x {n_freq} float32) — non-uniform psd_len?"
-                    )
-
-                # Read straight into a pre-allocated buffer (no intermediate copy).
-                bank = np.empty((n_seg, n_freq), dtype=np.float32)
-                with open(bin_path, "rb") as fh:
-                    nread = fh.readinto(memoryview(bank).cast("B"))
-                if nread != expected:
-                    raise ValueError(
-                        f"segment ASD bank {bin_path}: read {nread} of {expected} bytes"
-                    )
-                det_banks.append(bank)
+            # Segment ASDs are from THIS run's training noise.
+            det_banks, n_freq = load_segment_asds(run["data_dir"], self.detectors)
+            # Pooled runs are gathered into one buffer allocated at the first
+            # run's grid (see _gather_segment), so a run whose segment ASDs
+            # live on a different frequency grid would silently broadcast-fail.
+            # Require one shared grid across all pooled runs.
+            if seg_n_freq is None:
+                seg_n_freq = n_freq
+            elif n_freq != seg_n_freq:
+                raise ValueError(
+                    f"segment ASD banks under {run['data_dir']}: psd_len {n_freq} != "
+                    f"{seg_n_freq} from an earlier pooled run; all runs' segment ASDs "
+                    f"must share one frequency grid to be pooled for recolour."
+                )
             self._segment_banks.append(det_banks)
 
         # Grid of the segment ASD bank (None if it already matches the signal grid).
-        # Use the validated shared grid, not the leaked last-iteration n_freq.
         self._seg_src_freqs = self._bank_src_freqs(seg_n_freq)
 
     def _load_recolour_asds(self):
@@ -355,30 +372,75 @@ class RecolourPostprocess(torch.nn.Module):
         # batches), so everything below is sized off ``B``, not ``self.B``.
         B = batch_td.shape[0]
 
+        mask, seg_asd, target_asd = self._draw(
+            B, segment_ids, run_ids, self._gen, X.device
+        )
+
+        # Whitening: each window's own segment ASD; recolour: the target ASD.
+        X = torch.where(mask, X / (seg_asd + self.eps), X)
+        X = torch.where(mask, X * (target_asd + self.eps), X)
+
+        return X
+
+    @torch.no_grad()
+    def spectra(self, segment_ids, run_ids=None, generator=None):
+        """
+        ASD of each window after this postprocess, ``(B, D, F)`` on CPU.
+
+        A window that passes through keeps its own segment ASD; a recoloured one
+        carries the jittered target ASD. Drawn exactly as :meth:`forward` draws,
+        from ``generator`` instead of the training stream, so measuring the
+        spectra never shifts the training draws.
+        """
+        mask, seg_asd, target_asd = self._draw(
+            segment_ids.shape[0], segment_ids, run_ids, generator, "cpu"
+        )
+        return torch.where(mask, target_asd, seg_asd)
+
+    @torch.no_grad()
+    def target_segment_spectra(self, segment_ids):
+        """
+        Own-segment ASDs of windows read raw from the target run, ``(B, D, F)``.
+
+        The spectrum a validation window carries when validation reads the target
+        run without recolouring. ``segment_ids`` index that run's segment sidecar.
+        """
+        if getattr(self, "_target_segment_banks", None) is None:
+            banks, n_freq = load_segment_asds(
+                self.recolour_dataset_dir / "data_dir", self.detectors
+            )
+            self._target_segment_banks = banks
+            self._target_seg_src_freqs = self._bank_src_freqs(n_freq)
+        asd = self._gather(
+            self._target_segment_banks, segment_ids.detach().cpu().numpy()
+        )
+        return self._to_signal_grid(asd, self._target_seg_src_freqs)
+
+    def _draw(self, B, segment_ids, run_ids, generator, device):
+        """
+        The random draws behind one recolour pass, in the order :meth:`forward`
+        has always made them: the per-(sample, detector) recolour mask, each
+        window's own segment ASD, and the jittered target ASD, all ``(B, D, ·)``
+        on ``device``.
+        """
         # Bernoulli recolour mask (B, D, 1)
-        mask_cpu = torch.rand(B, self.D, 1, generator=self._gen) < self.p_recolour
-        mask = mask_cpu.to(X.device, non_blocking=True)
+        mask_cpu = torch.rand(B, self.D, 1, generator=generator) < self.p_recolour
+        mask = mask_cpu.to(device, non_blocking=True)
 
         # Whitening: each window's own segment ASD, keyed by (run, segment).
         seg_idx = segment_ids.detach().cpu().numpy()
         run_idx = (np.zeros_like(seg_idx) if run_ids is None
                    else run_ids.detach().cpu().numpy())
-        gathered_seg_asd = self._gather_segment(seg_idx, run_idx)
-        gathered_seg_asd = gathered_seg_asd.to(X.device, non_blocking=True)
-        gathered_seg_asd = self._to_signal_grid(gathered_seg_asd, self._seg_src_freqs)
-
-        X = torch.where(
-            mask,
-            X / (gathered_seg_asd + self.eps),
-            X,
-        )
+        seg_asd = self._gather_segment(seg_idx, run_idx)
+        seg_asd = seg_asd.to(device, non_blocking=True)
+        seg_asd = self._to_signal_grid(seg_asd, self._seg_src_freqs)
 
         # Recolour: a random ASD from the target-epoch bank
         recol_idx = torch.randint(
-            0, self.n_recolour_asd, (B, self.D), generator=self._gen
+            0, self.n_recolour_asd, (B, self.D), generator=generator
         ).numpy()
-        gathered_recol_asd = self._gather(self._recolour_banks, recol_idx)  # (B,D,F_src) CPU
-        gathered_recol_asd = self._to_signal_grid(gathered_recol_asd, self._recol_src_freqs)
+        target_asd = self._gather(self._recolour_banks, recol_idx)  # (B,D,F_src) CPU
+        target_asd = self._to_signal_grid(target_asd, self._recol_src_freqs)
 
         # Data-driven domain-randomization gain jitter (Tobin et al. IROS 2017):
         # a smooth broadband + linear + quadratic frequency shape, per (sample,
@@ -388,7 +450,7 @@ class RecolourPostprocess(torch.nn.Module):
         # the same seeded generator as the mask (reproducible / resume-aware).
         if self.dr_gain > 0.0:
             k = self.dr_gain
-            g = self._gen
+            g = generator
             # Random O(1) shape coeffs per (sample, detector), normalised so the
             # smooth shape lies in ~[-1, 1] (max |b0| + |b1*t| + |b2*(t^2-1/3)|
             # = 1 + 1 + 2/3 = 8/3), making k*sigma(f) an exact per-bin bound.
@@ -398,15 +460,9 @@ class RecolourPostprocess(torch.nn.Module):
             shape = (b0 + b1 * self._tnorm + b2 * self._tquad) * (3.0 / 8.0)
             # k*sigma(f) per-frequency gain; clamp is a final physical safety rail.
             gain = (1.0 + k * self._dr_sigma.unsqueeze(0) * shape).clamp(0.3, 3.0)
-            gathered_recol_asd = gathered_recol_asd * gain
+            target_asd = target_asd * gain
 
-        gathered_recol_asd = gathered_recol_asd.to(X.device)
-
-        recol_gain = gathered_recol_asd + self.eps
-
-        X = torch.where(mask, X * recol_gain, X)
-
-        return X
+        return mask, seg_asd, target_asd.to(device)
 
     def _gather(self, banks, idx):
         """Gather a (B, D, F) ASD tensor from the per-detector in-RAM banks.
