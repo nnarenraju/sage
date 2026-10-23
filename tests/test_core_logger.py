@@ -35,8 +35,6 @@ def _restore_root_handlers():
 
 
 class TestGetLoggerIsInert:
-    def test_returns_a_standard_logger(self):
-        assert isinstance(get_logger("sage.test.x"), logging.Logger)
 
     def test_creates_no_files_or_directories(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

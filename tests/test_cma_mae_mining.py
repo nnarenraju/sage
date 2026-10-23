@@ -8,7 +8,6 @@ that mining covers more than one bump (QD diversity, no collapse), and that the
 (run, segment, start) codec round-trips including the run id (multi-run).
 """
 import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -111,35 +110,32 @@ def test_decode_respects_segment_bounds():
 
 
 # ── mining (file-backed bank) ──────────────────────────────────────────────
-def test_mine_keeps_only_hard_windows():
-    with tempfile.TemporaryDirectory() as tmp:
-        m = _miner(tmp)
-        ev, _ = _make_eval(0)
-        stats = m.mine(ev, n_iters=20, epoch=0)
-        assert stats["kept_starts"] > 0 and m.bank.n_starts > 0
-        # every banked window cleared the keep threshold
-        _, _, _ = m.bank.read_starts(np.arange(m.bank.n_starts))
-        import h5py
-        with h5py.File(m.bank.path, "r") as f:
-            assert (f["start_found_score"][:] >= 5.0).all()
-            assert f["start_runs"].shape == f["start_times"].shape
+def test_mine_keeps_only_hard_windows(tmp_path):
+    m = _miner(str(tmp_path))
+    ev, _ = _make_eval(0)
+    stats = m.mine(ev, n_iters=20, epoch=0)
+    assert stats["kept_starts"] > 0 and m.bank.n_starts > 0
+    # every banked window cleared the keep threshold
+    _, _, _ = m.bank.read_starts(np.arange(m.bank.n_starts))
+    import h5py
+    with h5py.File(m.bank.path, "r") as f:
+        assert (f["start_found_score"][:] >= 5.0).all()
+        assert f["start_runs"].shape == f["start_times"].shape
 
 
-def test_mine_is_diverse_not_collapsed():
-    with tempfile.TemporaryDirectory() as tmp:
-        m = _miner(tmp)
-        ev, bumps = _make_eval(0)
-        m.mine(ev, n_iters=30, epoch=0)
-        s, _, _ = m.bank.read_starts(np.arange(m.bank.n_starts))
-        p = s[:, 0].astype(float) / TOTAL
-        hit = {int(np.argmin(np.abs(bumps - pi))) for pi in p
-               if np.min(np.abs(bumps - pi)) < 0.06}
-        assert len(hit) >= 2, f"QD collapsed onto bump(s) {hit}"
+def test_mine_is_diverse_not_collapsed(tmp_path):
+    m = _miner(str(tmp_path))
+    ev, bumps = _make_eval(0)
+    m.mine(ev, n_iters=30, epoch=0)
+    s, _, _ = m.bank.read_starts(np.arange(m.bank.n_starts))
+    p = s[:, 0].astype(float) / TOTAL
+    hit = {int(np.argmin(np.abs(bumps - pi))) for pi in p
+           if np.min(np.abs(bumps - pi)) < 0.06}
+    assert len(hit) >= 2, f"QD collapsed onto bump(s) {hit}"
 
 
-def test_mine_empty_when_nothing_passes_threshold():
-    with tempfile.TemporaryDirectory() as tmp:
-        m = _miner(tmp, keep_threshold=1e6)          # impossibly high bar
-        ev, _ = _make_eval(0)
-        stats = m.mine(ev, n_iters=5, epoch=0)
-        assert stats["kept_starts"] == 0 and m.bank.n_starts == 0
+def test_mine_empty_when_nothing_passes_threshold(tmp_path):
+    m = _miner(str(tmp_path), keep_threshold=1e6)          # impossibly high bar
+    ev, _ = _make_eval(0)
+    stats = m.mine(ev, n_iters=5, epoch=0)
+    assert stats["kept_starts"] == 0 and m.bank.n_starts == 0

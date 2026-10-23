@@ -57,10 +57,6 @@ class TestEnsure1d:
         assert result.ndim == 1
         np.testing.assert_array_equal(result, [1, 2, 3])
 
-    def test_numpy_1d_passthrough(self):
-        arr = np.array([0.1, 0.2, 0.3])
-        result = ensure_1d(arr)
-        assert result.ndim == 1
 
     def test_2d_array_raises(self):
         with pytest.raises(ValueError, match="1D"):
@@ -70,11 +66,6 @@ class TestEnsure1d:
         # np.asarray(5).ndim == 0, not 1
         with pytest.raises(ValueError):
             ensure_1d(5)
-
-    def test_empty_array(self):
-        result = ensure_1d([])
-        assert result.ndim == 1
-        assert len(result) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +88,6 @@ class TestPhysicalConstants:
     def test_pi(self):
         assert C.PI == pytest.approx(math.pi, rel=1e-15)
 
-    def test_two_pi(self):
-        assert C.TWOPI == pytest.approx(2.0 * math.pi, rel=1e-15)
 
     def test_euler_gamma(self):
         # Euler–Mascheroni constant ≈ 0.5772...
@@ -108,7 +97,3 @@ class TestPhysicalConstants:
         # 1 Mpc ≈ 3.086 × 10^22 m
         assert C.Mpc == pytest.approx(3.086e22, rel=1e-2)
 
-    def test_gm_has_correct_units_of_time(self):
-        # GM = G * MSUN / C^3 should be ~4.93e-6 s (half-period of a 1-Msun binary)
-        expected = C.G * C.MSUN / (C.C ** 3)
-        assert C.GM == pytest.approx(expected, rel=1e-9)

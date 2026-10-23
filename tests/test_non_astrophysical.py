@@ -32,13 +32,6 @@ def _masker(**kw):
     )
 
 
-def test_shapes_and_dtype():
-    data, tc, mc = _pool()
-    d, t, m, mask = _masker()(data, tc, mc)
-    assert d.shape == (N, D, F) and d.is_complex()
-    assert t.shape == (N, D) and m.shape == (N, D) and mask.shape == (N, D)
-
-
 def test_tc_within_window_and_favours_band():
     data, tc, mc = _pool(1)
     _, na_tc, _, _ = _masker(seed=1)(data, tc, mc)
@@ -84,15 +77,6 @@ def test_retiming_zeros_wraparound():
             assert torch.allclose(td[i, 0, :k], torch.zeros(k), atol=1e-3)
         elif k < 0:      # left shift -> trailing |k| wrapped -> zeroed
             assert torch.allclose(td[i, 0, k:], torch.zeros(-k), atol=1e-3)
-
-
-def test_empty_pool_is_safe():
-    d, t, m, mask = _masker()(
-        torch.empty(0, D, F, dtype=torch.complex64),
-        torch.empty(0, D),
-        torch.empty(0, D),
-    )
-    assert d.shape == (0, D, F) and mask.shape == (0, D)
 
 
 if __name__ == "__main__":

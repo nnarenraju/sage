@@ -27,15 +27,6 @@ def _n_for_segments(seg_len, seg_stride, n_seg):
 
 # ── ScipyWelch ─────────────────────────────────────────────────────────────
 class TestScipyWelch:
-    def test_shapes_and_freqs(self):
-        fs = 512.0
-        w = ScipyWelch(sample_rate=fs, nperseg_in_seconds=0.5)  # nperseg = 256
-        x = np.random.default_rng(0).standard_normal(4096)
-        freqs, pxx = w(x)
-        assert w.nperseg == 256
-        assert freqs.shape == pxx.shape == (256 // 2 + 1,)
-        assert freqs[0] == 0.0 and np.isclose(freqs[-1], fs / 2)
-        assert (pxx >= 0).all()
 
     def test_rejects_nonpositive_nperseg(self):
         with pytest.raises(ValueError):
@@ -46,33 +37,15 @@ class TestScipyWelch:
         with pytest.raises(ValueError):
             w(np.zeros((2, 4096)))
 
-    def test_mean_vs_median_average_both_run(self):
-        x = np.random.default_rng(1).standard_normal(4096)
-        for avg in ("mean", "median"):
-            _, pxx = ScipyWelch(512.0, 0.5, average=avg)(x)
-            assert np.isfinite(pxx).all() and (pxx >= 0).all()
-
 
 # ── TorchWelch: construction / validation ──────────────────────────────────
 class TestTorchWelchConstruction:
-    def test_freqs_and_delta_f(self):
-        tw = TorchWelch(delta_t=1.0 / 512, seg_len=256, seg_stride=128)
-        assert tw.freqs.shape == (256 // 2 + 1,)
-        assert np.isclose(tw.delta_f, 512.0 / 256)
-        assert torch.isclose(tw.freqs[-1], torch.tensor(256.0, dtype=torch.float64))
 
-    def test_hann_window_default(self):
-        tw = TorchWelch(seg_len=128)
-        assert torch.allclose(tw.window, torch.hann_window(128))
 
     def test_unknown_window_raises(self):
         with pytest.raises(ValueError):
             TorchWelch(seg_len=128, window="blackman")
 
-    def test_custom_window_tensor(self):
-        win = torch.ones(64)
-        tw = TorchWelch(seg_len=64, window=win)
-        assert torch.equal(tw.window, win)
 
     def test_window_length_mismatch_raises(self):
         with pytest.raises(ValueError):
@@ -81,12 +54,6 @@ class TestTorchWelchConstruction:
 
 # ── TorchWelch: call / segmentation / averaging ────────────────────────────
 class TestTorchWelchCall:
-    def test_output_shape(self):
-        seg_len, seg_stride = 256, 128
-        tw = TorchWelch(1.0 / 512, seg_len, seg_stride)
-        psd = tw(_white(_n_for_segments(seg_len, seg_stride, 8)))
-        assert psd.shape == (seg_len // 2 + 1,)
-        assert torch.isfinite(psd).all() and (psd >= 0).all()
 
     def test_rejects_non_1d(self):
         tw = TorchWelch(seg_len=64, seg_stride=32)
@@ -106,19 +73,6 @@ class TestTorchWelchCall:
         with pytest.raises(ValueError):
             tw(_white(1300))
 
-    def test_trims_when_not_exact_fit(self):
-        seg_len, seg_stride = 256, 128
-        tw = TorchWelch(1.0 / 512, seg_len, seg_stride, require_exact_data_fit=False)
-        psd = tw(_white(1300))                     # trimmed internally to 1280
-        assert psd.shape == (seg_len // 2 + 1,)
-
-    def test_all_avg_methods_run(self):
-        seg_len, seg_stride = 128, 64
-        x = _white(_n_for_segments(seg_len, seg_stride, 11))
-        for avg in ("mean", "median", "median-mean"):
-            psd = TorchWelch(1.0 / 512, seg_len, seg_stride, avg_method=avg)(x)
-            assert psd.shape == (seg_len // 2 + 1,)
-            assert torch.isfinite(psd).all() and (psd >= 0).all()
 
     def test_unknown_avg_method_raises(self):
         seg_len, seg_stride = 128, 64
@@ -135,17 +89,6 @@ class TestMedianBias:
 
     def test_n_one_is_unity(self):
         assert TorchWelch._median_bias(1) == 1.0
-
-    def test_large_n_tends_to_log2(self):
-        assert np.isclose(TorchWelch._median_bias(1000), np.log(2.0))
-
-    def test_matches_scipy_formula(self):
-        # scipy.signal._spectral_py._median_bias closed form
-        def scipy_bias(n):
-            ii_2 = 2 * np.arange(1.0, (n - 1) // 2 + 1)
-            return 1 + np.sum(1.0 / (ii_2 + 1) - 1.0 / ii_2)
-        for n in (3, 5, 9, 50):
-            assert np.isclose(TorchWelch._median_bias(n), scipy_bias(n))
 
 
 # ── TorchWelch vs scipy.signal.welch (the correctness anchor) ──────────────

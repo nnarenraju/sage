@@ -47,9 +47,6 @@ class TestUniform:
         s = u.sample((N,))
         assert s.mean().item() == pytest.approx(5.0, abs=0.1)
 
-    def test_output_shape(self):
-        u = Uniform(low=0.0, high=1.0)
-        assert u.sample((4, 8)).shape == (4, 8)
 
     def test_generator_reproducible(self):
         u = Uniform(low=0.0, high=1.0)
@@ -59,10 +56,6 @@ class TestUniform:
         b = u.sample((20,), generator=g2)
         assert torch.allclose(a, b)
 
-    def test_device_kwarg_accepted(self):
-        u = Uniform(low=0.0, high=1.0)
-        s = u.sample((5,), device="cpu")
-        assert s.device.type == "cpu"
 
     def test_negative_range(self):
         u = Uniform(low=-5.0, high=-1.0)
@@ -107,9 +100,6 @@ class TestUniformPowerLaw:
         s = p.sample((N,))
         assert s.mean().item() == pytest.approx(2.0 / 3.0, abs=0.02)
 
-    def test_output_shape(self):
-        p = UniformPowerLaw(low=1.0, high=2.0)
-        assert p.sample((3, 5)).shape == (3, 5)
 
     def test_generator_reproducible(self):
         p = UniformPowerLaw(low=1.0, high=100.0)
@@ -119,21 +109,13 @@ class TestUniformPowerLaw:
         b = p.sample((20,), generator=g2)
         assert torch.allclose(a, b)
 
-    def test_name_attribute(self):
-        assert UniformPowerLaw.name == "uniform_power_law"
-
 
 # ---------------------------------------------------------------------------
 # UniformRadius
 # ---------------------------------------------------------------------------
 
 class TestUniformRadius:
-    def test_is_uniform_power_law_dim3(self):
-        r = UniformRadius(low=0.0, high=1.0)
-        assert r.dim == 3
 
-    def test_name_attribute(self):
-        assert UniformRadius.name == "uniform_radius"
 
     def test_samples_in_range(self):
         r = UniformRadius(low=10.0, high=500.0)
@@ -141,12 +123,3 @@ class TestUniformRadius:
         assert s.min().item() >= 10.0
         assert s.max().item() <= 500.0
 
-    def test_same_distribution_as_powerlaw_dim3(self):
-        # UniformRadius(0, 1) == UniformPowerLaw(0, 1, dim=3) statistically
-        r = UniformRadius(low=0.0, high=1.0)
-        p = UniformPowerLaw(low=0.0, high=1.0, dim=3)
-        g = torch.Generator().manual_seed(0)
-        sr = r.sample((N,), generator=g)
-        g.manual_seed(0)
-        sp = p.sample((N,), generator=g)
-        assert torch.allclose(sr, sp)

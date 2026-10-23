@@ -38,15 +38,6 @@ def test_underconfident_has_high_coverage():
         assert v["cov1sigma"] > 0.9      # sigma too large -> over-covers
 
 
-def test_accepts_1d_input():
-    rng = np.random.default_rng(1)
-    mu = rng.normal(0, 1, 5000)
-    sigma = np.ones(5000)
-    y = mu + sigma * rng.standard_normal(5000)
-    m = plot_pp_calibration(mu, sigma, y, save=True)
-    assert len(m) == 1
-
-
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

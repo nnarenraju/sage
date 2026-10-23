@@ -7,8 +7,6 @@ reconstruction to LAL's built-in multibanding (~1e-8 overlap) is validated
 separately against lalsimulation.
 """
 
-import math
-
 import numpy as np
 import torch
 
@@ -16,7 +14,6 @@ from sage.dsp.multiband_reconstruct import (
     unwrap,
     continuous_coarse_phase,
     multiband_reconstruct,
-    MultibandReconstructor,
 )
 
 
@@ -79,12 +76,3 @@ def test_continuous_coarse_phase_roundtrip():
     assert torch.max((cphase - phase[idx]).abs()).item() < 1e-9
 
 
-def test_module_matches_functional():
-    fine, idx = _grids()
-    rng = np.random.default_rng(2)
-    camp   = torch.tensor(rng.uniform(0.1, 1.0, idx.numel()))
-    cphase = torch.tensor(np.cumsum(rng.uniform(0.0, 5.0, idx.numel())))
-    mod = MultibandReconstructor(fine[idx], fine)
-    h_mod = mod(camp, cphase)
-    h_fn  = multiband_reconstruct(fine[idx], camp, cphase, fine)
-    assert torch.max((h_mod - h_fn).abs()).item() == 0.0

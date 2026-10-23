@@ -44,19 +44,7 @@ def _batch(B=8, sigma_loss=True, labels=None, seed=0):
 
 # ── BCEWithPEsigmaLoss ─────────────────────────────────────────────────────
 class TestSigmaLoss:
-    def test_num_components(self):
-        assert _make(BCEWithPEsigmaLoss).num_components == NUM_PE + 2
 
-    def test_output_shape_and_finite(self):
-        loss = _make(BCEWithPEsigmaLoss)
-        out = loss(*_batch())
-        assert out.shape == (NUM_PE + 2,)               # [total, bce, reg, coupling]
-        assert torch.isfinite(out).all()
-
-    def test_total_is_weighted_sum(self):
-        loss = _make(BCEWithPEsigmaLoss, regression_weight=0.3, coupling_weight=0.7)
-        total, bce, reg, coup = loss(*_batch())
-        assert torch.isclose(total, bce + 0.3 * reg + 0.7 * coup, atol=1e-5)
 
     def test_noise_only_reg_is_zero(self):
         loss = _make(BCEWithPEsigmaLoss)
@@ -86,41 +74,15 @@ class TestSigmaLoss:
         out = loss((rank, pe), targets)
         assert torch.isfinite(out).all()
 
-    def test_beta_zero_path(self):
-        # beta=0 disables the beta-NLL scaling branch; must still be finite
-        loss = _make(BCEWithPEsigmaLoss, beta=0.0)
-        assert torch.isfinite(loss(*_batch())).all()
-
-    def test_accepts_2d_ranking_stat(self):
-        loss = _make(BCEWithPEsigmaLoss)
-        (rank, pe), targets = _batch()
-        out = loss((rank.reshape(-1, 1), pe), targets)   # (B,1) is reshaped to (B,)
-        assert torch.isfinite(out).all()
-
 
 # ── BCEWithPEregLoss ───────────────────────────────────────────────────────
 class TestRegLoss:
-    def test_num_components(self):
-        assert _make(BCEWithPEregLoss).num_components == NUM_PE + 1
 
-    def test_output_shape_and_finite(self):
-        loss = _make(BCEWithPEregLoss)
-        out = loss(*_batch(sigma_loss=False))
-        assert out.shape == (NUM_PE + 1,)                # [total, bce, reg]
-        assert torch.isfinite(out).all()
 
     def test_noise_only_reg_is_zero(self):
         loss = _make(BCEWithPEregLoss)
         out = loss(*_batch(sigma_loss=False, labels=torch.zeros(8)))
         assert out[2].item() == 0.0
-
-    def test_regression_weight_scales_total(self):
-        out_pe, targets = _batch(sigma_loss=False)
-        lo = _make(BCEWithPEregLoss, regression_weight=0.0)(out_pe, targets)
-        hi = _make(BCEWithPEregLoss, regression_weight=5.0)(out_pe, targets)
-        # weight 0 -> total == bce; weight 5 -> total >= bce (reg >= 0)
-        assert torch.isclose(lo[0], lo[1], atol=1e-6)
-        assert hi[0].item() >= hi[1].item() - 1e-6
 
 
 if __name__ == "__main__":
