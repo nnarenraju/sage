@@ -35,12 +35,15 @@ case "$TASK" in
             "python -c 'from dataset import make_asds_only; make_asds_only()'"
         ;;
     fiducial)
-        # Build the combined O3a+O3b line-notched (LocalLineNotch K=4) fiducial from
-        # the on-disk recolour banks (no bank regen). Heavy RAM/IO -> CPU partition,
-        # generous memory; never on the login node.
+        # Build the combined O3+O4 line-notched (LocalLineNotch K=4) fiducial from
+        # the on-disk recolour banks (no bank regen). Each detector pools every run
+        # that has it: H1/L1 from O3a+O3b+O4a+O4b, V1 from O3a+O3b+O4b. Heavy RAM/IO
+        # -> CPU partition, generous memory; never on the login node. Optional args
+        # restrict the detectors:  ./submit.sh fiducial H1 L1
+        DETS="${*:2}"
         sage_submit --partition cpu --qos "" --gres none --cpus 16 --mem 128G \
-            --time 06:00:00 --job build-fiducial-o3ab \
-            "python ../build_fiducial.py"
+            --time 1-00:00 --job build-fiducial-o3o4 \
+            "python ../build_fiducial.py $DETS"
         ;;
     train)
         # Vanilla trainer. Optional 2nd arg: config module (default config).
