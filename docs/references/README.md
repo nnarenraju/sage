@@ -1,18 +1,14 @@
 # Reference documents for `sage/search`
 
-Every method in `sage/search` cites an equation in one of the documents below. Citations
-name the local file and the equation number, so an implementation can be checked against
-its source without leaving the repository.
+The documents below are the sources `sage/search` follows. A module that implements one
+names the local file and the equation number, so it can be checked against its source
+without leaving the repository.
 
 The PDFs themselves are not checked in (see `.gitignore`). Fetch them with:
 
 ```bash
 python docs/references/fetch.py
 ```
-
-The registry in [`sage/search/references.py`](../../sage/search/references.py) holds the
-same list in code, together with the specific equations this subpackage uses.
-`sage.search.references.verify_all()` checks that every document is present.
 
 | Key | arXiv | Title |
 |---|---|---|
