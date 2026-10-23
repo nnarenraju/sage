@@ -117,7 +117,7 @@ class OptimalSNREstimator(torch.nn.Module):
         mask[k_low:k_high] = 1.0
         return mask.view(1, 1, F)  # broadcastable
 
-    def forward(self, h):
+    def forward(self, h, asds=None):
         """
         Batched optimal SNR for multi-detector frequency-domain waveforms.
 
@@ -125,12 +125,10 @@ class OptimalSNREstimator(torch.nn.Module):
         ----------
         h : complex tensor (B, D, F)
             Detector-projected frequency-domain strain
-        asd : real tensor (D, F)
-            One-sided ASD for each detector
-        delta_f : float
-            Frequency spacing
-        mask : optional bool tensor (F,)
-            Frequency mask for f_low / f_high cutoffs
+        asds : real tensor (B, D, F) or None
+            ASD to integrate against, per row. ``None`` uses the fiducial ASDs.
+            Given, it is the same integral against another spectrum -- e.g. the
+            ASD of the noise window each row is injected into.
 
         Returns
         -------
@@ -141,7 +139,7 @@ class OptimalSNREstimator(torch.nn.Module):
         """
 
         # whiten waveform instead of squaring ASD (B,D,F)
-        h_white = (h / self.delta_f) / self.asds
+        h_white = (h / self.delta_f) / (self.asds if asds is None else asds)
 
         # |h|^2
         power = h_white.real * h_white.real + h_white.imag * h_white.imag
@@ -168,7 +166,6 @@ class OptimalSNRRescaler(torch.nn.Module):
     Rescales a batch of signals to match target SNRs.
 
     Args:
-        snr_estimator: instance of OptimalSNREstimator
         target_snr_sampler: callable(batch_size) -> Tensor of target SNRs
     """
 
