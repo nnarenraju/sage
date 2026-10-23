@@ -75,11 +75,12 @@ def merger_frequency(model, theta):
     Parameters
     ----------
     model : IMRPhenomXAS_NRTidalv3
-    theta : torch.Tensor, shape (1, 10)
+    theta : torch.Tensor, shape (1, 17)
+        Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
     """
     m1, m2 = float(theta[0, 0]), float(theta[0, 1])
-    c1, c2 = float(theta[0, 2]), float(theta[0, 3])
-    l1, l2 = float(theta[0, 8]), float(theta[0, 9])
+    c1, c2 = float(theta[0, 4]), float(theta[0, 7])
+    l1, l2 = float(theta[0, 12]), float(theta[0, 13])
     Mtot = m1 + m2
     one = lambda v: torch.tensor([[v]], dtype=torch.float64)
     Mf = model._merger_freq_v3(one(m1 / Mtot), one(m2 / Mtot),
@@ -144,7 +145,7 @@ def freq_at_tau(model, theta, taus):
     ----------
     model : IMRPhenomXAS_NRTidalv3
         Built on the analysis grid (its ``self.f``/``n_pad`` are used).
-    theta : torch.Tensor, shape (1, 10)
+    theta : torch.Tensor, shape (1, 17)
     taus : array-like of float
         Times to merger [s].
 
@@ -169,7 +170,7 @@ def freq_at_tau_batch(model, thetas, taus, progress=None):
     ----------
     model : IMRPhenomXAS_NRTidalv3
         Built with batch size ``model.B`` on the analysis grid.
-    thetas : torch.Tensor, shape (N, 10)
+    thetas : torch.Tensor, shape (N, 17)
     taus : array-like of float, length K
     progress : callable or None
         Optional ``progress(done, total)`` callback per chunk.
@@ -216,12 +217,12 @@ def select_reference(model, thetas, tau_min, make_theta=None, tol_hz=0.02,
     ----------
     model : IMRPhenomXAS_NRTidalv3
         Built on the analysis grid.
-    thetas : torch.Tensor, shape (N, 10)
+    thetas : torch.Tensor, shape (N, 17)
         Prior samples (include the prior corners for a guaranteed envelope).
     tau_min : float
         Truncation time-to-merger [s]: data at tau < tau_min is discarded.
     make_theta : callable or None
-        ``make_theta(m1, m2) -> (1, 10) tensor`` for candidate references.
+        ``make_theta(m1, m2) -> (1, 17) tensor`` for candidate references.
         Default builds an equal-mass zero-spin zero-tide row at 100 Mpc.
     tol_hz : float
         Solver tolerance on f_R(tau_min).
@@ -240,12 +241,14 @@ def select_reference(model, thetas, tau_min, make_theta=None, tol_hz=0.02,
                                half-bandwidth B* [Hz] at tau_min
         f_trunc              : (N,) exact per-sample f(tau_min) [Hz]
         i_lo, i_hi           : indices of the extreme samples
-        theta_ref            : (1, 10) tensor of the chosen reference
+        theta_ref            : (1, 17) tensor of the chosen reference
     """
     if make_theta is None:
         def make_theta(m1, m2):
-            return torch.tensor([[m1, m2, 0., 0., 100., 0., 0., 0., 0., 0.]],
-                                dtype=torch.float64)
+            theta = torch.zeros((1, 17), dtype=torch.float64)
+            theta[0, :2] = torch.tensor([m1, m2])
+            theta[0, 8] = 100.0
+            return theta
 
     if f_trunc is None:
         f_trunc = np.array([
