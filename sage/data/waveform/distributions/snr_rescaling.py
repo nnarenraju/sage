@@ -65,10 +65,14 @@ class HalfNorm(nn.Module):
         self.gen = torch.Generator(device=cfg.device)
         self.gen.manual_seed(seed)
 
+        # Most recent draw, read by SageVanillaTesting.run_signal.
+        self.last = None
+
     def forward(self, batch_size: int):
         x = torch.randn(
             batch_size,
             device=self.scale.device,
             generator=self.gen,
         ).abs()
-        return x * self.scale + self.loc
+        self.last = x * self.scale + self.loc
+        return self.last
