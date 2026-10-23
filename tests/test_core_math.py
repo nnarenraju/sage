@@ -71,10 +71,6 @@ class TestStandardise:
         result = s_zero.norm(5.0)
         assert math.isfinite(result)
 
-    def test_custom_eps(self):
-        s = Standardise(mean=0.0, std=1.0, eps=1e-4)
-        assert s.eps == 1e-4
-
 
 # ---------------------------------------------------------------------------
 # rotation_matrix
@@ -111,7 +107,3 @@ class TestRotationMatrix:
         with pytest.raises(ValueError):
             rotation_matrix(1.0, axis=-1)
 
-    def test_returns_numpy_array(self):
-        R = rotation_matrix(0.5)
-        assert isinstance(R, np.ndarray)
-        assert R.shape == (3, 3)

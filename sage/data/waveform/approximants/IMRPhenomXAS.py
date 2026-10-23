@@ -17,20 +17,16 @@ Description   : GPU-native batched IMRPhenomXAS aligned-spin frequency-domain
 
                 Parameters (theta columns)
                 --------------------------
-                0  : m1          (solar masses, m1 >= m2)
-                1  : m2          (solar masses)
-                2  : chi1z       (dimensionless aligned spin of body 1)
-                3  : chi2z       (dimensionless aligned spin of body 2)
-                4  : distance    (Mpc)
-                5  : tc          (s, time of coalescence)
-                6  : phic        (rad, reference orbital phase)
-                7  : inclination (rad)
+                waveform_utils.WAVEFORM_PARAMETERS (PyCBC names): mass1,
+                mass2, spin1x, spin1y, spin1z, spin2x, spin2y, spin2z,
+                distance, tc, coa_phase, inclination, lambda1, lambda2,
+                polarization, ra, dec.
 
 Created on 2026-05-27
 
 __author__      = Narenraju Nagarajan
 __copyright__   = Copyright 2026, Sage
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
@@ -47,14 +43,10 @@ import math
 
 import torch
 
+from sage.core.config import get_data_cfg
 from sage.data.waveform.approximants.phenom import PhenomConstants
-from sage.data.waveform.approximants.phenomx_data import (
-    _XAS_QNMData_a,
-    _XAS_QNMData_fring22,
-    _XAS_QNMData_fdamp22,
-)
 from sage.data.waveform import taper as _taper_mod
-from sage.core.interpolation import torch_scipylike_cubic_interp
+from sage.data.waveform import waveform_utils
 from sage.core.torch import nudge_backward_
 
 
@@ -77,6 +69,8 @@ class IMRPhenomXAS(PhenomConstants):
     """
 
     def __init__(self, f, f_ref, **kwargs):
+        f = f.to(torch.float64)
+        f_ref = f_ref.to(torch.float64)
         super().__init__(
             device=f.device,
             batch_size=f.shape[0],
@@ -107,23 +101,6 @@ class IMRPhenomXAS(PhenomConstants):
             device=f.device,
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
-
-        # XAS-specific QNM tables (1200 pts, uniform spin grid [-1, 1])
-        # Pre-interpolate to a 500k-point grid identical to the PhenomD approach,
-        # so that the fast O(1) linear-interp trick works unchanged.
-        self._xas_QNMData_a      = _XAS_QNMData_a.to(device=f.device, dtype=f.dtype)
-        self._xas_QNMData_fring22 = _XAS_QNMData_fring22.to(device=f.device, dtype=f.dtype)
-        self._xas_QNMData_fdamp22 = _XAS_QNMData_fdamp22.to(device=f.device, dtype=f.dtype)
-
-        self.xas_QNMData_a = torch.linspace(
-            -1.0, 1.0, 500_000, device=f.device, dtype=f.dtype
-        )
-        self.xas_QNMData_fring22 = torch_scipylike_cubic_interp(
-            self.xas_QNMData_a, self._xas_QNMData_a, self._xas_QNMData_fring22
-        )
-        self.xas_QNMData_fdamp22 = torch_scipylike_cubic_interp(
-            self.xas_QNMData_a, self._xas_QNMData_a, self._xas_QNMData_fdamp22
-        )
 
         # Frequency cutoff: Mf = 0.3 (same as PhenomD convention)
         self.fM_CUT_XAS = torch.tensor(0.3, device=f.device, dtype=f.dtype)
@@ -315,9 +292,8 @@ class IMRPhenomXAS(PhenomConstants):
 
         Parameters
         ----------
-        theta : torch.Tensor, shape (B, 8+)
-            Columns: [m1, m2, chi1z, chi2z, distance, tc, phic, inclination, ...]
-            Masses in solar masses, distance in Mpc, angles in radians.
+        theta : torch.Tensor, shape (B, 17)
+            Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
         reproduce_lal : bool
             If True, skip FD tapering, tc shift, and df normalisation so
             the output can be compared directly with raw LALSim output at
@@ -328,10 +304,16 @@ class IMRPhenomXAS(PhenomConstants):
         hp, hc : torch.Tensor, shape (B, n_pad + F), complex
             Plus and cross polarisations.  The first ``n_pad`` bins
             (DC to f_min) are always zero.
+
+        Raises
+        ------
+        ValueError
+            If any transverse spin is non-zero.
         """
         # ----------------------------------------------------------------
         # 1. Parameters and derived quantities
         # ----------------------------------------------------------------
+        theta = waveform_utils.aligned_layout(theta, waveform_utils.ALIGNED_COLUMNS)
         dist_Mpc = theta[:, 4:5]   # Mpc
         tc       = theta[:, 5:6]   # s
         phic     = theta[:, 6:7]   # rad  (orbital phase at f_ref)
@@ -451,8 +433,14 @@ class IMRPhenomXAS(PhenomConstants):
         return hp, hc
 
     def apply_tc(self, hp, hc, tc):
-        """Apply a frequency-domain time-shift by tc seconds."""
-        _tc = tc - self.sample_length_in_s
+        """
+        Shift the waveform so it merges ``tc`` seconds into the analysis window.
+
+        ``tc`` is measured from the end of the leading padding, the window
+        convention of training and search, so the merger lands
+        ``padding_length_in_s + tc`` into the padded segment.
+        """
+        _tc = (tc + get_data_cfg().padding_length_in_s) - self.sample_length_in_s
         hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
         hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
         return hp, hc
@@ -869,7 +857,7 @@ class IMRPhenomXAS(PhenomConstants):
     # Amplitude: 3 regions
     # ------------------------------------------------------------------
 
-    def get_amp_coeffs(self, derived):
+    def get_amp_coeffs(self, derived, afinal=None):
         """
         Compute all IMRPhenomXAS amplitude coefficients for the batch.
 
@@ -881,6 +869,10 @@ class IMRPhenomXAS(PhenomConstants):
         Parameters
         ----------
         derived : (B, 13)  — output of ``compute_derived_parameters``
+        afinal : torch.Tensor (B, 1), optional
+            Final spin override (the precessing model passes the
+            precessing final spin; the final mass stays aligned-spin,
+            as in IMRPhenomX_SetPrecessingRemnantParams)
 
         Returns
         -------
@@ -915,14 +907,18 @@ class IMRPhenomXAS(PhenomConstants):
         # 1. Final mass and spin → fRING, fDAMP  (dimensionless Mf units)
         # ------------------------------------------------------------------
         Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi, delta)
-        afinal = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        afinal_aligned = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        if afinal is None:
+            afinal = afinal_aligned
         fRING, fDAMP = IMRPhenomXAS.get_fRD_fdamp(afinal, Mfinal)
 
         # ------------------------------------------------------------------
         # 2. MECO and ISCO frequencies  (dimensionless Mf units)
+        # fISCO keeps the aligned-spin value: the precessing remnant
+        # override does not refresh pWF->fISCO (precession.c:1290)
         # ------------------------------------------------------------------
         fmeco = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi, delta)
-        fisco = IMRPhenomXAS.fISCO(afinal)
+        fisco = IMRPhenomXAS.fISCO(afinal_aligned)
 
         # ------------------------------------------------------------------
         # 3. Amplitude region boundaries
@@ -1138,7 +1134,7 @@ class IMRPhenomXAS(PhenomConstants):
 
         d_inspF1 = (
             ((chi2*(81.0 - 81.0*delta - 44.0*eta) + chi1*(81.0*(1.0 + delta) - 44.0*eta))*pi) / 48.0
-            + ((-969.0 + 1804.0*eta)*p2o3) / (1008.0 * Fma_m1o3)
+            + ((-969.0 + 1804.0*eta)*p2o3) / (1008.0 * Fma_p1o3)
             + ((-27312085.0 - 10287648.0*chi22 + 10287648.0*chi22*delta
                - 10287648.0*chi12*(1.0 + delta)
                + 24.0*(-1975055.0 + 857304.0*chi12 - 994896.0*chi1*chi2 + 857304.0*chi22)*eta
@@ -1384,7 +1380,7 @@ class IMRPhenomXAS(PhenomConstants):
     # Phase: 3 regions
     # ------------------------------------------------------------------
 
-    def get_phase_coeffs(self, derived):
+    def get_phase_coeffs(self, derived, afinal=None):
         """
         Compute all IMRPhenomXAS phase coefficients for the batch.
 
@@ -1398,6 +1394,9 @@ class IMRPhenomXAS(PhenomConstants):
         Parameters
         ----------
         derived : (B, 13) — output of compute_derived_parameters
+        afinal : torch.Tensor (B, 1), optional
+            Final spin override (precessing final spin; the final mass
+            stays aligned-spin, as in IMRPhenomX_SetPrecessingRemnantParams)
 
         Returns
         -------
@@ -1457,10 +1456,14 @@ class IMRPhenomXAS(PhenomConstants):
         # 1. Final mass / spin → QNM frequencies (same as amplitude)
         # ---------------------------------------------------------------
         Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi, delta)
-        afinal = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        afinal_aligned = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        if afinal is None:
+            afinal = afinal_aligned
         fRING, fDAMP = IMRPhenomXAS.get_fRD_fdamp(afinal, Mfinal)
         fmeco  = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi, delta)
-        fisco  = IMRPhenomXAS.fISCO(afinal)
+        # fISCO keeps the aligned-spin value: the precessing remnant
+        # override does not refresh pWF->fISCO (precession.c:1290)
+        fisco  = IMRPhenomXAS.fISCO(afinal_aligned)
 
         # ---------------------------------------------------------------
         # 2. Phase region boundaries (Sect. VII of arXiv:2001.11412)

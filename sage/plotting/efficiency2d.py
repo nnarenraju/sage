@@ -9,7 +9,7 @@ Created on 2026-03-21 17:46:43
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_2d_efficiency(
@@ -39,6 +40,7 @@ def plot_2d_efficiency(
     threshold,
     export_dir=None,
     save=True,
+    min_count=20,
     bins_x=20,
     bins_y=20,
 ):
@@ -95,7 +97,12 @@ def plot_2d_efficiency(
                 & (y >= y_edges[j])
                 & (y < y_edges[j + 1])
             )[0]
-            if len(idxs) == 0:
+            # Bins with only a handful of signals produce fractions of
+            # exactly 0.0 or 1.0, which render identically to a genuine
+            # extreme on the colour scale. On a typical run ~27% of occupied
+            # bins hold fewer than 20 samples, so those cells were reporting
+            # counting noise as certainty. Leave them blank instead.
+            if len(idxs) < min_count:
                 efficiency[i, j] = np.nan
             else:
                 efficiency[i, j] = np.sum(stat[idxs] > threshold) / len(idxs)
@@ -116,13 +123,13 @@ def plot_2d_efficiency(
     plt.colorbar(im, label=f"Fraction of signals above {threshold:.2f}")
     plt.xlabel(param_x)
     plt.ylabel(param_y)
-    plt.title(f"2D Efficiency Map - Epoch {epoch}")
+    plt.title(f"2D Efficiency Map - {_etitle(epoch)}")
 
     if save and export_dir is not None:
-        outdir = os.path.join(export_dir, "2D_EFFICIENCY")
+        outdir = os.path.join(export_dir, "2D_EFFICIENCY", _etag(epoch))
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"{param_x}_{param_y}_efficiency_epoch_{epoch}.png"),
+            os.path.join(outdir, f"{param_x}_{param_y}_efficiency_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

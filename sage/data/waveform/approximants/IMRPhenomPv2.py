@@ -9,7 +9,7 @@ Created on 2026-01-21 05:26:04
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -21,6 +21,16 @@ GitHub Repository: NULL
 
 Documentation: NULL
 
+Licensing
+---------
+This file is part of Sage and is distributed under GPL-3.0-or-later.
+Portions derive from the MIT-licensed JAX reference implementation by
+Adam Coogan and Thomas Edwards; that notice is retained verbatim in
+``THIRD_PARTY_LICENSE`` in this directory and must not be removed.  The MIT
+terms cover those derived portions only.  See ``README.md`` here for the
+full provenance chain (LALSuite GPL-2+ -> MIT JAX reference -> this PyTorch
+reimplementation, validated directly against LALSuite).
+
 """
 
 
@@ -29,7 +39,8 @@ import torch
 
 # LOCAL
 from sage.data.waveform.approximants import IMRPhenomD
-from sage.core.torch import nudge_backward_, nudge_forward_
+from sage.core.interpolation import torch_natural_cubic_coeffs, torch_natural_cubic_interp
+from sage.core.math import safe_sqrt
 
 from sage.data.waveform import taper
 from sage.data.waveform import waveform_utils
@@ -93,32 +104,11 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             self.data_cfg.padded_length_in_s,
             self.signal_batch_size,
             self.cfg.device,
-            self.cfg.dtype,
+            torch.float64,
         )
-        self.f = f
-        # Use padded_length_in_s directly — same source used by get_freqs,
-        # avoids catastrophic cancellation from f[0][1] - f[0][0].
-        _T = float(self.data_cfg.padded_length_in_s)
-        self.df = torch.tensor(1.0 / _T, device=self.cfg.device, dtype=self.cfg.dtype)
-        self.sample_length_in_s = _T
-        self.f_numel = self.f[0].numel()
-        self.f_ref = f_ref
-
-        # Initialise PhenomD with freqs
         IMRPhenomD.IMRPhenomD.__init__(self, f, f_ref)
-
-        # Batch size
-        self.B = f.shape[0]
-
-        # Tensor of zeroes for hp and hc
-        # Accounts for freqs from DC to f_upper
-        self.n_pad = int(torch.round((self.f[0][0] - self.df) / self.df)) + 1
-        self.hp_buffer = torch.empty(
-            (self.B, self.n_pad + self.f_numel),
-            dtype=torch.complex64,
-            device=f.device,
-        )
-        self.hc_buffer = torch.empty_like(self.hp_buffer)
+        self.sample_length_in_s = float(self.data_cfg.padded_length_in_s)
+        self._out_cdtype = torch.promote_types(self.cfg.dtype, torch.complex64)
 
         # Parameter sampler
         self.param_sampler = param_sampler
@@ -134,44 +124,14 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # Index of mchirp within do_point_estimate (its standardised column).
         self.mc_pe_idx = list(self.cfg.do_point_estimate).index("mchirp")
 
-        # param names needed for Pv2
-        self.param_names = [
-            "mass1",
-            "mass2",
-            "spin1x",
-            "spin1y",
-            "spin1z",
-            "spin2x",
-            "spin2y",
-            "spin2z",
-            "distance",
-            "tc",
-            "coa_phase",
-            "inclination",
-            "polarization",
-            "ra",
-            "dec",
-        ]
-
-        if self.param_sampler is not None:
-            get_idx = self.param_sampler.param_index
-            self.req_idx = torch.tensor(
-                [get_idx[key] for key in self.param_names],
-                device=f.device,
-                dtype=torch.int32,
-            )
-
-        # Column index of "distance" in the full all_theta parameter tensor.
-        # req_idx maps self.param_names → columns of all_theta; "distance" is
-        # self.param_names[8], so req_idx[8] gives its all_theta column.
-        self.dist_col = int(self.req_idx[8].item())
-
-        # Column of geocentric "tc" in the full all_theta tensor, used to build
-        # per-detector arrival times (tc_det = tc_geocentric + projection delay).
-        self.tc_col = int(self.param_sampler.param_index["tc"])
+        param_index = self.param_sampler.param_index
+        self.source, self.target = waveform_utils.layout_columns(param_index)
+        # Columns of distance and geocentric tc in the full all_theta tensor;
+        # tc builds per-detector arrival times (tc_det = tc + projection delay).
+        self.dist_col = param_index["distance"]
+        self.tc_col = param_index["tc"]
 
         # Target handling
-        self.param_sampler.req_idx = self.req_idx
         self.param_sampler._compile_batch_normaliser()
         self.param_sampler._compile_batch_standardiser()
 
@@ -182,16 +142,18 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
     @torch.no_grad()
     def forward(self, return_theta=False):
         all_theta = self.param_sampler(self.B)
-        req_theta = all_theta[:, self.req_idx]
+        theta = waveform_utils.to_layout(all_theta, self.source, self.target)
 
-        hp, hc = self.get_hphc(req_theta)
+        hp, hc = self.get_hphc(theta)
+        hp = hp.to(self._out_cdtype)
+        hc = hc.to(self._out_cdtype)
 
         proj = self.waveform_project(
             hp,
             hc,
-            ra=req_theta[:, -2],
-            dec=req_theta[:, -1],
-            polarization=req_theta[:, -3],
+            ra=theta[:, -2],
+            dec=theta[:, -1],
+            polarization=theta[:, -3],
             return_delay=self.append_per_det_targets,
         )
         if self.append_per_det_targets:
@@ -207,8 +169,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
                 all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
             )
 
-        # Target handling
-        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
+        # Target handling. Default: z-score (standardise). Opt in to the year-old
+        # [0,1] min-max normalisation with pe_target_minmax=True -- shrinks the PE
+        # target variance, hence the PE gradient at a given regression_weight.
+        if getattr(self.cfg, "pe_target_minmax", False):
+            normed_targets = self.param_sampler.norm_from_batch(all_theta)
+        else:
+            normed_targets = self.param_sampler.standardise_from_batch(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )
@@ -244,10 +211,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
         Parameters
         ----------
-        theta : torch.Tensor, shape (B, 15)
-            Waveform parameters: mass1, mass2, spin1x, spin1y, spin1z,
-            spin2x, spin2y, spin2z, distance, tc, coa_phase, inclination,
-            polarization, ra, dec.
+        theta : torch.Tensor, shape (B, 17)
+            Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
         reproduce_lal : bool, optional
             If ``True``, skip tapering, time-shifting, and df normalisation so
             output matches the raw LAL convention.  Default is ``False``.
@@ -255,13 +220,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         Returns
         -------
         hp : torch.Tensor, shape (B, n_freq)
-            Plus polarisation (complex64).
+            Plus polarisation (complex128).
         hc : torch.Tensor, shape (B, n_freq)
-            Cross polarisation (complex64).
+            Cross polarisation (complex128).
         """
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
         # s2z=7, dist_mpc=8, tc=9, phiRef=10, incl=11
-        # Pv2 requires m2 > m1; Swapping masses and spins done internally
+        theta = self.order_bodies(waveform_utils.fill_defaults(theta)[:, :12])
 
         # Compute generic derived quantities from masses
         derived = self.compute_derived_parameters(theta)
@@ -367,7 +332,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             # Frequency domain tapering
             _taper = taper.fd_taper(
                 f=self.f,
-                f_min=20.0,
+                f_min=self.f[0, 0].item(),
                 f_cut=fcut_true,
                 df=self.df,
             )
@@ -381,6 +346,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             # LAL works in continuous Fourier regime
             final_hp *= self.df
             final_hc *= self.df
+        else:
+            # LAL evaluates [f_min, f_max); the bin at f_max stays zero.
+            final_hp[:, -1] = 0
+            final_hc[:, -1] = 0
 
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
@@ -389,36 +358,25 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
         return final_hp, final_hc
 
-    def apply_tc(self, hp, hc, tc):
-        """
-        Apply a time-of-coalescence phase shift to hp and hc.
 
-        Converts ``tc`` from duration-space into a frequency-domain phase ramp
-        and applies it to the plus and cross polarisations in polar form.
+    @staticmethod
+    def order_bodies(theta):
+        """
+        Swap bodies, masses and spin vectors, where mass1 < mass2.
+
+        PhenomPCore swaps bodies to enforce m2 >= m1; this port takes
+        mass1 >= mass2 and assigns the bodies in :meth:`convert_spins`.
 
         Parameters
         ----------
-        hp : torch.Tensor, shape (B, n_freq)
-            Plus polarisation.
-        hc : torch.Tensor, shape (B, n_freq)
-            Cross polarisation.
-        tc : torch.Tensor, shape (B, 1)
-            Time of coalescence in seconds relative to the segment end.
+        theta : torch.Tensor, shape (B, 12)
 
         Returns
         -------
-        hp : torch.Tensor, shape (B, n_freq)
-            Phase-shifted plus polarisation.
-        hc : torch.Tensor, shape (B, n_freq)
-            Phase-shifted cross polarisation.
+        torch.Tensor, shape (B, 12)
         """
-        # Apply time shift to account for tc
-        # Converting from tc in duration space to actual shift
-        _tc = (tc + self.data_cfg.padding_length_in_s) - self.sample_length_in_s
-        # We do this in polar as well without torch exp
-        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
-        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
-        return hp, hc
+        swapped = theta[:, [1, 0, 5, 6, 7, 2, 3, 4, 8, 9, 10, 11]]
+        return torch.where(theta[:, 0:1] < theta[:, 1:2], swapped, theta)
 
     def pad_missing_frequencies(self, hp, hc):
         """
@@ -656,18 +614,16 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         fcut_true,
     ):
         """
-        Apply time-shift and phase corrections so the PhenomPv2 waveform coalesces at t=0.
+        Apply the time shift that makes the waveform coalesce at t=0.
 
-        Evaluates the PhenomD phase on a fixed frequency grid near the ringdown
-        frequency, estimates d(phase)/df via central difference, and calls
-        :meth:`apply_time_shift_phase_correction`.
+        t_corr = (1/2pi) dphi/df at fRD, from the natural cubic spline of
+        the phasing on 10 points in [0.8 fRD, min(1.2 fRD, fCut)]
+        (LALSimIMRPhenomP.c:1057-1161).
 
         Parameters
         ----------
-        hp : torch.Tensor, shape (B, n_freq)
-            Plus polarisation before correction.
-        hc : torch.Tensor, shape (B, n_freq)
-            Cross polarisation before correction.
+        hp, hc : torch.Tensor, shape (B, n_freq)
+            Polarisations before correction.
         theta_swapped : torch.Tensor, shape (B, 6)
             Mass-swapped reduced parameters.
         derived : torch.Tensor, shape (B, 4)
@@ -685,43 +641,20 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
         Returns
         -------
-        hp : torch.Tensor, shape (B, n_freq)
-            Corrected plus polarisation.
-        hc : torch.Tensor, shape (B, n_freq)
-            Corrected cross polarisation.
+        hp, hc : torch.Tensor, shape (B, n_freq)
+            Corrected polarisations.
         """
-        ## ** This is where we do the corrections to phase and time shift **
-        # Fixed frequency grid around ringdown frequency for Pv2
-        # 10 points should be enough for cubic interpolation
-        # Same n_fixed used in LAL version
-        n_fixed = 1000
-
-        fcut = self.fM_CUT / derived[:, 3:4]
+        n_fixed = 10
         f_final = trans_fs[:, 4:5]
-
         freqs_fixed_start = 0.8 * f_final
-        freqs_fixed_stop = torch.minimum(1.2 * f_final, fcut)
-
-        # Create linspace weights once
-        t = torch.linspace(
-            0.0,
-            1.0,
-            n_fixed,
-            device=self.f.device,
-            dtype=self.f.dtype,
-        )
-
-        # Broadcast to (B, n_fixed)
-        freqs_fixed = freqs_fixed_start + (freqs_fixed_stop - freqs_fixed_start) * t
-        ff_Ms = freqs_fixed * derived[:, 3:4]
-
-        # Compute phase on fixed grid
-        # We have inverted m1 and m2 back to the convention m1 > m2 for PhenomD call
-        phase_fixed = torch.empty(n_fixed, device=self.f.device, dtype=self.f.dtype)
+        freqs_fixed_stop = torch.minimum(1.2 * f_final, self.fM_CUT / derived[:, 3:4])
+        delta_freqs_fixed = (freqs_fixed_stop - freqs_fixed_start) / (n_fixed - 1)
+        steps = torch.arange(n_fixed, device=self.f.device, dtype=self.f.dtype)
+        freqs_fixed = freqs_fixed_start + steps * delta_freqs_fixed
 
         _, phase_fixed = self.PhenomPOneFrequency(
             freqs_fixed,
-            ff_Ms,
+            freqs_fixed * derived[:, 3:4],
             fx_Ms,
             theta_swapped,
             phd_derived,
@@ -730,15 +663,18 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             fcut_true,
         )
 
-        hp, hc = self.apply_time_shift_phase_correction(
-            hptilde=hp,
-            hctilde=hc,
-            freqs_fixed=freqs_fixed,
-            phase_fixed=phase_fixed,
-            f_final=f_final,
+        # LAL splines phasing = -phPhenom.
+        phasing = -phase_fixed
+        M = torch_natural_cubic_coeffs(freqs_fixed, phasing)
+        dphi_df = torch_natural_cubic_interp(
+            f_final, freqs_fixed, phasing, M, derivative=True
         )
+        t_corr_fixed = dphi_df / (2 * self.PI)
 
-        return hp, hc
+        phase_corr = torch.polar(
+            torch.ones_like(self.f), -2 * self.PI * self.f * t_corr_fixed
+        )
+        return hp * phase_corr, hc * phase_corr
 
     def convert_spins(self, theta, derived):
         """
@@ -757,7 +693,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             Columns: mass1[0], mass2[1], spin1x[2], spin1y[3], spin1z[4],
             spin2x[5], spin2y[6], spin2z[7], distance[8], tc[9],
             coa_phase[10], inclination[11].
-            Sage convention: mass1 >= mass2 (enforced by mass_order constraint),
+            mass1 >= mass2 (ordered by :meth:`order_bodies`),
             so spin1 belongs to the LARGER body and spin2 to the SMALLER body.
             Therefore theta[:,7] (spin2z) = aligned spin of the SMALLER body
             and theta[:,4] (spin1z) = aligned spin of the LARGER body, which
@@ -813,7 +749,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         J0 = torch.sqrt(J0x_sf * J0x_sf + J0y_sf * J0y_sf + J0z_sf * J0z_sf)
 
         thetaJ_sf = torch.arccos(J0z_sf / J0)
-        phiJ_sf = torch.arctan2(J0y_sf, J0x_sf)
+        # MAX_TOL_ATAN of LALSimIMRPhenomP.c.
+        tol = 1.0e-15
+        phiJ_sf = torch.where(
+            (J0x_sf.abs() < tol) & (J0y_sf.abs() < tol),
+            self.PI / 2.0 - theta[:, 10:11],  # aligned spin limit
+            torch.arctan2(J0y_sf, J0x_sf),
+        )
         phi_aligned = -phiJ_sf
 
         # First we determine kappa
@@ -829,7 +771,11 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         tmp_x, tmp_y, tmp_z = self.ROTATEZ(-phiJ_sf, tmp_x, tmp_y, tmp_z)
         tmp_x, tmp_y, tmp_z = self.ROTATEY(-thetaJ_sf, tmp_x, tmp_y, tmp_z)
 
-        kappa = -torch.arctan2(tmp_y, tmp_x)
+        kappa = -torch.where(
+            (tmp_y.abs() < tol) & (tmp_x.abs() < tol),
+            self.ZERO,
+            torch.arctan2(tmp_y, tmp_x),
+        )
 
         # Then we determine alpha0, by rotating LN
         tmp_x, tmp_y, tmp_z = self.ZERO, self.ZERO, self.ONE
@@ -837,7 +783,11 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         tmp_x, tmp_y, tmp_z = self.ROTATEY(-thetaJ_sf, tmp_x, tmp_y, tmp_z)
         tmp_x, tmp_y, tmp_z = self.ROTATEZ(kappa, tmp_x, tmp_y, tmp_z)
 
-        alpha0 = torch.arctan2(tmp_y, tmp_x)
+        alpha0 = torch.where(
+            (tmp_x.abs() < tol) & (tmp_y.abs() < tol),
+            self.PI,  # this is the aligned spin case
+            torch.arctan2(tmp_y, tmp_x),
+        )
 
         # Finally we determine thetaJ, by rotating N
         tmp_x, tmp_y, tmp_z = Nx_sf, Ny_sf, Nz_sf
@@ -967,8 +917,6 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         dm = m1 - m2
         mtot = self.ONE
         eta = m1 * m2
-        # This should prevent NaNs
-        nudge_backward_(eta, 0.25, 1e-6)
 
         eta2 = eta * eta
         eta3 = eta2 * eta
@@ -1262,19 +1210,11 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             theta[:, 3:4],
         )
 
-        rel_idx = (finspin - self.QNMData_a[0]) / (
-            self.QNMData_a[1] - self.QNMData_a[0]
+        fRD = torch_natural_cubic_interp(
+            finspin, self.QNMData_a, self.QNMData_fRD, self.QNMData_fRD_M
         )
-        idx_lower = rel_idx.floor().long().clamp(0, len(self.QNMData_a) - 2)
-        frac = rel_idx - idx_lower.float()
-
-        fRD = (
-            self.QNMData_fRD[idx_lower] * (1.0 - frac)
-            + self.QNMData_fRD[idx_lower + 1] * frac
-        )
-        fdamp = (
-            self.QNMData_fdamp[idx_lower] * (1.0 - frac)
-            + self.QNMData_fdamp[idx_lower + 1] * frac
+        fdamp = torch_natural_cubic_interp(
+            finspin, self.QNMData_a, self.QNMData_fdamp, self.QNMData_fdamp_M
         )
 
         factor = 1.0 / (1.0 - Erad)
@@ -1319,6 +1259,13 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         af = torch.copysign(self.ONE, af_parallel) * torch.sqrt(
             Sperp * Sperp + af_parallel * af_parallel
         )
+        # Match LAL (LALSimIMRPhenomP.c:798-801): the in-plane quadrature add can
+        # push |af| > 1 in extreme corners (very high mass ratio + large aligned
+        # AND in-plane spin), which the QNM table (nodes at |a| <= 1) cannot take
+        # -- Sage would otherwise extrapolate past the endpoint, giving a wrong
+        # (even negative) fdamp. Clamp the magnitude to 1, preserving sign. This
+        # is a no-op on the whole validated prior (max reachable |af| ~ 0.98).
+        af = af.clamp(min=-1.0, max=1.0)
         return af
 
     def FinalSpin0815(self, eta, chi1, chi2):
@@ -1623,8 +1570,12 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         s = Sp / (L + SL)
         s2 = s * s
         cos_beta = torch.sqrt(self.ONE / (1.0 + s2))
-        cos_beta_half = torch.sqrt(((1.0 + cos_beta) / self.TWO))
-        sin_beta_half = torch.sqrt(((1.0 - cos_beta) / self.TWO))
+        # Evaluated through a masked sqrt: in the aligned-spin limit
+        # (Sp = 0) cos_beta is exactly 1, where the sqrt derivative
+        # diverges and would fill every gradient with NaN.  Forward
+        # values are bit-identical to a plain sqrt.
+        cos_beta_half = safe_sqrt((1.0 + cos_beta) / self.TWO)
+        sin_beta_half = safe_sqrt((1.0 - cos_beta) / self.TWO)
 
         return cos_beta_half, sin_beta_half
 
@@ -1669,59 +1620,3 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # Similar reason; no abs or angle if not using polar
         hPhenom = Amp * (torch.exp(-self.ONE_J * phase))
         return hPhenom, phase
-
-    def apply_time_shift_phase_correction(
-        self,
-        hptilde,
-        hctilde,
-        freqs_fixed,
-        phase_fixed,
-        f_final,
-        offset: int = 0,
-    ):
-        """
-        Apply time shift correction so the waveform coalesces at t=0.
-
-        Args:
-            hptilde: Tensor of shape (n_freq,) with plus polarization.
-            hctilde: Tensor of shape (n_freq,) with cross polarization.
-            freqs: Tensor of frequencies corresponding to hptilde/hctilde.
-            freqs_fixed: Fixed frequency grid used for spline interpolation.
-            phase_fixed: Phase values on freqs_fixed.
-            f_final: Final frequency (fRD or f_merger) to evaluate derivative.
-            offset: Index offset if freqs does not start at zero.
-        Returns:
-            Tuple of corrected (hptilde, hctilde)
-        """
-
-        # Compute relative index (uniform grid assumption)
-        rel_idx = (f_final - freqs_fixed[:, :1]) / (
-            freqs_fixed[:, 1:2] - freqs_fixed[:, :1]
-        )
-
-        # Fast local estimate of dphi/df at f_final using a 3-point central difference
-        # on the reduced (n_fixed) frequency grid. This avoids constructing a full
-        # cubic spline, which is unnecessary when only a single derivative per batch
-        # is required and the phase is smooth in the matching region.
-        idx = rel_idx.floor().long().clamp(1, freqs_fixed.shape[1] - 2)
-
-        f_prev = freqs_fixed.gather(1, idx - 1)
-        f_next = freqs_fixed.gather(1, idx + 1)
-        p_prev = phase_fixed.gather(1, idx - 1)
-        p_next = phase_fixed.gather(1, idx + 1)
-
-        # LALSim stores phase_fixed = *phasing = -phPhenom (negated PhenomD phase).
-        # Sage stores phase_fixed = +phPhenom - 2*phic (positive).
-        # Therefore: d(Sage phase_fixed)/df = -d(LALSim phase_fixed)/df
-        # => negate here so Sage t_corr matches LALSim t_corr.
-        t_corr_fixed = -(p_next - p_prev) / (f_next - f_prev) / (2 * self.PI)
-
-        # Compute phase correction factor
-        # LALSim line 1157: exp(-i*2pi*f*t_corr)  — negative sign
-        phase_corr = torch.exp(-self.TWO_J * self.PI * self.f * t_corr_fixed)
-
-        # Apply to waveform, respecting offset
-        hptilde[..., offset : offset + self.f_numel] *= phase_corr
-        hctilde[..., offset : offset + self.f_numel] *= phase_corr
-
-        return hptilde, hctilde

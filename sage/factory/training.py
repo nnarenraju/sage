@@ -27,6 +27,8 @@ SageVanillaTraining
 """
 
 # Packages
+import sys
+import time
 import torch
 
 from tqdm import tqdm
@@ -34,8 +36,11 @@ from contextlib import nullcontext
 
 # LOCAL
 from sage.core.config import get_cfg
+from sage.core.logger import get_logger, format_duration as _fmt_duration
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
 from .schedulers import ManageScheduler
+
+logger = get_logger(__name__)
 
 
 class SageVanillaTraining(torch.nn.Module):
@@ -101,8 +106,7 @@ class SageVanillaTraining(torch.nn.Module):
         num_epochs,
         scheduler_mode="batch",
         callbacks=None,
-        aux_losses=None,
-        balancer=None,
+        amp_dtype=torch.float16,
     ):
         super().__init__()
 
@@ -113,19 +117,11 @@ class SageVanillaTraining(torch.nn.Module):
         self.processor      = processor
         self.model          = model.to(device=self.cfg.device, dtype=self.cfg.dtype)
 
-        # Multi-loss mode (aux_losses and/or a balancer given): loss_function is a
-        # LossAdapter and the trainer combines main + aux, optionally
-        # gradient-balanced. Otherwise plain vanilla: a raw loss called as
-        # loss_function(out, targets).
-        self.aux_losses = list(aux_losses) if aux_losses else []
-        self.balancer   = balancer
-        self._multiloss = bool(self.aux_losses) or (balancer is not None)
-        if self._multiloss:
-            self.loss_function = loss_function          # a LossAdapter instance
-        else:
-            self.loss_function = loss_function.to(
-                device=self.cfg.device, dtype=self.cfg.dtype
-            )
+        # Vanilla single loss: called as loss_function(out, targets) and
+        # returning a components tensor whose [0] is the total to backprop.
+        self.loss_function = loss_function.to(
+            device=self.cfg.device, dtype=self.cfg.dtype
+        )
         self.optimiser  = optimiser
         self.scheduler  = ManageScheduler(scheduler, scheduler_mode)
         self.scaler     = scaler
@@ -135,6 +131,11 @@ class SageVanillaTraining(torch.nn.Module):
 
         # Training callbacks (loop hooks). Empty -> plain vanilla training.
         self.callbacks = list(callbacks) if callbacks else []
+
+        # AMP compute dtype: bf16 (H100 etc.; no loss scaler needed) or fp16
+        # (older GPUs, paired with a GradScaler). The caller picks it from the
+        # available hardware.
+        self.amp_dtype = amp_dtype
 
         self.num_point_estimate = len(self.cfg.do_point_estimate)
         self.num_targets        = self.num_point_estimate + 1
@@ -158,12 +159,7 @@ class SageVanillaTraining(torch.nn.Module):
             self._coarse_indices = self._selector.coarse_indices
 
         # ── Loss tracking ─────────────────────────────────────────────────
-        # vanilla: the loss's own components; multi-loss: [total, main_total,
-        # *aux_adapter_totals].
-        n_components = (
-            2 + len(self.aux_losses) if self._multiloss
-            else self.loss_function.num_components
-        )
+        n_components = self.loss_function.num_components
         self.loss_components = torch.zeros(
             (num_epochs, n_components),
             device=self.cfg.device,
@@ -174,7 +170,7 @@ class SageVanillaTraining(torch.nn.Module):
                           noise_targets, device):
         """Vanilla batch assembly: pad noise targets + inject ``S`` signals at
         random positions. Returns ``(x, targets)``. Skipped when an on_sample
-        callback assembles the batch itself (e.g. the non-astro masker)."""
+        callback assembles the batch itself (no shipped callback does)."""
         pad = torch.zeros(
             noise_targets.shape[0], self.num_point_estimate,
             device=device, dtype=noise_targets.dtype,
@@ -191,33 +187,32 @@ class SageVanillaTraining(torch.nn.Module):
 
         return noise_data + signal_pad, noise_targets + target_pad
 
-    def _collect(self, out, targets, ctx):
-        """Run the main + aux loss adapters (multi-loss mode).
-
-        Returns ``(primary, aux_terms, aux_totals)``: the single primary
-        (reference / BCE) term, the flat list of auxiliary terms to balance, and
-        the per-aux-adapter totals (logged alongside the primary, so the tracked
-        components are ``[total, primary, *aux_totals]`` — e.g. for consistency
-        ``[total, bce, cons_total]``).
-        """
-        primary = None
-        aux_terms = []
-        aux_totals = []
-        for adapter in [self.loss_function, *self.aux_losses]:
-            comps = adapter(out, targets, ctx)
-            if adapter.primary_index is not None:
-                primary = comps[adapter.primary_index]
-            else:
-                aux_totals.append(comps[0])
-            aux_terms += [comps[i] for i in adapter.aux_indices]
-        return primary, aux_terms, aux_totals
-
     def forward(self, nepoch):
 
         self.model.train()
         device = self.cfg.device
 
-        for nbatch in tqdm(range(self.num_iterations)):
+        # A progress bar is useful interactively and actively harmful in a
+        # batch job: tqdm repaints with carriage returns, which a SLURM .out
+        # file records verbatim, so a long run buries its own output under
+        # hundreds of MB of redraw. Show the bar on a TTY; on anything else
+        # emit a periodic single line instead.
+        interactive = sys.stdout.isatty()
+        log_every = max(1, self.num_iterations // 10)
+        t_epoch = time.time()
+
+        logger.info(
+            "Epoch %d | training: %d iterations, batch %d",
+            nepoch, self.num_iterations, self.cfg.batch_size,
+        )
+
+        _iter = tqdm(
+            range(self.num_iterations),
+            disable=not interactive,
+            desc=f"epoch {nepoch} train",
+            leave=False,
+        )
+        for nbatch in _iter:
 
             # ── 1. Sample ─────────────────────────────────────────────────
             signal_data, signal_targets = self.signal_sampler()
@@ -231,13 +226,13 @@ class SageVanillaTraining(torch.nn.Module):
                 noise_data = self._selector(noise_data)
 
             # ── 3. Per-batch context + on_sample callbacks ────────────────
-            # A callback may *assemble* the batch (e.g. the non-astro masker
-            # builds the 4-class batch + a per_det_mask). The raw samples are
-            # exposed in ctx; a callback that assembles sets ctx['x'] /
-            # ctx['targets'] (and extras like per_det_mask). ctx is also read by
-            # the loss adapters in multi-loss mode. Pure vanilla -> ctx is None.
+            # ctx is built only when callbacks are present and threaded to each
+            # callback's on_sample hook. A callback MAY assemble the batch by
+            # setting ctx['x'] / ctx['targets'] (a generic extension point — no
+            # shipped callback uses it). Pure vanilla / hard-mining -> both fall
+            # through to _default_assembly below; with no callbacks ctx is None.
             ctx = None
-            if self.callbacks or self._multiloss:
+            if self.callbacks:
                 ctx = {
                     "signal_data": signal_data, "signal_targets": signal_targets,
                     "noise_data": noise_data, "noise_targets": noise_targets,
@@ -274,35 +269,14 @@ class SageVanillaTraining(torch.nn.Module):
             self.optimiser.zero_grad(set_to_none=True)
 
             with (
-                torch.autocast(device_type="cuda", dtype=torch.float16)
+                torch.autocast(device_type="cuda", dtype=self.amp_dtype)
                 if self.cfg.autocast
                 else nullcontext()
             ):
                 out = self.model(net_input)
-                if self._multiloss:
-                    primary, aux_terms, log_terms = self._collect(out, targets, ctx)
-                else:
-                    loss = self.loss_function(out, targets)
+                loss = self.loss_function(out, targets)
 
-            # Combine the total OUTSIDE autocast (the balancer's calibration runs
-            # its own forward); mirrors the consistency training loop.
-            if self._multiloss:
-                if self.balancer is not None:
-                    warmup = (
-                        (nbatch + 1) / self.num_iterations if nepoch == 0 else 1.0
-                    )
-
-                    def _recompute(o):
-                        p, a, _ = self._collect(o, targets, ctx)
-                        return p, a
-
-                    total = self.balancer.combine(
-                        primary, aux_terms, self.model, net_input, _recompute, warmup
-                    )
-                else:
-                    total = primary + sum(aux_terms)
-            else:
-                total = loss[0]
+            total = loss[0]
 
             if self.scaler is not None:
                 self.scaler.scale(total).backward()
@@ -321,17 +295,50 @@ class SageVanillaTraining(torch.nn.Module):
                 self.optimiser.step()
 
             self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
-            if self._multiloss:
-                # [total, primary (bce), *aux_adapter_totals (e.g. cons_total)]
-                self.loss_components[nepoch] += torch.stack(
-                    [total.detach(), primary.detach()]
-                    + [t.detach() for t in log_terms]
+            self.loss_components[nepoch] += loss.detach()
+
+            # ── Progress reporting ────────────────────────────────────────
+            done = nbatch + 1
+            if interactive:
+                if done % 50 == 0:
+                    running = (self.loss_components[nepoch][0] / done).item()
+                    _iter.set_postfix(loss=f"{running:.4f}")
+            elif done % log_every == 0 or done == self.num_iterations:
+                running = (self.loss_components[nepoch][0] / done).item()
+                elapsed = time.time() - t_epoch
+                rate = done / max(elapsed, 1e-9)
+                logger.info(
+                    "  epoch %d | %3.0f%% (%d/%d) | loss %.4f | %.1f it/s | eta %s",
+                    nepoch, 100.0 * done / self.num_iterations, done,
+                    self.num_iterations, running, rate,
+                    _fmt_duration((self.num_iterations - done) / max(rate, 1e-9)),
                 )
-            else:
-                self.loss_components[nepoch] += loss.detach()
+
+            # Per-batch callback hook (e.g. per-step weight EMA).
+            for cb in self.callbacks:
+                cb.on_batch_end(nbatch, nepoch, self)
 
         # ── End-of-epoch callback hook (e.g. hard-noise mining) ───────────
         for cb in self.callbacks:
             cb.on_epoch_end(nepoch, self)
 
         self.loss_components[nepoch] /= self.num_iterations
+
+        # One summary line per epoch. This is the record that matters when
+        # reading back a multi-day run, and until now nothing was emitted at
+        # all -- a 46-hour job reported no loss whatsoever.
+        comps = self.loss_components[nepoch].detach().cpu()
+        elapsed = time.time() - t_epoch
+        try:
+            lr = self.optimiser.param_groups[0]["lr"]
+        except (AttributeError, IndexError, KeyError):
+            lr = float("nan")
+        logger.info(
+            "Epoch %d | train loss %.5f | components [%s] | lr %.3e | %.1f it/s | %s",
+            nepoch,
+            comps[0].item(),
+            ", ".join(f"{c:.5f}" for c in comps[1:].tolist()),
+            lr,
+            self.num_iterations / max(elapsed, 1e-9),
+            _fmt_duration(elapsed),
+        )

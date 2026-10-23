@@ -9,7 +9,7 @@ Created on 2026-01-20 16:26:05
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -105,6 +105,23 @@ def eta_from_mass1_mass2(mass1, mass2):
 def mchirp_from_mass1_mass2(mass1, mass2):
     """Returns the chirp mass from mass1 and mass2."""
     return eta_from_mass1_mass2(mass1, mass2) ** (3.0 / 5) * (mass1 + mass2)
+
+
+def chirp_distance(dist, mchirp, ref_mass=1.4):
+    """Returns the chirp distance given the luminosity distance and chirp mass.
+
+    As ``pycbc.conversions.chirp_distance``; the reference chirp mass is that
+    of an equal-mass binary of ``ref_mass`` components.
+    """
+    return dist * (2.0 ** (-1.0 / 5) * ref_mass / mchirp) ** (5.0 / 6)
+
+
+def distance_from_chirp_distance_mchirp(chirp_distance, mchirp, ref_mass=1.4):
+    """Returns the luminosity distance given a chirp distance and chirp mass.
+
+    As ``pycbc.conversions.distance_from_chirp_distance_mchirp``.
+    """
+    return chirp_distance * (2.0 ** (-1.0 / 5) * ref_mass / mchirp) ** (-5.0 / 6)
 
 
 def mass1_mass2_to_mchirp_eta(mass1, mass2):

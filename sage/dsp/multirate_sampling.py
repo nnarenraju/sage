@@ -10,7 +10,7 @@ Created on Tue Mar 29 23:41:28 2022
 __author__      = nnarenraju
 __copyright__   = Copyright 2022, ProjectName
 __credits__     = nnarenraju
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __version__     = 0.0.1
 __maintainer__  = nnarenraju
 __email__       = nnarenraju@gmail.com
@@ -204,28 +204,6 @@ class MultirateSampler(torch.nn.Module):
             power_to_bins[power].append((sidx, eidx, i))
 
         return power_to_bins
-
-    def output_time_grid(self):
-        """Physical time (seconds, from the unpadded window start) of every
-        output sample, in output order. Shape ``(L_compressed,)``.
-
-        The forward concatenates the per-bin decimated chunks in bin order, and
-        ``detailed_bins`` is sorted by start sample, so this grid is
-        monotonically increasing. For bin ``i`` (decimation ``div = 2**power``),
-        output sample ``m`` comes from padded index ``(sidx + m) * div``, i.e.
-        unpadded sample ``(sidx + m) * div - pad``. Computed once (off the hot
-        path); used to map the ``tc`` soft-argmax onto physical time.
-        """
-        fs0 = float(self.original_fs)
-        pad = int(self.pad)
-        times = []
-        for i in range(self.num_bins):
-            div = 1 << int(self.dec_powers[i].item())
-            sidx = (int(self.bins[i, 0]) + pad) // div
-            eidx = (int(self.bins[i, 1]) + pad) // div
-            k = torch.arange(sidx, eidx, dtype=torch.float64)
-            times.append((k * div - pad) / fs0)
-        return torch.cat(times)
 
     ## FIR kernel construction ##
     def _build_legacy_kernels(self):

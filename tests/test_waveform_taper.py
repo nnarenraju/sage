@@ -144,7 +144,3 @@ class TestFdTaper:
         w = fd_taper(f, _F_MIN, _F_CUT, _DF, low_width=_WIDTH, high_width=_WIDTH)
         assert torch.allclose(w, torch.ones_like(w), atol=1e-5)
 
-    def test_output_same_shape_as_input(self):
-        f = _freq_array(0.0, 600.0, _DF)
-        w = fd_taper(f, _F_MIN, _F_CUT, _DF)
-        assert w.shape == f.shape

@@ -10,7 +10,7 @@ Created on 19/07/2024 at 10:20:58
 __author__       =  Narenraju Nagarajan
 __copyright__    =  Copyright 2024, Sage
 __credits__      =  nnarenraju
-__license__      =  MIT Licence
+__license__      =  GPL-3.0-or-later
 __version__      =  0.0.1
 __maintainer__   =  nnarenraju
 __affiliation__  =  University of Glasgow

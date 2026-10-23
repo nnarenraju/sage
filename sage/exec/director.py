@@ -9,7 +9,7 @@ Created on 2021-11-21 15:30:43
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2025, Sage
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = University of Glasgow
@@ -462,9 +462,12 @@ class SageDirector:
 
 if __name__ == "__main__":
 
-    # Initialising logger
-    # sets up main log and console output
-    setup_logging("logs")
+    # Console logging only at this point: the export directory is not known
+    # until the config is loaded below. SageDirector re-calls setup_logging()
+    # with the resolved export_dir, which attaches the run's log file.
+    # setup_logging() is idempotent, so the second call replaces this handler
+    # rather than duplicating output.
+    setup_logging()
 
     # Parse command-line arguments
     opts = parse_args()

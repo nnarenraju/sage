@@ -10,7 +10,7 @@ Created on 2026-01-19 14:23:24
 
 __author__      = Narenraju Nagarajan
 __copyright__   = Copyright 2026, Sage
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
@@ -25,7 +25,6 @@ Documentation: NULL
 
 # Packages
 import os
-import re
 import h5py
 import json
 import torch
@@ -44,32 +43,15 @@ from concurrent.futures import ThreadPoolExecutor
 # pycbc is an optional dependency; pull its dynamic-range constant lazily so the
 # noise package imports without pycbc (see ._pycbc_lazy).
 from ._pycbc_lazy import dyn_range_fac
-
-# ---------------------------------------------------------------------------
-# Dataset versioning helpers
-# ---------------------------------------------------------------------------
-
-_EPOCH_PATTERN = re.compile(r'^hard_noise_epoch_(\d+)\.npz$')
-
-
-def _find_latest_hard_dataset(directory: str | Path) -> Path | None:
-    """
-    Scan *directory* for ``hard_noise_epoch_NNNN.npz`` files and return
-    the path of the one with the highest epoch number, or ``None`` if none
-    exist.
-    """
-    d = Path(directory)
-    if not d.exists():
-        return None
-    best_epoch, best_path = -1, None
-    for p in d.glob("hard_noise_epoch_*.npz"):
-        m = _EPOCH_PATTERN.match(p.name)
-        if m and int(m.group(1)) > best_epoch:
-            best_epoch, best_path = int(m.group(1)), p
-    return best_path
+from .data_quality import clean, noise_bad_segments
 
 # LOCAL
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.config import (
+    get_bad_segments,
+    get_cfg,
+    get_data_cfg,
+    register_bad_segments,
+)
 
 
 class HDF5SingleNoiseSampler:
@@ -132,8 +114,11 @@ class HDF5SingleNoiseSampler:
         if requested_nsamples in self._prob_cache:
             return self._prob_cache[requested_nsamples]
 
-        usable = self.seg_lengths - requested_nsamples
-        usable[usable == 0] = 1
+        # Weight ∝ number of valid start offsets = nsamples - seq_len + 1 (a
+        # segment of exactly seq_len has one valid start at offset 0). Segments
+        # shorter than seq_len get 0 weight. The old form dropped the +1, slightly
+        # under-weighting short segments relative to long ones.
+        usable = self.seg_lengths - requested_nsamples + 1
         usable[usable < 0] = 0
 
         total = usable.sum()
@@ -264,8 +249,11 @@ class MemmapSingleNoiseSampler:
         if requested_nsamples in self._prob_cache:
             return self._prob_cache[requested_nsamples]
 
-        usable = self.seg_lengths - requested_nsamples
-        usable[usable == 0] = 1
+        # Weight ∝ number of valid start offsets = nsamples - seq_len + 1 (a
+        # segment of exactly seq_len has one valid start at offset 0). Segments
+        # shorter than seq_len get 0 weight. The old form dropped the +1, slightly
+        # under-weighting short segments relative to long ones.
+        usable = self.seg_lengths - requested_nsamples + 1
         usable[usable < 0] = 0
 
         total = usable.sum()
@@ -384,10 +372,10 @@ class MemmapNoiseSampler(torch.nn.Module):
         prefetch: int = 3,
         seed=None,
         training=True,
-        hard_dataset_path=None,
-        hard_dataset_dir=None,
         hard_bias_prob: float = 0.0,
         num_read_workers: int = 16,
+        hard_start_jitter_s: float = 2.0,
+        hard_focal_gamma: float = 0.0,
     ):
         super().__init__()
 
@@ -396,104 +384,155 @@ class MemmapNoiseSampler(torch.nn.Module):
         data_cfg = get_data_cfg()
 
         self.seq_len = data_cfg.padded_length_in_nsamples
+        self.sample_rate = float(data_cfg.sample_rate)
+        # Replayed hard windows are jittered by +/- this many seconds around the
+        # mined start (uniform, clamped to the SAME segment) so biasing toward a
+        # mined window keeps yielding varied (overlapping) noise rather than the
+        # identical realisation every draw. 0 disables. Segment/run ids are left
+        # unchanged, so the whitening ASD and recolour keys still match.
+        self._hard_jitter_s = float(hard_start_jitter_s)
+        self._seg_bounds_lut = None            # lazily built: (run,seg)->(lo,hi)/det
         self.device = cfg.device
         self.prefetch = prefetch
         self.n_detectors = len(cfg.detectors)
         self.batch_size = cfg.batch_size
         self.postprocess_fn = postprocess_fn
 
-        # Set noise files
-        if training:
-            self.bin_files = [Path(f) for f in data_cfg.training_noise_files]
-        else:
-            self.bin_files = [Path(f) for f in data_cfg.validation_noise_files]
+        # ── Resolve the run set (multi-run pooling) ───────────────────────────
+        # New form: data_cfg.training_noise = [{run, data_dir, bins:[per det]}]
+        # pools several observing runs. Legacy form: the flat
+        # training/validation_noise_files list -> a single run. A run id is
+        # carried through every window so it can be read from the right run's
+        # mmap and recoloured with the right run's per-segment ASD.
+        runs = self._resolve_runs(cfg, data_cfg, training)
+        self.run_names = [r["run"] for r in runs]
+        self.run_data_dirs = [r["data_dir"] for r in runs]
+        self.n_runs = len(runs)
+        for r in runs:
+            if len(r["bins"]) != self.n_detectors:
+                raise ValueError(
+                    f"noise run {r['run']!r}: {len(r['bins'])} bins != "
+                    f"{self.n_detectors} detectors"
+                )
+            # Config-layer guard: bins bind to channels positionally, so a run
+            # whose detector order differs from cfg.detectors would cross-map
+            # channels. run_noise records the order; enforce it here (the sidecar
+            # detector check below is the authoritative runtime backstop).
+            r_dets = r.get("detectors")
+            if r_dets is not None and (
+                [str(x).upper() for x in r_dets]
+                != [str(x).upper() for x in cfg.detectors]
+            ):
+                raise ValueError(
+                    f"noise run {r['run']!r}: detectors {list(r_dets)} != cfg.detectors "
+                    f"{list(cfg.detectors)}. Order each run's bins to match cfg.detectors."
+                )
 
-        self.mmaps = []
-        self.seg_index = []
-        self.segment_probs = []
-        self.dtypes = []
+        self.mmaps = [[] for _ in range(self.n_detectors)]      # [d][run] -> memmap
+        self.seg_index = [None] * self.n_detectors              # [d] -> pooled struct
+        self.segment_probs = [None] * self.n_detectors          # [d] -> pooled probs
+        self.dtypes = [[] for _ in range(self.n_detectors)]     # [d][run] -> dtype
+        self.bin_files = []                                     # flat, for logging
 
         # Targets for noise batch
         self.noise_target = torch.zeros((self.batch_size, 1)).to(
             dtype=cfg.dtype, device=cfg.device
         )
 
-        # Load metadata and memmaps
-        for p in self.bin_files:
-            meta_path = p.parent / f"{p.stem}_segments.json"
-            if not meta_path.exists():
-                raise FileNotFoundError(f"Metadata {meta_path} not found")
-
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-
-            dtype = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
-            self.dtypes.append(dtype)
-
-            mm = np.memmap(p, dtype=dtype, mode="r")
-            self.mmaps.append(mm)
-
-            seg_idx_arr = np.array(
-                [
-                    (
-                        seg["segment_index"],
-                        seg["sample_start_idx"],
-                        seg["sample_start_idx"] + seg["nsamples"],
-                        seg["nsamples"],
+        # Segment table carries a run id so pooled runs never collide on the
+        # per-(detector,run) dense ``segment_index``.
+        _seg_dtype = [("run", "i8"), ("idx", "i8"), ("start", "i8"),
+                      ("end", "i8"), ("nsamples", "i8")]
+        for d in range(self.n_detectors):
+            seg_tables, usable_parts = [], []
+            for run_id, r in enumerate(runs):
+                p = Path(r["bins"][d])
+                self.bin_files.append(p)
+                meta_path = p.parent / f"{p.stem}_segments.json"
+                if not meta_path.exists():
+                    raise FileNotFoundError(
+                        f"noise run {r['run']!r} provides no data for detector "
+                        f"{cfg.detectors[d]!r}: expected {meta_path}. If this run lacks "
+                        f"that detector it cannot be pooled for a {list(cfg.detectors)} network."
                     )
-                    for seg in meta
-                ],
-                dtype=[
-                    ("idx", "i8"),
-                    ("start", "i8"),
-                    ("end", "i8"),
-                    ("nsamples", "i8"),
-                ],
-            )
-            self.seg_index.append(seg_idx_arr)
-
-            usable = seg_idx_arr["nsamples"] - self.seq_len
-            usable[usable == 0] = 1
-            usable[usable < 0] = 0
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                # Multi-run identity guards. Bins bind to channels POSITIONALLY
+                # (mmaps[d] <- bins[d]), so a mis-ordered or wrong-run bin would
+                # silently feed the wrong detector's strain into channel d and be
+                # whitened/recoloured with the wrong PSD. Validate the sidecar's own
+                # detector / observing-run against the expected (channel d, run r).
+                meta_det = str(meta[0].get("detector", "")).upper()
+                if meta_det and meta_det != str(cfg.detectors[d]).upper():
+                    raise ValueError(
+                        f"noise run {r['run']!r}: bins[{d}] ({p.name}) holds detector "
+                        f"{meta_det}, but cfg.detectors[{d}] = {cfg.detectors[d]}. Order "
+                        f"each run's bins to match cfg.detectors."
+                    )
+                # Observing-run identity only matters when >1 run is pooled (the
+                # run id keys the per-run recolour PSD bank). A single run takes
+                # the legacy path, which labels it from cfg.train_runs[0] -- the
+                # first TRAIN run -- and that legitimately differs from a cross-run
+                # validation set (e.g. train O3b+O3a, validate O3a), so enforce
+                # this only for genuine multi-run pools.
+                meta_run = str(meta[0].get("observing_run", "")).upper()
+                if self.n_runs > 1 and meta_run and meta_run != str(r["run"]).upper():
+                    raise ValueError(
+                        f"noise bin {p.name} is from observing run {meta_run}, but was placed "
+                        f"in the {r['run']!r} run slot. Fix training_noise so each run's bins "
+                        f"come from that run."
+                    )
+                dtype = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
+                self.dtypes[d].append(dtype)
+                self.mmaps[d].append(np.memmap(p, dtype=dtype, mode="r"))
+                seg_arr = np.array(
+                    [
+                        (
+                            run_id,
+                            seg["segment_index"],
+                            seg["sample_start_idx"],
+                            seg["sample_start_idx"] + seg["nsamples"],
+                            seg["nsamples"],
+                        )
+                        for seg in meta
+                    ],
+                    dtype=_seg_dtype,
+                )
+                seg_tables.append(seg_arr)
+                # Weight ∝ number of valid start offsets = nsamples-seq_len+1
+                # (exactly-seq_len segments have one valid start at offset 0);
+                # shorter-than-seq_len segments get 0 weight.
+                usable = seg_arr["nsamples"] - self.seq_len + 1
+                usable[usable < 0] = 0
+                # Skip segments holding CBC Category 2 or hardware-injection time.
+                key = (meta[0]["observing_run"], meta[0]["detector"])
+                usable[~clean(meta, get_bad_segments()[key])] = 0
+                usable_parts.append(usable)
+            pooled = (seg_tables[0] if len(seg_tables) == 1
+                      else np.concatenate(seg_tables))
+            usable = (usable_parts[0] if len(usable_parts) == 1
+                      else np.concatenate(usable_parts))
             total = usable.sum()
             if total == 0:
                 raise ValueError("seq_len exceeds all segments")
-            probs = usable / total
-            self.segment_probs.append(probs)
+            self.seg_index[d] = pooled
+            self.segment_probs[d] = usable / total
 
         # deterministic RNG for reproducible training
         self.rng = np.random.default_rng(seed)
 
         # Hard-noise biasing ---------------------------------------------------
-        # A StartTimeDataset of pre-mined hard windows.  The prefetch thread
+        # A StartTimeDataset of currently-hard windows.  The prefetch thread
         # draws from it with probability hard_bias_prob instead of sampling
-        # randomly.  Updated live via set_hard_dataset() between epochs.
-        #
-        # Two ways to supply the initial dataset:
-        #   hard_dataset_path  — load a specific .npz file
-        #   hard_dataset_dir   — scan the directory and load the latest
-        #                        hard_noise_epoch_NNNN.npz found there
+        # randomly.  Populated live by HardMiningCallback via set_hard_bank()
+        # (which calls set_hard_dataset) between epochs; starts empty.
         self._hard_dataset   = None
         self._hard_bias_prob = float(hard_bias_prob)
         self._hard_lock      = threading.Lock()
-
-        _load_path = None
-        if hard_dataset_path is not None:
-            p = Path(hard_dataset_path)
-            _load_path = p if p.suffix == ".npz" else p.with_suffix(".npz")
-        elif hard_dataset_dir is not None:
-            _load_path = _find_latest_hard_dataset(hard_dataset_dir)
-            if _load_path is not None:
-                print(f"[MemmapNoiseSampler] Loading latest hard dataset: {_load_path.name}")
-
-        if _load_path is not None and _load_path.exists():
-            from sage.data.noise.lowfar_noise import StartTimeDataset
-            self._hard_dataset = StartTimeDataset.load(_load_path)
-            print(
-                f"[MemmapNoiseSampler] Hard dataset loaded: "
-                f"{len(self._hard_dataset):,} windows, "
-                f"bias_prob={self._hard_bias_prob:.0%}"
-            )
+        # Focal-style replay weighting: a window with ranking stat s is drawn with
+        # weight sigmoid(s)**gamma (see _sample_hard_starts). 0.0 -> uniform.
+        self._hard_focal_gamma = float(hard_focal_gamma)
+        self._hard_cdf         = None      # cached, rebuilt on dataset swap
         # -----------------------------------------------------------------------
 
         # Worker pool that reads the batch's per-window noise slices in
@@ -526,74 +565,193 @@ class MemmapNoiseSampler(torch.nn.Module):
 
         atexit.register(_stop_at_exit)
 
-    def set_hard_dataset(
-        self,
-        dataset,
-        hard_bias_prob: float | None = None,
-        epoch: int | None = None,
-        save_dir: str | Path | None = None,
-    ):
+    @staticmethod
+    def _resolve_runs(cfg, data_cfg, training):
+        """Return the run set as ``[{run, data_dir, bins:[per detector]}]``.
+
+        Multi-run training reads ``data_cfg.training_noise`` (a list of such
+        dicts, one per observing run). Otherwise (validation, or single-run
+        training) the flat ``training/validation_noise_files`` list is wrapped as
+        a single run tagged with the config's run name + ``data_dir``.
         """
-        Replace the hard-noise dataset and optionally persist it to disk.
+        if training and getattr(data_cfg, "training_noise", None):
+            return [
+                {"run": s["run"], "data_dir": s.get("data_dir"),
+                 "bins": list(s["bins"]), "detectors": s.get("detectors")}
+                for s in data_cfg.training_noise
+            ]
+        files = (data_cfg.training_noise_files if training
+                 else data_cfg.validation_noise_files)
+        run = (getattr(cfg, "train_runs", None)
+               or [getattr(cfg, "run", "unknown")])[0]
+        return [{"run": run, "data_dir": getattr(data_cfg, "data_dir", None),
+                 "bins": list(files)}]
+
+    def set_hard_dataset(self, dataset, hard_bias_prob: float | None = None):
+        """
+        Replace the in-RAM hard-noise dataset (the prefetch thread's bias pool).
 
         Thread-safe: can be called from the main thread while the prefetch
         daemon is running.  The change takes effect on the next batch the
-        prefetch thread starts reading.
-
-        Versioned saving
-        ----------------
-        When ``epoch`` and ``save_dir`` are both given, the dataset is saved
-        as ``{save_dir}/hard_noise_epoch_{epoch:04d}.npz``.  Files from
-        *earlier* epochs are left untouched.  If two miners both fire at the
-        same epoch (explorer then refiner), the second call overwrites the
-        first for that epoch number — only the refiner's file survives on
-        disk, though the explorer's GPS findings remain in the shared bank.
-        On the next training restart,
-        ``MemmapNoiseSampler(hard_dataset_dir=save_dir)`` automatically
-        picks up the latest epoch file.
+        prefetch thread starts reading.  Persistence of the hard windows is the
+        HDF5 bank's job (see :meth:`set_hard_bank`); this only swaps the live
+        snapshot the sampler draws from.
 
         Parameters
         ----------
         dataset : StartTimeDataset or None
-            A freshly mined dataset.  Pass ``None`` to disable biasing.
+            The hard windows to bias toward.  Pass ``None`` to disable biasing.
         hard_bias_prob : float or None
             New bias probability.  ``None`` keeps the existing value.
-        epoch : int or None
-            Training epoch at which this dataset was mined.  Used in the
-            filename when ``save_dir`` is also provided.
-        save_dir : str or Path or None
-            Directory in which to save the versioned file.
         """
-        if dataset is not None and epoch is not None and save_dir is not None:
-            save_dir = Path(save_dir)
-            save_dir.mkdir(parents=True, exist_ok=True)
-            out_path = save_dir / f"hard_noise_epoch_{epoch:04d}.npz"
-            dataset.save(out_path)
-            print(
-                f"[MemmapNoiseSampler] Saved hard dataset → {out_path.name} "
-                f"({len(dataset):,} windows)"
-            )
-
         with self._hard_lock:
             self._hard_dataset = dataset
+            self._hard_cdf = self._build_hard_cdf(dataset)
             if hard_bias_prob is not None:
                 self._hard_bias_prob = float(hard_bias_prob)
 
+    def _build_hard_cdf(self, dataset):
+        """Cache the focal replay distribution for ``dataset`` (None -> uniform).
+
+        Weight of a hard window with ranking stat ``s`` is ``sigmoid(s)**gamma``
+        -- the focal-loss modulating factor for a negative the model is calling
+        signal. It is monotone in ``s`` and BOUNDED: within the active set
+        (``s >= keep_threshold``, typically 0) the hardest-to-easiest weight
+        ratio is at most ``2**gamma``, so replay concentrates on the tail that
+        sets the FAR without any window being replayed orders of magnitude more
+        than its peers. ``bias_replays_per_epoch`` still caps the absolute count.
+
+        Built once per dataset swap (between epochs), not per batch.
+        """
+        gamma = self._hard_focal_gamma
+        if dataset is None or gamma <= 0.0 or len(dataset) == 0:
+            return None
+        s = np.asarray(dataset.scores, dtype=np.float64)
+        if s.size != len(dataset) or not np.any(np.isfinite(s)):
+            return None
+        w = np.exp(-gamma * np.logaddexp(0.0, -s))     # sigmoid(s)**gamma, stable
+        w[~np.isfinite(w)] = 0.0
+        total = w.sum()
+        if total <= 0.0:
+            return None
+        cdf = np.cumsum(w / total)
+        cdf[-1] = 1.0                                   # guard fp drift
+        return cdf
+
+    def set_hard_bank(self, bank, active_indices, hard_bias_prob: float | None = None):
+        """Augment random start-times with the *currently-hard* windows from a
+        :class:`~sage.data.noise.hard_bank.HardMiningBank`.
+
+        ``active_indices`` are the bank rows whose latest re-evaluation ranking
+        stat is above the keep threshold (computed by the mining callback after
+        re-eval).  Their start/segment indices are read **once** from the bank
+        file here -- between epochs, after the miner has finished writing and
+        while the prefetch thread only touches the in-RAM snapshot, so there is
+        never concurrent HDF5 access.  The compact active subset (start/segment
+        indices only) becomes the in-RAM hard dataset; the full bank (all
+        history, embeddings, re-eval matrix) stays on disk.
+
+        Nothing else in the hot path changes -- this simply swaps which windows
+        ``_sample_hard_starts`` draws from, via the existing thread-safe
+        :meth:`set_hard_dataset`.
+        """
+        from sage.data.noise.lowfar_noise import StartTimeDataset
+
+        ai = np.asarray(active_indices, dtype=np.int64)
+        if ai.size == 0:                                  # nothing currently hard
+            self.set_hard_dataset(None, hard_bias_prob=hard_bias_prob)
+            return
+        # (start, segment, run) per detector -- the run tells the reader which
+        # pooled file's mmap to read this hard window from.
+        starts, segs, runs = bank.read_starts(ai)         # (K, D) each
+        # Latest re-eval stat per active window -- drives the focal replay
+        # weighting in _sample_hard_starts (ignored when hard_focal_gamma == 0).
+        scores = bank.latest_eval(ai)
+        ds = StartTimeDataset(
+            detectors=bank.detectors,
+            start_indices=starts,
+            segment_indices=segs,
+            run_indices=runs,
+            gps_times=np.zeros(ai.size, dtype=np.float64),     # unused by sampling
+            scores=scores,
+            bin_files=bank.bin_files,
+            sample_rate=bank.sample_rate,
+            seq_len=bank.seq_len,
+        )
+        # epoch/save_dir omitted -> swap only, no .npz write (the bank persists).
+        self.set_hard_dataset(ds, hard_bias_prob=hard_bias_prob)
+
     def _sample_hard_starts(self, dataset, batch_size: int):
         """
-        Draw ``batch_size`` start indices uniformly from ``dataset``.
+        Draw ``batch_size`` start indices from ``dataset``, each jittered by
+        +/- ``self._hard_jitter_s`` seconds (uniform) and clamped to stay inside
+        its OWN segment.
 
-        Returns lists in the same format as ``_sample_starts_batch``.
+        Windows are drawn UNIFORMLY when ``hard_focal_gamma`` is 0, else from the
+        cached focal distribution (``_build_hard_cdf``) so harder windows are
+        replayed more often -- bounded, never unboundedly.
+
+        The jitter (per window, per detector) means repeatedly biasing toward the
+        same mined window yields varied, overlapping noise realisations instead of
+        the identical window every time. Segment/run ids are unchanged, so the
+        per-segment whitening ASD and recolour keys still line up. Returns lists
+        in the same format as ``_sample_starts_batch``.
         """
         n = len(dataset)
         if n == 0:
             return self._sample_starts_batch(batch_size)
-        idx = self.rng.integers(0, n, size=batch_size)
-        start_indices   = [dataset.start_indices[idx, d]   for d in range(self.n_detectors)]
-        segment_indices = [dataset.segment_indices[idx, d] for d in range(self.n_detectors)]
-        return start_indices, segment_indices
+        cdf = self._hard_cdf
+        if cdf is not None and cdf.size == n:
+            idx = np.searchsorted(cdf, self.rng.random(batch_size), side="right")
+            np.clip(idx, 0, n - 1, out=idx)
+        else:
+            idx = self.rng.integers(0, n, size=batch_size)
 
-    def _sample_starts_batch(self, batch_size: int):
+        jmax = int(round(self._hard_jitter_s * self.sample_rate))
+        if jmax > 0 and self._seg_bounds_lut is None:
+            self._build_seg_bounds_lut()
+
+        start_indices, segment_indices, run_indices = [], [], []
+        for d in range(self.n_detectors):
+            base = dataset.start_indices[idx, d].astype(np.int64)
+            segs = dataset.segment_indices[idx, d].astype(np.int64)
+            runs = dataset.run_indices[idx, d].astype(np.int64)
+            if jmax > 0:
+                starts = base + self.rng.integers(-jmax, jmax + 1, size=batch_size)
+                lut = self._seg_bounds_lut[d]
+                for i in range(batch_size):
+                    # clamp to [seg_start, seg_last_valid_start]; if the segment
+                    # is unknown (shouldn't happen) fall back to no jitter.
+                    lo, hi = lut.get((int(runs[i]), int(segs[i])),
+                                     (int(base[i]), int(base[i])))
+                    if starts[i] < lo:
+                        starts[i] = lo
+                    elif starts[i] > hi:
+                        starts[i] = hi
+            else:
+                starts = base
+            start_indices.append(starts)
+            segment_indices.append(segs)
+            run_indices.append(runs)
+        return start_indices, segment_indices, run_indices
+
+    def _build_seg_bounds_lut(self):
+        """Per-detector map ``(run_id, segment_id) -> (min_start, max_start)`` for
+        clamping jittered hard-window starts to their own segment. ``max_start``
+        is the last offset at which a full ``seq_len`` window still fits.
+        """
+        lut = []
+        for d in range(self.n_detectors):
+            m = {}
+            for row in self.seg_index[d]:
+                start = int(row["start"])
+                m[(int(row["run"]), int(row["idx"]))] = (
+                    start, start + int(row["nsamples"]) - self.seq_len
+                )
+            lut.append(m)
+        self._seg_bounds_lut = lut
+
+    def _sample_starts_batch(self, batch_size: int, rng=None):
         """
         Draw random start indices for one batch.
 
@@ -609,6 +767,9 @@ class MemmapNoiseSampler(torch.nn.Module):
         ----------
         batch_size : int
             Number of windows to sample.
+        rng : numpy.random.Generator, optional
+            Draw from this instead of ``self.rng``. Safe from any thread, since
+            the prefetch stream is left untouched.
 
         Returns
         -------
@@ -616,30 +777,53 @@ class MemmapNoiseSampler(torch.nn.Module):
             Per-detector array of absolute memmap start indices, shape
             ``(batch_size,)``.
         segment_indices : list of np.ndarray
-            Per-detector array of segment IDs (for PSD look-up), shape
+            Per-detector array of segment IDs (for ASD look-up), shape
             ``(batch_size,)``.
+        run_indices : list of np.ndarray
+            Per-detector array of run IDs (which pooled run each window came
+            from; indexes ``self.mmaps[d]`` and the recolour segment bank),
+            shape ``(batch_size,)``.
         """
+        rng = self.rng if rng is None else rng
         start_indices = []
         segment_indices = []
+        run_indices = []
 
         for d in range(self.n_detectors):
             seg_idx = self.seg_index[d]
             probs = self.segment_probs[d]
-            chosen_segments = self.rng.choice(len(seg_idx), size=batch_size, p=probs)
+            chosen_segments = rng.choice(len(seg_idx), size=batch_size, p=probs)
 
             starts = np.empty(batch_size, dtype=np.int64)
             seg_ids = np.empty(batch_size, dtype=np.int64)
+            run_ids = np.empty(batch_size, dtype=np.int64)
             for i, seg_i in enumerate(chosen_segments):
                 seg = seg_idx[seg_i]
                 max_offset = seg["nsamples"] - self.seq_len
-                offset = self.rng.integers(0, max_offset + 1) if max_offset > 0 else 0
+                offset = rng.integers(0, max_offset + 1) if max_offset > 0 else 0
                 starts[i] = seg["start"] + offset
                 seg_ids[i] = seg["idx"]
+                run_ids[i] = seg["run"]
 
             start_indices.append(starts)
             segment_indices.append(seg_ids)
+            run_indices.append(run_ids)
 
-        return start_indices, segment_indices
+        return start_indices, segment_indices, run_indices
+
+    def sample_segments(self, batch_size: int, rng):
+        """
+        Segment and run ids of ``batch_size`` windows, ``(B, D)`` int64 each.
+
+        Drawn the way a batch draws its windows (segments weighted by usable
+        duration, independently per detector) but from ``rng``, without reading
+        any strain.
+        """
+        _, segment_indices, run_indices = self._sample_starts_batch(batch_size, rng)
+        return (
+            torch.from_numpy(np.stack(segment_indices, axis=1)),
+            torch.from_numpy(np.stack(run_indices, axis=1)),
+        )
 
     def _read_batch(self, batch_size: int):
         """
@@ -679,9 +863,11 @@ class MemmapNoiseSampler(torch.nn.Module):
         )
 
         if use_hard:
-            start_indices, segment_indices = self._sample_hard_starts(hard_ds, B)
+            start_indices, segment_indices, run_indices = \
+                self._sample_hard_starts(hard_ds, B)
         else:
-            start_indices, segment_indices = self._sample_starts_batch(B)
+            start_indices, segment_indices, run_indices = \
+                self._sample_starts_batch(B)
         batch_tensor = torch.empty(
             (B, D, seq_len), dtype=torch.float32, device=self.device
         )
@@ -695,28 +881,33 @@ class MemmapNoiseSampler(torch.nn.Module):
         def _read_window(job):
             d, i = job
             s = start_indices[d][i]
-            arrs[d][i] = mmaps[d][s : s + seq_len]
+            r = run_indices[d][i]                 # which run's mmap this came from
+            arrs[d][i] = mmaps[d][r][s : s + seq_len]
 
         list(self._read_pool.map(
             _read_window, [(d, i) for d in range(D) for i in range(B)]
         ))
 
+        # pin_memory + non_blocking only help the async host->CUDA copy; on a
+        # CPU-only node pin_memory raises (no driver), so gate on the target.
+        pin = torch.device(self.device).type == "cuda"
         for d in range(D):
             arrs[d] /= dyn_range_fac()  # restore original scale
-            cpu_tensor = torch.from_numpy(arrs[d]).pin_memory()
-            batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=True)
+            cpu_tensor = torch.from_numpy(arrs[d])
+            if pin:
+                cpu_tensor = cpu_tensor.pin_memory()
+            batch_tensor[:, d, :].copy_(cpu_tensor, non_blocking=pin)
 
-        # convert segment indices to a CPU tensor
-        # We deliberately place this in CPU (check postprocess)
+        # Segment + run ids as CPU tensors (B, D) -- recolour keys its per-run
+        # whitening ASD by (run_id, segment_index).
         segment_ids = torch.empty((B, D), dtype=torch.int64)
-
+        run_ids     = torch.empty((B, D), dtype=torch.int64)
         for d in range(D):
-            segment_ids[:, d].copy_(
-                torch.from_numpy(segment_indices[d]),
-            )
+            segment_ids[:, d].copy_(torch.from_numpy(segment_indices[d]))
+            run_ids[:, d].copy_(torch.from_numpy(run_indices[d]))
 
         if self.postprocess_fn is not None:
-            batch_tensor = self.postprocess_fn(batch_tensor, segment_ids)
+            batch_tensor = self.postprocess_fn(batch_tensor, segment_ids, run_ids)
         else:
             # default: TD to FD only
             batch_tensor = torch.fft.rfft(batch_tensor, dim=-1, norm="forward")
@@ -777,3 +968,20 @@ class MemmapNoiseSampler(torch.nn.Module):
         for mm in getattr(self, "mmaps", []):
             del mm
         self.mmaps = []
+
+
+def register_noise_bad_segments():
+    """
+    Fetch, once, the GWOSC bad time of all training and validation noise.
+
+    Called right after the configs are registered, before any noise sampler
+    is built; the samplers read it from :func:`get_bad_segments`.
+    """
+    cfg, data_cfg = get_cfg(), get_data_cfg()
+    bins = [
+        path
+        for training in (True, False)
+        for run in MemmapNoiseSampler._resolve_runs(cfg, data_cfg, training)
+        for path in run["bins"]
+    ]
+    register_bad_segments(noise_bad_segments(bins))

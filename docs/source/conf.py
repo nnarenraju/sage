@@ -80,7 +80,6 @@ autoapi_python_class_content = "both"
 autoapi_ignore = [
     "*/evomcts/*",
     "*/legacy/*",
-    "*/presets/legacy*",
     "*/factory/legacy*",
     "*/__pycache__/*",
 ]

@@ -9,7 +9,7 @@ Created on 2026-01-22 10:38:25
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -21,6 +21,16 @@ GitHub Repository: NULL
 
 Documentation: NULL
 
+Licensing
+---------
+This file is part of Sage and is distributed under GPL-3.0-or-later.
+Portions derive from the MIT-licensed JAX reference implementation by
+Adam Coogan and Thomas Edwards; that notice is retained verbatim in
+``THIRD_PARTY_LICENSE`` in this directory and must not be removed.  The MIT
+terms cover those derived portions only.  See ``README.md`` here for the
+full provenance chain (LALSuite GPL-2+ -> MIT JAX reference -> this PyTorch
+reimplementation, validated directly against LALSuite).
+
 """
 
 
@@ -28,9 +38,11 @@ Documentation: NULL
 import torch
 
 # LOCAL
+from sage.core.config import get_data_cfg
+from sage.core.interpolation import torch_natural_cubic_interp
 from sage.core.torch import nudge_backward_
 from sage.data.waveform.approximants import phenom
-from sage.data.waveform import taper
+from sage.data.waveform import taper, waveform_utils
 
 
 class IMRPhenomD(phenom.PhenomConstants):
@@ -43,9 +55,9 @@ class IMRPhenomD(phenom.PhenomConstants):
     pre-allocated constants and QNM interpolation tables from
     :class:`~sage.data.waveform.approximants.phenom.PhenomConstants`.
 
-    The waveform is computed on the frequency grid ``f`` supplied at
-    construction time.  Low-frequency bins below ``f[0]`` are zero-padded
-    so that the output arrays span ``[0, f_max]`` inclusive.
+    The waveform is computed in float64 on the frequency grid ``f``
+    supplied at construction time.  Low-frequency bins below ``f[0]`` are
+    zero-padded so that the output arrays span ``[0, f_max]`` inclusive.
 
     Parameters
     ----------
@@ -58,6 +70,8 @@ class IMRPhenomD(phenom.PhenomConstants):
     """
 
     def __init__(self, f, f_ref, **kwargs):
+        f = f.to(torch.float64)
+        f_ref = f_ref.to(torch.float64)
         super().__init__(
             device=f.device,
             batch_size=f.shape[0],
@@ -89,9 +103,9 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         Parameters
         ----------
-        theta : torch.Tensor, shape ``(B, P)``
-            Batch of waveform parameters: ``[m1, m2, chi1, chi2, distance,
-            tc, inclination, ...]``.
+        theta : torch.Tensor, shape ``(B, 17)``
+            Parameters in the :data:`waveform_utils.WAVEFORM_PARAMETERS`
+            layout.
         reproduce_lal : bool
             If ``True``, skip FD tapering and ``tc`` application to
             reproduce raw LALSuite output (default ``False``).
@@ -100,7 +114,15 @@ class IMRPhenomD(phenom.PhenomConstants):
         -------
         hp, hc : torch.Tensor, shape ``(B, F)`` complex
             Plus and cross polarisations in the frequency domain.
+
+        Raises
+        ------
+        ValueError
+            If any transverse spin is non-zero.
         """
+        # [m1, m2, chi1, chi2, distance, tc, phic, inclination]
+        theta = waveform_utils.aligned_layout(theta, waveform_utils.ALIGNED_COLUMNS)
+
         # Compute derived quantities
         derived = self.compute_derived_parameters(theta)
 
@@ -128,7 +150,7 @@ class IMRPhenomD(phenom.PhenomConstants):
             # Frequency domain tapering
             _taper = taper.fd_taper(
                 f=self.f,
-                f_min=20.0,
+                f_min=self.f[0, 0].item(),
                 f_cut=fcut_true,
                 df=self.df,
             )
@@ -150,11 +172,14 @@ class IMRPhenomD(phenom.PhenomConstants):
         return hp, hc
 
     def apply_tc(self, hp, hc, tc):
-        """Apply a frequency-domain phase shift equivalent to a time-domain shift by *tc*."""
-        # Apply time shift to account for tc
-        # Converting from tc in duration space to actual shift
-        _tc = tc - self.sample_length_in_s
-        # We do this in polar as well without torch exp
+        """
+        Shift the waveform so it merges ``tc`` seconds into the analysis window.
+
+        ``tc`` is measured from the end of the leading padding, the window
+        convention of training and search, so the merger lands
+        ``padding_length_in_s + tc`` into the padded segment.
+        """
+        _tc = (tc + get_data_cfg().padding_length_in_s) - self.sample_length_in_s
         hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
         hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
         return hp, hc
@@ -391,8 +416,8 @@ class IMRPhenomD(phenom.PhenomConstants):
 
     def get_fRD_fdamp(self, chi1, chi2, m1_s, m2_s, M_s, eta_s):
         """
-        Return the ringdown frequency and damping frequency by interpolating
-        the pre-loaded QNM table with the final-spin estimate.
+        Return the ringdown frequency and damping frequency from the QNM
+        tables at the final-spin estimate, by natural cubic spline as LAL does.
         """
         # Compute Kerr-like total angular momentum
         S = (chi1 * m1_s * m1_s + chi2 * m2_s * m2_s) / (M_s * M_s)
@@ -400,20 +425,11 @@ class IMRPhenomD(phenom.PhenomConstants):
         a = IMRPhenomD.final_spin_0815_s(eta_s, S)
         Erad = IMRPhenomD.erad_rational_0815(eta_s, chi1, chi2)
 
-        # Compute relative position in grid
-        # We could precompute slope and intercept but this is faster
-        # We have uniform indexing on QNMData_a which allows this to work
-        rel_idx = (a - self.QNMData_a[0]) / (self.QNMData_a[1] - self.QNMData_a[0])
-        idx_lower = rel_idx.floor().long().clamp(0, len(self.QNMData_a) - 2)
-        frac = rel_idx - idx_lower.float()
-
-        fRD = (
-            self.QNMData_fRD[idx_lower] * (1 - frac)
-            + self.QNMData_fRD[idx_lower + 1] * frac
+        fRD = torch_natural_cubic_interp(
+            a, self.QNMData_a, self.QNMData_fRD, self.QNMData_fRD_M
         )
-        fdamp = (
-            self.QNMData_fdamp[idx_lower] * (1 - frac)
-            + self.QNMData_fdamp[idx_lower + 1] * frac
+        fdamp = torch_natural_cubic_interp(
+            a, self.QNMData_a, self.QNMData_fdamp, self.QNMData_fdamp_M
         )
 
         factor = 1.0 / (1.0 - Erad)

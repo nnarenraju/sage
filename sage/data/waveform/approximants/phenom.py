@@ -9,7 +9,7 @@ Created on 2026-01-23 03:24:33
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -34,7 +34,7 @@ import torch
 
 # LOCAL
 from sage.core import constants
-from sage.core.interpolation import torch_scipylike_cubic_interp
+from sage.core.interpolation import torch_natural_cubic_coeffs
 
 from .phenom_data import _QNMData_a, _QNMData_fdamp, _QNMData_fRD, PhenomD_coeff_table
 
@@ -48,11 +48,9 @@ class PhenomConstants:
     device.  This avoids creating tensors inside the hot-path iteration loop,
     which would break ``torch.compile`` graph capture.
 
-    QNM (quasi-normal mode) ringdown frequency and damping time tables are
-    pre-interpolated onto a fine 500 000-point grid via
-    :func:`~sage.core.interpolation.torch_scipylike_cubic_interp` so that
-    ringdown frequency lookups can be done with a simple linear-slope
-    computation at runtime.
+    QNM (quasi-normal mode) ringdown and damping frequency tables carry the
+    second derivatives of their natural cubic splines, so a lookup is the
+    ``gsl_interp_cspline`` evaluation LAL performs in ``fring``/``fdamp``.
 
     Parameters
     ----------
@@ -119,10 +117,17 @@ class PhenomConstants:
         ## Physical constants for Pv2
         self.fM_CUT = torch.tensor(0.2, device=device, dtype=dtype)
 
-        # QNM Data
-        self._QNMData_a = _QNMData_a.to(device=device, dtype=dtype)
-        self._QNMData_fdamp = _QNMData_fdamp.to(device=device, dtype=dtype)
-        self._QNMData_fRD = _QNMData_fRD.to(device=device, dtype=dtype)
+        # QNM tables and their natural-spline second derivatives, solved in
+        # float64 from the float64 tables (LALSimIMRPhenomD_internals.c).
+        self.QNMData_a = _QNMData_a.to(device=device, dtype=dtype)
+        self.QNMData_fRD = _QNMData_fRD.to(device=device, dtype=dtype)
+        self.QNMData_fdamp = _QNMData_fdamp.to(device=device, dtype=dtype)
+        self.QNMData_fRD_M = torch_natural_cubic_coeffs(
+            _QNMData_a, _QNMData_fRD
+        ).to(device=device, dtype=dtype)
+        self.QNMData_fdamp_M = torch_natural_cubic_coeffs(
+            _QNMData_a, _QNMData_fdamp
+        ).to(device=device, dtype=dtype)
 
         # Ones/zeroes of batch size (B, 1)
         self.ONES = torch.ones(
@@ -146,30 +151,4 @@ class PhenomConstants:
             -684.8 / 2.1,
             device=device,
             dtype=dtype,
-        )
-
-        # Target grid
-        self.QNMData_a = torch.linspace(-1, 1, 500_000, device=device, dtype=dtype)
-
-        # Interpolate using your torch cubic function
-        self.QNMData_fRD = torch_scipylike_cubic_interp(
-            self.QNMData_a, self._QNMData_a, self._QNMData_fRD
-        )
-        self.QNMData_fdamp = torch_scipylike_cubic_interp(
-            self.QNMData_a, self._QNMData_a, self._QNMData_fdamp
-        )
-
-        # Precompute slope and intercept for quick linear interpolation
-        self.fRD_slope = (self.QNMData_fRD[1:] - self.QNMData_fRD[:-1]) / (
-            self.QNMData_a[1:] - self.QNMData_a[:-1]
-        )
-        self.fRD_intercept = (
-            self.QNMData_fRD[:-1] - self.fRD_slope * self.QNMData_a[:-1]
-        )
-
-        self.fdamp_slope = (self.QNMData_fdamp[1:] - self.QNMData_fdamp[:-1]) / (
-            self.QNMData_a[1:] - self.QNMData_a[:-1]
-        )
-        self.fdamp_intercept = (
-            self.QNMData_fdamp[:-1] - self.fdamp_slope * self.QNMData_a[:-1]
         )

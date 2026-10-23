@@ -12,6 +12,8 @@ SageVanillaValidation
 """
 
 import os
+import sys
+import time
 import h5py
 import torch
 import torch.nn.functional as F
@@ -20,7 +22,11 @@ from tqdm import tqdm
 from contextlib import nullcontext
 
 from sage.core.config import get_cfg
+from sage.core.logger import get_logger, format_duration as _fmt_duration
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
+from sage.utils.atomic_io import append_h5
+
+logger = get_logger(__name__)
 
 
 def save_validation(nepoch, output, target, params, signal_idx, savepath):
@@ -46,7 +52,11 @@ def save_validation(nepoch, output, target, params, signal_idx, savepath):
     savepath : str
         Path to the HDF5 output file.
     """
-    with h5py.File(savepath, "a") as f:
+    # Appended in place: this file reaches ~300 MB, so snapshotting it every
+    # epoch (atomic_h5) would move tens of GB per run to protect a diagnostic
+    # that training does not read back. append_h5 instead absorbs a kill on the
+    # NEXT open, quarantining a damaged file so it cannot crash the run.
+    with append_h5(savepath) as f:
         name = f"epoch_{nepoch:04d}"
         if name in f:
             # Overwrite a re-validated / restarted epoch rather than crashing on
@@ -77,6 +87,20 @@ class SageVanillaValidation(torch.nn.Module):
     Auto-multibanding and GWBatch tracking work identically to the training
     loop — no extra configuration needed.
 
+    Resume note
+    -----------
+    The *trained model* is fully resume-deterministic, but the validation
+    *loss curve* is not bit-reproducible across a resume. The val signal/noise
+    samplers are seeded once at construction and advance their RNGs per call,
+    and the injection permutation below (:func:`torch.randperm`) draws from the
+    global RNG — so a run resuming at epoch K draws different validation
+    realisations than a fresh run did at epoch K. This is only Monte-Carlo
+    sampling noise on an unbiased estimate of the same fixed-distribution loss;
+    it never affects the trained weights, only the exact val-loss value (and
+    hence a marginal, MC-level wobble in best.pt selection). Making the curve
+    bit-identical across resume would require per-epoch reseeding of the
+    (threaded) val samplers; deliberately not done.
+
     Parameters
     ----------
     signal_sampler, noise_sampler, processor, model, loss_function
@@ -96,10 +120,12 @@ class SageVanillaValidation(torch.nn.Module):
         loss_function,
         num_iterations,
         num_epochs,
+        amp_dtype=torch.float16,
     ):
         super().__init__()
 
         self.cfg = get_cfg()
+        self.amp_dtype = amp_dtype
 
         self.signal_sampler = signal_sampler
         self.noise_sampler  = noise_sampler
@@ -148,9 +174,22 @@ class SageVanillaValidation(torch.nn.Module):
             "network_target": [],
         }
 
+        # See the note in training.forward: a tqdm bar on a non-TTY fills the
+        # job's .out file with carriage-return redraws.
+        interactive = sys.stdout.isatty()
+        t_epoch = time.time()
+        logger.info(
+            "Epoch %d | validating: %d iterations", nepoch, self.num_iterations
+        )
+
         with torch.inference_mode():
 
-            for _ in tqdm(range(self.num_iterations)):
+            for _ in tqdm(
+                range(self.num_iterations),
+                disable=not interactive,
+                desc=f"epoch {nepoch} val",
+                leave=False,
+            ):
 
                 # ── 1. Sample ─────────────────────────────────────────────
                 signal_data, signal_targets, theta = self.signal_sampler(
@@ -196,7 +235,7 @@ class SageVanillaValidation(torch.nn.Module):
 
                 # ── 6. Forward pass ───────────────────────────────────────
                 with (
-                    torch.autocast(device_type="cuda", dtype=torch.float16)
+                    torch.autocast(device_type="cuda", dtype=self.amp_dtype)
                     if self.cfg.autocast
                     else nullcontext()
                 ):
@@ -208,26 +247,37 @@ class SageVanillaValidation(torch.nn.Module):
 
                 ranking   = network_output[:, 0:1]
                 mu_std    = network_output[:, 1 : 1 + self.num_point_estimate]
-                sigma_raw = network_output[
-                    :, 1 + self.num_point_estimate : 1 + 2 * self.num_point_estimate
-                ]
-
-                mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
-                    mu_std
-                )
-                # Map the raw sigma params to a std the *same* way the loss does
-                # (softplus, not exp(0.5*log_var)) so exported sigma matches the
-                # trained parameterisation. Reuse the loss's own _sigma when present.
-                _sigma = getattr(self.loss_function, "_sigma", None)
-                if callable(_sigma):
-                    sigma_std = _sigma(sigma_raw)
+                if getattr(self.cfg, "pe_target_minmax", False):
+                    mu_phys = self.signal_sampler.param_sampler.unnorm_from_batch(
+                        mu_std
+                    )
                 else:
-                    sigma_std = F.softplus(sigma_raw) + 1e-3
-                std_prior  = self.signal_sampler.param_sampler._std_stds.to(
-                    sigma_std.device
-                )
-                sigma_phys = sigma_std * std_prior
-                network_output = torch.cat([ranking, mu_phys, sigma_phys], dim=1)
+                    mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
+                        mu_std
+                    )
+                # Heteroscedastic models also emit a raw sigma per point estimate
+                # (columns after the means); mean-only models (e.g. BCEWithPEregLoss)
+                # do not -- their network_output has no sigma columns, so export
+                # ranking + mu only (no sigma_phys) instead of crashing on an empty slice.
+                if network_output.shape[1] >= 1 + 2 * self.num_point_estimate:
+                    sigma_raw = network_output[
+                        :, 1 + self.num_point_estimate : 1 + 2 * self.num_point_estimate
+                    ]
+                    # Map the raw sigma params to a std the *same* way the loss does
+                    # (softplus, not exp(0.5*log_var)) so exported sigma matches the
+                    # trained parameterisation. Reuse the loss's own _sigma when present.
+                    _sigma = getattr(self.loss_function, "_sigma", None)
+                    if callable(_sigma):
+                        sigma_std = _sigma(sigma_raw)
+                    else:
+                        sigma_std = F.softplus(sigma_raw) + 1e-3
+                    std_prior  = self.signal_sampler.param_sampler._std_stds.to(
+                        sigma_std.device
+                    )
+                    sigma_phys = sigma_std * std_prior
+                    network_output = torch.cat([ranking, mu_phys, sigma_phys], dim=1)
+                else:
+                    network_output = torch.cat([ranking, mu_phys], dim=1)
 
                 diagnostics["network_output"].append(network_output.cpu())
                 diagnostics["network_target"].append(targets.cpu())
@@ -236,6 +286,15 @@ class SageVanillaValidation(torch.nn.Module):
                 self.loss_components[nepoch] += loss.detach()
 
         self.loss_components[nepoch] /= self.num_iterations
+
+        comps = self.loss_components[nepoch].detach().cpu()
+        logger.info(
+            "Epoch %d | val   loss %.5f | components [%s] | %s",
+            nepoch,
+            comps[0].item(),
+            ", ".join(f"{c:.5f}" for c in comps[1:].tolist()),
+            _fmt_duration(time.time() - t_epoch),
+        )
 
         # ── Save diagnostic outputs ───────────────────────────────────────
         network_output = torch.vstack(diagnostics["network_output"])

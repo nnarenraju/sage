@@ -10,7 +10,7 @@ Created on Tue Nov 21 17:19:53 2021
 __author__      = Narenraju Nagarajan
 __copyright__   = Copyright 2021, Sage
 __credits__     = nnarenraju
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = nagarajan@uni-potsdam.de

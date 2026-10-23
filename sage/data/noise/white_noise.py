@@ -163,6 +163,148 @@ def _resolve_asd_cached(spec, **kwargs):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+# Which interferometer each detector label and each analytic model belongs to.
+# Only used to warn about an obvious mismatch — nothing here changes the output.
+_DETECTOR_FAMILY = {
+    "H1": "LIGO", "L1": "LIGO", "I1": "LIGO", "A1": "LIGO",
+    "V1": "Virgo", "K1": "KAGRA", "G1": "GEO",
+    "E1": "ET", "E2": "ET", "E3": "ET", "C1": "CE",
+}
+
+
+# The curve each interferometer gets from ``asd="auto"``: its design sensitivity.
+_DETECTOR_DEFAULT_ASD = {
+    "LIGO":  "aLIGODesignSensitivityP1200087",
+    "Virgo": "AdVDesignSensitivityP1200087",
+    "KAGRA": "KAGRADesignSensitivityT1600593",
+    "ET":    "EinsteinTelescopeP1600143",
+    "CE":    "CosmicExplorerP1600143",
+}
+
+# Plain-English names for the same curves, so a caller who has never seen a
+# LALSimulation model string can still ask for realistic noise.
+_ASD_ALIASES = {
+    "ligo": "LIGO", "aligo": "LIGO", "h1": "LIGO", "l1": "LIGO",
+    "virgo": "Virgo", "advirgo": "Virgo", "adv": "Virgo", "v1": "Virgo",
+    "kagra": "KAGRA", "k1": "KAGRA",
+    "et": "ET", "einstein": "ET", "einstein telescope": "ET",
+    "ce": "CE", "cosmic explorer": "CE", "cosmicexplorer": "CE",
+}
+
+
+def _model_family(name):
+    """
+    Which interferometer an analytic model name describes, or ``None``.
+
+    Order matters: LALSimulation carries deprecated aliases that wrongly prefix
+    other detectors' curves with ``aLIGO`` (``aLIGOAdVO4T1800545`` is an AdVirgo
+    curve), so the more specific families are tested first.
+    """
+    n = name.lower()
+    if "adv" in n or "virgo" in n:
+        return "Virgo"
+    if "kagra" in n:
+        return "KAGRA"
+    if "einsteintelescope" in n:
+        return "ET"
+    if "cosmicexplorer" in n:
+        return "CE"
+    if "ligo" in n:
+        return "LIGO"
+    return None
+
+
+def _expand_asd_spec(asd, detectors):
+    """
+    Resolve ``"auto"`` and the plain-English aliases into real model names.
+
+    Everything else is handed back untouched, so an exact LALSimulation name, an
+    array, a ``(freqs, values)`` pair or ``None`` all behave exactly as before.
+    """
+    def _one(spec):
+        if not isinstance(spec, str):
+            return spec
+        key = spec.strip().lower()
+        if key in ("flat", "white", "none"):
+            return spec
+        family = _ASD_ALIASES.get(key)
+        return _DETECTOR_DEFAULT_ASD[family] if family else spec
+
+    if isinstance(asd, list):
+        return [_one(s) for s in asd]
+
+    names = detectors if isinstance(detectors, (list, tuple)) else None
+    if names is not None and not all(isinstance(d, str) for d in names):
+        names = None
+    families = ([_DETECTOR_FAMILY.get(d.upper()) for d in names]
+                if names is not None else None)
+    all_known = (families is not None
+                 and all(f in _DETECTOR_DEFAULT_ASD for f in families))
+
+    if isinstance(asd, str) and asd.strip().lower() == "auto":
+        if names is None:
+            raise ValueError(
+                'asd="auto" picks each detector\'s own curve from its name, so it '
+                'needs named detectors — e.g. detectors=["H1", "L1", "V1"].  Name '
+                "them, or ask for a specific model instead."
+            )
+        if not all_known:
+            unknown = [d for d, f in zip(names, families)
+                       if f not in _DETECTOR_DEFAULT_ASD]
+            known = ", ".join(sorted(_DETECTOR_DEFAULT_ASD))
+            raise ValueError(
+                f'asd="auto" does not recognise {unknown}.  Known families: '
+                f"{known}.  Name a model explicitly for those detectors."
+            )
+        return [_DETECTOR_DEFAULT_ASD[f] for f in families]
+
+    if asd is None and all_known:
+        # Naming real detectors and saying nothing about the spectrum means you
+        # want those detectors' noise.  Pass asd="white" for white noise instead.
+        return [_DETECTOR_DEFAULT_ASD[f] for f in families]
+
+    return _one(asd)
+
+
+def _check_detector_asd_match(asd, detectors):
+    """
+    Reject a named detector paired with another interferometer's curve.
+
+    Naming H1 and then handing it an AdVirgo model is a misunderstanding, not a
+    preference, so it raises rather than warning.  Either half alone is fine —
+    name the detectors and let one ASD cover them, or pass the ASDs as a list and
+    let their count set the detector axis.  Passing both is fine too; they just
+    have to agree.
+
+    Only fires when it is certain: both the label and the model name have to be
+    recognisable and disagree.  Integer ``detectors``, caller-supplied arrays and
+    unfamiliar labels all pass without comment.
+    """
+    if not isinstance(detectors, (list, tuple)):
+        return
+    names = [d for d in detectors if isinstance(d, str)]
+    if len(names) != len(detectors):
+        return
+
+    specs = asd if isinstance(asd, list) else [asd] * len(names)
+    if len(specs) != len(names):
+        return
+
+    for det, spec in zip(names, specs):
+        if not isinstance(spec, str):
+            continue
+        want = _DETECTOR_FAMILY.get(det.upper())
+        got = _model_family(spec)
+        if want and got and want != got:
+            raise ValueError(
+                f"detector {det!r} is a {want} interferometer but was given the "
+                f"{got} curve {spec!r}.  Pass the model that matches the "
+                f"detector; or, if the pairing is deliberate, drop the names and "
+                f"give a count (detectors={len(names)}) or pass the ASD list on "
+                f"its own and let it set the detector axis."
+            )
+
+
 def _default_cutoff(spec, low_frequency_cutoff):
     """
     Choose a low-frequency cutoff for ``spec`` when the caller gave none.
@@ -224,11 +366,16 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
     duration : float
         Length of the sample in **seconds**.
     asd : optional
-        What to colour the noise with.  ``None`` (default) gives white noise.
-        Accepts an analytic model name (``"aLIGOZeroDetHighPower"`` — see
-        :func:`available_asds`), an array on the output grid, a
-        ``(freqs, values)`` pair on any grid, a callable ``f -> ASD``, or a
-        scalar.  Full list in :func:`resolve_asd`.
+        What to colour the noise with.  Accepts ``"auto"``, a detector's ordinary
+        name (``"LIGO"``, ``"Virgo"``, …), an analytic model name
+        (``"aLIGOZeroDetHighPower"`` — see :func:`available_asds`), an array on
+        the output grid, a ``(freqs, values)`` pair on any grid, a callable
+        ``f -> ASD``, or a scalar.  Full list in :func:`resolve_asd`.
+
+        Left unset it follows the detectors: name real ones and you get their
+        design curves, because nobody ever saw white noise come out of H1.  With
+        an unrecognised label, or a plain count, there is nothing to infer from
+        and you get white noise.  Say ``asd="white"`` for white noise regardless.
 
         Pass a **list** of those, one per detector, to give each detector its
         own noise curve — the one way detectors genuinely differ for noise::
@@ -241,8 +388,16 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
     batch : int or None
         Number of independent samples.  ``None`` (default) omits the axis.
     detectors : int or sequence or None
-        Number of detectors, or a list like ``["H1", "L1"]`` (only its length
-        is used).  ``None`` (default) omits the axis.
+        Number of detectors, or a list like ``["H1", "L1"]``.  ``None`` (default)
+        omits the axis — unless ``asd`` is a list, which sets it on its own.
+
+        Only the **length** affects the output; the names are labels.  Nothing
+        detector-specific is applied beyond the ASD you supply, because nothing
+        else about noise is detector-specific (antenna patterns and time delays
+        act on a signal, not on instrumental noise).  Naming a detector and then
+        handing it another interferometer's curve — ``detectors=["H1"]`` with an
+        AdVirgo model — raises, since that is a misunderstanding rather than a
+        preference.  Give a count instead of names if the pairing is deliberate.
     domain : {"td", "fd"}
         ``"td"`` (default) returns a real time series; ``"fd"`` returns the
         complex ``rfft(norm="forward")`` spectrum with ``N // 2 + 1`` bins.
@@ -323,9 +478,18 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
             f"duration {duration} s at {sample_rate} Hz rounds to {n_time} samples"
         )
 
+    # "auto" and the plain-English aliases become real model names here, so
+    # everything downstream sees one kind of spec.
+    asd = _expand_asd_spec(asd, detectors)
+
     n_det = None
     if detectors is not None:
         n_det = detectors if isinstance(detectors, int) else len(detectors)
+        _check_detector_asd_match(asd, detectors)
+    elif isinstance(asd, list):
+        # A list of ASDs is one per detector, so it sets the detector axis on its
+        # own — no need to state the count twice.
+        n_det = len(asd)
 
     lead = []
     if batch is not None:
@@ -1387,6 +1551,14 @@ class WhiteGaussianNoiseSampler(torch.nn.Module):
         self.unit_psd = unit_psd
         self.filter_duration = filter_duration
         self._step = 0
+
+        # Accept the same friendly vocabulary as ``sample_synthetic_noise`` —
+        # "auto", "LIGO", "Virgo" and so on.  Unlike that function this keeps
+        # ``asd=None`` meaning white noise: the sampler's job is to stand in for
+        # the real-noise samplers, and silently colouring would change what a
+        # default-constructed sampler feeds a training loop.
+        if asd is not None:
+            asd = _expand_asd_spec(asd, cfg.detectors)
 
         if asd is not None and low_frequency_cutoff is None:
             low_frequency_cutoff = getattr(

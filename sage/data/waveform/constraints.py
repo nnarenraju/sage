@@ -9,7 +9,7 @@ Created on 2026-02-16 14:28:00
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -49,6 +49,30 @@ def mass_order(params, param_index, extra_params=None):
     # Write back
     params[:, idx_m1] = m1_new
     params[:, idx_m2] = m2_new
+
+    return params
+
+
+def lambda_order(params, param_index, extra_params=None):
+    """
+    Enforce lambda1 <= lambda2 in a torch.compile-safe way.
+
+    Astrophysically the more massive component (mass1, after
+    :func:`mass_order`) is more compact and has the SMALLER tidal
+    deformability, so lambda1 (paired with mass1) must be the smaller of
+    the two.  Reorders the per-star tidal deformabilities using pure
+    tensor ops, mirroring :func:`mass_order`.
+    """
+
+    idx_l1 = param_index["lambda1"]
+    idx_l2 = param_index["lambda2"]
+
+    l1 = params[:, idx_l1]
+    l2 = params[:, idx_l2]
+
+    # lambda1 (heavier star) <= lambda2 (lighter star), no branching
+    params[:, idx_l1] = torch.minimum(l1, l2)
+    params[:, idx_l2] = torch.maximum(l1, l2)
 
     return params
 

@@ -47,12 +47,29 @@ dependencies = [
   "astropy>=5.3",
   "gwpy>=3.0",
   "torch>=2.1",
+  # Read by sage.data.waveform.sampler.read_from_config, which parses the
+  # gwconfig.yaml on the main training path — not optional.
+  "pyyaml>=6.0",
+  # Imported at module level on the training path (sage.dsp.filters,
+  # sage.dsp.multirate_sampling) and by the search -- not optional.
+  "lalsuite>=7.0",
+  "pycbc>=2.2",
 ]
 
 [project.optional-dependencies]
-lal = [
-  "lalsuite>=7.0",
-  "pycbc>=2.2",
+# GWOSC data download and segment preparation (sage.data.primer).
+download = [
+  "requests>=2.28",
+  "urllib3>=1.26",
+  "gwosc>=0.7",
+]
+# Quality-diversity hard-noise mining (sage.data.noise.cma_mae_mining).
+mining = [
+  "ribs>=0.7",
+]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
 ]
 
 [project.urls]
@@ -70,7 +87,18 @@ exclude = ["sage.egg-info*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers"
+# An xfail that starts passing is reported as a failure. Unimplemented search tests are
+# marked xfail(raises=NotImplementedError) while their module is a stub; implementing the
+# module makes the test pass, which fails the run until the marker is removed. That is the
+# intended ratchet, so the strictness must not be optional.
+xfail_strict = true
+markers = [
+    "gpu: needs a CUDA device",
+    "data: needs a strain release on project storage",
+    "net: needs network access to an external service",
+    "slow: takes long enough to be worth deselecting during development",
+]
 
 [tool.coverage.run]
 source = ["sage"]

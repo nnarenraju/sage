@@ -9,7 +9,7 @@ Created on 2026-03-21 17:52:33
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -26,6 +26,7 @@ Documentation: NULL
 # Packages
 import os
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_correlation_matrix(
@@ -76,13 +77,13 @@ def plot_correlation_matrix(
     for i in range(len(keys)):
         for j in range(len(keys)):
             ax.text(j, i, f"{corr[i, j]:.2f}", ha="center", va="center", fontsize=6)
-    ax.set_title(f"Correlation Matrix - Epoch {epoch}")
+    ax.set_title(f"Correlation Matrix - {_etitle(epoch)}")
 
     if save and export_dir is not None:
         outdir = os.path.join(export_dir, "CORRELATION_MATRIX")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"correlation_matrix_epoch_{epoch}.png"),
+            os.path.join(outdir, f"correlation_matrix_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

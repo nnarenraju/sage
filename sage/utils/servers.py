@@ -94,12 +94,41 @@ class Server:
         return os.path.join(self.data_release_root, f"{run.lower()}_dataset")
 
     def data_dir(self, run: str) -> str:
-        """The per-run ``data_dir`` (recolour PSDs etc.)."""
+        """The per-run ``data_dir`` (recolour ASD banks etc.)."""
         return os.path.join(self.dataset_dir(run), "data_dir")
 
-    def noise_bin(self, detector: str, run: str) -> str:
-        """Monolithic noise .bin for one detector / observing run."""
-        return os.path.join(self.dataset_dir(run), f"data_{detector}_{run}.bin")
+    def noise_bin(self, detector: str, run: str,
+                  release_dirname: str = "data_release") -> str:
+        """Monolithic noise .bin for one detector / observing run.
+
+        The downloader writes the .bin FLAT inside its release folder with the
+        run encoded in the filename -- there is NO ``<run>_dataset`` sub-folder
+        for the strain (that sub-folder only holds derived ASD banks).
+        ``release_dirname`` is the folder the run was downloaded into:
+        ``"data_release"`` (the default/base run) or an isolated dir such as
+        ``"data_release_o3a"`` / ``"data_release_o4b"``.
+        """
+        return os.path.join(
+            self.data_root, release_dirname, f"data_{detector}_{run}.bin"
+        )
+
+    def run_noise(self, run: str, detectors, release_dirname: str = "data_release",
+                  data_dir: str | None = None) -> dict:
+        """One run's entry for the multi-run noise sampler's ``training_noise``.
+
+        Bundles the per-detector strain ``.bin`` (from ``release_dirname``) with
+        the run's derived-ASD ``data_dir`` (holding the per-segment whitening
+        ASDs the recolour step needs). ``bins`` are ordered to match
+        ``detectors``. Pass ``data_dir`` explicitly for the flat O4 layout
+        (``data_release_<run>/data_dir``); it defaults to the O3-style
+        ``data_release/<run>_dataset/data_dir``.
+        """
+        return {
+            "run": run,
+            "data_dir": data_dir if data_dir is not None else self.data_dir(run),
+            "bins": [self.noise_bin(d, run, release_dirname) for d in detectors],
+            "detectors": list(detectors),  # validated against cfg.detectors by the sampler
+        }
 
 
 # ----------------------------------------------------------------------------
@@ -117,11 +146,17 @@ SERVERS: dict[str, Server] = {
         scheduler="slurm",
         partition="gpu",
         qos="normal",
-        gres="gpu:h100_80gb:1",
+        gres="gpu:1",     # any GPU type (hgc01 h100_80gb + hgc02 h100_94gb/h200_143gb);
+                          # all fit the model -- pinning to h100_80gb starved us to 2 GPUs
         time="2-00:00",
-        cpus=4,
-        mem="48G",
-        mail="nagarajan@uni-potsdam.de",
+        cpus=16,          # noise prefetch (16 read workers) + hard-mining threads
+        # RecolourPostprocess keeps the target ASD bank resident: ~16 GB/detector
+        # (see recolour.py). 2-det ~33 GB, 3-det (HLV) ~49 GB, + segment banks +
+        # torch/compile overhead. 128 GB covers all networks; nodes have ~770 GB.
+        mem="128G",
+        # Empty: no mail. Set SAGE_MAIL in the environment to turn it back on for a
+        # session, and SAGE_MAIL_TYPE to choose what it reports (FAIL by default).
+        mail="",
     ),
 
     # Glasgow WIAY. Fill SLURM details if/when batch jobs are run there.

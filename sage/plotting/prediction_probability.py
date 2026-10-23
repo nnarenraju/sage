@@ -9,7 +9,7 @@ Created on 2026-03-21 17:27:00
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_prediction_probability(epoch, pred_prob, labels, export_dir=None, save=True):
@@ -92,7 +93,7 @@ def plot_prediction_probability(epoch, pred_prob, labels, export_dir=None, save=
     plt.yscale("log")
     plt.xlabel("Prediction Probability (Sigmoid)")
     plt.ylabel("Number of Occurrences")
-    plt.title(f"Pred Prob Output at {epoch}")
+    plt.title(f"Pred Prob Output at {_etitle(epoch)}")
     plt.legend()
     plt.grid(True, ls=":")
 

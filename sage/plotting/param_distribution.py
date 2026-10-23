@@ -9,7 +9,7 @@ Created on 2026-03-21 17:38:07
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -28,6 +28,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import itertools
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_outputbin_param_distribution(
@@ -63,7 +64,7 @@ def plot_outputbin_param_distribution(
 
     if save and export_dir is not None:
         parent_dir = os.path.join(export_dir, "OUTBIN_PARAM_DISTR")
-        base_dir = os.path.join(parent_dir, f"epoch_{epoch}")
+        base_dir = os.path.join(parent_dir, f"{_etag(epoch)}")
         os.makedirs(base_dir, exist_ok=True)
     else:
         base_dir = None

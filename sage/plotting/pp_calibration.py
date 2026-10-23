@@ -14,10 +14,10 @@ therefore reveals miscalibration of the predicted uncertainties:
   - curve shallower than diagonal   -> over-confident (sigma too small)
   - curve steeper than diagonal     -> under-confident (sigma too large)
 
-This validates the sigma mechanism that the multi-detector consistency
-statistic relies on (it is uncertainty-weighted, so trustworthy sigmas matter),
-and works equally for the merged heteroscedastic heads. It complements
-``plot_calibration_curve`` (which calibrates the *classifier*).
+This validates the sigma mechanism of the heteroscedastic parameter heads:
+trustworthy predicted sigmas are what make the per-PE uncertainties usable
+downstream. It complements ``plot_calibration_curve`` (which calibrates the
+*classifier*).
 """
 
 import os
@@ -26,6 +26,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from scipy.special import ndtr  # standard-normal CDF, Phi
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def _pit(mu, sigma, y, eps=1e-12):
@@ -106,14 +107,14 @@ def plot_pp_calibration(
     if title is None:
         title = "σ-calibration P–P plot"
         if epoch is not None:
-            title += f" — epoch {epoch}"
+            title += f" — {_etitle(epoch)}"
     plt.title(title)
 
     if save and export_dir is not None:
         outdir = os.path.join(export_dir, "calibration")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"pp_calibration_epoch_{epoch}.png"),
+            os.path.join(outdir, f"pp_calibration_{_etag(epoch)}.png"),
             dpi=150, bbox_inches="tight",
         )
         plt.close()

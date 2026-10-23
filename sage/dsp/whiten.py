@@ -9,7 +9,7 @@ Created on 2026-01-19 16:26:37
 
 __author__      = Narenraju Nagarajan
 __copyright__   = Copyright 2026, Sage
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
@@ -24,18 +24,18 @@ Documentation: NULL
 
 # Packages
 import math
+import numpy as np
 import torch
-import matplotlib.pyplot as plt
 
 # LOCAL
-from sage.data.psd import get_fiducial_psds
+from sage.data.asd import get_fiducial_asds
 from sage.core.config import get_cfg, get_data_cfg
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
 
 
 class FiducialWhitening(torch.nn.Module):
     """
-    Whiten frequency-domain strain using fixed, detector-specific fiducial PSDs.
+    Whiten frequency-domain strain using fixed, detector-specific fiducial ASDs.
 
     The whitening kernel is derived once from pre-computed fiducial ASDs and
     stored as a registered buffer so it moves to the correct device
@@ -47,7 +47,7 @@ class FiducialWhitening(torch.nn.Module):
        ``X_white = X_fd * whitening``  where
        ``whitening[d, f] = 2 Δf / (√0.5 · ASD[d, f])``.
     2. Convert back to time domain via inverse real FFT.
-    3. Strip the corrupted edge samples introduced by the Welch PSD
+    3. Strip the corrupted edge samples introduced by the Welch
        estimation window (``padding_nsamples`` on each side).
 
     The ``@torch.no_grad()`` decorator on :meth:`forward` means this
@@ -80,8 +80,8 @@ class FiducialWhitening(torch.nn.Module):
         cfg = get_cfg()
         data_cfg = get_data_cfg()
 
-        # Get fiducial psds
-        fiducial_psds = get_fiducial_psds()
+        # Per-detector fiducial ASDs (strain/sqrt(Hz)); see sage.data.asd
+        fiducial_asds = get_fiducial_asds()
 
         self.device = cfg.device
 
@@ -94,16 +94,30 @@ class FiducialWhitening(torch.nn.Module):
         self.delta_f = torch.tensor(delta_f).to(device=cfg.device)
 
         # Whitening
-        whitening = 2 * self.delta_f / (math.sqrt(0.5) * fiducial_psds)
+        whitening = 2 * self.delta_f / (math.sqrt(0.5) * fiducial_asds)
         # Final whitening moved to device
         whitening = whitening.to(device=cfg.device)
 
         # Register as buffer for compile friendliness
         self.register_buffer("whitening", whitening)  # (D, F)
 
+        # ~Unit-variance normalisation for the FD_COARSE (stay-in-FD) path.
+        # The TD path gets unit variance from the ``irfft(norm="forward")·Δf`` step
+        # in ``_whiten_to_td``; the FD_COARSE branch skips it, leaving the whitened
+        # data sub-unity.  We restore ~O(1) with a SINGLE analytic constant
+        # (dividing the 2Δf/(√0.5·ASD) whitening by 2·Δf^1.5, i.e. the proper
+        # √2/(ASD·√Δf) form).  It is a shared scalar -- deliberately NOT a
+        # per-detector or data-driven fit: each detector is already divided by its
+        # own ASD, so a common constant preserves the relative sensitivity between
+        # detectors (which carries sky/SNR information); a per-detector fit would
+        # destroy it.  It just happens to land the typical whitened noise near unity
+        # for all detectors.  Only the FD_COARSE (BNS) branch uses it; TD/BBH is
+        # untouched.
+        self._fd_unit_norm = 1.0 / (2.0 * float(delta_f) ** 1.5)
+
     def remove_corrupted(self, x):
         """
-        Strip edge samples corrupted by the Welch PSD estimation window.
+        Strip edge samples corrupted by the Welch estimation window.
 
         Parameters
         ----------
@@ -168,7 +182,9 @@ class FiducialWhitening(torch.nn.Module):
             # delta_f, so no interpolation is needed.
             idx = batch.coarse_indices                         # (N_coarse,)
             whitening_coarse = self.whitening[:, idx]          # (D, N_coarse)
-            X_white = batch.data * whitening_coarse.unsqueeze(0)
+            # Stay in FD: apply the unit-variance factor the (skipped) IFFT would
+            # have provided, so the coarse data is O(1) like the BBH TD path.
+            X_white = batch.data * whitening_coarse.unsqueeze(0) * self._fd_unit_norm
             new_state = batch.state.after_whiten()
             return GWBatch(X_white, new_state, batch.freqs, batch.coarse_indices)
 

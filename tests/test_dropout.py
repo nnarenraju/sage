@@ -10,19 +10,7 @@ import torch.nn as nn
 
 from sage.architecture.frontend.mscnn1d_cbam import ConvBlock
 from sage.architecture.backend.resnet2d_cbam import Bottleneck
-from sage.architecture.network import enable_mc_dropout, mc_predict
-
-
-def test_convblock_dropout_noop_and_stochastic():
-    x = torch.randn(2, 1, 4096)
-    # p=0 is a no-op even in train mode
-    b0 = ConvBlock(32, 64, dropout=0.0).train()
-    assert torch.allclose(b0(x), b0(x))
-    # p>0 is stochastic in train, deterministic in eval
-    b = ConvBlock(32, 64, dropout=0.5).train()
-    assert not torch.allclose(b(x), b(x))
-    b.eval()
-    assert torch.allclose(b(x), b(x))
+from sage.architecture.network import enable_mc_dropout
 
 
 def test_bottleneck_dropout_stochastic():
@@ -55,30 +43,6 @@ def test_enable_mc_dropout_modes():
             assert mod.training is True
         if isinstance(mod, nn.BatchNorm1d):
             assert mod.training is False
-
-
-def test_mc_predict_spread_and_shapes():
-    m = _toy()
-    x = torch.randn(5, 8)
-    mean, std = mc_predict(m, x, n_samples=20)
-    assert mean.shape == (5, 3) and std.shape == (5, 3)
-    assert float(std.mean()) > 1e-6   # dropout -> non-zero epistemic spread
-
-
-def test_mc_predict_handles_tuple_output():
-    class Two(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.d = nn.Dropout(0.5)
-            self.l = nn.Linear(8, 4)
-
-        def forward(self, x):
-            h = self.l(self.d(x))
-            return h, h.sum(-1)
-
-    mean, std = mc_predict(Two(), torch.randn(6, 8), n_samples=10)
-    assert isinstance(mean, tuple) and len(mean) == 2
-    assert mean[0].shape == (6, 4) and mean[1].shape == (6,)
 
 
 if __name__ == "__main__":

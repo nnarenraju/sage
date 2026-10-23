@@ -9,7 +9,7 @@ Created on 2026-03-21 17:51:16
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -25,6 +25,7 @@ Documentation: NULL
 
 # Packages
 import os
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_perturbation_sensitivity(
@@ -104,14 +105,14 @@ def plot_perturbation_sensitivity(
     plt.scatter(perturb_values, perturb_outputs, alpha=0.4, c="blue", s=20)
     plt.xlabel(f"Fractional perturbation in {param_name}")
     plt.ylabel("Network Ranking Statistic")
-    plt.title(f"Perturbation Sensitivity - {param_name} - Epoch {epoch}")
+    plt.title(f"Perturbation Sensitivity - {param_name} - {_etitle(epoch)}")
     plt.grid(True, ls=":")
 
     if save and export_dir is not None:
         outdir = os.path.join(export_dir, "PERTURBATION_SENSITIVITY")
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
-            os.path.join(outdir, f"perturb_sensitivity_{param_name}_epoch_{epoch}.png"),
+            os.path.join(outdir, f"perturb_sensitivity_{param_name}_{_etag(epoch)}.png"),
             dpi=150,
             bbox_inches="tight",
         )

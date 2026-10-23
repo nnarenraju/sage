@@ -26,77 +26,51 @@ Usage
 from __future__ import annotations
 
 import math
+import os
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-from sage.data.waveform.multiband_grid import (
-    multibanding_grid,
-    _inspiral_df_coefficient,
-    _MTSUN_SI,
-)
+from sage.data.waveform.multiband_grid import multibanding_grid
 
 
-def _n_coarse_fast(f_min, f_max, delta_f, m1, m2, res_test=1e-3):
+# ── Exact worst-case scan (no approximation) ──────────────────────────────
+#
+# The worst-case scan counts the coarse points of the ACTUAL grid used by the
+# pipeline — ``len(multibanding_grid(...))`` — for every mass pair.  There is no
+# fast/approximate counter: the ranking is by the exact grid size.  The scan is
+# distributed row-by-row across processes (identical exact math, just parallel).
+#
+# Worker state is populated once per process by the initializer so the m2 axis
+# and constants are not re-pickled for every task.
+_SCAN_CTX: dict = {}
+
+
+def _init_scan_worker(m2_axis, f_min, f_max, delta_f, res_test):
+    _SCAN_CTX["m2_axis"] = np.asarray(m2_axis, dtype=np.float64)
+    _SCAN_CTX["const"]   = (float(f_min), float(f_max), float(delta_f), float(res_test))
+
+
+def _scan_row(m1):
     """
-    Count coarse grid points without allocating the frequency array.
+    Exact worst case over all valid m2 (<= m1) for a fixed m1 — one grid row.
 
-    Mirrors the LAL inspiral-only path of multibanding_grid().  Used for the
-    worst-case prior scan because it is ~37× faster than the full function.
-
-    NOTE: overcounts by a fixed amount (~79 for the BNS defaults) because the
-    last sub-band is not truncated at f_max here.  This does NOT affect the
-    ranking — the mass pair that maximises this count is identical to the one
-    that maximises the full multibanding_grid() count, so the scan result is
-    correct.  The winner is always cross-validated with the full function.
+    Returns ``(best_n_coarse, m1, best_m2, n_evaluated)``.  Uses the real
+    ``multibanding_grid()`` for every pair, so ``best_n_coarse`` is exact.
     """
-    M_total_s = (m1 + m2) * _MTSUN_SI
-    eta       = m1 * m2 / (m1 + m2) ** 2
-    eval_dmf  = delta_f * M_total_s
-    mf_start  = f_min   * M_total_s
-    mf_fmax   = f_max   * M_total_s
-
-    mf_meco = max(1.0 / (6.0 ** 1.5 * math.pi), mf_fmax * 4.0)
-
-    df_power      = 11.0 / 6.0
-    df_coefficient = _inspiral_df_coefficient(eta, 2, res_test)
-    freq_factor    = 2.0 ** (1.0 / df_power)
-
-    df0_orig = df_coefficient * mf_start ** df_power
-    df_ratio = df0_orig / eval_dmf
-
-    total = 0
-    if df_ratio < 1.0:
-        f_end_grid0        = (eval_dmf / df_coefficient) ** (1.0 / df_power)
-        n_pre_i            = math.ceil((f_end_grid0 - mf_start) / eval_dmf)
-        total             += n_pre_i + 1
-        f_start_insp_deref = mf_start + eval_dmf * n_pre_i
-        df0_current        = 2.0 * df0_orig
-        pre_done           = True
-    else:
-        f_start_insp_deref = mf_start
-        df0_current        = df0_orig
-        pre_done           = False
-
-    n_derefine = math.ceil(
-        math.log(mf_meco / f_start_insp_deref) / math.log(freq_factor)
-    )
-
-    next_f_start = f_start_insp_deref
-    for index in range(n_derefine):
-        mydf = (eval_dmf if df0_current < eval_dmf
-                else eval_dmf * int(math.floor(df0_current / eval_dmf)))
-        f_start_here = next_f_start + mydf if (index > 0 or pre_done) else next_f_start
-        f_end_here   = f_start_here * freq_factor
-        n_i          = math.ceil((f_end_here - f_start_here) / mydf)
-        x_max        = f_start_here + mydf * n_i
-        total       += n_i + 1
-        df0_current *= 2.0
-        next_f_start = x_max
-        if next_f_start >= mf_fmax:
-            break
-    return total
+    m2_axis = _SCAN_CTX["m2_axis"]
+    f_min, f_max, delta_f, res_test = _SCAN_CTX["const"]
+    best_n, best_m2, n_eval = 0, 0.0, 0
+    for m2 in m2_axis:                       # m2_axis is sorted ascending
+        if m2 > m1 + 1e-9:
+            break                            # all further m2 violate m1 >= m2
+        n = len(multibanding_grid(f_min, f_max, delta_f, m1, m2, res_test=res_test))
+        n_eval += 1
+        if n > best_n:
+            best_n, best_m2 = n, float(m2)
+    return best_n, float(m1), best_m2, n_eval
 
 
 class MultibandSelector(nn.Module):
@@ -168,14 +142,30 @@ class MultibandSelector(nn.Module):
         cls,
         param_sampler,
         data_cfg,
-        n_grid:   int   = 500,
-        res_test: float = 1e-3,
-        device:   str   = "cpu",
-        verbose:  bool  = True,
+        min_samples: int   = 10_000_000,
+        n_grid:      int | None = None,
+        res_test:    float = 1e-3,
+        device:      str   = "cpu",
+        n_workers:   int | None = None,
+        verbose:     bool  = True,
     ) -> "MultibandSelector":
         """
         Scan the mass prior at runtime and build a selector for the worst-case
         (m1, m2) — the pair that requires the most coarse grid points.
+
+        The worst-case multibanding config is NOT the lowest chirp mass: LAL's
+        multibanding places coarse points from a per-binary chirp-time envelope,
+        and the pair that needs the finest grid (largest ``N_coarse``) lies at a
+        prior-dependent band that must be found by search.  This method searches
+        the full ``(m1, m2)`` support — the only parameters the grid depends on —
+        at a resolution fine enough to evaluate at least ``min_samples`` valid
+        mass pairs, then uses the winner's grid for the whole prior (a grid that
+        is exact for the hardest binary is exact for all easier ones).
+
+        EXACT: every pair is counted with the real ``multibanding_grid()`` (the
+        same grid the pipeline uses) — there is no fast/approximate counter.  The
+        scan is distributed across processes; the math is identical to a serial
+        exact scan, only faster.
 
         Parameters
         ----------
@@ -184,14 +174,21 @@ class MultibandSelector(nn.Module):
             bounds are read from ``param_sampler.bounds``.
         data_cfg : BaseDataConfig
             Sage data configuration (f_min, f_max, delta_f).
-        n_grid : int
-            Number of points per axis for the coarse scan grid.  500×500
-            (default) covers ~125k valid pairs in a few seconds using the
-            fast counter.  Increase for finer resolution.
+        min_samples : int
+            Minimum number of valid (m1 >= m2) mass pairs to evaluate in the
+            scan (default 10,000,000).  The per-axis resolution ``n_grid`` is
+            derived from this so the guarantee holds for any prior shape.
+        n_grid : int or None
+            Explicit per-axis grid resolution.  When None (default), it is
+            derived from ``min_samples``.  Pass an int only to override.
         res_test : float
             LAL multibanding accuracy threshold (default 1e-3).
         device : str
             Torch device for the index tensor.
+        n_workers : int or None
+            Number of worker processes for the exact scan.  None (default) uses
+            all available CPUs; 1 runs serially in-process.  The result does not
+            depend on this — only the wall-clock time.
         verbose : bool
             Print scan progress and result.
 
@@ -214,38 +211,61 @@ class MultibandSelector(nn.Module):
         f_max   = float(data_cfg.sample_rate / 2.0)
         delta_f = float(data_cfg.padded_delta_f)
 
+        # ── Derive per-axis resolution from the sample-count target ────────
+        # The m1 >= m2 constraint censors ~half of a square grid when the m1
+        # and m2 ranges coincide (the conservative worst case), so target
+        # 2*min_samples total grid points to guarantee >= min_samples valid.
+        if n_grid is None:
+            n_grid = int(math.ceil(math.sqrt(2.0 * float(min_samples))))
+
+        if n_workers is None:
+            n_workers = os.cpu_count() or 1
+
         if verbose:
             print(
-                f"[MultibandSelector] Scanning prior "
+                f"[MultibandSelector] EXACT scan of prior "
                 f"m1∈[{m1_min},{m1_max}] m2∈[{m2_min},{m2_max}] M☉  "
-                f"({n_grid}×{n_grid} grid, resTest={res_test}) ..."
+                f"({n_grid}×{n_grid} grid, Δm≈{(m1_max-m1_min)/max(n_grid-1,1):.2e} M☉, "
+                f"target≥{min_samples:,} valid pairs, resTest={res_test}, "
+                f"{n_workers} worker(s)) ..."
             )
 
-        # ── Fast scan to rank mass pairs ──────────────────────────────────
-        m1_arr = np.linspace(m1_min, m1_max, n_grid)
-        m2_arr = np.linspace(m2_min, m2_max, n_grid)
+        # ── Exact scan: count the REAL multibanding grid for every pair ────
+        # Distributed row-by-row (fixed m1, all valid m2) across processes.
+        # Every count is len(multibanding_grid(...)) — no approximation.
+        m1_axis = np.linspace(m1_min, m1_max, n_grid)
+        m2_axis = np.linspace(m2_min, m2_max, n_grid)
 
-        best_n_fast, best_m1, best_m2 = 0, m1_min, m2_min
-        for m1 in m1_arr:
-            for m2 in m2_arr:
-                if m2 > m1 + 1e-9:   # enforce m1 >= m2 (mass_order constraint)
-                    continue
-                n = _n_coarse_fast(f_min, f_max, delta_f, m1, m2, res_test)
-                if n > best_n_fast:
-                    best_n_fast, best_m1, best_m2 = n, m1, m2
+        n_valid = 0
+        best_n, best_m1, best_m2 = 0, m1_min, m2_min
 
-        # ── Validate the winner with the exact function ───────────────────
-        # The fast counter overcounts the last sub-band but preserves ranking.
-        # Use the full multibanding_grid() on the winner to get the true count.
-        true_n = len(multibanding_grid(f_min, f_max, delta_f, best_m1, best_m2,
-                                       res_test=res_test))
+        if n_workers <= 1:
+            _init_scan_worker(m2_axis, f_min, f_max, delta_f, res_test)
+            for m1 in m1_axis:
+                bn, bm1, bm2, ne = _scan_row(float(m1))
+                n_valid += ne
+                if bn > best_n:
+                    best_n, best_m1, best_m2 = bn, bm1, bm2
+        else:
+            with ProcessPoolExecutor(
+                max_workers=n_workers,
+                initializer=_init_scan_worker,
+                initargs=(m2_axis, f_min, f_max, delta_f, res_test),
+            ) as ex:
+                for bn, bm1, bm2, ne in ex.map(
+                    _scan_row, [float(x) for x in m1_axis], chunksize=16
+                ):
+                    n_valid += ne
+                    if bn > best_n:
+                        best_n, best_m1, best_m2 = bn, bm1, bm2
 
         if verbose:
+            n_uniform = int(round((f_max - f_min) / delta_f)) + 1
             print(
-                f"[MultibandSelector] Worst-case: m1={best_m1:.4f} M☉  "
-                f"m2={best_m2:.4f} M☉  →  N_coarse={true_n:,}  "
-                f"({int(round((f_max-f_min)/delta_f))+1}/{true_n} = "
-                f"{(int(round((f_max-f_min)/delta_f))+1)/true_n:.1f}× compression)"
+                f"[MultibandSelector] Scanned {n_valid:,} valid mass pairs (EXACT).  "
+                f"Worst-case: m1={best_m1:.5f} M☉  "
+                f"m2={best_m2:.5f} M☉  →  N_coarse={best_n:,}  "
+                f"({n_uniform}/{best_n} = {n_uniform/best_n:.1f}× compression)"
             )
 
         return cls.from_prior(

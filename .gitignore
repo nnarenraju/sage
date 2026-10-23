@@ -163,20 +163,30 @@ source/baseline/data/psds/
 !requirements.txt
 !docs/_static/display_picture.jpg
 
-# Automatically added files
-sage/architectures/zoo/*ba.py
-sage/benchmark/evomcts
+# Third-party reference sources (LALSuite C, kept locally for the waveform ports)
 sage/data/waveform/lalsim_src
 
-# Experimental runs
-runs/o3b_dummy_1
-runs/test
-runs/*s
-runs/o3b/*_smoke
-
-# New network modules
-sage/architecture/network/attentive_*.py
-sage/architecture/network/[!_]*/
-
-# New integration tests
-tests/*_complex.py
+# runs/: track only what launches a run; variant configs, analysis scripts,
+# data and outputs stay local (checkpoints/logs live on /work/nagarajan/sage_runs)
+runs/**
+!runs/*/
+!runs/README.md
+!runs/build_fiducial.py
+!runs/launch_asds.sh
+!runs/asd_memguard.sh
+!runs/*/config.py
+!runs/*/config_base.py
+!runs/*/config_HL.py
+!runs/*/config_HLV.py
+!runs/*/config_HV.py
+!runs/*/config_LV.py
+!runs/*/dataset.py
+!runs/*/gwconfig.yaml
+!runs/*/train.py
+!runs/*/train_hard.py
+!runs/*/submit.sh
+!runs/*/start.sh
+scratch
+# Reference PDFs for sage/search (fetched locally, not redistributed)
+docs/references/*.pdf
+references/*.pdf

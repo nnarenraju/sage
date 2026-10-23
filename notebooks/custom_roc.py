@@ -10,7 +10,7 @@ Created on Tue Mar 21 15:03:57 2023
 __author__      = nnarenraju
 __copyright__   = Copyright 2022, ProjectName
 __credits__     = nnarenraju
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __version__     = 0.0.1
 __maintainer__  = nnarenraju
 __email__       = nnarenraju@gmail.com

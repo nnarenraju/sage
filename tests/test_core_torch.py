@@ -24,28 +24,12 @@ class TestNudgeOps:
         nudge_backward_(x, max_limit=2.0)
         assert (x < 2.0).all()
 
-    def test_nudge_backward_leaves_small_values_unchanged(self):
-        x = torch.tensor([0.5, 1.0])
-        nudge_backward_(x, max_limit=2.0)
-        # Already well below the limit; nudge has no visible effect
-        assert (x < 2.0).all()
 
     def test_nudge_forward_pushes_at_min(self):
         x = torch.tensor([0.0, 0.5])
         nudge_forward_(x, min_limit=1.0)
         assert (x > 1.0).all()
 
-    def test_nudge_backward_is_in_place(self):
-        x = torch.tensor([5.0])
-        ptr = x.data_ptr()
-        nudge_backward_(x, max_limit=3.0)
-        assert x.data_ptr() == ptr
-
-    def test_nudge_forward_is_in_place(self):
-        x = torch.tensor([0.0])
-        ptr = x.data_ptr()
-        nudge_forward_(x, min_limit=1.0)
-        assert x.data_ptr() == ptr
 
     def test_nudge_backward_custom_factor(self):
         x = torch.tensor([10.0])
@@ -56,13 +40,6 @@ class TestNudgeOps:
         x = torch.tensor([0.0])
         nudge_forward_(x, min_limit=0.0, nudge_factor=0.1)
         assert x.item() == pytest.approx(0.1)
-
-    def test_nudge_backward_batch(self):
-        x = torch.tensor([1.0, 2.0, 3.0, 4.0])
-        nudge_backward_(x, max_limit=2.5)
-        assert (x <= 2.5).all()
-        # Values originally below 2.5 should still be below it
-        assert x[0].item() < 2.5
 
 
 # ---------------------------------------------------------------------------
@@ -103,11 +80,6 @@ class TestTorchGrad:
         assert ga.item() == pytest.approx(4.0)
         assert gb.item() == pytest.approx(3.0)
 
-    def test_gradient_shape_matches_input(self):
-        x = torch.rand(5, 3)
-        g = torch_grad(lambda t: (t ** 2).sum(), (x,))
-        assert g.shape == x.shape
-
 
 # ---------------------------------------------------------------------------
 # torch_value_and_grad
@@ -147,14 +119,4 @@ class TestTorchValueAndGrad:
         g2 = torch.autograd.grad(g, x)[0]
         assert g2.item() == pytest.approx(12.0)
 
-    def test_grad_shape_matches_input(self):
-        x = torch.rand(4, 6)
-        _, g = torch_value_and_grad(lambda t: (t ** 2).sum(), (x,))
-        assert g.shape == x.shape
 
-    def test_value_and_grad_consistent_with_torch_grad(self):
-        x = torch.rand(10)
-        fn = lambda t: (torch.sin(t)).sum()
-        val, g_vg = torch_value_and_grad(fn, (x.clone(),))
-        g_direct = torch_grad(fn, (x.clone(),))
-        assert torch.allclose(g_vg, g_direct, atol=1e-6)

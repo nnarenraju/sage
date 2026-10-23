@@ -16,11 +16,15 @@
 #   sage_run    "<cmd>"      run <cmd> now, in the foreground, env activated
 #   sage_submit "<cmd>"      SLURM: sbatch --wrap;  local: nohup background
 #                            opts: --job NAME  --time T  --gres G  --mem M  --cpus N
+#                                  --nodelist NODES
 # ===========================================================================
 
 # Resolve this file's location -> repo root (.../sage/sage/utils/run_base.sh).
-_SAGE_RUN_BASE="${BASH_SOURCE[0]}"
-_SAGE_UTILS_DIR="$(cd "$(dirname "$_SAGE_RUN_BASE")" && pwd)"
+_SAGE_UTILS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Re-anchor to an ABSOLUTE path: sage_submit embeds this into the sbatch --wrap
+# and the job re-sources it from the compute node's cwd, where a relative path
+# (e.g. when this file was sourced as "sage/utils/run_base.sh") would not exist.
+_SAGE_RUN_BASE="$_SAGE_UTILS_DIR/run_base.sh"
 SAGE_REPO_ROOT="${SAGE_REPO_ROOT:-$(cd "$_SAGE_UTILS_DIR/../.." && pwd)}"
 
 # Pick a python to drive the (stdlib-only) server registry bridge. Any python
@@ -97,6 +101,18 @@ sage_submit() {
 
     local job="sage" part="$SAGE_PARTITION" qos="$SAGE_QOS"
     local time="$SAGE_TIME" gres="$SAGE_GRES" mem="$SAGE_MEM" cpus="$SAGE_CPUS"
+    # Campaign-level pins, settable from the environment so the per-run submit.sh
+    # needs no edit; the matching --opts override them per call.
+    #
+    # Prefer SAGE_GRES_OVERRIDE (a typed GRES, e.g. gpu:h100_80gb:1) over
+    # SAGE_NODELIST to confine a campaign to a subset of the GPUs. A typed GRES is
+    # a consumable the scheduler must actually reserve, so surplus jobs queue.
+    # --nodelist only constrains PLACEMENT: asking for more GPUs than the named
+    # node has was observed to place the extra jobs on it with GRES=(null) -- they
+    # start with no GPU and die on cuda:0. Use --nodelist only when the node's GPU
+    # count is not the binding constraint.
+    local dep="" parsable="" array="" nodelist="${SAGE_NODELIST:-}"
+    [ -n "${SAGE_GRES_OVERRIDE:-}" ] && gres="$SAGE_GRES_OVERRIDE"
     while [ "$#" -gt 1 ]; do
         case "$1" in
             --job)       job="$2";  shift 2 ;;
@@ -107,6 +123,20 @@ sage_submit() {
             --gres)      gres="$2"; [ "$gres" = "none" ] && gres=""; shift 2 ;;
             --mem)       mem="$2";  shift 2 ;;
             --cpus)      cpus="$2"; shift 2 ;;
+            # Restrict the job to specific node(s), e.g. --nodelist hgc01. Used to
+            # partition the GPU pool between concurrent campaigns so one does not
+            # crowd the other off the machine.
+            --nodelist)  nodelist="$2"; shift 2 ;;
+            # SLURM job dependency, e.g. "afterany:12345" (used by chaining).
+            --dependency) dep="$2"; shift 2 ;;
+            # SLURM array spec, e.g. "1-6%6" -- six tasks, six at a time. Used to
+            # spread one stage across several GPUs. Without this the flag fell
+            # through to the command position, so the array spec was submitted as
+            # the job and every task exited 127.
+            --array)     array="$2"; shift 2 ;;
+            # Print ONLY the job id on stdout (for capturing in a chain driver);
+            # all human-readable log lines go to stderr.
+            --parsable)  parsable=1; shift ;;
             *) break ;;
         esac
     done
@@ -118,16 +148,23 @@ sage_submit() {
         # submitting environment (SAGE_SERVER etc.) is also inherited by SLURM.
         local wrap="export SAGE_SERVER='$SAGE_SERVER'; source '$_SAGE_RUN_BASE'; sage_activate; cd '$PWD'; $cmd"
         local args=(--job-name="$job" --chdir="$PWD" --nodes=1 --ntasks=1
-                    --cpus-per-task="$cpus" --output="%x-%j.out"
-                    --mail-type=ALL)
+                    --cpus-per-task="$cpus" --output="%x-%j.out")
         [ -n "$part" ]           && args+=(--partition="$part")
         [ -n "$qos" ]            && args+=(--qos="$qos")
         [ -n "$gres" ]           && args+=(--gres="$gres")
         [ -n "$time" ]           && args+=(--time="$time")
         [ -n "$mem" ]            && args+=(--mem="$mem")
+        [ -n "$dep" ]            && args+=(--dependency="$dep")
+        [ -n "$array" ]          && args+=(--array="$array")
+        [ -n "$nodelist" ]       && args+=(--nodelist="$nodelist")
+        [ -n "$parsable" ]       && args+=(--parsable)
         [ -n "$SAGE_ACCOUNT" ]   && args+=(--account="$SAGE_ACCOUNT")
-        [ -n "$SAGE_MAIL" ]      && args+=(--mail-user="$SAGE_MAIL")
-        echo "[run_base] sbatch ${args[*]}"
+        # Mail is off unless SAGE_MAIL is set. A campaign is submitted as chains and
+        # arrays -- one background run is 252 slide groups -- so --mail-type=ALL on every
+        # one of them is hundreds of messages for work nobody reads a message about.
+        [ -n "$SAGE_MAIL" ] && args+=(--mail-user="$SAGE_MAIL" --mail-type="${SAGE_MAIL_TYPE:-FAIL}")
+        # stderr, so `--parsable` leaves only the job id on stdout.
+        echo "[run_base] sbatch ${args[*]}" >&2
         sbatch "${args[@]}" --wrap "$wrap"
     else
         local log="$job-$(date +%Y%m%d-%H%M%S).out"
@@ -135,6 +172,39 @@ sage_submit() {
         nohup bash -c "$cmd" >"$log" 2>&1 &
         echo "[run_base] pid $! ; tail -f $log"
     fi
+}
+
+# Submit <n> copies of a command as an `afterany` dependency chain, so a long
+# run spans the scheduler's per-job wall limit as N back-to-back segments.
+#   sage_submit_chain 4 --time 2-00:00 --job o3b-hard "<cmd>"
+# Each segment starts only after the previous one ENDS (wall-kill or normal
+# exit) and resumes from its own checkpoint; once training completes, trailing
+# segments resume, find no epochs left, and exit in seconds. Only ONE segment
+# ever runs at a time (serial chain) -> holds at most one GPU. Echoes the last
+# segment's job id.
+#
+# Honours SAGE_AFTER for the FIRST segment, so a chain can be hung off something
+# already queued -- two dataprep builds sharing one GWOSC connection want to run
+# back to back rather than at once, and 16 concurrent fetch workers measure 8 MB/s
+# against 21 at 8, with a third of transfers abandoned. Without this the helper
+# could chain its own segments but not be chained onto anything, which `sage_submit`
+# has always supported through `after_opts`.
+sage_submit_chain() {
+    local n="$1"; shift
+    case "$n" in ''|*[!0-9]*) echo "[run_base] sage_submit_chain: first arg must be N>=1" >&2; return 2 ;; esac
+    [ "$n" -ge 1 ] || { echo "[run_base] sage_submit_chain: N must be >=1" >&2; return 2; }
+    local prev="${SAGE_AFTER:-}" jid dep_arg
+    [ -n "$prev" ] && echo "[run_base] chain starts after job $prev" >&2
+    local i
+    for i in $(seq 1 "$n"); do
+        dep_arg=()
+        [ -n "$prev" ] && dep_arg=(--dependency "afterany:$prev")
+        jid="$(sage_submit --parsable "${dep_arg[@]}" "$@")" || return 1
+        jid="${jid%%;*}"        # strip ";cluster" if the site returns it
+        echo "[run_base] chain segment $i/$n -> job $jid${prev:+ (afterany:$prev)}" >&2
+        prev="$jid"
+    done
+    echo "$prev"
 }
 
 # Load the server now so sourcing scripts can read $SAGE_* immediately.

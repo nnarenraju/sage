@@ -9,7 +9,7 @@ Created on 2026-03-21 18:13:05
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -27,7 +27,6 @@ from .calibration_curve import plot_calibration_curve
 from .correllation_matrix import plot_correlation_matrix
 from .cumulative_volume import plot_cumulative_volume
 from .density2d import plot_2d_param_density
-from .consistency_diagnostics import plot_consistency_diagnostics
 from .diagonal_compare import plot_diagonal_compare
 from .efficiency_curves import plot_efficiency_curves
 from .efficiency2d import plot_2d_efficiency
@@ -35,7 +34,11 @@ from .epoch_separation import plot_separation_over_epochs
 from .gradient_uncertainty import plot_uncertainty_vs_gradient
 from .joint_cdfs import plot_joint_cdfs
 from .learning_parameter_prior import plot_learning_parameter_prior
-from .loss_curves import plot_loss_curves
+from .loss_curves import (
+    plot_loss_curves,
+    validated_epochs,
+    best_validated_epoch,
+)
 from .output_gradient import plot_output_gradient
 from .output_param_heatmap import plot_output_vs_param_heatmap
 from .output_trajectory import plot_output_trajectory_over_epochs
@@ -54,7 +57,6 @@ from .manager import ValidationPlotManager
 
 __all__ = [
     "ValidationPlotManager",
-    "plot_consistency_diagnostics",
     "plot_calibration_curve",
     "plot_correlation_matrix",
     "plot_cumulative_volume",
@@ -79,4 +81,9 @@ __all__ = [
     "plot_prediction_raw",
     "plot_roc_curve",
     "plot_confidence_vs_snr",
+    # was implemented and tested but never exported
+    "plot_pp_calibration",
+    # helpers for the pre-allocated losses.h5 layout
+    "validated_epochs",
+    "best_validated_epoch",
 ]

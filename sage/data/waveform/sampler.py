@@ -9,7 +9,7 @@ Created on 2026-02-16 10:35:39
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -40,6 +40,7 @@ from typing import Any, Dict
 # LOCAL
 from sage.data.waveform.distributions import (
     angular,
+    cosmology,
     powerlaw,
     sky,
     uniform,
@@ -49,10 +50,8 @@ from sage.core.math import Normalise
 from sage.core.config import get_cfg, get_data_cfg
 
 # Conversions
-from sage.data.waveform.conversions import (
-    mass1_mass2_to_mchirp_q,
-    chirp_distance_to_distance,
-)
+from sage.core.conversions import distance_from_chirp_distance_mchirp
+from sage.data.waveform.conversions import mass1_mass2_to_mchirp_q
 
 # Transformation constraints
 import sage.data.waveform.constraints as constraints
@@ -139,30 +138,6 @@ class NamedConstraint:
         self.params = params or []
 
 
-class ExpressionConstraint:
-    """
-    Constraint defined as an inline Python expression string.
-
-    The expression is evaluated with ``eval`` against the current parameter
-    dictionary, so any parameter name can be referenced directly.
-
-    Parameters
-    ----------
-    expr : str
-        A Python expression that evaluates to ``True`` (accept) or ``False``
-        (reject) given the current parameter dict.  Example:
-        ``"mass1 >= mass2"``.
-    """
-
-    def __init__(self, expr: str):
-        self.name = "custom"
-        self.expr = expr
-
-    def check(self, params):
-        """Return ``True`` if the parameter dict satisfies the stored expression."""
-        return eval(self.expr, {}, params)
-
-
 class DistributionSampler(torch.nn.Module):
     """
     Batched waveform-parameter sampler driven by a YAML prior configuration.
@@ -174,8 +149,8 @@ class DistributionSampler(torch.nn.Module):
     * **waveform_transforms** — deterministic reparametrisations applied
       after sampling (spherical → Cartesian spins, m1/m2 → mchirp/q,
       chirp-distance → luminosity distance).
-    * **constraints** — named or custom Boolean filters applied via
-      rejection sampling (e.g. ``mass_order`` to enforce m1 ≥ m2).
+    * **constraints** — named deterministic projections that mutate params in
+      place (e.g. ``mass_order`` to enforce m1 ≥ m2).
 
     After construction, :meth:`_compile_batch_standardiser` must be called
     once to pre-compute mean and standard deviation buffers used by
@@ -263,7 +238,6 @@ class DistributionSampler(torch.nn.Module):
         self.param_names = sorted(self.param_names)
         self.param_index = {name: i for i, name in enumerate(self.param_names)}
         self.num_params = len(self.param_names)
-        self.req_idx = None
 
         self._build_distributions()
         self._build_transforms()
@@ -291,6 +265,12 @@ class DistributionSampler(torch.nn.Module):
             )
         if name == "uniform_radius":
             return powerlaw.UniformRadius(args["min"], args["max"])
+        if name == "uniform_comoving_volume":
+            return cosmology.UniformComovingVolume(
+                args["min"],
+                args["max"],
+                cosmology=args.get("cosmology", "Planck18"),
+            )
         raise ValueError(f"Unknown distribution {name}")
 
     def _build_distributions(self):
@@ -317,18 +297,16 @@ class DistributionSampler(torch.nn.Module):
 
         for c in self.cfg.get("constraints", []):
 
-            # deterministic projection constraint
+            # deterministic projection constraint (the only supported kind: it
+            # mutates params in place, e.g. mass ordering). Rejection-style
+            # constraints are not implemented in the vectorised fixed-batch flow.
             if c["name"] in constraints._NAMED_CONSTRAINTS:
                 self.constraints.append(NamedConstraint(c["name"], c.get("params")))
-
-            # rejection constraint
-            elif c["name"] == "custom":
-                self.constraints.append(ExpressionConstraint(c["expr"]))
 
             else:
                 raise ValueError(
                     f"Unknown constraint type '{c['name']}'. "
-                    f"Available named: {constraints._NAMED_CONSTRAINTS} or 'custom'"
+                    f"Available named: {constraints._NAMED_CONSTRAINTS}"
                 )
 
     def _sample_base(self, N):
@@ -401,7 +379,7 @@ class DistributionSampler(torch.nn.Module):
                 cd = params[:, self.param_index["chirp_distance"]]
                 mc = params[:, self.param_index["mchirp"]]
 
-                d = chirp_distance_to_distance(cd, mc)
+                d = distance_from_chirp_distance_mchirp(cd, mc)
 
                 params[:, self.param_index["distance"]] = d
 
@@ -449,6 +427,9 @@ class DistributionSampler(torch.nn.Module):
                 bounds[pname] = (pcfg["min"], pcfg["max"])
 
             elif name == "uniform_radius":
+                bounds[pname] = (pcfg["min"], pcfg["max"])
+
+            elif name == "uniform_comoving_volume":
                 bounds[pname] = (pcfg["min"], pcfg["max"])
 
             elif name == "uniform_angle":
@@ -509,8 +490,8 @@ class DistributionSampler(torch.nn.Module):
             mc_min, mc_max = bounds["mchirp"]
 
             # distance from chirp distance
-            d_min = chirp_distance_to_distance(cd_min, mc_min)
-            d_max = chirp_distance_to_distance(cd_max, mc_max)
+            d_min = distance_from_chirp_distance_mchirp(cd_min, mc_min)
+            d_max = distance_from_chirp_distance_mchirp(cd_max, mc_max)
 
             bounds["distance"] = (d_min, d_max)
 
@@ -567,8 +548,7 @@ class DistributionSampler(torch.nn.Module):
 
     def _compile_batch_normaliser(self):
         """
-        Precompute tensors used for fast batch normalisation,
-        adjusted for the sliced parameter subset (self.req_idx).
+        Precompute tensors used for fast batch normalisation.
         """
 
         selected_names = self.sage_cfg.do_point_estimate

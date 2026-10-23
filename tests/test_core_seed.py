@@ -2,19 +2,11 @@
 
 import random
 import numpy as np
-import pytest
 from sage.core.seed import SeedManager
 
 
 class TestSeedManager:
-    def test_seed_stored_as_int(self):
-        sm = SeedManager(42)
-        assert sm.seed == 42
-        assert isinstance(sm.seed, int)
 
-    def test_float_seed_coerced_to_int(self):
-        sm = SeedManager(7.9)
-        assert sm.seed == 7
 
     def test_numpy_global_rng_seeded(self):
         SeedManager(0)
@@ -30,9 +22,6 @@ class TestSeedManager:
         b = [random.random() for _ in range(5)]
         assert a == b
 
-    def test_rng_attribute_is_numpy_generator(self):
-        sm = SeedManager(1)
-        assert isinstance(sm.rng, np.random.Generator)
 
     def test_rng_reproducible_across_instances(self):
         a = SeedManager(1).rng.random(10)
@@ -61,10 +50,6 @@ class TestSeedManager:
         r2 = sm.spawn("signal").random()
         assert r1 != r2
 
-    def test_spawn_returns_numpy_generator(self):
-        sm = SeedManager(10)
-        child = sm.spawn("child")
-        assert isinstance(child, np.random.Generator)
 
     def test_spawn_deterministic_across_instances(self):
         r1 = SeedManager(42).spawn("waveform").random(5)

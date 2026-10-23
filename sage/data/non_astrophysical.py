@@ -2,8 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Non-astrophysical (decoherent) two-detector sample generation for training the
-multi-detector consistency heads to reject incoherent coincidences.
+Non-astrophysical (decoherent) two-detector sample generation: hard background
+pairs that look time-coincident but are physically inconsistent, used to teach a
+detection network that coincidence alone is not detection.
+
+.. note::
+   This module is currently PARKED — it is not imported or wired into any
+   training callback on the live path. It is kept as a ready-to-use background
+   augmentation for a future run; see :class:`NonAstrophysicalMasker`.
 
 A real astrophysical signal is **coherent** across detectors: a shared source
 gives a shared chirp mass and arrival times within the light-travel time. The

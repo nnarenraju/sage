@@ -10,7 +10,7 @@ Created on Fri Jan 28 19:08:44 2022
 __author__      = nnarenraju
 __copyright__   = Copyright 2021, Sage
 __credits__     = nnarenraju
-__license__     = MIT Licence
+__license__     = GPL-3.0-or-later
 __version__     = 0.0.1
 __maintainer__  = nnarenraju
 __email__       = nnarenraju@gmail.com
@@ -126,6 +126,67 @@ class BCEWithPEregLoss(nn.Module):
         return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
 
 
+class BCEWithPEmseLoss(nn.Module):
+    """
+    Year-old parameter-estimation loss: BCE + pure-MSE regression.
+
+    Identical to :class:`BCEWithPEregLoss` EXCEPT the regression term is plain MSE
+    (not smooth_l1/Huber) and is NOT re-weighted by the predicted signal
+    probability -- i.e. exactly the ``norm_tc + norm_mchirp`` MSE the year-old
+    SageNet run minimised.
+
+    Why this matters: MSE's gradient is error-proportional (``2*error``), so it
+    drives the point estimates down hard in the first epoch; PE converges almost
+    immediately and stops competing with the BCE for the shared trunk. Huber caps
+    the regression gradient at +/-1, which under-drives PE, leaving it hot
+    (~35% of the total loss) and a persistent competitor for many epochs -> slower
+    BCE convergence. Kept as a separate module so :class:`BCEWithPEregLoss` stays
+    branch-free.
+
+        L = BCE(ranking_stat, class_target)
+          + regression_weight * MSE_signal(point_estimates, pe_targets)
+
+    Parameters
+    ----------
+    regression_weight : float
+        Relative weight of the regression term vs. BCE.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(3,)``
+        Stacked ``[total_loss, bce_loss, reg_loss]``.
+    """
+
+    def __init__(self, regression_weight: float = 1.0):
+        super().__init__()
+
+        self.regression_weight = regression_weight
+
+        cfg = get_cfg()
+        self.num_components = len(cfg.do_point_estimate) + 1
+
+    def forward(self, outputs, targets):
+        ranking_stat, point_estimates = outputs
+
+        class_target = targets[:, -1].to(ranking_stat.dtype)
+        ranking_stat = ranking_stat.reshape(-1)
+
+        bce_loss = F.binary_cross_entropy_with_logits(ranking_stat, class_target)
+
+        pe_targets = targets[:, :-1]
+        signal_mask = targets[:, -1].unsqueeze(1)
+
+        # Pure MSE on signal samples only: no Huber, no p_signal weighting --
+        # the year-old regression term exactly.
+        reg = F.mse_loss(point_estimates, pe_targets, reduction="none")
+        reg = reg * signal_mask
+        reg_loss = reg.sum() / signal_mask.sum().clamp_min(1)
+
+        total_loss = bce_loss + self.regression_weight * reg_loss
+
+        return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
+
+
 class BCEWithPEsigmaLoss(nn.Module):
     """
     Combined BCE + Heteroscedastic Regression Loss.
@@ -150,7 +211,7 @@ class BCEWithPEsigmaLoss(nn.Module):
         self.regression_weight = regression_weight
         self.coupling_weight = coupling_weight
         # beta-NLL exponent (Seitzer et al. 2022); softplus sigma bounds. These
-        # mirror PerDetHead / ConsistencyNLLLoss so the merged head is NaN-proofed
+        # NaN-proof the merged head (clamp before softplus)
         # the same way: no exp(log_var) blow-up, no overconfident sigma collapse.
         self.beta = float(beta)
         self.sigma_min = float(sigma_min)
@@ -159,7 +220,7 @@ class BCEWithPEsigmaLoss(nn.Module):
         self.eps = eps  # stability for variance
 
     def _sigma(self, raw):
-        """Softplus-parameterised std (same as PerDetHead._sigma): strictly
+        """Softplus-parameterised std: strictly
         positive, floored at ``sigma_min``, capped at ``sigma_max``. No ``exp`` so
         a momentarily large logit cannot collapse sigma toward zero and blow up
         the ``(mu - y)^2 / sigma^2`` term."""
@@ -223,8 +284,8 @@ class BCEWithPEsigmaLoss(nn.Module):
 
         # beta-NLL (Seitzer et al. 2022): scale each term by stop_grad(sigma^2beta).
         # Tempers the ~1/sigma^2 gradient that lets a briefly-overconfident head
-        # explode, without biasing the optimum. Same treatment as the consistency
-        # loss; this is the fix that stops pe_reg diverging.
+        # explode, without biasing the optimum. This is the fix that stops pe_reg
+        # diverging.
         if self.beta > 0.0:
             nll = nll * (var**self.beta).detach()
 

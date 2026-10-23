@@ -9,7 +9,7 @@ Created on 2026-03-21 17:20:08
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -27,6 +27,7 @@ Documentation: NULL
 import os
 import matplotlib.pyplot as plt
 from sklearn import metrics
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
@@ -62,7 +63,7 @@ def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
     plt.ylabel("True Positive Rate")
     plt.xlim(right=1)
     plt.ylim(top=1)
-    plt.title(f"ROC Curve at {epoch}")
+    plt.title(f"ROC Curve at {_etitle(epoch)}")
     plt.legend()
     plt.grid(True, which="both", ls=":")
 

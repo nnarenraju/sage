@@ -1490,9 +1490,21 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         with h5py.File(snrs_path, "r") as fp:
             snrs = fp["snr"][()]
     else:
-        from sage.presets.data_configs import Default as data_cfg
-        from sage.utils.get_testdata_snr import get_snrs
-        snrs = get_snrs(args.injection_file, data_cfg, dataset_dir)
+        # The on-the-fly fallback used to build a data config from
+        # sage.presets.data_configs and call sage.utils.get_testdata_snr.
+        # Both were written against the pre-refactor config schema (fields such
+        # as signal_low_freq_cutoff, ifo_combination, parent_dir) that no
+        # current config provides, so this path has been non-functional for
+        # some time; presets was removed in favour of rebuilding it from the
+        # run configs. Fail with something actionable instead of an ImportError.
+        raise FileNotFoundError(
+            f"Injection SNRs not found at {snrs_path}.\n"
+            "Pre-computing them is currently required: the on-the-fly fallback "
+            "depended on the old sage.presets config schema and no longer "
+            "works. Generate snr.hdf alongside the injection file (a dataset "
+            "'snr' of one network SNR per injection, ordered as in "
+            f"{args.injection_file}) and re-run."
+        )
 
     # Find indices contained in foreground
     print("\nRunning Testing Phase Evaluator")

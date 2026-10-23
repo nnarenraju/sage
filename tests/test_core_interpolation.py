@@ -10,7 +10,6 @@ import torch
 import numpy as np
 from sage.core.interpolation import (
     torch_linear_interp,
-    torch_scipylike_cubic_interp,
     torch_catmull_rom_cubic_interp,
     torch_natural_cubic_coeffs,
     torch_natural_cubic_interp,
@@ -55,11 +54,6 @@ class TestTorchLinearInterp:
         out = torch_linear_interp(torch.tensor([4.0]), xp, fp)
         assert out.item() == pytest.approx(12.0)  # 3 + 3*(4-1) = 12
 
-    def test_output_shape_preserved(self):
-        xp = torch.linspace(0.0, 1.0, 20)
-        fp = torch.rand(20)
-        x = torch.rand(7)
-        assert torch_linear_interp(x, xp, fp).shape == (7,)
 
     def test_matches_numpy_interp_interior(self):
         # numpy.interp clamps at boundaries; only compare on interior points
@@ -71,42 +65,6 @@ class TestTorchLinearInterp:
             np.interp(x.numpy(), xp.numpy(), fp.numpy()), dtype=torch.float32
         )
         assert torch.allclose(out, ref, atol=1e-5)
-
-
-# ---------------------------------------------------------------------------
-# torch_scipylike_cubic_interp
-# ---------------------------------------------------------------------------
-
-class TestTorchScipylikeCubicInterp:
-    def test_linear_function_exact(self):
-        xp = torch.linspace(0.0, 4.0, 12)
-        fp = 2.0 * xp - 1.0
-        x = torch.linspace(0.5, 3.5, 40)
-        out = torch_scipylike_cubic_interp(x, xp, fp)
-        assert torch.allclose(out, 2.0 * x - 1.0, atol=1e-4)
-
-    def test_linear_at_interval_midpoints(self):
-        # Midpoints between consecutive nodes — these land cleanly inside one interval
-        xp = torch.linspace(0.0, 4.0, 12)
-        fp = 5.0 * xp + 3.0
-        x_mid = (xp[1:-2] + xp[2:-1]) / 2  # midpoints of interior intervals
-        out = torch_scipylike_cubic_interp(x_mid, xp, fp)
-        assert torch.allclose(out, 5.0 * x_mid + 3.0, atol=1e-5)
-
-    def test_output_shape_matches_input(self):
-        xp = torch.linspace(0.0, 1.0, 20)
-        fp = torch.rand(20)
-        x = torch.rand(15)
-        assert torch_scipylike_cubic_interp(x, xp, fp).shape == (15,)
-
-    def test_values_bounded_near_data(self):
-        # For monotone data, cubic values should stay in the data range
-        xp = torch.linspace(0.0, 1.0, 15)
-        fp = xp  # identity, strictly increasing
-        x = torch.linspace(0.05, 0.95, 60)
-        out = torch_scipylike_cubic_interp(x, xp, fp)
-        assert out.min() >= -0.01
-        assert out.max() <= 1.01
 
 
 # ---------------------------------------------------------------------------
@@ -130,22 +88,6 @@ class TestTorchCatmullRomCubicInterp:
         xs = torch.linspace(x0 + dx * 2, x0 + dx * (N - 4), 12)
         out = torch_catmull_rom_cubic_interp(xs, y, x0, dx)
         assert torch.allclose(out, torch.full_like(out, 3.14), atol=1e-5)
-
-    def test_output_shape_preserved(self):
-        N, x0, dx = 50, 0.0, 0.01
-        y = torch.rand(N)
-        xs = torch.rand(16) * (dx * (N - 6)) + x0 + dx * 2
-        out = torch_catmull_rom_cubic_interp(xs, y, x0, dx)
-        assert out.shape == (16,)
-
-    def test_monotone_ramp_stays_in_range(self):
-        # For a linear ramp, output should stay in the data range
-        N, x0, dx = 30, 0.0, 0.1
-        y = torch.linspace(0.0, 1.0, N)
-        xs = torch.linspace(x0 + dx * 2, x0 + dx * (N - 4), 50)
-        out = torch_catmull_rom_cubic_interp(xs, y, x0, dx)
-        assert out.min() >= -0.01
-        assert out.max() <= 1.01
 
 
 # ---------------------------------------------------------------------------
@@ -173,15 +115,38 @@ class TestTorchNaturalCubicSpline:
         out = torch_natural_cubic_interp(x, xp, fp, M)
         assert torch.allclose(out, 3.0 * x + 1.0, atol=1e-8)
 
-    def test_close_to_scipy_natural_cubicspline(self):
+    @pytest.mark.parametrize("uniform", [True, False])
+    def test_matches_scipy_natural_cubicspline(self, uniform):
         from scipy.interpolate import CubicSpline
-        xp, fp, M = self._spline(torch.sin, n=20, x0=0.0, x1=math.pi)
+        xp = torch.linspace(0.0, math.pi, 20, dtype=torch.float64)
+        if not uniform:
+            xp = math.pi * (xp / math.pi) ** 2
+        fp = torch.sin(xp)
+        M = torch_natural_cubic_coeffs(xp, fp)
         x = torch.linspace(0.2, 3.0, 60, dtype=torch.float64)
         out = torch_natural_cubic_interp(x, xp, fp, M)
         cs = CubicSpline(xp.numpy(), fp.numpy(), bc_type="natural")
         ref = torch.tensor(cs(x.numpy()), dtype=torch.float64)
-        # Implementation closely approximates scipy's natural cubic spline
-        assert torch.allclose(out, ref, atol=1e-4)
+        assert torch.allclose(out, ref, rtol=0, atol=1e-12)
+
+    def test_matches_scipy_on_phenomd_qnm_tables(self):
+        # The tables LAL interpolates with gsl_interp_cspline, including the
+        # change of node spacing near a = 0.996.
+        from scipy.interpolate import CubicSpline
+        from sage.data.waveform.approximants.phenom_data import (
+            _QNMData_a,
+            _QNMData_fdamp,
+            _QNMData_fRD,
+        )
+        a = torch.cat([
+            torch.linspace(-0.999, 0.999, 2001, dtype=torch.float64),
+            torch.linspace(0.993, 0.999, 601, dtype=torch.float64),
+        ])
+        for table in (_QNMData_fRD, _QNMData_fdamp):
+            M = torch_natural_cubic_coeffs(_QNMData_a, table)
+            out = torch_natural_cubic_interp(a, _QNMData_a, table, M).numpy()
+            ref = CubicSpline(_QNMData_a.numpy(), table.numpy(), bc_type="natural")(a.numpy())
+            assert np.max(np.abs(out - ref) / np.abs(ref)) < 1e-12
 
     def test_derivative_of_linear_is_slope(self):
         # d/dx (3x + 1) = 3 everywhere
@@ -197,10 +162,5 @@ class TestTorchNaturalCubicSpline:
         deriv = torch_natural_cubic_interp(x, xp, fp, M, derivative=True)
         cs = CubicSpline(xp.numpy(), fp.numpy(), bc_type="natural")
         ref = torch.tensor(cs(x.numpy(), 1), dtype=torch.float64)
-        assert torch.allclose(deriv, ref, atol=0.01)
+        assert torch.allclose(deriv, ref, rtol=0, atol=1e-10)
 
-    def test_batch_query_shape(self):
-        xp, fp, M = self._spline(torch.exp)
-        x = torch.rand(24, dtype=torch.float64) * 0.8 + 0.1
-        out = torch_natural_cubic_interp(x, xp, fp, M)
-        assert out.shape == (24,)

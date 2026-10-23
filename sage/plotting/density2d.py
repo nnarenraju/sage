@@ -9,7 +9,7 @@ Created on 2026-03-21 17:47:18
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -27,6 +27,7 @@ Documentation: NULL
 # Packages
 import os
 import matplotlib.pyplot as plt
+from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def plot_2d_param_density(
@@ -80,14 +81,14 @@ def plot_2d_param_density(
     plt.colorbar(label="Sum of ranking statistic")
     plt.xlabel(param_x)
     plt.ylabel(param_y)
-    plt.title(f"Ranking Statistic Density - Epoch {epoch}")
+    plt.title(f"Ranking Statistic Density - {_etitle(epoch)}")
 
     if save and export_dir is not None:
-        outdir = os.path.join(export_dir, "2D_PARAM_DENSITY")
+        outdir = os.path.join(export_dir, "2D_PARAM_DENSITY", _etag(epoch))
         os.makedirs(outdir, exist_ok=True)
         plt.savefig(
             os.path.join(
-                outdir, f"{param_x}_{param_y}_ranking_density_epoch_{epoch}.png"
+                outdir, f"{param_x}_{param_y}_ranking_density_{_etag(epoch)}.png"
             ),
             dpi=150,
             bbox_inches="tight",

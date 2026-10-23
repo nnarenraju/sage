@@ -244,8 +244,10 @@ tensor is returned. Three transforms are available:
      - Computes chirp mass :math:`\mathcal{M}_c` and mass ratio :math:`q = m_1/m_2`
        from the component masses. Added to the output tensor as ``mchirp`` and ``q``.
    * - ``chirp_distance_to_distance``
-     - Converts chirp distance to luminosity distance using the chirp mass:
-       :math:`d_L = d_\text{chirp} \cdot \left(\mathcal{M}_c / 1.2\,M_\odot\right)^{5/6}`.
+     - Converts chirp distance to luminosity distance with PyCBC's convention
+       (``pycbc.conversions.distance_from_chirp_distance_mchirp``):
+       :math:`d_L = d_\text{chirp} \cdot \left(\mathcal{M}_c / (2^{-1/5} \cdot 1.4\,M_\odot)\right)^{5/6}`,
+       the reference being the chirp mass of a 1.4 + 1.4 :math:`M_\odot` binary.
        Added as ``distance``.
 
 Transforms that are not needed can simply be omitted from the ``waveform_transforms``

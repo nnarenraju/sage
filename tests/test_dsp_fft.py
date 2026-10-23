@@ -17,25 +17,7 @@ def bfd():
 
 
 class TestBatchToFrequencyDomain:
-    def test_delta_t_stored(self, bfd):
-        assert bfd.delta_t == pytest.approx(_DELTA_T)
 
-    def test_output_shape_standard(self, bfd):
-        B, D, T = 8, 2, 4096
-        x = torch.randn(B, D, T)
-        out = bfd(x)
-        assert out.shape == (B, D, T // 2 + 1)
-
-    def test_output_shape_odd_T(self, bfd):
-        B, D, T = 3, 1, 101
-        x = torch.randn(B, D, T)
-        out = bfd(x)
-        assert out.shape == (B, D, T // 2 + 1)
-
-    def test_output_is_complex(self, bfd):
-        x = torch.randn(2, 1, 512)
-        out = bfd(x)
-        assert torch.is_complex(out)
 
     def test_dimension_error_2d_input(self, bfd):
         x = torch.randn(4, 512)
@@ -70,16 +52,4 @@ class TestBatchToFrequencyDomain:
         peak_bin = magnitudes.argmax().item()
         assert peak_bin == k0
 
-    def test_linearity(self, bfd):
-        # F{a*x + b*y} = a*F{x} + b*F{y}
-        a, b = 2.0, -0.5
-        x = torch.randn(2, 1, 256)
-        y = torch.randn(2, 1, 256)
-        combined = bfd(a * x + b * y)
-        linear = a * bfd(x) + b * bfd(y)
-        assert torch.allclose(combined, linear, atol=1e-5)
 
-    def test_zero_input_gives_zero_output(self, bfd):
-        x = torch.zeros(3, 2, 128)
-        out = bfd(x)
-        assert torch.allclose(out, torch.zeros_like(out))

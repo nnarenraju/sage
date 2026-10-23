@@ -184,3 +184,27 @@ class GWBatch:
 
     def __repr__(self) -> str:
         return f"GWBatch(shape={tuple(self.data.shape)}, state={self.state})"
+
+
+# ── Network channel-layout contract ───────────────────────────────────────────
+
+
+def blocked_detector_channel_indices(d, num_detectors, channels_per_det=2):
+    """
+    Channel indices for detector ``d`` in the BLOCKED real-channel layout that
+    :meth:`GWBatch.to_network_input` produces for FD grids.
+
+    ``to_network_input`` returns ``torch.cat([data.real, data.imag], dim=1)``, so
+    for ``D`` detectors the channels are grouped by part (all reals, then all
+    imags) — NOT interleaved per detector::
+
+        [det0_re, det1_re, ..., det(D-1)_re, det0_im, det1_im, ..., det(D-1)_im]
+
+    Detector ``d``'s real part is therefore at channel ``d`` and its imaginary
+    part at ``D + d`` (in general, part ``k`` at ``k*D + d``).  A network that
+    instead slices ``[d*C : (d+1)*C]`` (interleaved) scrambles detectors for
+    ``D >= 2`` — stream 0 becomes all reals, stream 1 all imags.  Any consumer of
+    ``to_network_input`` that needs per-detector channels must gather them via
+    this function.
+    """
+    return [d + k * num_detectors for k in range(channels_per_det)]

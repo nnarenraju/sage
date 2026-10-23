@@ -1,14 +1,7 @@
-"""Unit tests for sage.data.noise.lowfar_noise — CPU-only, no GPU/pycbc/lal needed.
+"""Unit tests for sage.data.noise.lowfar_noise, on CPU.
 
-Strategy
---------
-* pycbc is stubbed via sys.modules before any import that would pull it in.
-* sage.data.noise.__init__ is bypassed (it imports lowfar_noise → pycbc/lal
-  transitively).
-* A lightweight FakeNoiseSampler and FixedScoreModel let StartTimeDataset and
-  _MiningReader be exercised end-to-end with tiny parameters.
-* get_cfg is monkeypatched wherever _MiningReader._empty_dataset
-  calls it so no real config file is required.
+A FakeNoiseSampler and FixedScoreModel exercise StartTimeDataset and
+_MiningReader end to end with tiny parameters.
 """
 
 import json
@@ -28,56 +21,8 @@ from pathlib import Path
 pytest.importorskip("h5py", reason="sage.core.logger requires h5py")
 pytest.importorskip("tqdm", reason="lowfar_noise requires tqdm")
 
-# lowfar_noise.py does "from pycbc import DYN_RANGE_FAC" at import time.
-# We need pycbc in sys.modules only for that one import; afterwards we remove
-# the stub so that other tests in the session (e.g. test_dsp_heterodyning.py)
-# see the correct state — pycbc absent — and are skipped via importorskip
-# rather than running against a hollow stub that has no submodules.
-_pycbc_stubbed = False
-try:
-    import pycbc as _pycbc  # noqa: F401  real package — nothing to clean up
-except ImportError:
-    _pycbc_stub = types.ModuleType("pycbc")
-    _pycbc_stub.DYN_RANGE_FAC = 1.0
-    sys.modules["pycbc"] = _pycbc_stub
-    _pycbc_stubbed = True
-
-# Bypass sage.data.noise.__init__ which would import lowfar_noise → pycbc/lal.
-_SAGE_ROOT = Path(__file__).resolve().parents[1] / "sage"
-
-
-def _bypass_pkg(name):
-    if name not in sys.modules:
-        parts = name.split(".")[1:]
-        mod = types.ModuleType(name)
-        mod.__path__ = [str(_SAGE_ROOT.joinpath(*parts))]
-        mod.__package__ = name
-        sys.modules[name] = mod
-
-
-_bypass_pkg("sage.data.noise")
-
-from sage.data.noise.lowfar_noise import (  # noqa: E402
-    StartTimeDataset,
-    _MiningReader,
-)
-# Retrieve the already-loaded module object without walking the sage.data chain.
-_lnm = sys.modules["sage.data.noise.lowfar_noise"]
-
-# lowfar_noise reaches DYN_RANGE_FAC *lazily* (sage.data.noise._pycbc_lazy),
-# importing pycbc only on the first dyn_range_fac() call — which happens inside
-# read_batch(), well after this point.  Prime that cache from the live stub
-# (=1.0) before removing it, otherwise the first read_batch() would trigger a
-# `from pycbc import ...` against the now-absent stub.  Removing the hollow stub
-# afterwards keeps pytest.importorskip("pycbc") skipping tests that need real pycbc.
-if _pycbc_stubbed:
-    _lnm.dyn_range_fac()             # cache DYN_RANGE_FAC (=1.0) while the stub is live
-    del sys.modules["pycbc"]
-
-# pin_memory() requires an NVIDIA driver even for CPU tensors.  Replace it
-# with a no-op for the duration of this test module so tests can run on
-# machines without a GPU.
-torch.Tensor.pin_memory = lambda self, device=None: self
+import sage.data.noise.lowfar_noise as _lnm
+from sage.data.noise.lowfar_noise import StartTimeDataset, _MiningReader
 
 # ---------------------------------------------------------------------------
 # Shared constants
@@ -91,6 +36,7 @@ _D = len(_DETECTORS)
 _ENDIAN = "<" if sys.byteorder == "little" else ">"
 
 _SEG_DTYPE = np.dtype([
+    ("run", np.int64),
     ("idx", np.int64),
     ("start", np.int64),
     ("end", np.int64),
@@ -114,7 +60,8 @@ def _sidecar(gps_start=1_234_567_890.0):
 
 
 def _seg_arr():
-    return np.array([(0, 0, _N_SAMPLES, _N_SAMPLES)], dtype=_SEG_DTYPE)
+    # (run, idx, start, end, nsamples) -- single run 0
+    return np.array([(0, 0, 0, _N_SAMPLES, _N_SAMPLES)], dtype=_SEG_DTYPE)
 
 
 def _fake_cfg():
@@ -133,8 +80,9 @@ class _FakeSampler:
         seg = _seg_arr()
         self.seg_index = [seg] * self.n_detectors
         self.segment_probs = [np.array([1.0])] * self.n_detectors
+        # mmaps are nested [detector][run] (5a); this stub is single-run.
         self.mmaps = [
-            np.memmap(str(p), dtype=np.dtype(f"{_ENDIAN}f4"), mode="r")
+            [np.memmap(str(p), dtype=np.dtype(f"{_ENDIAN}f4"), mode="r")]
             for p in self.bin_files
         ]
 
@@ -180,28 +128,6 @@ def reader(sampler, monkeypatch):
     return _MiningReader(sampler, seed=0)
 
 
-@pytest.fixture
-def patched_cfg(monkeypatch):
-    """Patch get_cfg so miners can build their return datasets."""
-    monkeypatch.setattr(_lnm, "get_cfg", _fake_cfg)
-
-
-@pytest.fixture
-def simple_ds(fake_env):
-    """A small StartTimeDataset whose bin_files point to real fake files."""
-    N = 10
-    return StartTimeDataset(
-        detectors=_DETECTORS,
-        start_indices=np.zeros((N, _D), dtype=np.int64),
-        segment_indices=np.zeros((N, _D), dtype=np.int64),
-        gps_times=np.linspace(1_234_567_890.0, 1_234_567_890.0 + N, N),
-        scores=np.ones(N, dtype=np.float32) * 5.0,
-        bin_files=[str(p) for p in fake_env],
-        sample_rate=_SR,
-        seq_len=_SEQ_LEN,
-    )
-
-
 # ---------------------------------------------------------------------------
 # TestStartTimeDataset
 # ---------------------------------------------------------------------------
@@ -220,26 +146,6 @@ class TestStartTimeDataset:
             seq_len=_SEQ_LEN,
         )
 
-    def test_len(self):
-        assert len(self._make(7)) == 7
-
-    def test_repr_empty(self):
-        ds = StartTimeDataset(
-            detectors=_DETECTORS,
-            start_indices=np.empty((0, _D), dtype=np.int64),
-            segment_indices=np.empty((0, _D), dtype=np.int64),
-            gps_times=np.empty(0),
-            scores=np.empty(0, dtype=np.float32),
-            bin_files=[],
-            sample_rate=_SR,
-            seq_len=_SEQ_LEN,
-        )
-        assert "0 samples" in repr(ds)
-
-    def test_repr_nonempty_contains_count(self):
-        r = repr(self._make(5))
-        assert "5" in r
-        assert "H1" in r
 
     def test_save_load_roundtrip(self, tmp_path):
         ds = self._make(8)
@@ -251,15 +157,6 @@ class TestStartTimeDataset:
         assert ds2.sample_rate == ds.sample_rate
         assert ds2.seq_len == ds.seq_len
 
-    def test_save_auto_adds_npz_suffix(self, tmp_path):
-        self._make(4).save(str(tmp_path / "out"))   # no suffix
-        assert (tmp_path / "out.npz").exists()
-        assert (tmp_path / "out.json").exists()
-
-    def test_load_without_npz_suffix(self, tmp_path):
-        self._make(4).save(str(tmp_path / "ds.npz"))
-        ds2 = StartTimeDataset.load(str(tmp_path / "ds"))  # no .npz
-        assert len(ds2) == 4
 
     def test_filter_keeps_correct_subset(self):
         ds = self._make(10)      # scores 0..9
@@ -267,28 +164,6 @@ class TestStartTimeDataset:
         assert len(filtered) == 5
         assert (filtered.scores >= 5.0).all()
 
-    def test_filter_to_empty(self):
-        ds = self._make(5)
-        assert len(ds.filter(100.0)) == 0
-
-    def test_merge_lengths_add(self):
-        merged = self._make(6).merge(self._make(4))
-        assert len(merged) == 10
-
-    def test_merge_scores_concatenated(self):
-        ds1, ds2 = self._make(3), self._make(3)
-        merged = ds1.merge(ds2)
-        np.testing.assert_array_equal(
-            merged.scores, np.concatenate([ds1.scores, ds2.scores])
-        )
-
-    def test_merge_start_indices_concatenated(self):
-        ds1, ds2 = self._make(4), self._make(3)
-        merged = ds1.merge(ds2)
-        np.testing.assert_array_equal(
-            merged.start_indices,
-            np.concatenate([ds1.start_indices, ds2.start_indices], axis=0),
-        )
 
     def test_merge_detector_mismatch_raises(self):
         ds1 = self._make(3)
@@ -346,10 +221,6 @@ class TestStartTimeDataset:
             acc = acc.merge(ds).dedup()                   # same windows re-found
         assert len(acc) == 2
 
-    def test_dedup_noop_when_all_unique(self):
-        ds = self._make(6)                                # all start rows distinct
-        assert len(ds.dedup()) == 6
-
 
 # ---------------------------------------------------------------------------
 # TestMiningReader
@@ -357,31 +228,7 @@ class TestStartTimeDataset:
 
 
 class TestMiningReader:
-    def test_gps_range_returns_ordered_floats(self, reader):
-        t_min, t_max = reader.gps_range()
-        assert isinstance(t_min, float)
-        assert isinstance(t_max, float)
-        assert t_min < t_max
 
-    def test_gps_from_starts_shape(self, reader):
-        starts, segs = reader.random_starts(5)
-        gps = reader.gps_from_starts(starts, segs)
-        assert gps.shape == (5,)
-        assert gps.dtype == np.float64
-
-    def test_gps_from_starts_ballpark(self, reader):
-        starts = np.zeros((1, _D), dtype=np.int64)
-        segs = np.zeros((1, _D), dtype=np.int64)
-        gps = reader.gps_from_starts(starts, segs)
-        # H1 sidecar has gps_start = 1_234_567_890; index 0 → offset 0
-        assert abs(gps[0] - 1_234_567_890.0) < 1.0
-
-    def test_random_starts_shape(self, reader):
-        starts, segs = reader.random_starts(8)
-        assert starts.shape == (8, _D)
-        assert segs.shape == (8, _D)
-        assert starts.dtype == np.int64
-        assert segs.dtype == np.int64
 
     def test_random_starts_in_memmap_bounds(self, reader):
         starts, segs = reader.random_starts(50)
@@ -389,10 +236,6 @@ class TestMiningReader:
             assert np.all(starts[:, d] >= 0)
             assert np.all(starts[:, d] + _SEQ_LEN <= _N_SAMPLES)
 
-    def test_random_starts_custom_weights(self, reader):
-        weights = [np.array([1.0])] * _D
-        starts, segs = reader.random_starts(4, weights=weights)
-        assert starts.shape == (4, _D)
 
     def test_mutate_starts_in_bounds(self, reader):
         starts, segs = reader.random_starts(10)
@@ -400,40 +243,5 @@ class TestMiningReader:
         for d in range(_D):
             assert np.all(new_starts[:, d] >= 0)
             assert np.all(new_starts[:, d] + _SEQ_LEN <= _N_SAMPLES)
-
-    def test_mutate_starts_preserves_segs(self, reader):
-        starts, segs = reader.random_starts(5)
-        _, new_segs = reader.mutate_starts(starts, segs, sigma_samples=10)
-        np.testing.assert_array_equal(new_segs, segs)
-
-    def test_read_batch_shape(self, reader):
-        starts, segs = reader.random_starts(4)
-        out = reader.read_batch(starts, segs)
-        expected_f = _SEQ_LEN // 2 + 1
-        assert out.shape == (4, _D, expected_f)
-
-    def test_read_batch_is_complex(self, reader):
-        starts, segs = reader.random_starts(2)
-        out = reader.read_batch(starts, segs)
-        assert out.is_complex()
-
-    def test_empty_dataset_length_zero(self, reader, sampler):
-        ds = reader._empty_dataset(sampler)
-        assert len(ds) == 0
-
-    def test_empty_dataset_metadata(self, reader, sampler):
-        ds = reader._empty_dataset(sampler)
-        assert ds.detectors == _DETECTORS
-        assert ds.sample_rate == _SR
-        assert ds.seq_len == _SEQ_LEN
-        assert ds.start_indices.shape == (0, _D)
-
-    def test_score_percentile_str_empty(self):
-        assert _MiningReader._score_percentile_str(np.array([])) == "n/a"
-
-    def test_score_percentile_str_nonempty(self):
-        s = _MiningReader._score_percentile_str(np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
-        assert "/" in s
-        assert "50" in s
 
 

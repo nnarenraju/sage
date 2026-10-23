@@ -9,7 +9,7 @@ Created on 2025-12-16 15:02:55
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2025, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -36,7 +36,7 @@ from sage.data.primer.retry import (
     retry_detector,
 )
 
-from sage.data.psd.blackout import (
+from sage.data.asd.blackout import (
     NoBlackout,
     HardRatioBlackout,
     SoftRatioBlackout,
@@ -45,4 +45,4 @@ from sage.data.psd.blackout import (
     SqrtSoftRatioBlackout,
 )
 
-from sage.data.primer.get_psds import EstimatePSD
+from sage.data.primer.get_asds import EstimateASD

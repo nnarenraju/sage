@@ -9,7 +9,7 @@ Created on 2025-11-27 00:24:23
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2025, Sage
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -25,8 +25,6 @@ Documentation: NULL
 
 # Packages
 import torch
-import pathlib
-import matplotlib as mpl
 
 # LOCAL
 from sage.core.logger import get_logger
@@ -34,19 +32,9 @@ from sage.core.logger import get_logger
 # Logging
 logger = get_logger(__name__)
 
-# Directory containing style files (bundled with the core package)
-_STYLES_DIR = pathlib.Path(__file__).parent / "styles"
-
-# Pre-built styles
-AVAILABLE_STYLES = {
-    "classic": "classic.mplstyle",
-    "dark": "dark.mplstyle",
-    "publication": "publication.mplstyle",
-    "minimalist": "minimal.mplstyle",
-}
-
 _CFG = None
 _DATA_CFG = None
+_BAD_SEGMENTS = None
 
 
 def register_configs(cfg, data_cfg):
@@ -106,6 +94,42 @@ def get_data_cfg():
     if _DATA_CFG is None:
         raise RuntimeError("data_cfg has not been registered.")
     return _DATA_CFG
+
+
+def register_bad_segments(segments):
+    """
+    Register the GWOSC bad time of every noise run and detector.
+
+    Called once at the start of a run, right after :func:`register_configs`;
+    noise samplers drop the segments that overlap it.
+
+    Parameters
+    ----------
+    segments : dict
+        ``sage.data.noise.data_quality.bad_segments`` keyed by
+        ``(run, detector)``.
+    """
+    global _BAD_SEGMENTS
+    _BAD_SEGMENTS = segments
+
+
+def get_bad_segments():
+    """
+    Return the registered GWOSC bad time.
+
+    Returns
+    -------
+    dict
+        The segments registered via :func:`register_bad_segments`.
+
+    Raises
+    ------
+    RuntimeError
+        If :func:`register_bad_segments` has not been called yet.
+    """
+    if _BAD_SEGMENTS is None:
+        raise RuntimeError("bad segments have not been registered.")
+    return _BAD_SEGMENTS
 
 
 def inject_configs(cfg_cls, data_cfg_cls):
@@ -168,33 +192,3 @@ class ConfiguredModule(torch.nn.Module):
         self.data_cfg = get_data_cfg()
 
 
-class StyleConfig:
-    """
-    Base configuration class for Sage.
-
-    Users should subclass this and can optionally set:
-        1. mplstyle : str   (e.g., "dark")
-           Upon instantiation, the chosen style is automatically applied.
-
-    """
-
-    # Default if user doesn't specify one
-    mplstyle: str = "classic"
-
-    def __init__(self):
-        self.apply_style()
-
-    def apply_style(self):
-        """Load the user's chosen matplotlib style file."""
-        style_key = self.mplstyle
-
-        if style_key not in AVAILABLE_STYLES:
-            logger.warning(
-                f"Unknown mplstyle '{style_key}'. "
-                f"Available: {list(AVAILABLE_STYLES.keys())}"
-                f"Defaulting to classic."
-            )
-            style_key = "classic"
-
-        style_path = _STYLES_DIR / AVAILABLE_STYLES[style_key]
-        mpl.style.use(str(style_path))

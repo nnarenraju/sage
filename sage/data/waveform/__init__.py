@@ -9,7 +9,7 @@ Created on 2026-01-22 09:45:15
 
 __author__        = Narenraju Nagarajan
 __copyright__     = Copyright 2026, ProjectName
-__license__       = MIT Licence
+__license__       = GPL-3.0-or-later
 __version__       = 0.0.1
 __maintainer__    = Narenraju Nagarajan
 __affiliation__   = N/A
@@ -26,6 +26,8 @@ Documentation: NULL
 from .approximants.IMRPhenomD import IMRPhenomD
 from .approximants.IMRPhenomPv2 import IMRPhenomPv2
 from .approximants.IMRPhenomXAS_NRTidalv3 import IMRPhenomXAS_NRTidalv3
+from .approximants.IMRPhenomXP import IMRPhenomXP
+from .approximants.IMRPhenomXPHM import IMRPhenomXPHM
 from .project import ConstantProjection
 from .sampler import read_from_config
 from .distributions.snr_rescaling import HalfNorm
