@@ -43,9 +43,15 @@ from concurrent.futures import ThreadPoolExecutor
 # pycbc is an optional dependency; pull its dynamic-range constant lazily so the
 # noise package imports without pycbc (see ._pycbc_lazy).
 from ._pycbc_lazy import dyn_range_fac
+from .data_quality import clean, noise_bad_segments
 
 # LOCAL
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.config import (
+    get_bad_segments,
+    get_cfg,
+    get_data_cfg,
+    register_bad_segments,
+)
 
 
 class HDF5SingleNoiseSampler:
@@ -498,6 +504,9 @@ class MemmapNoiseSampler(torch.nn.Module):
                 # shorter-than-seq_len segments get 0 weight.
                 usable = seg_arr["nsamples"] - self.seq_len + 1
                 usable[usable < 0] = 0
+                # Skip segments holding CBC Category 2 or hardware-injection time.
+                key = (meta[0]["observing_run"], meta[0]["detector"])
+                usable[~clean(meta, get_bad_segments()[key])] = 0
                 usable_parts.append(usable)
             pooled = (seg_tables[0] if len(seg_tables) == 1
                       else np.concatenate(seg_tables))
@@ -941,3 +950,20 @@ class MemmapNoiseSampler(torch.nn.Module):
         for mm in getattr(self, "mmaps", []):
             del mm
         self.mmaps = []
+
+
+def register_noise_bad_segments():
+    """
+    Fetch, once, the GWOSC bad time of all training and validation noise.
+
+    Called right after the configs are registered, before any noise sampler
+    is built; the samplers read it from :func:`get_bad_segments`.
+    """
+    cfg, data_cfg = get_cfg(), get_data_cfg()
+    bins = [
+        path
+        for training in (True, False)
+        for run in MemmapNoiseSampler._resolve_runs(cfg, data_cfg, training)
+        for path in run["bins"]
+    ]
+    register_bad_segments(noise_bad_segments(bins))
