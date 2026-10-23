@@ -25,6 +25,38 @@ Documentation: NULL
 
 # Packages
 import numpy as np
+import torch
+
+
+def safe_sqrt(x):
+    """
+    ``sqrt(x)`` with a zero, rather than infinite, derivative at ``x = 0``.
+
+    The square root is evaluated on an operand masked away from zero and
+    the exact-zero entries are restored afterwards, so the returned
+    values are bit-identical to :func:`torch.sqrt` while the backward
+    pass stays finite.  Used where a physically attainable limit sits on
+    the branch point, e.g. the Wigner half-angle coefficients
+    ``sin(beta/2) = sqrt((1 - cos beta) / 2)`` of the precessing
+    waveform models, which reach ``cos beta = 1`` in the aligned-spin
+    limit.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Non-negative operand.
+
+    Returns
+    -------
+    torch.Tensor
+        ``sqrt(x)``, with zero gradient contribution where ``x == 0``.
+    """
+    nonzero = x > 0
+    return torch.where(
+        nonzero,
+        torch.sqrt(torch.where(nonzero, x, torch.ones_like(x))),
+        torch.zeros_like(x),
+    )
 
 
 class Normalise:
