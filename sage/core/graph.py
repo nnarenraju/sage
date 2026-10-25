@@ -5,11 +5,9 @@
 Sage pipeline building blocks.
 
 Preprocessor
-    Sequential chain of preprocessing modules (whitening, multirate, etc.).
-    Passes data through each module in order.  Modules may accept and return
-    either raw tensors (legacy) or :class:`~sage.core.pipeline.GWBatch`
-    objects — ``nn.Sequential`` is type-agnostic, so the chain works in both
-    cases transparently.
+    Ordered chain of preprocessing steps (whitening, min-max normalisation,
+    multirate sampling) on :class:`~sage.core.pipeline.GWBatch` objects. The
+    order is checked when the chain is built.
 
 TorchChoice
     Probabilistic per-sample module selection.  Useful for augmentation or
@@ -22,51 +20,85 @@ import torch.nn as nn
 
 from typing import List
 
+from sage.core.pipeline import GWBatch, PipelineError, ProcessingState
+
 
 class Preprocessor(nn.Module):
     """
-    Sequential preprocessing pipeline for gravitational-wave data.
+    Ordered preprocessing chain for gravitational-wave batches.
 
-    Chains an ordered list of ``nn.Module`` transforms.  Each module receives
-    the output of the previous one.  A typical pipeline for TD training is::
+    Each step declares the state it takes and gives through a static
+    ``next_state(state)``. The chain is walked once at construction, so a step
+    in an impossible position raises before any data flows. For example::
 
-        Preprocessor([FiducialWhitening(), MultirateSampler(...)])
+        Preprocessor(
+            [FiducialWhitening(asds, window, device),
+             MultirateSampler(bins, window, device, dtype)],
+            ProcessingState(Grid.FD_UNIFORM),
+        )
 
-    and for FD_COARSE (worst-case multibanding)::
-
-        Preprocessor([FiducialWhitening()])
-
-    The pipeline is grid-aware when modules return
-    :class:`~sage.core.pipeline.GWBatch` objects (which is the default for
-    updated modules).  The training loop is responsible for wrapping the
-    combined signal+noise tensor in a GWBatch before calling this module,
-    and for extracting ``batch.to_network_input()`` afterward.
+    The caller wraps the input in a GWBatch and takes
+    ``batch.to_network_input()`` from the result.
 
     Parameters
     ----------
     modules : list of nn.Module
-        Ordered preprocessing steps.
+        Ordered preprocessing steps, each with a static ``next_state``.
+    input_state : ProcessingState
+        State of the batches the chain receives.
+
+    Attributes
+    ----------
+    input_state, output_state : ProcessingState
+        States before the first and after the last step.
+
+    Raises
+    ------
+    PipelineError
+        If a step cannot take the state the step before it gives.
+    TypeError
+        If a module does not declare ``next_state``.
     """
 
-    def __init__(self, modules: List[nn.Module]):
+    def __init__(self, modules: List[nn.Module], input_state: ProcessingState):
         super().__init__()
+        state = input_state
+        for index, module in enumerate(modules):
+            where = f"preprocess[{index}] ({type(module).__name__})"
+            if not hasattr(module, "next_state"):
+                raise TypeError(f"{where} does not declare next_state")
+            try:
+                state = module.next_state(state)
+            except PipelineError as error:
+                raise PipelineError(f"{where}: {error}") from None
+        self.input_state = input_state
+        self.output_state = state
         self.seq = nn.Sequential(*modules)
 
-    def forward(self, x):
+    def forward(self, batch: GWBatch) -> GWBatch:
         """
-        Run the full preprocessing pipeline.
+        Run the chain.
 
         Parameters
         ----------
-        x : torch.Tensor or GWBatch
-            Input data.  Shape and type depend on the first module.
+        batch : GWBatch
+            Batch in ``input_state``.
 
         Returns
         -------
-        torch.Tensor or GWBatch
-            Preprocessed data.  Type matches whatever the last module returns.
+        GWBatch
+            Batch in ``output_state``.
+
+        Raises
+        ------
+        PipelineError
+            If the batch is not in ``input_state``.
         """
-        return self.seq(x)
+        if batch.state != self.input_state:
+            raise PipelineError(
+                f"preprocessor built for {self.input_state}, got a batch in {batch.state}"
+            )
+        return self.seq(batch)
 
 
 class TorchChoice(nn.Module):

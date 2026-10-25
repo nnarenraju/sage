@@ -27,6 +27,7 @@ Documentation:
 """
 
 # Packages
+import numpy as np
 import torch
 
 
@@ -85,12 +86,15 @@ def inverse_spectrum_truncation_batch(
     inv_asd = torch.zeros_like(
         psd, dtype=torch.complex64 if dtype == torch.float32 else torch.complex128
     )
-    kmin = 0
-    if low_frequency_cutoff is not None:
+    # As PyCBC: the inverse ASD spans [kmin, N/2), so DC and Nyquist stay 0.
+    kmin = 1
+    if low_frequency_cutoff:
         kmin = int(low_frequency_cutoff / delta_f)
 
     # Fill inverse sqrt PSD
-    inv_asd[..., kmin:F] = 1.0 / torch.sqrt(psd[..., kmin:F].to(inv_asd.real.dtype))
+    inv_asd[..., kmin : N // 2] = 1.0 / torch.sqrt(
+        psd[..., kmin : N // 2].to(inv_asd.real.dtype)
+    )
 
     # Convert to time domain (complex IFFT)
     q = torch.fft.irfft(inv_asd, n=N, dim=-1)
@@ -104,7 +108,8 @@ def inverse_spectrum_truncation_batch(
 
     # Apply Hann taper if requested
     if trunc_method == "hann":
-        window = torch.hann_window(max_filter_len, device=device, dtype=q.dtype)
+        # PyCBC's window: numpy.hanning (symmetric).
+        window = torch.from_numpy(np.hanning(max_filter_len)).to(device=device, dtype=q.dtype)
         # left edge
         q[..., :trunc_start] *= window[-trunc_start:]
         # right edge
@@ -158,12 +163,13 @@ def inverse_spectrum_truncation_single(
     # float64 throughout for precision; device follows the input so this works
     # on GPU too (the batch sibling already does this).
     inv_asd = torch.zeros(F, dtype=torch.complex128, device=psd.device)
-    kmin = 0
-    if low_frequency_cutoff is not None:
+    # As PyCBC: the inverse ASD spans [kmin, N/2), so DC and Nyquist stay 0.
+    kmin = 1
+    if low_frequency_cutoff:
         kmin = int(low_frequency_cutoff / delta_f)
 
     # Fill inverse sqrt PSD
-    inv_asd[kmin:F] = 1.0 / torch.sqrt(psd[kmin:F].to(torch.float64))
+    inv_asd[kmin : N // 2] = 1.0 / torch.sqrt(psd[kmin : N // 2].to(torch.float64))
 
     # IFFT to TD
     q = torch.fft.irfft(inv_asd, n=N)
@@ -176,7 +182,8 @@ def inverse_spectrum_truncation_single(
 
     # Apply Hann taper if requested
     if trunc_method == "hann":
-        window = torch.hann_window(max_filter_len, dtype=q.dtype, device=q.device)
+        # PyCBC's window: numpy.hanning (symmetric).
+        window = torch.from_numpy(np.hanning(max_filter_len)).to(device=q.device, dtype=q.dtype)
         # left edge
         q[:trunc_start] *= window[-trunc_start:]
         # right edge

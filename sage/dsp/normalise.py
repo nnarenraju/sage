@@ -30,36 +30,64 @@ across detectors.
 
 import torch
 
-from sage.core.pipeline import GWBatch
+from sage.core.pipeline import GWBatch, PipelineError, ProcessingState
 
 
 class MinMaxNormalise(torch.nn.Module):
     """Per-(sample, detector) min-max-to-[0,1] then mean-centre, over the time axis.
 
-    Accepts a :class:`GWBatch` (state-tracked path) or a raw ``(B, D, T)`` tensor
-    (legacy path).  Operates only on time-domain data; the processing state is
-    passed through unchanged.
+    Takes time-domain batches only; the processing state is passed through
+    unchanged. ``EPS`` keeps a constant channel at zero instead of 0/0.
     """
 
-    def __init__(self, eps: float = 1e-12):
-        super().__init__()
-        self.eps = eps
+    EPS = 1e-12
+
+    @staticmethod
+    def next_state(state: ProcessingState) -> ProcessingState:
+        """
+        State after min-max normalisation: unchanged.
+
+        Parameters
+        ----------
+        state : ProcessingState
+            State of the incoming batch.
+
+        Returns
+        -------
+        ProcessingState
+            The same state.
+
+        Raises
+        ------
+        PipelineError
+            If the batch is not time-domain data.
+        """
+        if not state.is_td():
+            raise PipelineError(f"Min-max normalisation needs time-domain data, got {state}.")
+        return state
 
     def _apply_td(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, D, T) real. Reduce over the time axis, per (sample, detector).
         mn = x.amin(dim=-1, keepdim=True)
         mx = x.amax(dim=-1, keepdim=True)
-        y = (x - mn) / (mx - mn + self.eps)          # -> [0, 1]
+        y = (x - mn) / (mx - mn + self.EPS)          # -> [0, 1]
         y = y - y.mean(dim=-1, keepdim=True)          # centre -> ~[-0.5, 0.5]
         return y
 
     @torch.no_grad()
-    def forward(self, input):
-        if isinstance(input, GWBatch):
-            return GWBatch(
-                self._apply_td(input.data),
-                input.state,
-                input.freqs,
-                input.coarse_indices,
-            )
-        return self._apply_td(input)
+    def forward(self, batch: GWBatch) -> GWBatch:
+        """
+        Normalise each (sample, detector) channel of a time-domain batch.
+
+        Parameters
+        ----------
+        batch : GWBatch
+            Time-domain strain ``(B, D, T)``.
+
+        Returns
+        -------
+        GWBatch
+            Normalised strain, same state.
+        """
+        new_state = self.next_state(batch.state)
+        return GWBatch(self._apply_td(batch.data), new_state)

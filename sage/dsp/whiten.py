@@ -28,9 +28,8 @@ import numpy as np
 import torch
 
 # LOCAL
-from sage.data.asd import get_fiducial_asds
-from sage.core.config import get_cfg, get_data_cfg
-from sage.core.pipeline import GWBatch, Grid, ProcessingState
+from sage.core.geometry import Window
+from sage.core.pipeline import GWBatch, ProcessingState
 
 
 class FiducialWhitening(torch.nn.Module):
@@ -57,8 +56,12 @@ class FiducialWhitening(torch.nn.Module):
 
     Parameters
     ----------
-    **kwargs
-        Forwarded to ``nn.Module.__init__``.
+    asds : torch.Tensor, shape ``(D, F)``
+        Fiducial ASDs per detector (strain/sqrt(Hz)), on the padded grid.
+    window : Window
+        Window geometry; sets the frequency spacing and the padding removed.
+    device : str or torch.device
+        Device of the whitening kernel.
 
     Attributes
     ----------
@@ -73,47 +76,26 @@ class FiducialWhitening(torch.nn.Module):
         where ``T_valid = seq_len - 2 * corrupted_len``.
     """
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, asds: torch.Tensor, window: Window, device):
+        super().__init__()
 
-        # Setup configs
-        cfg = get_cfg()
-        data_cfg = get_data_cfg()
+        self.device = device
 
-        # Per-detector fiducial ASDs (strain/sqrt(Hz)); see sage.data.asd
-        fiducial_asds = get_fiducial_asds()
-
-        self.device = cfg.device
-
-        self.seq_len = data_cfg.padded_length_in_nsamples
-        self.sample_rate = data_cfg.sample_rate
-        self.corrupted_len = data_cfg.padding_nsamples
+        self.seq_len = window.padded_length_in_samples
+        self.sample_rate = window.sample_rate_in_hz
+        self.corrupted_len = window.padding_in_samples
 
         # Frequency resolution
-        delta_f = data_cfg.sample_rate / self.seq_len
-        self.delta_f = torch.tensor(delta_f).to(device=cfg.device)
+        delta_f = window.delta_f_in_hz
+        self.delta_f = torch.tensor(delta_f).to(device=device)
 
         # Whitening
-        whitening = 2 * self.delta_f / (math.sqrt(0.5) * fiducial_asds)
+        whitening = 2 * self.delta_f / (math.sqrt(0.5) * asds)
         # Final whitening moved to device
-        whitening = whitening.to(device=cfg.device)
+        whitening = whitening.to(device=device)
 
         # Register as buffer for compile friendliness
         self.register_buffer("whitening", whitening)  # (D, F)
-
-        # ~Unit-variance normalisation for the FD_COARSE (stay-in-FD) path.
-        # The TD path gets unit variance from the ``irfft(norm="forward")·Δf`` step
-        # in ``_whiten_to_td``; the FD_COARSE branch skips it, leaving the whitened
-        # data sub-unity.  We restore ~O(1) with a SINGLE analytic constant
-        # (dividing the 2Δf/(√0.5·ASD) whitening by 2·Δf^1.5, i.e. the proper
-        # √2/(ASD·√Δf) form).  It is a shared scalar -- deliberately NOT a
-        # per-detector or data-driven fit: each detector is already divided by its
-        # own ASD, so a common constant preserves the relative sensitivity between
-        # detectors (which carries sky/SNR information); a per-detector fit would
-        # destroy it.  It just happens to land the typical whitened noise near unity
-        # for all detectors.  Only the FD_COARSE (BNS) branch uses it; TD/BBH is
-        # untouched.
-        self._fd_unit_norm = 1.0 / (2.0 * float(delta_f) ** 1.5)
 
     def remove_corrupted(self, x):
         """
@@ -135,38 +117,45 @@ class FiducialWhitening(torch.nn.Module):
         end = T - self.corrupted_len
         return x[..., start:end]
 
-    @torch.no_grad()
-    def forward(self, input):
+    @staticmethod
+    def next_state(state: ProcessingState) -> ProcessingState:
         """
-        Whiten frequency-domain strain.
-
-        Accepts either a raw tensor (legacy path) or a :class:`GWBatch`
-        (state-tracked path).  The behaviour depends on the grid type:
-
-        * **FD_UNIFORM** — whiten → IFFT → strip corrupted edges → return
-          ``GWBatch`` with ``TD_UNIFORM`` state (real float32, shape
-          ``(B, D, T_valid)``).
-        * **FD_COARSE** — whiten at the coarse frequency indices using
-          ``batch.coarse_indices`` → return ``GWBatch`` with ``FD_COARSE``
-          whitened state (complex, shape ``(B, D, N_coarse)``).
-          No IFFT is applied — the non-uniform grid cannot be IFFTed.
-        * **Raw tensor** (no GWBatch) — treated as FD_UNIFORM and the raw
-          whitened TD tensor is returned for backward compatibility.
+        State after whitening.
 
         Parameters
         ----------
-        input : torch.Tensor or GWBatch
-            FD strain ``(B, D, F)`` complex, or a GWBatch wrapping it.
+        state : ProcessingState
+            State of the incoming batch.
 
         Returns
         -------
-        GWBatch or torch.Tensor
-            GWBatch when input is a GWBatch; raw float32 tensor otherwise.
+        ProcessingState
+            Whitened TD_UNIFORM.
+
+        Raises
+        ------
+        PipelineError
+            If the batch is already whitened or not in the frequency domain.
         """
-        if isinstance(input, GWBatch):
-            return self._forward_batch(input)
-        # Legacy raw-tensor path: FD → whitened TD (backward compatible)
-        return self._whiten_to_td(input)
+        return state.after_whiten().after_ifft()
+
+    @torch.no_grad()
+    def forward(self, batch: GWBatch) -> GWBatch:
+        """
+        Whiten frequency-domain strain: whiten, IFFT, strip the corrupted
+        edges; returns ``TD_UNIFORM`` (real float32, shape ``(B, D, T_valid)``).
+
+        Parameters
+        ----------
+        batch : GWBatch
+            FD strain ``(B, D, F)`` complex.
+
+        Returns
+        -------
+        GWBatch
+            Whitened batch.
+        """
+        return self._forward_batch(batch)
 
     def _whiten_to_td(self, X_fd: torch.Tensor) -> torch.Tensor:
         """Whiten FD strain and convert to valid TD float32."""
@@ -175,20 +164,5 @@ class FiducialWhitening(torch.nn.Module):
         return self.remove_corrupted(x_td)
 
     def _forward_batch(self, batch: GWBatch) -> GWBatch:
-        if batch.state.grid == Grid.FD_COARSE:
-            # Non-uniform grid: whiten at the exact coarse indices only.
-            # coarse_indices are integer offsets into the full 0→Nyquist
-            # whitening buffer — guaranteed to be exact integer multiples of
-            # delta_f, so no interpolation is needed.
-            idx = batch.coarse_indices                         # (N_coarse,)
-            whitening_coarse = self.whitening[:, idx]          # (D, N_coarse)
-            # Stay in FD: apply the unit-variance factor the (skipped) IFFT would
-            # have provided, so the coarse data is O(1) like the BBH TD path.
-            X_white = batch.data * whitening_coarse.unsqueeze(0) * self._fd_unit_norm
-            new_state = batch.state.after_whiten()
-            return GWBatch(X_white, new_state, batch.freqs, batch.coarse_indices)
-
-        # FD_UNIFORM: existing whiten → IFFT → strip path, wrapped in GWBatch
-        x_td      = self._whiten_to_td(batch.data)
-        new_state = batch.state.after_whiten().after_ifft()
-        return GWBatch(x_td, new_state, freqs=None, coarse_indices=None)
+        new_state = self.next_state(batch.state)
+        return GWBatch(self._whiten_to_td(batch.data), new_state)

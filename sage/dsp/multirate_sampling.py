@@ -43,8 +43,9 @@ from pycbc.detector import Detector
 from pycbc import pnutils
 
 # LOCAL
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.checks import check_power_of_two
 from sage.core.constants import GM, MSUN
+from sage.core.geometry import Window
 from sage.core.pipeline import GWBatch, ProcessingState
 
 
@@ -74,14 +75,15 @@ class MultirateSampler(torch.nn.Module):
 
     Parameters
     ----------
-    binning_method : DyadicPyramidBinning
-        Pre-computed bin layout (sample index ranges + target sample rate
-        per bin).
-    reflect_pad : int or None
-        Override the automatically computed reflect-padding width.
-        Must be ≥ ``max(2 * max_dec_factor, kernel_len)`` if set manually.
-    **kwargs
-        Forwarded to ``nn.Module.__init__``.
+    bins : np.ndarray, shape ``(N_bins, 3)``
+        Bin layout from :class:`DyadicPyramidBinning`: start sample, end
+        sample and target sample rate per bin.
+    window : Window
+        Window geometry; sets the input sample rate.
+    device : str or torch.device
+        Device of the FIR kernel.
+    dtype : torch.dtype
+        Dtype of the FIR kernel.
 
     Attributes
     ----------
@@ -92,24 +94,14 @@ class MultirateSampler(torch.nn.Module):
 
     Input / Output
     --------------
-    forward(noisy_signals) : (B, D, L) float32 → (B, D, L_compressed) float32
+    forward(batch) : TD_UNIFORM (B, D, L) → TD_MULTIRATE (B, D, L_compressed)
         where ``L_compressed ≪ L`` with all signal information preserved.
     """
 
-    def __init__(
-        self,
-        binning_method,
-        reflect_pad = None,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
+    def __init__(self, bins: np.ndarray, window: Window, device, dtype):
+        super().__init__()
 
-        # Setup configs
-        self.cfg = get_cfg()
-        data_cfg = get_data_cfg()
-
-        # Get bins and fs from binning method
-        self.bins = binning_method.detailed_bins
+        self.bins = bins
         self.num_bins = len(self.bins)
 
         self.register_buffer(
@@ -118,7 +110,7 @@ class MultirateSampler(torch.nn.Module):
             persistent=False,
         )
 
-        self.original_fs = data_cfg.sample_rate
+        self.original_fs = window.sample_rate_in_hz
         self.min_fs = np.min(self.bins[:, 2])
 
         max_dec_factor = int(self.original_fs // self.min_fs)
@@ -131,28 +123,16 @@ class MultirateSampler(torch.nn.Module):
         self.register_buffer("dec_powers", dec_powers, persistent=False)
 
         # Precompute FIR kernels for powers of 2
-        self._build_kernels()
+        self._build_kernels(device, dtype)
         kernel_len = self.kernel.shape[-1]
 
-        # Reflect Padding
-        # Largest FIR kernel size if 2 * dec factor + 1
-        # if max factor = 64 -> kernel size = 129 -> half = 64
-        # So using 128 to 256 is very conservative
-        # NOTE: Adjust if needed (and remove conservative assertion)
-        if reflect_pad is not None:
-            self.pad = reflect_pad
-            assert self.pad >= 2 * max_dec_factor
-            assert self.pad >= kernel_len
-        else:
-            kernel_len = self.kernel.shape[-1]
-
-            group_delay = (kernel_len - 1) // 2
-
-            self.pad = max(
-                4 * kernel_len,
-                2 * max_dec_factor,
-                2 * group_delay * max_dec_factor,
-            )
+        # Reflect padding covering the group delay at the largest decimation
+        group_delay = (kernel_len - 1) // 2
+        self.pad = max(
+            4 * kernel_len,
+            2 * max_dec_factor,
+            2 * group_delay * max_dec_factor,
+        )
 
         # Get sorted decimation factors and remember original order
         self.power_to_bins = self.order_decimations(dec_powers)
@@ -207,22 +187,7 @@ class MultirateSampler(torch.nn.Module):
         return power_to_bins
 
     ## FIR kernel construction ##
-    def _build_legacy_kernels(self):
-        factor = 2
-        kernel_size = 2 * factor + 1
-        t = torch.arange(-factor, factor + 1, dtype=torch.float32)
-
-        h = torch.sinc(t / factor)
-        h = h * torch.hamming_window(kernel_size, periodic=False)
-        h = h / h.sum()
-
-        self.register_buffer(
-            "kernel",
-            h.view(1, 1, -1).to(self.cfg.device, dtype=self.cfg.dtype),
-            persistent=False,
-        )
-
-    def _build_kernels(self):
+    def _build_kernels(self, device, dtype):
 
         # choose taps based on safety target
         # GOOD SAFE VALUES:
@@ -261,7 +226,7 @@ class MultirateSampler(torch.nn.Module):
 
         self.register_buffer(
             "kernel",
-            h.view(1, 1, -1).to(self.cfg.device, dtype=self.cfg.dtype),
+            h.view(1, 1, -1).to(device, dtype=dtype),
             persistent=False,
         )
 
@@ -293,36 +258,45 @@ class MultirateSampler(torch.nn.Module):
 
         return y.reshape(B, D, y.shape[-1])
 
-    @torch.no_grad()
-    def forward(self, input) -> "torch.Tensor | GWBatch":
+    @staticmethod
+    def next_state(state: ProcessingState) -> ProcessingState:
         """
-        Decimate the input signal according to the pre-computed bin layout.
-
-        Accepts either a raw float32 tensor (legacy) or a
-        :class:`~sage.core.pipeline.GWBatch`.  When a GWBatch is provided,
-        the state is validated — the grid must be ``TD_UNIFORM`` (uniform
-        time-domain data produced by :class:`FiducialWhitening`).
-        A ``PipelineError`` is raised immediately if the grid is incompatible
-        (e.g. ``FD_COARSE`` — non-uniform FD data cannot be multirate-sampled).
+        State after multirate sampling.
 
         Parameters
         ----------
-        input : torch.Tensor or GWBatch
-            Whitened time-domain strain ``(B, D, L)`` float32, or a GWBatch
-            wrapping it with ``TD_UNIFORM`` state.
+        state : ProcessingState
+            State of the incoming batch.
 
         Returns
         -------
-        torch.Tensor or GWBatch
-            Multi-rate compressed time series ``(B, D, L_compressed)`` float32.
-            Returns a GWBatch when input is a GWBatch (``TD_MULTIRATE`` state);
-            returns a raw tensor when input is a raw tensor.
+        ProcessingState
+            TD_MULTIRATE.
+
+        Raises
+        ------
+        PipelineError
+            If the batch is not uniform time-domain data.
         """
-        if isinstance(input, GWBatch):
-            new_state = input.state.after_multirate()   # raises PipelineError if invalid
-            compressed = self._decimate(input.data)
-            return GWBatch(compressed, new_state, freqs=None, coarse_indices=None)
-        return self._decimate(input)
+        return state.after_multirate()
+
+    @torch.no_grad()
+    def forward(self, batch: GWBatch) -> GWBatch:
+        """
+        Decimate time-domain strain according to the pre-computed bin layout.
+
+        Parameters
+        ----------
+        batch : GWBatch
+            Whitened ``TD_UNIFORM`` strain ``(B, D, L)``.
+
+        Returns
+        -------
+        GWBatch
+            ``TD_MULTIRATE`` strain ``(B, D, L_compressed)``.
+        """
+        new_state = self.next_state(batch.state)
+        return GWBatch(self._decimate(batch.data), new_state)
 
     def _decimate(self, noisy_signals: torch.Tensor) -> torch.Tensor:
         """Core decimation logic (raw tensor in, raw tensor out)."""
@@ -388,55 +362,72 @@ class DyadicPyramidBinning:
 
     Parameters
     ----------
-    param_bounds : dict
-        Prior parameter bounds dict with keys ``"mass1"`` and ``"tc"``.
-        ``mass1`` sets the lowest / highest mass for the frequency-ladder
-        computation; ``tc`` sets the injection window for the unchanged region.
-    lowest_allowed_fs : float
-        Minimum sample rate (Hz) for any bin.  Must be a power of 2 or
-        will be rounded up to the next power of 2 internally.
-    safe_nyquist_gap : float
-        Extra margin (Hz) added to the required Nyquist frequency when
+    mass_range : tuple of float
+        Lowest and highest component mass of the prior (solar masses). The
+        lowest sets the frequency ladder, the highest the post-merger time.
+    tc_range : tuple of float
+        Earliest and latest merger time in the window (seconds); sets the
+        full-rate region.
+    window : Window
+        Window geometry; sets the sample rate and segment length.
+    low_frequency_cutoff_in_hz : float
+        Signal low-frequency cutoff; the bottom of the frequency ladder.
+    lowest_sample_rate_in_hz : float
+        Minimum sample rate for any bin; a power of two.
+    nyquist_margin_in_hz : float
+        Extra margin added to the required Nyquist frequency when
         choosing a bin's sample rate.  Guards against PN approximation error
         near bin boundaries.
-    min_bin_duration : float
-        Bins shorter than this (seconds) are merged with their higher-fs
-        neighbour to avoid extremely short decimated arrays.
-    verify_nyquist : bool
-        If ``True``, call :meth:`verify_nyquist_condition` immediately after
-        construction and raise if any bin violates the Nyquist limit.
+    min_bin_length_in_s : float
+        Bins shorter than this are merged with their higher-fs neighbour to
+        avoid extremely short decimated arrays.
+    pre_merger_leeway_in_s, post_merger_leeway_in_s : float
+        Extra time kept at the full rate before the earliest and after the
+        latest merger time, on top of the fixed safety margins.
 
     Attributes
     ----------
     detailed_bins : np.ndarray, shape ``(N_bins, 3)``
         Columns: ``[start_sample, end_sample, sample_rate]``.
         Both indices are relative to the start of the full-rate segment.
+
+    Raises
+    ------
+    ValueError
+        If the sample rate or lowest sample rate is not a power of two, or a
+        leeway is negative.
     """
     def __init__(
         self,
-        param_bounds,
-        lowest_allowed_fs=64.0,
-        safe_nyquist_gap=20.0,
-        min_bin_duration=0.05,
-        verify_nyquist=False,
+        mass_range,
+        tc_range,
+        window: Window,
+        low_frequency_cutoff_in_hz: float,
+        lowest_sample_rate_in_hz: float,
+        nyquist_margin_in_hz: float,
+        min_bin_length_in_s: float,
+        pre_merger_leeway_in_s: float,
+        post_merger_leeway_in_s: float,
     ):
-        # Setup configs
-        data_cfg = get_data_cfg()
+        check_power_of_two("data.sample_rate_in_hz", window.sample_rate_in_hz)
+        check_power_of_two("multirate lowest_sample_rate_in_hz", lowest_sample_rate_in_hz)
+        for name, leeway in (
+            ("pre_merger_leeway_in_s", pre_merger_leeway_in_s),
+            ("post_merger_leeway_in_s", post_merger_leeway_in_s),
+        ):
+            if leeway < 0:
+                raise ValueError(f"multirate {name} must be >= 0, got {leeway}")
 
-        self.prior_low_mass, self.prior_high_mass = param_bounds["mass1"]
-        self.signal_low_freq_cutoff = data_cfg.signal_low_frequency_cutoff
-        self.sample_rate = data_cfg.sample_rate
-        self.signal_length = data_cfg.sample_length_in_s
-        self.lowest_allowed_fs = lowest_allowed_fs
-        self.tc_inject_lower, self.tc_inject_upper = param_bounds["tc"]
-        self.safe_nyquist_gap = safe_nyquist_gap
-        self.min_bin_duration = min_bin_duration
-        self.extra_pre_tc_leeway = max(
-            0.0, float(getattr(data_cfg, "multirate_extra_pre_tc_leeway", 0.0))
-        )
-        self.extra_post_tc_leeway = max(
-            0.0, float(getattr(data_cfg, "multirate_extra_post_tc_leeway", 0.0))
-        )
+        self.prior_low_mass, self.prior_high_mass = mass_range
+        self.signal_low_freq_cutoff = low_frequency_cutoff_in_hz
+        self.sample_rate = window.sample_rate_in_hz
+        self.signal_length = window.sample_length_in_s
+        self.lowest_allowed_fs = lowest_sample_rate_in_hz
+        self.tc_inject_lower, self.tc_inject_upper = tc_range
+        self.safe_nyquist_gap = nyquist_margin_in_hz
+        self.min_bin_duration = min_bin_length_in_s
+        self.extra_pre_tc_leeway = pre_merger_leeway_in_s
+        self.extra_post_tc_leeway = post_merger_leeway_in_s
 
         # Precompute tf for lowest mass system
         self.t, self.f = self._get_tf_evolution_before_tc()
@@ -460,10 +451,6 @@ class DyadicPyramidBinning:
 
         # Construct bins immediately
         self.detailed_bins = self._construct_multirate_bins()
-        # Verify Nyquist for all bins
-        # This is an option because sometimes we leave things out deliberately
-        if verify_nyquist:
-            self.verify_nyquist_condition()
 
     def _velocity_to_frequency(self, v, M):
         return v**3 / (M * GM * np.pi)
