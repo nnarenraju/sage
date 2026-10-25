@@ -1,43 +1,22 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+"""Named networks: a frontend per detector feeding a shared backend.
 
-"""
-Filename        : __init__.py
-Description     : Short description of the file
+``MSCNN1D`` frontends have no attention; ``MSCNN1Datt`` frontends have channel
+and temporal attention; ``catt`` marks cross-attention between detectors.
 
-Created on 2026-03-09 11:50:15
-
-__author__        = Narenraju Nagarajan
-__copyright__     = Copyright 2026, ProjectName
-__license__       = GPL-3.0-or-later
-__version__       = 0.0.1
-__maintainer__    = Narenraju Nagarajan
-__affiliation__   = N/A
-__email__         = N/A
-__status__        = ['inProgress', 'Archived', 'inUsage', 'Debugging']
-
-
-GitHub Repository: NULL
-
-Documentation: NULL
-
+Every network declares ``uncertainty`` (estimate heads also give a raw width)
+and ``separable`` (detectors meet only at the backend input, so the search can
+compute each detector's frontend once and reuse it across time slides).
 """
 
-from .mscnn1d_att_resnet2d_cbam import (
-    MSCNN1D_2DResNetCBAM,
-    MSCNN1D_2DResNetCBAM_Heteroscedastic,
-)
-from .mscnn1d_att_resnet3d_cbam import MSCNN1Datt_3DResNetCBAM
-from .mscnn1d_catt_resnet2d_cbam import MSCNN1D_catt_2DResNetCBAM
-from .networks import MSCNN1D_2DResNetCBAM_HardMining
 from .mc_dropout import enable_mc_dropout, mc_predict
+from .mscnn1d_att_catt_resnet2d_cbam import MSCNN1Datt_catt_2DResNetCBAM
+from .mscnn1d_att_resnet2d_cbam import MSCNN1Datt_2DResNetCBAM
+from .mscnn1d_resnet2d_cbam import MSCNN1D_2DResNetCBAM
 
 __all__ = [
     "MSCNN1D_2DResNetCBAM",
-    "MSCNN1Datt_3DResNetCBAM",
-    "MSCNN1D_catt_2DResNetCBAM",
-    "MSCNN1D_2DResNetCBAM_Heteroscedastic",
-    "MSCNN1D_2DResNetCBAM_HardMining",
+    "MSCNN1Datt_2DResNetCBAM",
+    "MSCNN1Datt_catt_2DResNetCBAM",
     "enable_mc_dropout",
     "mc_predict",
 ]

@@ -1,90 +1,67 @@
-"""Tests for the merged classification+PE losses in custom_losses/loss_functions.
+"""Tests for the classification + parameter-estimation losses.
 
-Covers BCEWithPEregLoss (BCE + smooth-L1 PE) and BCEWithPEsigmaLoss
-(BCE + heteroscedastic beta-NLL + coupling), focusing on the NaN-proofing that
-was the point of the sigma loss: softplus sigma floored at sigma_min / capped at
-sigma_max (no exp), so extreme head outputs can't blow up 1/sigma^2. The loss
-only reads cfg.do_point_estimate at construction, so get_cfg is patched — no
-config registration, no GPU. CI-safe.
+The point of ``BCE_PE_Sigma`` is NaN-proofing: softplus widths floored at
+``sigma_min`` and capped at ``sigma_max`` (no exp), so extreme head outputs
+cannot blow up ``1/sigma^2``. Components are named per target.
 """
-
-from unittest.mock import patch
 
 import pytest
 import torch
 
-from sage.architecture.custom_losses.loss_functions import (
-    BCEWithPEregLoss,
-    BCEWithPEsigmaLoss,
-)
+from sage.architecture.custom_losses import BCE_PE_Huber, BCE_PE_MSE, BCE_PE_Sigma, width_to_sigma
 
-NUM_PE = 2                       # do_point_estimate = [tc, mchirp]
-_CFG_PATH = "sage.architecture.custom_losses.loss_functions.get_cfg"
+TARGETS = ["tc", "mchirp"]
 
 
-class _Cfg:
-    do_point_estimate = ["tc", "mchirp"]
-
-
-def _make(cls, **kw):
-    with patch(_CFG_PATH, return_value=_Cfg()):
-        return cls(**kw)
-
-
-def _batch(B=8, sigma_loss=True, labels=None, seed=0):
+def batch(widths=True, labels=None, seed=0):
     g = torch.Generator().manual_seed(seed)
-    rank = torch.randn(B, generator=g)
-    pe_cols = 2 * NUM_PE if sigma_loss else NUM_PE
-    pe = torch.randn(B, pe_cols, generator=g)
+    rank = torch.randn(8, 1, generator=g)
+    estimates = torch.randn(8, 4 if widths else 2, generator=g)
     if labels is None:
-        labels = (torch.arange(B) % 2).float()          # alternating noise/signal
-    targets = torch.cat([torch.randn(B, NUM_PE, generator=g), labels[:, None]], dim=1)
-    return (rank, pe), targets
+        labels = (torch.arange(8) % 2).float()          # alternating noise/signal
+    targets = torch.cat([torch.randn(8, 2, generator=g), labels[:, None]], dim=1)
+    return (rank, estimates), targets
 
 
-# ── BCEWithPEsigmaLoss ─────────────────────────────────────────────────────
-class TestSigmaLoss:
+@pytest.mark.parametrize(
+    "loss, widths",
+    [(BCE_PE_Sigma(TARGETS), True), (BCE_PE_Huber(TARGETS), False), (BCE_PE_MSE(TARGETS), False)],
+)
+def test_components(loss, widths):
+    out = loss(*batch(widths))
+    names = loss.component_names
+    assert len(out) == loss.num_components == len(names)
+    assert names[:4] == ["total", "classification", "regression_tc", "regression_mchirp"]
+    regression = out[2] + out[3]
+    coupling = loss.coupling_weight * out[4] if "coupling" in names else 0.0
+    assert torch.isclose(out[0], out[1] + loss.regression_weight * regression + coupling)
 
 
-    def test_noise_only_reg_is_zero(self):
-        loss = _make(BCEWithPEsigmaLoss)
-        out = loss(*_batch(labels=torch.zeros(8)))      # all noise -> no signal
-        assert out[2].item() == 0.0                     # reg_loss masked to 0
-
-    def test_sigma_bounds(self):
-        loss = _make(BCEWithPEsigmaLoss, sigma_min=1e-3, sigma_max=10.0)
-        raw = torch.tensor([-1e6, -20.0, 0.0, 20.0, 1e6])
-        s = loss._sigma(raw)
-        assert torch.isfinite(s).all()
-        assert (s >= loss.sigma_min - 1e-9).all()
-        assert (s <= loss.sigma_max + 1e-9).all()
-        assert torch.isclose(s[0], torch.tensor(loss.sigma_min), atol=1e-6)   # floored
-        assert torch.isclose(s[-1], torch.tensor(loss.sigma_max), atol=1e-6)  # capped
-
-    @pytest.mark.parametrize("raw_sigma", [-1e6, -50.0, 50.0, 1e6])
-    def test_nan_proof_extreme_sigma(self, raw_sigma):
-        # extreme raw sigma (would be exp-blowup without softplus floor/cap)
-        loss = _make(BCEWithPEsigmaLoss)
-        B = 6
-        rank = torch.randn(B)
-        pe = torch.empty(B, 2 * NUM_PE)
-        pe[:, :NUM_PE] = 1e3                              # large means too
-        pe[:, NUM_PE:] = raw_sigma
-        targets = torch.cat([torch.randn(B, NUM_PE), torch.ones(B, 1)], dim=1)
-        out = loss((rank, pe), targets)
-        assert torch.isfinite(out).all()
+def test_noise_only_regression_is_zero():
+    out = BCE_PE_Sigma(TARGETS)(*batch(labels=torch.zeros(8)))
+    assert (out[2:4] == 0.0).all()
 
 
-# ── BCEWithPEregLoss ───────────────────────────────────────────────────────
-class TestRegLoss:
+def test_confidence_weighting():
+    outputs, targets = batch(widths=False)
+    plain = BCE_PE_MSE(TARGETS, confidence_weighting=False)(outputs, targets)
+    weighted = BCE_PE_MSE(TARGETS, confidence_weighting=True)(outputs, targets)
+    assert torch.equal(plain[1], weighted[1])          # classification unchanged
+    assert (weighted[2:] < plain[2:]).all()            # each term scaled by p < 1
 
 
-    def test_noise_only_reg_is_zero(self):
-        loss = _make(BCEWithPEregLoss)
-        out = loss(*_batch(sigma_loss=False, labels=torch.zeros(8)))
-        assert out[2].item() == 0.0
+def test_sigma_bounds():
+    s = width_to_sigma(torch.tensor([-1e6, -20.0, 0.0, 20.0, 1e6]), 1e-3, 10.0)
+    assert torch.isfinite(s).all()
+    assert torch.isclose(s[0], torch.tensor(1e-3), atol=1e-6)   # floored
+    assert torch.isclose(s[-1], torch.tensor(10.0), atol=1e-6)  # capped
 
 
-if __name__ == "__main__":
-    import sys
-    sys.exit(pytest.main([__file__, "-q"]))
+@pytest.mark.parametrize("raw_width", [-1e6, -50.0, 50.0, 1e6])
+def test_nan_proof_extreme_width(raw_width):
+    rank = torch.randn(6, 1)
+    estimates = torch.empty(6, 4)
+    estimates[:, :2] = 1e3                              # large means too
+    estimates[:, 2:] = raw_width
+    targets = torch.cat([torch.randn(6, 2), torch.ones(6, 1)], dim=1)
+    assert torch.isfinite(BCE_PE_Sigma(TARGETS)((rank, estimates), targets)).all()

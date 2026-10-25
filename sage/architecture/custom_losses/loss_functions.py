@@ -1,328 +1,222 @@
-# -*- coding: utf-8 -*-
-#!/usr/bin/env python
+"""Classification + parameter-estimation losses.
 
-"""
-Filename        = custom_loss_functions.py
-Description     = Repository of custom loss functions
-
-Created on Fri Jan 28 19:08:44 2022
-
-__author__      = nnarenraju
-__copyright__   = Copyright 2021, Sage
-__credits__     = nnarenraju
-__license__     = GPL-3.0-or-later
-__version__     = 0.0.1
-__maintainer__  = nnarenraju
-__email__       = nnarenraju@gmail.com
-__status__      = ['inProgress', 'Archived', 'inUsage', 'Debugging']
-
-
-Github Repository: NULL
-
-Documentation: NULL
-
+Each loss returns a vector of named components (``component_names``): ``total``
+(the one back-propagated), ``classification``, one ``regression_<target>`` per
+target and, for :class:`BCE_PE_Sigma`, ``coupling``. The total is built from the
+regression summed over every target and sample, as before the per-target split.
 """
 
-# Packages
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# LOCAL
-from sage.core.config import get_cfg
 
-
-class BCEWithPEregLoss(nn.Module):
+def width_to_sigma(raw: torch.Tensor, sigma_min: float, sigma_max: float) -> torch.Tensor:
     """
-    Binary cross-entropy classification loss with MSE-based parameter
-    estimation regularisation.
+    Standard deviation from a raw width output: softplus plus ``sigma_min``,
+    clamped to ``[sigma_min, sigma_max]``.
 
-    The total loss is::
+    No ``exp``, so a momentarily large output cannot collapse the width and blow
+    up ``(mu - y)^2 / sigma^2``.
+    """
+    return torch.clamp(F.softplus(raw) + sigma_min, sigma_min, sigma_max)
 
-        L = BCE(ranking_stat, class_target)
-          + regression_weight * MSE_signal(point_estimates, pe_targets)
 
-    where the MSE term is:
+def component_names(targets: list, coupling: bool) -> list:
+    """Names of a loss's components, in output order."""
+    names = ["total", "classification", *[f"regression_{target}" for target in targets]]
+    return names + ["coupling"] if coupling else names
 
-    * computed only on signal samples (``class_target == 1``),
-    * weighted per-sample by the network's current predicted signal
-      probability ``p = sigmoid(ranking_stat)`` to focus regression
-      updates on confident detections.
 
-    This is the simplest multi-task loss in Sage and does not model
-    prediction uncertainty.
+class EstimateLoss(nn.Module):
+    """
+    BCE on the ranking statistic + a regression of the estimates (no widths).
 
-    Parameters
-    ----------
-    regression_weight : float
-        Relative weight of the regression term vs. BCE.
+        L = BCE + regression_weight * sum(w * r) / n_signal
 
-    Returns
-    -------
-    torch.Tensor, shape ``(num_pe + 1,)``
-        Stacked ``[total_loss, bce_loss, reg_loss, ...]`` (one entry per
-        point-estimate parameter plus the total).
+    ``r`` is the elementwise regression of :meth:`regression`, kept on signal
+    samples only; with ``confidence_weighting`` each sample is weighted by the
+    detached signal probability ``sigmoid(ranking_statistic)``.
     """
 
-    def __init__(self, regression_weight: float = 1.0):
+    uncertainty = False
+
+    def __init__(self, targets: list, regression_weight: float, confidence_weighting: bool):
         super().__init__()
-
-        # Weight between classification and regression
         self.regression_weight = regression_weight
+        self.confidence_weighting = confidence_weighting
+        self.component_names = component_names(targets, coupling=False)
+        self.num_components = len(self.component_names)
 
-        # Required for training tracker
-        cfg = get_cfg()
-        self.num_components = len(cfg.do_point_estimate) + 1
+    def regression(self, estimates: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
 
-    def forward(self, outputs, targets):
+    def forward(self, outputs: tuple, targets: torch.Tensor) -> torch.Tensor:
         """
-        Compute BCE + MSE regression loss.
-
         Parameters
         ----------
         outputs : tuple
-            ``(ranking_stat, point_estimates)``
-            ``ranking_stat``: shape ``(B,)`` or ``(B, 1)`` — raw logits.
-            ``point_estimates``: shape ``(B, num_pe)`` — predicted parameters.
-        targets : torch.Tensor, shape ``(B, num_pe + 1)``
-            Last column is the binary class label (0 = noise, 1 = signal).
-            Preceding columns are the regression targets.
+            ``(ranking_statistic, estimates)``, shapes ``(B, 1)`` and ``(B, P)``.
+        targets : torch.Tensor, shape ``(B, P + 1)``
+            Scaled estimate targets, then the class label (1 = signal).
 
         Returns
         -------
-        torch.Tensor, shape ``(num_pe + 1,)``
-            ``[total_loss, bce_loss, reg_loss]``.
+        torch.Tensor, shape ``(P + 2,)``
+            ``[total, classification, regression_<target>...]``.
         """
-
         ranking_stat, point_estimates = outputs
-
-        # Classification target
         class_target = targets[:, -1].to(ranking_stat.dtype)
-
-        # BCE expects same shape
         ranking_stat = ranking_stat.reshape(-1)
+        bce_loss = F.binary_cross_entropy_with_logits(ranking_stat, class_target)
 
-        bce_loss = F.binary_cross_entropy_with_logits(
-            ranking_stat,
-            class_target,
-        )
-
-        # Regression targets
-        pe_targets = targets[:, :-1]
         signal_mask = targets[:, -1].unsqueeze(1)
+        reg = self.regression(point_estimates, targets[:, :-1]) * signal_mask
+        if self.confidence_weighting:
+            reg = reg * torch.sigmoid(ranking_stat).detach().unsqueeze(1)
+        num_signal = signal_mask.sum().clamp_min(1)
 
-        # MSE loss with mean performed only for signal batch
-        reg = F.smooth_l1_loss(point_estimates, pe_targets, reduction="none")
-        reg = reg * signal_mask
-
-        # This weights PE based on perceived signal probability
-        p_signal = torch.sigmoid(ranking_stat).detach()
-        reg = reg * p_signal.unsqueeze(1)
-        reg_loss = reg.sum() / signal_mask.sum().clamp_min(1)
-
-        # Final total loss BCE + weighted MSE regularisation
-        total_loss = bce_loss + self.regression_weight * reg_loss
-
-        return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
+        total_loss = bce_loss + self.regression_weight * (reg.sum() / num_signal)
+        return torch.stack([total_loss, bce_loss, *(reg.sum(dim=0) / num_signal)])
 
 
-class BCEWithPEmseLoss(nn.Module):
+class BCE_PE_Huber(EstimateLoss):
     """
-    Year-old parameter-estimation loss: BCE + pure-MSE regression.
-
-    Identical to :class:`BCEWithPEregLoss` EXCEPT the regression term is plain MSE
-    (not smooth_l1/Huber) and is NOT re-weighted by the predicted signal
-    probability -- i.e. exactly the ``norm_tc + norm_mchirp`` MSE the year-old
-    SageNet run minimised.
-
-    Why this matters: MSE's gradient is error-proportional (``2*error``), so it
-    drives the point estimates down hard in the first epoch; PE converges almost
-    immediately and stops competing with the BCE for the shared trunk. Huber caps
-    the regression gradient at +/-1, which under-drives PE, leaving it hot
-    (~35% of the total loss) and a persistent competitor for many epochs -> slower
-    BCE convergence. Kept as a separate module so :class:`BCEWithPEregLoss` stays
-    branch-free.
-
-        L = BCE(ranking_stat, class_target)
-          + regression_weight * MSE_signal(point_estimates, pe_targets)
+    BCE + smooth-L1 (Huber) regression of the estimates.
 
     Parameters
     ----------
+    targets : list of str
+        Estimated parameters, in head order; from ``signal.targets``.
     regression_weight : float
-        Relative weight of the regression term vs. BCE.
-
-    Returns
-    -------
-    torch.Tensor, shape ``(3,)``
-        Stacked ``[total_loss, bce_loss, reg_loss]``.
+        Weight of the regression against BCE.
+    confidence_weighting : bool
+        Weight each sample's regression by the network's detection confidence.
     """
 
-    def __init__(self, regression_weight: float = 1.0):
+    def __init__(self, targets: list, regression_weight: float = 1.0, confidence_weighting: bool = True):
+        super().__init__(targets, regression_weight, confidence_weighting)
+
+    def regression(self, estimates, targets):
+        return F.smooth_l1_loss(estimates, targets, reduction="none")
+
+
+class BCE_PE_MSE(EstimateLoss):
+    """
+    BCE + mean-squared-error regression of the estimates.
+
+    Parameters
+    ----------
+    targets : list of str
+        Estimated parameters, in head order; from ``signal.targets``.
+    regression_weight : float
+        Weight of the regression against BCE.
+    confidence_weighting : bool
+        Weight each sample's regression by the network's detection confidence.
+    """
+
+    def __init__(self, targets: list, regression_weight: float = 1.0, confidence_weighting: bool = False):
+        super().__init__(targets, regression_weight, confidence_weighting)
+
+    def regression(self, estimates, targets):
+        return F.mse_loss(estimates, targets, reduction="none")
+
+
+class BCE_PE_Sigma(nn.Module):
+    """
+    BCE + heteroscedastic beta-NLL regression + coupling. The production loss.
+
+        L = BCE + regression_weight * sum(w * nll) / n_signal
+                + coupling_weight * mean(mean_sigma * sigmoid(ranking_statistic))
+
+    ``nll = 0.5 (mu - y)^2 / sigma^2 + log sigma``, scaled by
+    ``stop_grad(sigma^(2 beta))`` (beta-NLL, Seitzer et al. 2022), on signal
+    samples only; with ``confidence_weighting`` each sample is weighted by the
+    detached signal probability. ``sigma`` comes from :func:`width_to_sigma`.
+
+    Parameters
+    ----------
+    targets : list of str
+        Estimated parameters, in head order; from ``signal.targets``.
+    regression_weight : float
+        Weight of the regression against BCE.
+    coupling_weight : float
+        Weight of the coupling between width and detection confidence.
+    beta : float
+        beta-NLL exponent; 0 gives the plain Gaussian NLL.
+    sigma_min, sigma_max : float
+        Bounds of the standard deviation.
+    confidence_weighting : bool
+        Weight each sample's regression by the network's detection confidence.
+    """
+
+    uncertainty = True
+
+    def __init__(
+        self,
+        targets: list,
+        regression_weight: float = 0.005,
+        coupling_weight: float = 0.005,
+        beta: float = 0.5,
+        sigma_min: float = 1e-3,
+        sigma_max: float = 10.0,
+        confidence_weighting: bool = True,
+    ):
         super().__init__()
-
         self.regression_weight = regression_weight
+        self.coupling_weight = coupling_weight
+        self.beta = float(beta)
+        self.sigma_min = float(sigma_min)
+        self.sigma_max = float(sigma_max)
+        self.confidence_weighting = confidence_weighting
+        self.component_names = component_names(targets, coupling=True)
+        self.num_components = len(self.component_names)
 
-        cfg = get_cfg()
-        self.num_components = len(cfg.do_point_estimate) + 1
+    def forward(self, outputs: tuple, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        outputs : tuple
+            ``(ranking_statistic, estimates)``, shapes ``(B, 1)`` and ``(B, 2P)``:
+            all means, then all raw widths.
+        targets : torch.Tensor, shape ``(B, P + 1)``
+            Scaled estimate targets, then the class label (1 = signal).
 
-    def forward(self, outputs, targets):
+        Returns
+        -------
+        torch.Tensor, shape ``(P + 3,)``
+            ``[total, classification, regression_<target>..., coupling]``.
+        """
         ranking_stat, point_estimates = outputs
-
         class_target = targets[:, -1].to(ranking_stat.dtype)
         ranking_stat = ranking_stat.reshape(-1)
-
         bce_loss = F.binary_cross_entropy_with_logits(ranking_stat, class_target)
 
         pe_targets = targets[:, :-1]
         signal_mask = targets[:, -1].unsqueeze(1)
-
-        # Pure MSE on signal samples only: no Huber, no p_signal weighting --
-        # the year-old regression term exactly.
-        reg = F.mse_loss(point_estimates, pe_targets, reduction="none")
-        reg = reg * signal_mask
-        reg_loss = reg.sum() / signal_mask.sum().clamp_min(1)
-
-        total_loss = bce_loss + self.regression_weight * reg_loss
-
-        return torch.stack([total_loss, bce_loss, reg_loss], dim=0)
-
-
-class BCEWithPEsigmaLoss(nn.Module):
-    """
-    Combined BCE + Heteroscedastic Regression Loss.
-
-    - BCE for classification (ranking statistic).
-    - Regression term uses predicted mean and log-variance.
-    - Only computed for signal entries.
-    - Weighted per-sample by network's predicted signal probability.
-    """
-
-    def __init__(
-        self,
-        regression_weight: float = 1.0,
-        coupling_weight: float = 1.0,
-        beta: float = 0.5,
-        sigma_min: float = 1e-3,
-        sigma_max: float = 10.0,
-        eps: float = 1e-6,
-    ):
-        super().__init__()
-        cfg = get_cfg()  # grab config
-        self.regression_weight = regression_weight
-        self.coupling_weight = coupling_weight
-        # beta-NLL exponent (Seitzer et al. 2022); softplus sigma bounds. These
-        # NaN-proof the merged head (clamp before softplus)
-        # the same way: no exp(log_var) blow-up, no overconfident sigma collapse.
-        self.beta = float(beta)
-        self.sigma_min = float(sigma_min)
-        self.sigma_max = float(sigma_max)
-        self.num_components = len(cfg.do_point_estimate) + 2
-        self.eps = eps  # stability for variance
-
-    def _sigma(self, raw):
-        """Softplus-parameterised std: strictly
-        positive, floored at ``sigma_min``, capped at ``sigma_max``. No ``exp`` so
-        a momentarily large logit cannot collapse sigma toward zero and blow up
-        the ``(mu - y)^2 / sigma^2`` term."""
-        import torch.nn.functional as F
-
-        return torch.clamp(
-            F.softplus(raw) + self.sigma_min, self.sigma_min, self.sigma_max
-        )
-
-    def forward(self, outputs, targets):
-        """
-        Compute heteroscedastic BCE + NLL regression + coupling loss.
-
-        Parameters
-        ----------
-        outputs : tuple
-            ``(ranking_stat, point_estimates)``
-            ``ranking_stat``: shape ``(B,)`` — raw classification logits.
-            ``point_estimates``: shape ``(B, 2 * num_pe)`` — concatenation
-            of predicted means ``μ`` (first ``num_pe`` columns) and raw
-            ``σ`` parameters (last ``num_pe`` columns), the latter mapped to a
-            strictly-positive std via softplus (:meth:`_sigma`).
-        targets : torch.Tensor, shape ``(B, num_pe + 1)``
-            Last column is the binary class label; preceding columns are
-            the physical regression targets.
-
-        Returns
-        -------
-        torch.Tensor, shape ``(num_pe + 2,)``
-            ``[total_loss, bce_loss, reg_loss, coupling_loss]``.
-        """
-
-        ranking_stat, point_estimates = outputs
-        class_target = targets[:, -1].to(ranking_stat.dtype)
-        ranking_stat = ranking_stat.reshape(-1)
-
-        # ----------------------
-        # Classification loss
-        # ----------------------
-        bce_loss = F.binary_cross_entropy_with_logits(
-            ranking_stat,
-            class_target,
-        )
-
-        # ----------------------
-        # Regression loss (heteroscedastic + variance regularisation)
-        # ----------------------
-        pe_targets = targets[:, :-1]
-        signal_mask = targets[:, -1].unsqueeze(1)
-
         num_pe = pe_targets.shape[1]
 
         # float32 throughout: 1/sigma^2 can exceed fp16 range under autocast.
         mu = point_estimates[:, :num_pe].float()
-        sigma = self._sigma(point_estimates[:, num_pe:].float())  # softplus std > 0
-        y = pe_targets.float()
+        sigma = width_to_sigma(point_estimates[:, num_pe:].float(), self.sigma_min, self.sigma_max)
         var = sigma * sigma
-
-        # Heteroscedastic Gaussian NLL (softplus sigma, no exp -> no collapse).
-        nll = 0.5 * (mu - y) ** 2 / var + torch.log(sigma)
-
-        # beta-NLL (Seitzer et al. 2022): scale each term by stop_grad(sigma^2beta).
-        # Tempers the ~1/sigma^2 gradient that lets a briefly-overconfident head
-        # explode, without biasing the optimum. This is the fix that stops pe_reg
-        # diverging.
+        nll = 0.5 * (mu - pe_targets.float()) ** 2 / var + torch.log(sigma)
+        # beta-NLL tempers the ~1/sigma^2 gradient that lets a briefly
+        # overconfident head explode, without moving the optimum.
         if self.beta > 0.0:
             nll = nll * (var**self.beta).detach()
 
-        # Softened confidence curriculum: learn PE where the net believes it is a
-        # signal. First power (was squared) -> gentler gate.
-        p_signal = torch.sigmoid(ranking_stat).float().detach().unsqueeze(1)
-
-        # Apply masks; normalise by the signal count (curriculum re-weights within).
-        nll = nll * signal_mask.float() * p_signal
+        nll = nll * signal_mask.float()
+        if self.confidence_weighting:
+            nll = nll * torch.sigmoid(ranking_stat).float().detach().unsqueeze(1)
         num_signal = signal_mask.float().sum().clamp_min(1.0)
 
-        # No variance regulariser: the old `lambda_var * var` term pushed sigma
-        # *down*, driving the overconfident collapse. softplus + beta-NLL make it
-        # unnecessary (and harmful), so it is removed.
-        reg_loss = nll.sum() / num_signal
+        coupling_loss = (sigma.mean(dim=1) * torch.sigmoid(ranking_stat).float()).mean()
 
-        # ----------------------
-        # Coupling loss
-        # ----------------------
-        mean_sigma = sigma.mean(dim=1)
-
-        sigmoid_rank = torch.sigmoid(ranking_stat).float()
-
-        coupling_loss = mean_sigma * sigmoid_rank
-        coupling_loss = coupling_loss.mean()
-
-        # ----------------------
-        # Total loss
-        # ----------------------
-        # fp32 throughout (PE terms are fp32); cast bce so the stack is uniform.
         bce_loss = bce_loss.float()
         total_loss = (
             bce_loss
-            + (self.regression_weight * reg_loss)
+            + (self.regression_weight * (nll.sum() / num_signal))
             + (self.coupling_weight * coupling_loss)
         )
-
-        return torch.stack([total_loss, bce_loss, reg_loss, coupling_loss], dim=0)
-
-
+        return torch.stack([total_loss, bce_loss, *(nll.sum(dim=0) / num_signal), coupling_loss])

@@ -23,10 +23,11 @@ Documentation: NULL
 
 """
 
-from .loss_functions import BCEWithPEregLoss, BCEWithPEsigmaLoss, BCEWithPEmseLoss
+from .loss_functions import BCE_PE_Huber, BCE_PE_MSE, BCE_PE_Sigma, width_to_sigma
 
 __all__ = [
-    "BCEWithPEregLoss",
-    "BCEWithPEsigmaLoss",
-    "BCEWithPEmseLoss",
+    "BCE_PE_Huber",
+    "BCE_PE_MSE",
+    "BCE_PE_Sigma",
+    "width_to_sigma",
 ]
