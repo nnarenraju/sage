@@ -30,7 +30,7 @@ The repository contains the research code used for the Sage pipeline, including:
 - Automated download and preparation of GWOSC data releases, segments, and PSDs.
 - Realistic noise simulation: real strain, coloured, recoloured, and glitch-injected noise.
 - Binary black hole waveform generation (IMRPhenomD/PhenomPv2), multi-detector projection, and SNR utilities.
-- Signal processing: whitening, inverse spectrum truncation, time-domain multirate sampling, frequency-domain multibanding, and prior-median heterodyning.
+- Signal processing: whitening, inverse spectrum truncation, time-domain multirate sampling, and prior-median heterodyning.
 - Modular neural network architectures with interchangeable frontends, backends, and attention mechanisms.
 - Training loops with on-the-fly data generation, schedulers, callbacks, and checkpointing.
 - Google Colab tutorials, reproducibility notebooks, and run scripts for paper-style experiments.
@@ -90,7 +90,7 @@ sage/
 │   │   ├── primer/         # Data download and preparation utilities
 │   │   ├── psd/            # PSD generation and loading
 │   │   └── waveform/       # Parameter sampling, waveforms, projection, SNR
-│   ├── dsp/                # FFT, whitening, PSDs, multirate, multibanding
+│   ├── dsp/                # FFT, whitening, PSDs, multirate
 │   ├── exec/               # Pipeline orchestration
 │   ├── factory/            # Training, validation, schedulers, callbacks
 │   ├── plotting/           # Diagnostic and publication plotting

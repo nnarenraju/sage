@@ -1,12 +1,3 @@
-from sage.dsp.multibanding import (
-    FrequencyBand,
-    FrequencyBandLayout,
-    FrequencyMultibandCompressor,
-    describe_layout,
-    make_dyadic_frequency_bands,
-    make_prior_informed_frequency_bands,
-    make_empirical_frequency_bands,
-)
 from sage.dsp.heterodyne import (
     heterodyne,
     apply_phase,
@@ -29,13 +20,6 @@ from sage.dsp.reference import (
 )
 
 __all__ = [
-    "FrequencyBand",
-    "FrequencyBandLayout",
-    "FrequencyMultibandCompressor",
-    "describe_layout",
-    "make_dyadic_frequency_bands",
-    "make_prior_informed_frequency_bands",
-    "make_empirical_frequency_bands",
     "heterodyne",
     "apply_phase",
     "analytic_signal",
