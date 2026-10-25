@@ -6,7 +6,6 @@ _MiningReader end to end with tiny parameters.
 
 import json
 import sys
-import types
 
 import numpy as np
 import pytest
@@ -21,7 +20,6 @@ from pathlib import Path
 pytest.importorskip("h5py", reason="sage.core.logger requires h5py")
 pytest.importorskip("tqdm", reason="lowfar_noise requires tqdm")
 
-import sage.data.noise.lowfar_noise as _lnm
 from sage.data.noise.lowfar_noise import StartTimeDataset, _MiningReader
 
 # ---------------------------------------------------------------------------
@@ -62,10 +60,6 @@ def _sidecar(gps_start=1_234_567_890.0):
 def _seg_arr():
     # (run, idx, start, end, nsamples) -- single run 0
     return np.array([(0, 0, 0, _N_SAMPLES, _N_SAMPLES)], dtype=_SEG_DTYPE)
-
-
-def _fake_cfg():
-    return types.SimpleNamespace(detectors=_DETECTORS)
 
 
 class _FakeSampler:
@@ -123,8 +117,7 @@ def sampler(fake_env):
 
 
 @pytest.fixture
-def reader(sampler, monkeypatch):
-    monkeypatch.setattr(_lnm, "get_cfg", _fake_cfg)
+def reader(sampler):
     return _MiningReader(sampler, seed=0)
 
 

@@ -1,43 +1,42 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+"""Training checkpoints, in one self-contained format.
 
-"""
-Filename        : checkpoint.py
-Description     : Short description of the file
+Every file holds the run record and the training state, so a checkpoint alone
+is enough to resume, evaluate or search::
 
-Created on 2026-03-22 11:10:40
+    record                 resolved run.yaml, prior.yaml, derived.yaml and
+                           versions.yaml as text; the fiducial files (name -> bytes)
+    epoch                  last finished epoch
+    validation_loss        this epoch's, or None
+    best_validation_loss
+    model                  weights (uncompiled names)
+    optimiser, schedule    states
+    scaler, ema            states, or None without a loss scaler or EMA
+    rng                    torch, cuda, numpy and python generator states
+    timestamp
 
-__author__        = Narenraju Nagarajan
-__copyright__     = Copyright 2026, ProjectName
-__license__       = GPL-3.0-or-later
-__version__       = 0.0.1
-__maintainer__    = Narenraju Nagarajan
-__affiliation__   = N/A
-__email__         = N/A
-__status__        = ['inProgress', 'Archived', 'inUsage', 'Debugging']
-
-
-GitHub Repository: NULL
-
-Documentation: NULL
-
+``checkpoints/`` holds ``latest.pt`` (every epoch), ``best.pt`` (lowest
+validation loss), ``epoch_NNNN.pt`` (the newest ``keep`` epochs) and, with EMA,
+``ema.pt``: the averaged weights as ``model``, training-only entries None; after
+training, ``ema_calibrated.pt`` is ``ema.pt`` with recalibrated batch-norm
+statistics.
 """
 
-# Packages
-import os
-import torch
-import shutil
 import json
+import os
 import random
-import numpy as np
 from datetime import datetime
-from functools import cached_property
+from pathlib import Path
+
+import numpy as np
+import torch
+
+RECORD_FILES = ("run", "prior", "derived", "versions")
+TRAINING_ONLY = ("optimiser", "schedule", "scaler", "ema", "rng")
 
 
-def _atomic_torch_save(obj, path):
+def atomic_torch_save(obj, path):
     """``torch.save`` to a sibling temp file then ``os.replace`` (atomic on the
-    same filesystem), so a crash/pre-emption mid-write can never truncate an
-    existing good checkpoint."""
+    same filesystem), so a crash mid-write never truncates a good checkpoint."""
     tmp = f"{path}.tmp"
     torch.save(obj, tmp)
     os.replace(tmp, path)
@@ -51,443 +50,150 @@ def _atomic_json_dump(obj, path):
     os.replace(tmp, path)
 
 
-def config_to_dict(cfg):
-    """Flatten a Sage config into a plain, JSON-serialisable dict of values.
+def rng_state() -> dict:
+    """States of the global torch, CUDA, NumPy and Python generators."""
+    return {
+        "torch": torch.get_rng_state(),
+        "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+        "numpy": np.random.get_state(),
+        "python": random.getstate(),
+    }
 
-    ``BaseConfig`` / ``BaseDataConfig`` are ``__getattr__`` forwarders whose own
-    instance dict is just ``{"cfg": <wrapped object>}``. Serialising
-    ``cfg.__dict__`` therefore wrote a single useless entry::
 
-        {"cfg": "<config_HL.O3bCFG object at 0x7f38...>"}
+def set_rng_state(state: dict) -> None:
+    """Restore the global generators from :func:`rng_state`."""
+    # map_location moves the generator states too; set_rng_state needs them on CPU.
+    torch.set_rng_state(state["torch"].cpu())
+    if torch.cuda.is_available() and state["cuda"] is not None:
+        torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda"]])
+    np.random.set_state(state["numpy"])
+    random.setstate(state["python"])
 
-    and the run's actual hyperparameters -- learning rate schedule, epochs,
-    detectors, everything -- were never recorded. That makes a finished run
-    impossible to interrogate afterwards, which is exactly when you want to
-    know what it was configured with.
 
-    The real settings live as *class* attributes on the wrapped config object,
-    so this walks the class as well as the instance, and also materialises the
-    derived ``cached_property`` values (``padded_length_in_s``, ``delta_f``,
-    ...) so the snapshot records what the run actually used rather than only
-    what was typed.
+def run_record(run_dir: Path) -> dict:
+    """
+    The record every checkpoint of a run carries.
 
     Parameters
     ----------
-    cfg : object
-        A ``BaseConfig``/``BaseDataConfig`` wrapper, or a raw config object.
+    run_dir : Path
+        Run directory, its ``resolved/`` written.
 
     Returns
     -------
     dict
-        Attribute name -> value, for every public, non-callable setting.
+        ``run``, ``prior``, ``derived``, ``versions`` (YAML text) and
+        ``fiducial`` (file name to bytes).
     """
-    seen = {}
+    resolved = Path(run_dir) / "resolved"
+    record = {name: (resolved / f"{name}.yaml").read_text() for name in RECORD_FILES}
+    record["fiducial"] = {path.name: path.read_bytes() for path in sorted((resolved / "fiducial").iterdir())}
+    return record
 
-    def public_attrs(obj):
-        out = {}
-        # Class attributes: where a `class MyCFG: batch_size = 64` config keeps
-        # its values. Walk the MRO so subclassed configs are covered too.
-        for klass in reversed(type(obj).__mro__):
-            if klass is object:
-                continue
-            for name, value in vars(klass).items():
-                if name.startswith("_") or callable(value):
-                    continue
-                if isinstance(value, (property, staticmethod, classmethod)):
-                    continue
-                out[name] = value
-        # Instance attributes take precedence.
-        for name, value in vars(obj).items():
-            if not name.startswith("_") and not callable(value):
-                out[name] = value
-        return out
 
-    # Unwrap the forwarder, keeping anything set on the wrapper itself.
-    raw = getattr(cfg, "cfg", None) or getattr(cfg, "data_cfg", None)
-    if raw is not None and raw is not cfg:
-        seen.update(public_attrs(raw))
-    seen.update({k: v for k, v in public_attrs(cfg).items()
-                 if k not in ("cfg", "data_cfg")})
-
-    # Derived cached_property values (delta_f, padded_length_in_s, ...): these
-    # are what the pipeline actually consumed, so record them too.
-    for klass in type(cfg).__mro__:
-        for name, value in vars(klass).items():
-            if name.startswith("_") or not isinstance(value, cached_property):
-                continue
-            try:
-                seen[name] = getattr(cfg, name)
-            except Exception:
-                pass
-
-    return seen
+def next_epoch(run_dir: Path) -> int:
+    """The epoch a run starts at: last saved epoch + 1, or 0 before any checkpoint."""
+    marker = Path(run_dir) / "checkpoints" / "progress.json"
+    return json.loads(marker.read_text())["epoch"] + 1 if marker.exists() else 0
 
 
 class CheckpointManager:
     """
-    Manages saving and loading of training checkpoints.
-
-    On construction, creates the checkpoint directory and writes one-time
-    JSON snapshots of ``cfg`` and ``data_cfg`` so that the hyperparameters
-    that produced each checkpoint are always recoverable.
-
-    Three checkpoint types are maintained:
-
-    * ``latest.pt`` — overwritten every call to :meth:`save`; safe resume
-      point after a crash or pre-emption.
-    * ``epoch_{N}.pt`` — per-epoch copy (optional; controlled by
-      ``save_epoch_ckpt``).  Allows rolling back to any specific epoch.
-    * ``best.pt`` — copy of ``latest.pt`` whenever ``val_loss`` improves;
-      the recommended checkpoint for inference.
-
-    Each checkpoint file contains the full training state:
-    model weights, optimiser and scheduler states, AMP scaler state,
-    configurations, and all four RNG states (Python, NumPy, CPU torch,
-    CUDA torch) for bit-exact reproducibility.
+    Saves a run's checkpoints every epoch and restores the latest on resume.
 
     Parameters
     ----------
-    cfg : BaseConfig
-        Training configuration (provides ``export_dir``, ``autocast``,
-        ``dtype``).
-    data_cfg : BaseDataConfig
-        Data configuration (saved to JSON snapshot only).
+    run_dir : Path
+        Run directory; checkpoints go to ``checkpoints/``.
     model : nn.Module
-        The model being trained (may be a ``torch.compile`` wrapper).
-    optimizer : torch.optim.Optimizer
-    scheduler : torch.optim.lr_scheduler._LRScheduler
-    scaler : torch.amp.GradScaler
+        The network, uncompiled (so weight names carry no compile prefix).
+    optimiser : torch.optim.Optimizer
+    schedule : torch.optim.lr_scheduler.LRScheduler
+    scaler : torch.amp.GradScaler or None
+    ema_model : torch.optim.swa_utils.AveragedModel or None
+        The EMA of the weights, when EMA is on.
+    keep : int or str
+        Epoch copies kept (the newest), or ``"all"``.
     """
 
-    def __init__(
-        self,
-        cfg,
-        data_cfg,
-        model,
-        optimizer,
-        scheduler,
-        scaler,
-    ):
-
-        self.cfg = cfg
-        self.data_cfg = data_cfg
+    def __init__(self, run_dir, model, optimiser, schedule, scaler, ema_model, keep):
+        self.dir = Path(run_dir) / "checkpoints"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.record = run_record(run_dir)
         self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
+        self.optimiser = optimiser
+        self.schedule = schedule
         self.scaler = scaler
+        self.ema_model = ema_model
+        self.keep = keep
+        self.best_validation_loss = float("inf")
 
-        self.best_val_loss = float("inf")
-
-        self.ckpt_dir = os.path.join(cfg.export_dir, "CHECKPOINTS")
-        os.makedirs(self.ckpt_dir, exist_ok=True)
-
-        self.latest_path = os.path.join(self.ckpt_dir, "latest.pt")
-        self.best_path = os.path.join(self.ckpt_dir, "best.pt")
-
-        # ---- save config snapshots once ----
-        with open(os.path.join(self.ckpt_dir, "cfg_snapshot.json"), "w") as f:
-            json.dump(config_to_dict(cfg), f, indent=2, default=str, sort_keys=True)
-
-        with open(os.path.join(self.ckpt_dir, "data_cfg_snapshot.json"), "w") as f:
-            json.dump(config_to_dict(data_cfg), f, indent=2, default=str, sort_keys=True)
-
-    # ============================================================
-    # STATE GATHER
-    # ============================================================
-
-    def _gather_state(self, epoch, val_loss=None):
-        """
-        Collect all serialisable training state into a flat dictionary.
-
-        Parameters
-        ----------
-        epoch : int
-            Current epoch index (0-based).
-        val_loss : float or None
-            Validation loss at this epoch (stored for reference; ``None``
-            if validation was not run this epoch).
-
-        Returns
-        -------
-        dict
-            All state needed to fully resume training, including model
-            weights, optimiser/scheduler/scaler states, configs, parameter
-            counts, and all four RNG states.
-        """
-
-        state = {
-            # ---- bookkeeping ----
+    def _state(self, epoch, validation_loss):
+        return {
+            "record": self.record,
             "epoch": epoch,
-            "timestamp": str(datetime.now()),
-            "val_loss": val_loss,
-            "best_val_loss": self.best_val_loss,
-            # ---- training objects ----
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict(),
-            "scaler_state_dict": self.scaler.state_dict(),
-            # ---- configs ----
-            # Store a flattened, plain-dict snapshot (identical to
-            # cfg_snapshot.json) rather than the live config object. The raw
-            # object pickles to a useless "<... object at 0x...>" anyway (see
-            # config_to_dict) and its class may be unpicklable -- e.g. a config
-            # built by a factory (make_configs.<locals>.O3aCFG). Nothing on
-            # resume reads these keys; they are purely a record of settings.
-            "cfg": json.loads(json.dumps(config_to_dict(self.cfg), default=str)),
-            "data_cfg": json.loads(
-                json.dumps(config_to_dict(self.data_cfg), default=str)),
-            # ---- model info ----
-            "param_count": sum(p.numel() for p in self.model.parameters()),
-            "trainable_param_count": sum(
-                p.numel() for p in self.model.parameters() if p.requires_grad
-            ),
-            # ---- RNG states (CRITICAL FOR REPRO) ----
-            "torch_rng": torch.get_rng_state(),
-            "cuda_rng": (
-                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
-            ),
-            "numpy_rng": np.random.get_state(),
-            "python_rng": random.getstate(),
-            # ---- AMP metadata ----
-            "amp_enabled": self.cfg.autocast,
-            "amp_dtype": str(self.cfg.dtype),
+            "validation_loss": validation_loss,
+            "best_validation_loss": self.best_validation_loss,
+            "model": self.model.state_dict(),
+            "optimiser": self.optimiser.state_dict(),
+            "schedule": self.schedule.state_dict(),
+            "scaler": None if self.scaler is None else self.scaler.state_dict(),
+            "ema": None if self.ema_model is None else self.ema_model.state_dict(),
+            "rng": rng_state(),
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
         }
 
-        return state
-
-    # ============================================================
-    # SAVE
-    # ============================================================
-
-    def save(self, epoch, val_loss=None, save_epoch_ckpt=True):
+    def save(self, epoch: int, validation_loss) -> None:
         """
-        Save the current training state to disk.
-
-        Always writes ``latest.pt``.  If ``val_loss`` is better than the
-        current best, also copies to ``best.pt``.
+        Write ``latest.pt``, ``epoch_NNNN.pt``, ``best.pt`` when the
+        validation loss improved, and ``ema.pt`` with EMA.
 
         Parameters
         ----------
         epoch : int
-            Current epoch (0-based).
-        val_loss : float or None
-            Validation loss; used to decide whether to update ``best.pt``.
-        save_epoch_ckpt : bool
-            If ``True`` (default), also write ``epoch_{epoch}.pt``.
+            Epoch just finished.
+        validation_loss : float or None
+            This epoch's validation loss; None when validation did not run.
         """
-
-        # Decide "best" BEFORE gathering state so best_val_loss is persisted at
-        # its current value and survives a resume. (Previously best_val_loss reset
-        # to inf on every restart, so best.pt was clobbered at each 2-day segment
-        # boundary; and it tracked whatever loss was passed in.)
-        improved = val_loss is not None and val_loss < self.best_val_loss
+        improved = validation_loss is not None and validation_loss < self.best_validation_loss
         if improved:
-            self.best_val_loss = val_loss
+            self.best_validation_loss = validation_loss
+        state = self._state(epoch, validation_loss)
 
-        state = self._gather_state(epoch, val_loss)
-
-        # ---- latest (atomic: temp file + os.replace, so a kill mid-write leaves
-        #      the previous good latest.pt intact instead of truncating it) ------
-        _atomic_torch_save(state, self.latest_path)
-
-        # Lightweight resume marker: lets a restarting process read the resume
-        # epoch (to seed the data samplers resume-aware) WITHOUT loading the full
-        # checkpoint. Written (atomically) after latest.pt so it never points past
-        # an incomplete latest.pt.
-        _atomic_json_dump(
-            {"epoch": epoch, "val_loss": val_loss},
-            os.path.join(self.ckpt_dir, "progress.json"),
-        )
-
-        # ---- epoch history ----
-        if save_epoch_ckpt:
-            _atomic_torch_save(
-                state, os.path.join(self.ckpt_dir, f"epoch_{epoch}.pt")
-            )
-            # Optional retention: keep only the newest ``keep_last_ckpts`` epoch
-            # copies. Default None => keep everything (nothing is ever deleted
-            # unless a run opts in via cfg.keep_last_ckpts). latest.pt/best.pt are
-            # always kept.
-            self._prune_epoch_ckpts(getattr(self.cfg, "keep_last_ckpts", None))
-
-        # ---- best (atomic write of THIS state; only when val_loss improved) ----
+        atomic_torch_save(state, self.dir / "latest.pt")
+        _atomic_json_dump({"epoch": epoch}, self.dir / "progress.json")
+        atomic_torch_save(state, self.dir / f"epoch_{epoch:04d}.pt")
+        if self.keep != "all":
+            for path in sorted(self.dir.glob("epoch_*.pt"))[: -self.keep]:
+                path.unlink()
         if improved:
-            print(f"New BEST checkpoint at epoch {epoch} | val_loss={val_loss:.6f}")
-            _atomic_torch_save(state, self.best_path)
+            atomic_torch_save(state, self.dir / "best.pt")
+        if self.ema_model is not None:
+            ema = {**state, **dict.fromkeys(TRAINING_ONLY), "model": self.ema_model.module.state_dict()}
+            atomic_torch_save(ema, self.dir / "ema.pt")
 
-    def _prune_epoch_ckpts(self, keep_last):
-        """Delete all but the newest ``keep_last`` ``epoch_{N}.pt`` files.
-        ``None`` or ``<= 0`` keeps everything (no deletion). ``latest.pt`` and
-        ``best.pt`` are never touched."""
-        if keep_last is None or keep_last <= 0:
-            return
-        import glob, re
-        def _epn(p):
-            m = re.search(r"epoch_(\d+)\.pt$", p)
-            return int(m.group(1)) if m else -1
-        files = sorted(
-            glob.glob(os.path.join(self.ckpt_dir, "epoch_*.pt")), key=_epn
-        )
-        for p in files[:-keep_last]:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-
-    def _load_newest_epoch_ckpt(self, map_location):
-        """Load the newest intact ``epoch_{N}.pt`` (resume fallback when
-        ``latest.pt`` is unreadable, e.g. truncated by a pre-atomic write)."""
-        import glob, re
-        def _epn(p):
-            m = re.search(r"epoch_(\d+)\.pt$", p)
-            return int(m.group(1)) if m else -1
-        files = sorted(
-            glob.glob(os.path.join(self.ckpt_dir, "epoch_*.pt")),
-            key=_epn, reverse=True,
-        )
-        for p in files:
-            try:
-                return torch.load(p, map_location=map_location, weights_only=False)
-            except Exception:
-                continue
-        raise RuntimeError(
-            "No loadable checkpoint (latest.pt and all epoch_*.pt failed)"
-        )
-
-    # ============================================================
-    # LOAD
-    # ============================================================
-
-    def load_latest(self, map_location="cpu"):
-        """Load latest snapshot and resume training
-
-        Args:
-            map_location (str, optional): _description_. Defaults to "cpu".
-
-        Returns:
-            _type_: _description_
-
-        Usage:
-            start_epoch = ckpt_mgr.load_latest(map_location=cfg.device)
-            for nepoch in range(start_epoch, cfg.num_epochs):
-            ...
+    def load_latest(self, map_location) -> int:
         """
-        print("Loading latest checkpoint")
-        # weights_only=False: our checkpoints intentionally carry non-tensor
-        # state (cfg/data_cfg objects + numpy/python RNG) and are self-produced
-        # and trusted; torch>=2.6 defaults weights_only=True which rejects them.
-        try:
-            ckpt = torch.load(self.latest_path, map_location=map_location,
-                              weights_only=False)
-        except Exception as e:
-            # latest.pt unreadable (e.g. truncated by a kill mid-write on an old
-            # pre-atomic checkpoint). Fall back to the newest intact epoch_*.pt
-            # so the automated resume chain recovers instead of crash-looping.
-            print(f"[resume] latest.pt failed to load ({e}); "
-                  f"falling back to newest epoch checkpoint")
-            ckpt = self._load_newest_epoch_ckpt(map_location)
-        self._restore(ckpt)
-        return ckpt["epoch"] + 1
-
-    @staticmethod
-    def peek_next_epoch(export_dir, map_location="cpu"):
-        """Resume epoch (last saved epoch + 1), read from the lightweight
-        ``progress.json`` marker WITHOUT loading the full checkpoint. Returns
-        ``0`` when no checkpoint exists yet.
-
-        This lets a restarting run seed its data samplers with a resume-aware
-        seed *before* they are built, so the resumed stream never replays the
-        pre-crash draws. Mirrors :meth:`load_latest`'s ``epoch + 1``.
-        """
-        ckpt_dir = os.path.join(export_dir, "CHECKPOINTS")
-        marker = os.path.join(ckpt_dir, "progress.json")
-        if os.path.exists(marker):
-            with open(marker) as f:
-                return int(json.load(f)["epoch"]) + 1
-        # Fallback for checkpoints written before progress.json existed: read the
-        # epoch out of latest.pt (heavier, but only hit on legacy resumes).
-        latest = os.path.join(ckpt_dir, "latest.pt")
-        if os.path.exists(latest):
-            ckpt = torch.load(latest, map_location=map_location, weights_only=False)
-            return int(ckpt["epoch"]) + 1
-        return 0
-
-    def load_best(self, map_location="cpu"):
-        """Load best snapshot for inference
-
-        Args:
-            map_location (str, optional): _description_. Defaults to "cpu".
-
-        Returns:
-            _type_: _description_
-
-        Usage:
-            ckpt_mgr.load_best(map_location=cfg.device)
-            model.eval()
-        """
-        print("Loading best checkpoint")
-        ckpt = torch.load(self.best_path, map_location=map_location,
-                          weights_only=False)
-        self._restore(ckpt)
-        return ckpt
-
-    def load_epoch(self, epoch, map_location="cpu"):
-        """
-        Load a specific per-epoch checkpoint.
+        Restore the training state of ``latest.pt``.
 
         Parameters
         ----------
-        epoch : int
-            Epoch index of the checkpoint to load.
-        map_location : str
-            Device mapping for ``torch.load``.
+        map_location : str or torch.device
+            Device the tensors are loaded onto.
 
         Returns
         -------
         int
-            ``epoch + 1`` — the next epoch to run.
+            The epoch to continue at.
         """
-        path = os.path.join(self.ckpt_dir, f"epoch_{epoch}.pt")
-        print(f"Loading checkpoint epoch {epoch}")
-        ckpt = torch.load(path, map_location=map_location, weights_only=False)
-        self._restore(ckpt)
-        return ckpt["epoch"] + 1
-
-    # ============================================================
-    # RESTORE STATE
-    # ============================================================
-
-    def _restore(self, ckpt):
-        """
-        Apply a loaded checkpoint dict to the current training objects.
-
-        Restores model weights, optimiser/scheduler/scaler states, and all
-        four RNG states (Python, NumPy, CPU torch, CUDA torch).
-
-        Parameters
-        ----------
-        ckpt : dict
-            Dictionary as produced by :meth:`_gather_state`.
-        """
-
-        # Restore the best-val-loss marker so best.pt tracking survives a resume
-        # (absent on pre-fix checkpoints -> fall back to +inf).
-        self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
-
-        self.model.load_state_dict(ckpt["model_state_dict"])
-        self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        self.scaler.load_state_dict(ckpt["scaler_state_dict"])
-
-        # ---- RNG restore ----
-        # torch.load(map_location=<cuda>) moves EVERY checkpoint tensor to the
-        # device, including the RNG-state ByteTensors -- but set_rng_state()
-        # requires them on CPU (else "RNG state must be a torch.ByteTensor").
-        # Force them back to CPU. (CPU-only resume never hit this.)
-        torch.set_rng_state(ckpt["torch_rng"].cpu())
-
-        if torch.cuda.is_available() and ckpt["cuda_rng"] is not None:
-            torch.cuda.set_rng_state_all([s.cpu() for s in ckpt["cuda_rng"]])
-
-        np.random.set_state(ckpt["numpy_rng"])
-        random.setstate(ckpt["python_rng"])
+        state = torch.load(self.dir / "latest.pt", map_location=map_location, weights_only=False)
+        self.best_validation_loss = state["best_validation_loss"]
+        self.model.load_state_dict(state["model"])
+        self.optimiser.load_state_dict(state["optimiser"])
+        self.schedule.load_state_dict(state["schedule"])
+        if self.scaler is not None:
+            self.scaler.load_state_dict(state["scaler"])
+        if self.ema_model is not None:
+            self.ema_model.load_state_dict(state["ema"])
+        set_rng_state(state["rng"])
+        return state["epoch"] + 1

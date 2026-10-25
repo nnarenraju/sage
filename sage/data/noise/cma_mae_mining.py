@@ -35,33 +35,17 @@ from ribs.archives import CVTArchive
 from ribs.emitters import EvolutionStrategyEmitter
 from ribs.schedulers import Scheduler
 
-from sage.core.pipeline import GWBatch, Grid, ProcessingState
+from sage.core.pipeline import GWBatch
 
 
-def make_miner_preprocessor(processor, signal_sampler=None):
+def make_miner_preprocessor(processor):
     """Build ``preprocess_fn(noise_fd) -> net_input`` mirroring the training
-    noise pipeline (whitening -> IFFT -> multirate, or coarse-FD selection), so
-    the miner scores noise shaped exactly like what the model sees in training.
-    ``signal_sampler`` (when given) supplies the multibanding state.
+    noise pipeline (whitening -> IFFT -> multirate), so the miner scores noise
+    shaped exactly like what the model sees in training. Batches enter in the
+    processor's input state.
     """
-    if signal_sampler is not None:
-        initial_state = getattr(
-            signal_sampler, "output_state", ProcessingState(Grid.FD_UNIFORM)
-        )
-        selector = getattr(signal_sampler, "selector", None)
-        freqs = selector.coarse_freqs if selector is not None else None
-        coarse_idx = selector.coarse_indices if selector is not None else None
-    else:
-        initial_state, selector, freqs, coarse_idx = (
-            ProcessingState(Grid.FD_UNIFORM), None, None, None
-        )
-
     def preprocess_fn(noise_fd):
-        if selector is not None:
-            noise_fd = selector(noise_fd)
-        batch = GWBatch(noise_fd, state=initial_state, freqs=freqs,
-                        coarse_indices=coarse_idx)
-        return processor(batch).to_network_input()
+        return processor(GWBatch(noise_fd, state=processor.input_state)).to_network_input()
 
     return preprocess_fn
 

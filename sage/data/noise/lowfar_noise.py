@@ -34,8 +34,6 @@ from tqdm import tqdm
 # pycbc is optional; pull DYN_RANGE_FAC lazily (see ._pycbc_lazy).
 from ._pycbc_lazy import dyn_range_fac
 
-from sage.core.config import get_cfg
-
 
 # ---------------------------------------------------------------------------
 # StartTimeDataset
@@ -470,20 +468,6 @@ class _MiningReader:
                 t_min = min(t_min, m["gps_start"])
                 t_max = max(t_max, m["gps_start"])
         return t_min, t_max
-
-    def _empty_dataset(self, noise_sampler):
-        cfg = get_cfg()
-        D = self.n_detectors
-        return StartTimeDataset(
-            detectors=cfg.detectors,
-            start_indices=np.empty((0, D), dtype=np.int64),
-            segment_indices=np.empty((0, D), dtype=np.int64),
-            gps_times=np.empty(0, dtype=np.float64),
-            scores=np.empty(0, dtype=np.float32),
-            bin_files=[str(p) for p in noise_sampler.bin_files],
-            sample_rate=self.sample_rate,
-            seq_len=self.seq_len,
-        )
 
     @staticmethod
     def _score_percentile_str(scores):

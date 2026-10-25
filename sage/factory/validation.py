@@ -11,35 +11,34 @@ SageVanillaValidation
     (ROC curves, parameter recovery, etc.).
 """
 
-import os
 import sys
 import time
-import h5py
 import torch
-import torch.nn.functional as F
 
 from tqdm import tqdm
 from contextlib import nullcontext
 
-from sage.core.config import get_cfg
+from sage.architecture.custom_losses import width_to_sigma
 from sage.core.logger import get_logger, format_duration as _fmt_duration
-from sage.core.pipeline import GWBatch, Grid, ProcessingState
+from sage.core.pipeline import GWBatch
+from sage.factory.training import assemble_batch
 from sage.utils.atomic_io import append_h5
 
 logger = get_logger(__name__)
 
 
-def save_validation(nepoch, output, target, params, signal_idx, savepath):
+def save_validation(name, output, target, params, signal_idx, savepath):
     """
-    Append one epoch's validation results to an HDF5 file.
+    Append one validation pass's results to an HDF5 file.
 
-    Creates a group ``epoch_{nepoch:04d}`` inside ``savepath`` containing
-    four gzip-compressed datasets.
+    Creates a group ``name`` inside ``savepath`` containing four
+    gzip-compressed datasets.
 
     Parameters
     ----------
-    nepoch : int
-        Epoch index (used as the HDF5 group name).
+    name : str
+        Group name: ``epoch_NNNN`` for a regular pass, ``final`` for the
+        check of ``best.pt`` after training.
     output : torch.Tensor, shape ``(N, 1 + 2*num_pe)``
         Network outputs: ranking statistic, predicted means, predicted sigmas
         (in physical units).
@@ -57,7 +56,6 @@ def save_validation(nepoch, output, target, params, signal_idx, savepath):
     # that training does not read back. append_h5 instead absorbs a kill on the
     # NEXT open, quarantining a damaged file so it cannot crash the run.
     with append_h5(savepath) as f:
-        name = f"epoch_{nepoch:04d}"
         if name in f:
             # Overwrite a re-validated / restarted epoch rather than crashing on
             # a pre-existing validation_data.h5 (e.g. a fresh run reusing an
@@ -80,12 +78,12 @@ class SageVanillaValidation(torch.nn.Module):
     * Calls ``signal_sampler(return_theta=True)`` to obtain raw waveform
       parameters for parameter-recovery diagnostics.
     * Unstandardises predicted means back to physical units.
-    * Converts the raw sigma params to sigma via softplus (matching the loss's
-      ``_sigma``), then un-standardises to physical units.
-    * Writes per-epoch results to ``{export_dir}/validation_data.h5``.
+    * Converts the raw widths to sigma with the loss's mapping and bounds
+      (:func:`~sage.architecture.custom_losses.width_to_sigma`), then
+      un-standardises to physical units.
+    * Writes each pass's results to ``results_path`` (``results/validation.h5``).
 
-    Auto-multibanding and GWBatch tracking work identically to the training
-    loop — no extra configuration needed.
+    GWBatch tracking works as in the training loop.
 
     Resume note
     -----------
@@ -104,11 +102,25 @@ class SageVanillaValidation(torch.nn.Module):
     Parameters
     ----------
     signal_sampler, noise_sampler, processor, model, loss_function
-        Same objects passed to the corresponding training class.
+        Validation samplers, and the objects passed to the training class.
     num_iterations : int
-        Number of batches per validation epoch.
+        Batches per validation pass.
     num_epochs : int
         Total epochs (pre-allocates the ``loss_components`` tracking tensor).
+    batch_size : int
+        Windows per batch (the training one).
+    signal_batch_size : int
+        Windows per batch that receive a signal (the training one).
+    num_estimates : int
+        Estimated parameters (``signal.targets``).
+    device : str or torch.device
+        Device of the batches.
+    dtype : torch.dtype
+        Dtype of the loss tracking tensor.
+    autocast_dtype : torch.dtype or None
+        Autocast dtype on ``device``; None runs without autocast.
+    results_path : Path
+        HDF5 file the passes are appended to.
     """
 
     def __init__(
@@ -118,14 +130,21 @@ class SageVanillaValidation(torch.nn.Module):
         processor,
         model,
         loss_function,
-        num_iterations,
-        num_epochs,
-        amp_dtype=torch.float16,
+        num_iterations: int,
+        num_epochs: int,
+        batch_size: int,
+        signal_batch_size: int,
+        num_estimates: int,
+        device,
+        dtype: torch.dtype,
+        autocast_dtype,
+        results_path,
     ):
         super().__init__()
 
-        self.cfg = get_cfg()
-        self.amp_dtype = amp_dtype
+        self.device = torch.device(device)
+        self.autocast_dtype = autocast_dtype
+        self.results_path = results_path
 
         self.signal_sampler = signal_sampler
         self.noise_sampler  = noise_sampler
@@ -135,36 +154,26 @@ class SageVanillaValidation(torch.nn.Module):
 
         self.num_iterations = num_iterations
         self.num_epochs     = num_epochs
-
-        self.num_point_estimate = len(self.cfg.do_point_estimate)
-        self.num_targets        = self.num_point_estimate + 1
-        self.B = self.cfg.batch_size
-        self.S = int(self.cfg.batch_size * self.cfg.class_balance)
-
-        # ── Auto-configure for multibanding (mirrors SageVanillaTraining) ─
-        self._initial_state = getattr(
-            signal_sampler, "output_state",
-            ProcessingState(Grid.FD_UNIFORM),
-        )
-        self._selector       = getattr(signal_sampler, "selector", None)
-        self._freqs          = None
-        self._coarse_indices = None
-
-        if self._selector is not None:
-            self._freqs          = self._selector.coarse_freqs
-            self._coarse_indices = self._selector.coarse_indices
+        self.batch_size        = batch_size
+        self.signal_batch_size = signal_batch_size
+        self.num_estimates     = num_estimates
 
         # ── Loss tracking ─────────────────────────────────────────────────
         self.loss_components = torch.zeros(
-            (num_epochs, self.loss_function.num_components),
-            device=self.cfg.device,
-            dtype=self.cfg.dtype,
+            (num_epochs, self.loss_function.num_components), device=self.device, dtype=dtype,
         )
 
-    def forward(self, nepoch):
+    def forward(self, nepoch, name=None):
+        """
+        Run one validation pass and append its results.
 
-        device = self.cfg.device
-
+        Parameters
+        ----------
+        nepoch : int
+            Row of ``loss_components`` the pass fills.
+        name : str or None
+            Results group; ``epoch_NNNN`` when None.
+        """
         self.model.eval()
 
         diagnostics = {
@@ -197,80 +206,45 @@ class SageVanillaValidation(torch.nn.Module):
                 )
                 noise_data, noise_targets = self.noise_sampler()
 
-                # ── 2. Auto-multiband noise ───────────────────────────────
-                if self._selector is not None:
-                    noise_data = self._selector(noise_data)
-
-                # ── 3. Pad noise targets ──────────────────────────────────
-                pad = torch.zeros(
-                    noise_targets.shape[0], self.num_point_estimate,
-                    device=device, dtype=noise_targets.dtype,
+                # ── 2. Random signal injection ────────────────────────────
+                x, targets, idx = assemble_batch(
+                    signal_data, signal_targets, noise_data, noise_targets,
+                    self.signal_batch_size, self.num_estimates,
                 )
-                noise_targets = torch.cat((pad, noise_targets), dim=1)
-
-                # ── 4. Random signal injection ────────────────────────────
-                idx        = torch.randperm(self.B, device=device)[: self.S]
-                signal_pad = torch.zeros_like(noise_data)
-                target_pad = torch.zeros(
-                    self.B, self.num_targets,
-                    device=device, dtype=signal_targets.dtype,
-                )
-                signal_pad[idx] = signal_data
-                target_pad[idx] = signal_targets
-
-                x       = noise_data + signal_pad
-                targets = noise_targets + target_pad
-
                 diagnostics["signal_idx"].append(idx.cpu())
 
-                # ── 5. Wrap in GWBatch and preprocess ─────────────────────
-                batch = GWBatch(
-                    x,
-                    state          = self._initial_state,
-                    freqs          = self._freqs,
-                    coarse_indices = self._coarse_indices,
-                )
-                batch     = self.processor(batch)
+                # ── 3. Wrap in GWBatch and preprocess ─────────────────────
+                batch     = self.processor(GWBatch(x, state=self.processor.input_state))
                 net_input = batch.to_network_input()
 
-                # ── 6. Forward pass ───────────────────────────────────────
+                # ── 4. Forward pass ───────────────────────────────────────
                 with (
-                    torch.autocast(device_type="cuda", dtype=self.amp_dtype)
-                    if self.cfg.autocast
+                    torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype)
+                    if self.autocast_dtype is not None
                     else nullcontext()
                 ):
                     out  = self.model(net_input)
                     loss = self.loss_function(out, targets)
 
-                # ── 7. Diagnostics ────────────────────────────────────────
+                # ── 5. Diagnostics ────────────────────────────────────────
                 network_output = torch.cat([*out], dim=1)
 
                 ranking   = network_output[:, 0:1]
-                mu_std    = network_output[:, 1 : 1 + self.num_point_estimate]
-                if getattr(self.cfg, "pe_target_minmax", False):
-                    mu_phys = self.signal_sampler.param_sampler.unnorm_from_batch(
-                        mu_std
-                    )
-                else:
-                    mu_phys = self.signal_sampler.param_sampler.unstandardise_from_batch(
-                        mu_std
-                    )
+                mu_std    = network_output[:, 1 : 1 + self.num_estimates]
+                mu_phys   = self.signal_sampler.param_sampler.unstandardise_from_batch(mu_std)
                 # Heteroscedastic models also emit a raw sigma per point estimate
-                # (columns after the means); mean-only models (e.g. BCEWithPEregLoss)
+                # (columns after the means); mean-only models (e.g. with BCE_PE_Huber)
                 # do not -- their network_output has no sigma columns, so export
                 # ranking + mu only (no sigma_phys) instead of crashing on an empty slice.
-                if network_output.shape[1] >= 1 + 2 * self.num_point_estimate:
+                if network_output.shape[1] >= 1 + 2 * self.num_estimates:
                     sigma_raw = network_output[
-                        :, 1 + self.num_point_estimate : 1 + 2 * self.num_point_estimate
+                        :, 1 + self.num_estimates : 1 + 2 * self.num_estimates
                     ]
-                    # Map the raw sigma params to a std the *same* way the loss does
-                    # (softplus, not exp(0.5*log_var)) so exported sigma matches the
-                    # trained parameterisation. Reuse the loss's own _sigma when present.
-                    _sigma = getattr(self.loss_function, "_sigma", None)
-                    if callable(_sigma):
-                        sigma_std = _sigma(sigma_raw)
-                    else:
-                        sigma_std = F.softplus(sigma_raw) + 1e-3
+                    # The loss's own mapping and bounds, so exported sigma matches
+                    # the trained parameterisation.
+                    sigma_std = width_to_sigma(
+                        sigma_raw, self.loss_function.sigma_min, self.loss_function.sigma_max
+                    )
                     std_prior  = self.signal_sampler.param_sampler._std_stds.to(
                         sigma_std.device
                     )
@@ -302,8 +276,8 @@ class SageVanillaValidation(torch.nn.Module):
         signal_params  = torch.vstack(diagnostics["signal_params"])
         signal_idx     = torch.stack(diagnostics["signal_idx"])
 
-        savepath = os.path.join(self.cfg.export_dir, "validation_data.h5")
+        self.results_path.parent.mkdir(parents=True, exist_ok=True)
         save_validation(
-            nepoch, network_output, network_target,
-            signal_params, signal_idx, savepath,
+            name or f"epoch_{nepoch:04d}", network_output, network_target,
+            signal_params, signal_idx, self.results_path,
         )

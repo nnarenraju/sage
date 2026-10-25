@@ -31,18 +31,13 @@ SageVanillaTesting
     ``signal_sampler.augment.target_snr_sampler.last``.
 """
 
-import os
 import time
 import torch
 import numpy as np
-import torch.nn.functional as F
-
-from tqdm import tqdm
 
 # LOCAL
-from sage.core.config import get_cfg
+from sage.architecture.custom_losses import width_to_sigma
 from sage.core.logger import get_logger, format_duration as _fmt_duration
-from sage.core.pipeline import GWBatch, Grid, ProcessingState
 from sage.factory.contract import forward_batch
 from sage.utils.atomic_io import write_h5
 
@@ -104,7 +99,7 @@ def query_testing(h5path, far=None, score_above=None, detector=None,
         Keep records whose max per-detector peak exceeds this.
     pe_below, pe_above : dict[str, float]
         Keep records whose physical PE mean for the named head is below / above
-        the value (head names are ``cfg.do_point_estimate``, e.g. "tc","mchirp").
+        the value (head names are the run's ``signal.targets``, e.g. "tc","mchirp").
 
     Returns
     -------
@@ -162,7 +157,27 @@ def reconstruct_noise(h5path, sampler, indices=None):
 
 # ==================================================================== testing loop
 class SageVanillaTesting(torch.nn.Module):
-    """Large-scale sensitivity testing loop (see module docstring)."""
+    """
+    Large-scale sensitivity testing loop (see module docstring).
+
+    Parameters
+    ----------
+    signal_sampler, noise_sampler, processor, model
+        Samplers, preprocessing chain and network.
+    targets : list of str
+        Estimated parameters, in head order (``signal.targets``).
+    detectors : list of str
+        Detectors, in channel order.
+    width_bounds : tuple of float
+        ``(sigma_min, sigma_max)`` of the loss's width mapping.
+    device : str or torch.device
+        Device of the batches.
+    autocast_dtype : torch.dtype or None
+        Autocast dtype on ``device``; None runs without autocast.
+    keep_top, keep_loud, hist_bins : int
+        Retained score tail, loudest noise windows kept as records, and
+        histogram bins.
+    """
 
     def __init__(
         self,
@@ -170,15 +185,21 @@ class SageVanillaTesting(torch.nn.Module):
         noise_sampler,
         processor,
         model,
-        amp_dtype=torch.float16,
+        targets: list,
+        detectors: list,
+        width_bounds: tuple,
+        device,
+        autocast_dtype,
         keep_top=2_000_000,
         keep_loud=5_000,
         hist_bins=4000,
     ):
         super().__init__()
 
-        self.cfg = get_cfg()
-        self.amp_dtype = amp_dtype
+        self.detectors = list(detectors)
+        self.width_bounds = tuple(width_bounds)
+        self.device = torch.device(device)
+        self.autocast_dtype = autocast_dtype
 
         self.signal_sampler = signal_sampler
         self.noise_sampler  = noise_sampler
@@ -191,25 +212,15 @@ class SageVanillaTesting(torch.nn.Module):
 
         self.param_names = list(getattr(
             getattr(signal_sampler, "param_sampler", None), "param_names", []) or [])
-        self.num_pe   = len(self.cfg.do_point_estimate)
-        self.pe_names = list(self.cfg.do_point_estimate)
-
-        # Multiband parity with SageVanillaValidation (selector optional).
-        self._initial_state = getattr(
-            signal_sampler, "output_state", ProcessingState(Grid.FD_UNIFORM))
-        self._selector       = getattr(signal_sampler, "selector", None)
-        self._freqs          = None
-        self._coarse_indices = None
-        if self._selector is not None:
-            self._freqs          = self._selector.coarse_freqs
-            self._coarse_indices = self._selector.coarse_indices
+        self.num_pe   = len(targets)
+        self.pe_names = list(targets)
 
     # ------------------------------------------------------------------ core
     def _forward(self, x):
         """Raw strain batch ``(B, D, F)`` -> full network output ``(B, C)``.
 
-        Mirrors SageVanillaValidation's forward path (selector -> GWBatch ->
-        processor -> autocast model). Column 0 is the ranking statistic; the rest
+        Mirrors SageVanillaValidation's forward path (GWBatch -> processor ->
+        autocast model). Column 0 is the ranking statistic; the rest
         are the raw PE means then sigmas.
 
         The path itself lives in ``sage.factory.contract`` so that testing,
@@ -220,25 +231,18 @@ class SageVanillaTesting(torch.nn.Module):
             x,
             self.model,
             self.processor,
-            state=self._initial_state,
-            selector=self._selector,
-            freqs=self._freqs,
-            coarse_indices=self._coarse_indices,
-            amp_dtype=self.amp_dtype,
-            autocast=self.cfg.autocast,
+            amp_dtype=self.autocast_dtype,
+            autocast=self.autocast_dtype is not None,
+            device_type=self.device.type,
         )
 
     def _physical_pe(self, net):
         """Full output ``(B, C)`` -> physical PE mean/sigma ``(B, P)`` (as validation)."""
         P = self.num_pe
         ps = self.signal_sampler.param_sampler
-        mu_std = net[:, 1:1 + P]
-        if getattr(self.cfg, "pe_target_minmax", False):
-            mu_phys = ps.unnorm_from_batch(mu_std)
-        else:
-            mu_phys = ps.unstandardise_from_batch(mu_std)
+        mu_phys = ps.unstandardise_from_batch(net[:, 1:1 + P])
         if net.shape[1] >= 1 + 2 * P:
-            sigma_std  = F.softplus(net[:, 1 + P:1 + 2 * P]) + 1e-3
+            sigma_std  = width_to_sigma(net[:, 1 + P:1 + 2 * P], *self.width_bounds)
             sigma_phys = sigma_std * ps._std_stds.to(sigma_std.device)
         else:
             sigma_phys = torch.full_like(mu_phys, float("nan"))
@@ -327,7 +331,7 @@ class SageVanillaTesting(torch.nn.Module):
         if save_path:
             files = getattr(self.noise_sampler, "bin_files", None)
             attrs = {"n_noise": int(n_windows),
-                     "detectors": ",".join(self.cfg.detectors),
+                     "detectors": ",".join(self.detectors),
                      "pe_names": ",".join(self.pe_names),
                      "seq_len": int(getattr(self.noise_sampler, "seq_len", 0))}
             if files:
@@ -388,7 +392,7 @@ class SageVanillaTesting(torch.nn.Module):
                       sig_pe_mu=pe_mu, sig_pe_sigma=pe_sig)
         if save_path:
             _write_h5(save_path, result,
-                      attrs={"detectors": ",".join(self.cfg.detectors),
+                      attrs={"detectors": ",".join(self.detectors),
                              "param_names": ",".join(self.param_names),
                              "pe_names": ",".join(self.pe_names)})
             logger.info("[testing] wrote %s", save_path)

@@ -24,8 +24,10 @@ So the contract lives here once and is called, not copied.
 
 Two pieces:
 
-* :func:`make_processor` builds the preprocessing chain. It was duplicated verbatim in
-  eight training drivers.
+* :func:`sage.factory.build.build_preprocess` builds the preprocessing chain from the
+  run's ``preprocess`` settings, for training and every consumer alike. Whitening is the
+  network's input normalisation, so the fiducial spectra are part of the contract: a
+  search uses the ones the network was trained with, not those of the run it analyses.
 * :func:`forward_batch` runs the input through the processor and the model, preserving the
   boundary that matters: the preprocessor runs OUTSIDE autocast, because it consumes
   complex frequency-domain input which must not be cast, and only the model runs inside.
@@ -40,45 +42,12 @@ raw point-estimate means followed by their raw sigmas.
 """
 
 from contextlib import nullcontext
-from typing import Optional, Sequence
+from typing import Optional
 
 import torch
 
 from sage.core.graph import Preprocessor
-from sage.core.pipeline import GWBatch, Grid, ProcessingState
-from sage.dsp.multirate_sampling import DyadicPyramidBinning, MultirateSampler
-from sage.dsp.whiten import FiducialWhitening
-
-
-def make_processor(bounds: Sequence) -> Preprocessor:
-    """
-    Build the preprocessing chain a Sage network is trained and evaluated with.
-
-    Whitening by the fiducial spectra, then multirate sampling on a dyadic pyramid over
-    the parameter bounds.
-
-    Parameters
-    ----------
-    bounds : sequence
-        Parameter bounds from the signal sampler, which fix the dyadic binning. They come
-        from ``read_from_config(...).bounds`` on the training path and, for a search, from
-        the configuration the checkpoint was trained under.
-
-    Returns
-    -------
-    Preprocessor
-        The chain, ready to be applied to a :class:`GWBatch`.
-
-    Notes
-    -----
-    Whitening is the network's input normalisation, so the fiducial spectra are part of
-    the contract too: they must be the ones the network was trained with, not the ones
-    belonging to the run being analysed. The two differ whenever a network trained on one
-    observing run is used to search another.
-    """
-    whitener = FiducialWhitening()
-    mrsampler = MultirateSampler(binning_method=DyadicPyramidBinning(bounds))
-    return Preprocessor([whitener, mrsampler])
+from sage.core.pipeline import GWBatch, ProcessingState
 
 
 def forward_batch(
@@ -87,9 +56,6 @@ def forward_batch(
     processor: Preprocessor,
     *,
     state: Optional[ProcessingState] = None,
-    selector=None,
-    freqs=None,
-    coarse_indices=None,
     amp_dtype: torch.dtype = torch.bfloat16,
     autocast: bool = True,
     device_type: str = "cuda",
@@ -104,11 +70,9 @@ def forward_batch(
     model : Module
         The trained network. Returns ``(ranking_statistic, point_estimates)``.
     processor : Preprocessor
-        Built by :func:`make_processor`.
+        Built by :func:`sage.factory.build.build_preprocess`.
     state : ProcessingState, optional
-        Grid the input is on. Defaults to the uniform frequency-domain grid.
-    selector : optional
-        Multiband selector, applied before the batch is formed when present.
+        Grid the input is on. Defaults to the processor's input state.
     amp_dtype : torch.dtype
         Autocast dtype for the model.
     autocast : bool
@@ -132,11 +96,9 @@ def forward_batch(
     steps coarse enough to be visible right where a false-alarm threshold sits, which shows
     up as a comb in the background distribution.
     """
-    if selector is not None:
-        x = selector(x)
     if state is None:
-        state = ProcessingState(Grid.FD_UNIFORM)
-    batch = GWBatch(x, state=state, freqs=freqs, coarse_indices=coarse_indices)
+        state = processor.input_state
+    batch = GWBatch(x, state=state)
     # Outside autocast: the preprocessor consumes complex frequency-domain input, which
     # must not be cast to a reduced dtype.
     batch = processor(batch)

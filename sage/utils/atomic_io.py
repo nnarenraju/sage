@@ -7,7 +7,7 @@ Write to a private temp copy of the file, then ``os.replace`` it over the live
 file in one atomic filesystem step. A crash (e.g. a SLURM TIMEOUT) mid-write
 therefore leaves the live file exactly as it was -- worst case a stray ``.tmp``
 that the next atomic_h5 overwrites via its snapshot copy. This mirrors
-``_atomic_torch_save``/``_atomic_json_dump`` (checkpoint.py) for the small ``.h5``
+``atomic_torch_save``/``_atomic_json_dump`` (checkpoint.py) for the small ``.h5``
 side products, so a mid-write kill can no longer corrupt a file that is reopened
 in append mode every epoch and would otherwise crash the run on its next open.
 

@@ -413,17 +413,19 @@ class HDF5LossLogger:
         shape-mismatched file is (re)created fresh.
     num_epochs : int
         Total number of training epochs (pre-allocates the dataset).
-    num_components : int
-        Number of scalar loss components logged per epoch (e.g. 4 for
-        :class:`BCEWithPEsigmaLoss`: total, BCE, reg, coupling).
+    component_names : list of str
+        The loss's ``component_names`` (e.g. total, classification,
+        regression_tc, regression_mchirp, coupling), stored as each dataset's
+        ``components`` attribute.
     dtype : str
         NumPy dtype string for the stored values (default ``"float32"``).
     """
 
-    def __init__(self, path, num_epochs, num_components, dtype="float32"):
+    def __init__(self, path, num_epochs, component_names, dtype="float32"):
         self.path = path
         self.num_epochs = num_epochs
-        self.num_components = num_components
+        self.component_names = list(component_names)
+        self.num_components = len(self.component_names)
         self.dtype = dtype
 
         # Resume-safe: if a compatible file already exists (same shape), KEEP it
@@ -433,36 +435,27 @@ class HDF5LossLogger:
         if self._existing_is_compatible():
             return
 
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(self.path, "w") as f:
-
-            # Train group
-            train_grp = f.create_group("training")
-            train_grp.create_dataset(
-                "loss",
-                shape=(num_epochs, num_components),
-                dtype=dtype,
-            )
-
-            # Validation group
-            val_grp = f.create_group("validation")
-            val_grp.create_dataset(
-                "loss",
-                shape=(num_epochs, num_components),
-                dtype=dtype,
-            )
+            for split in ("training", "validation"):
+                dataset = f.create_group(split).create_dataset(
+                    "loss", shape=(num_epochs, self.num_components), dtype=dtype,
+                )
+                dataset.attrs["components"] = self.component_names
 
     def _existing_is_compatible(self):
         """True iff ``self.path`` already holds training/validation loss datasets
-        of the expected ``(num_epochs, num_components)`` shape (i.e. this is a
-        resume of the same run and the history must be preserved)."""
+        of the expected shape and components (i.e. this is a resume of the same
+        run and the history must be preserved)."""
         try:
             with h5py.File(self.path, "r") as f:
                 for split in ("training", "validation"):
                     if split not in f or "loss" not in f[split]:
                         return False
-                    if tuple(f[split]["loss"].shape) != (
-                        self.num_epochs, self.num_components
-                    ):
+                    loss = f[split]["loss"]
+                    if tuple(loss.shape) != (self.num_epochs, self.num_components):
+                        return False
+                    if [str(c) for c in loss.attrs.get("components", [])] != self.component_names:
                         return False
             return True
         except Exception:

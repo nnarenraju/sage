@@ -11,9 +11,8 @@ Design goals (set by the project):
     history all live in ONE HDF5 file under /work.
   * Continuous learning: the file is appended to forever after a single cold
     start; the miner is never rebuilt from scratch.
-  * Generic / config-agnostic: ``runs`` and ``detectors`` are passed in (sourced
-    from cfg), never hardcoded here.  The filename and root attributes are
-    derived from them so each (runs, detectors) training setup gets its own bank.
+  * Generic / config-agnostic: ``runs`` and ``detectors`` are passed in, never
+    hardcoded here.  The root attributes are derived from them.
 
 Layout (see ``_ensure_file``)::
 
@@ -60,25 +59,18 @@ def runs_tag(runs):
     return "".join(str(r) for r in runs)
 
 
-def default_bank_path(root, runs, detectors):
-    """Standard per-(runs, detectors) bank path, e.g.
-    ``/work/.../hard_mining/hardbank_O3aO3bO4a_HLV.h5``."""
-    fname = f"hardbank_{runs_tag(runs)}_{detectors_tag(detectors)}.h5"
-    return os.path.join(root, fname)
-
-
 class HardMiningBank:
     """File-resident bank for hard-noise mining (one HDF5 file).
 
     Parameters
     ----------
     path : str
-        HDF5 file path (use :func:`default_bank_path` to build a standard one).
+        HDF5 file path (a run keeps its bank at ``mining/bank.h5``).
     detectors : list[str]
-        Detector names, ``D = len(detectors)``.  Sourced from cfg.
+        Detector names, ``D = len(detectors)``.
     runs : str or list[str]
         Observing run(s) the model trains on (e.g. ``"O3b"`` or
-        ``["O3a","O3b","O4a"]``).  Sourced from cfg.  Stored as metadata only.
+        ``["O3a","O3b","O4a"]``).  Stored as metadata only.
     seq_len, sample_rate, bin_files :
         Window/length/source metadata, mirrored into emitted datasets.
     descriptor_dim : int

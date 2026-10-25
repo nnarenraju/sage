@@ -9,11 +9,6 @@ SageVanillaTraining
     model should be compiled externally with ``torch.compile(model, ...)``
     before being passed in, which is where the meaningful speedup comes from.
 
-    Auto-multibanding: if the signal sampler has a ``selector`` attribute
-    (set when ``multiband_mode='worst_case'`` is used), the noise batch is
-    automatically projected to the coarse grid before injection — the user
-    does not need a separate noise wrapper.
-
     GWBatch tracking: after combining signal + noise, the joint tensor is
     wrapped in a :class:`~sage.core.pipeline.GWBatch` that carries the
     current grid type and whitening state through the preprocessing pipeline.
@@ -22,8 +17,7 @@ SageVanillaTraining
     immediately when the offending module is called.
 
     The model receives ``batch.to_network_input()`` — a real float32 tensor
-    whose shape is ``(B, D, T)`` for TD pipelines and ``(B, 2·D, N_coarse)``
-    for FD_COARSE pipelines.
+    of shape ``(B, D, T)``.
 """
 
 # Packages
@@ -35,12 +29,45 @@ from tqdm import tqdm
 from contextlib import nullcontext
 
 # LOCAL
-from sage.core.config import get_cfg
 from sage.core.logger import get_logger, format_duration as _fmt_duration
-from sage.core.pipeline import GWBatch, Grid, ProcessingState
+from sage.core.pipeline import GWBatch
 from .schedulers import ManageScheduler
 
 logger = get_logger(__name__)
+
+
+def assemble_batch(signal_data, signal_targets, noise_data, noise_targets, signal_batch_size, num_estimates):
+    """
+    Inject the signals into the noise batch at random positions.
+
+    Parameters
+    ----------
+    signal_data, signal_targets : torch.Tensor
+        Signals and their targets (estimates, then the class label).
+    noise_data, noise_targets : torch.Tensor
+        Noise batch and its class labels.
+    signal_batch_size : int
+        Windows that receive a signal.
+    num_estimates : int
+        Estimated parameters.
+
+    Returns
+    -------
+    x, targets : torch.Tensor
+        The batch and its targets (zero estimates in noise windows).
+    idx : torch.Tensor
+        Positions of the signals.
+    """
+    batch_size, device = noise_data.shape[0], noise_data.device
+    pad = torch.zeros(noise_targets.shape[0], num_estimates, device=device, dtype=noise_targets.dtype)
+    noise_targets = torch.cat((pad, noise_targets), dim=1)
+
+    idx = torch.randperm(batch_size, device=device)[:signal_batch_size]
+    signal_pad = torch.zeros_like(noise_data)
+    target_pad = torch.zeros(batch_size, num_estimates + 1, device=device, dtype=signal_targets.dtype)
+    signal_pad[idx] = signal_data
+    target_pad[idx] = signal_targets
+    return noise_data + signal_pad, noise_targets + target_pad, idx
 
 
 class SageVanillaTraining(torch.nn.Module):
@@ -51,25 +78,19 @@ class SageVanillaTraining(torch.nn.Module):
 
     1. Draw a signal batch ``(S, D, F/T)`` and a noise batch ``(B, D, F/T)``
        from the respective samplers.
-    2. If the signal sampler uses worst-case multibanding, apply the selector
-       to the noise batch automatically (no user action required).
-    3. Scatter-inject signal waveforms at random positions in the noise batch.
-    4. Wrap the combined tensor in a :class:`~sage.core.pipeline.GWBatch`
+    2. Scatter-inject signal waveforms at random positions in the noise batch.
+    3. Wrap the combined tensor in a :class:`~sage.core.pipeline.GWBatch`
        carrying the current grid state.
-    5. Pass through the preprocessing pipeline (whitening, optional IFFT and
+    4. Pass through the preprocessing pipeline (whitening, optional IFFT and
        multirate sampling).
-    6. Forward pass through the compiled model, loss, backpropagation.
+    5. Forward pass through the compiled model, loss, backpropagation.
 
     Parameters
     ----------
     signal_sampler : nn.Module
         Waveform signal sampler (e.g. :class:`IMRPhenomXAS_NRTidalv3`).
-        If it exposes ``output_state`` and ``selector`` attributes (set
-        automatically when ``multiband_mode='worst_case'`` is used), the
-        training loop configures itself accordingly.
     noise_sampler : nn.Module
-        Noise sampler (e.g. :class:`MemmapNoiseSampler`).  No changes needed
-        for multibanding — the selector is applied internally.
+        Noise sampler (e.g. :class:`MemmapNoiseSampler`).
     processor : nn.Module
         Preprocessing pipeline (e.g. :class:`~sage.core.graph.Preprocessor`
         wrapping :class:`FiducialWhitening` and optionally
@@ -78,18 +99,34 @@ class SageVanillaTraining(torch.nn.Module):
         The neural network.  Should be compiled externally with
         ``torch.compile(model)`` before being passed here.
     loss_function : nn.Module
-        Loss function returning a stacked component tensor.
+        Loss function returning a stacked component tensor, total first.
     optimiser : torch.optim.Optimizer
-    scheduler : torch.optim.lr_scheduler._LRScheduler
+    scheduler : torch.optim.lr_scheduler.LRScheduler
     scaler : torch.amp.GradScaler or None
-        AMP gradient scaler.  Pass ``None`` to disable AMP.
+        Loss scaler (fp16 only), or None.
     num_iterations : int
-        Gradient steps per epoch.
+        Batches per epoch.
     num_epochs : int
         Total epochs (pre-allocates the loss tracking tensor).
+    batch_size : int
+        Windows per batch.
+    signal_batch_size : int
+        Windows per batch that receive a signal.
+    num_estimates : int
+        Estimated parameters (``signal.targets``).
+    clip_norm : float
+        Gradient-norm clipping threshold.
+    device : str or torch.device
+        Device of the batches, model and loss.
+    dtype : torch.dtype
+        Dtype of the model and loss.
+    autocast_dtype : torch.dtype or None
+        Autocast dtype (bf16 or fp16) on ``device``; None runs without autocast.
     scheduler_mode : str
         ``"batch"`` to step the scheduler every batch, ``"epoch"`` once per
-        epoch.
+        epoch, ``"metric"`` once per epoch with the validation loss.
+    callbacks : list
+        Loop hooks (mining, EMA); empty for plain training.
     """
 
     def __init__(
@@ -102,90 +139,60 @@ class SageVanillaTraining(torch.nn.Module):
         optimiser,
         scheduler,
         scaler,
-        num_iterations,
-        num_epochs,
-        scheduler_mode="batch",
-        callbacks=None,
-        amp_dtype=torch.float16,
+        num_iterations: int,
+        num_epochs: int,
+        batch_size: int,
+        signal_batch_size: int,
+        num_estimates: int,
+        clip_norm: float,
+        device,
+        dtype: torch.dtype,
+        autocast_dtype,
+        scheduler_mode: str,
+        callbacks: list,
     ):
         super().__init__()
 
-        self.cfg = get_cfg()
+        self.device = torch.device(device)
+        self.dtype = dtype
 
         self.signal_sampler = signal_sampler
         self.noise_sampler  = noise_sampler
         self.processor      = processor
-        self.model          = model.to(device=self.cfg.device, dtype=self.cfg.dtype)
+        self.model          = model.to(device=self.device, dtype=dtype)
 
         # Vanilla single loss: called as loss_function(out, targets) and
         # returning a components tensor whose [0] is the total to backprop.
-        self.loss_function = loss_function.to(
-            device=self.cfg.device, dtype=self.cfg.dtype
-        )
+        self.loss_function = loss_function.to(device=self.device, dtype=dtype)
         self.optimiser  = optimiser
         self.scheduler  = ManageScheduler(scheduler, scheduler_mode)
         self.scaler     = scaler
 
         self.num_iterations = num_iterations
         self.num_epochs     = num_epochs
+        self.batch_size        = batch_size
+        self.signal_batch_size = signal_batch_size
+        self.num_estimates     = num_estimates
+        self.clip_norm         = clip_norm
+        self.autocast_dtype    = autocast_dtype
 
         # Training callbacks (loop hooks). Empty -> plain vanilla training.
-        self.callbacks = list(callbacks) if callbacks else []
-
-        # AMP compute dtype: bf16 (H100 etc.; no loss scaler needed) or fp16
-        # (older GPUs, paired with a GradScaler). The caller picks it from the
-        # available hardware.
-        self.amp_dtype = amp_dtype
-
-        self.num_point_estimate = len(self.cfg.do_point_estimate)
-        self.num_targets        = self.num_point_estimate + 1
-        self.B = self.cfg.batch_size
-        self.S = int(self.cfg.batch_size * self.cfg.class_balance)
-
-        # ── Auto-configure for multibanding ───────────────────────────────
-        # Read the signal sampler's output state (FD_UNIFORM by default).
-        # If the sampler uses worst_case multibanding it will expose a
-        # 'selector' and an 'output_state' of Grid.FD_COARSE.
-        self._initial_state = getattr(
-            signal_sampler, "output_state",
-            ProcessingState(Grid.FD_UNIFORM),
-        )
-        self._selector       = getattr(signal_sampler, "selector", None)
-        self._freqs          = None
-        self._coarse_indices = None
-
-        if self._selector is not None:
-            self._freqs          = self._selector.coarse_freqs
-            self._coarse_indices = self._selector.coarse_indices
+        self.callbacks = list(callbacks)
 
         # ── Loss tracking ─────────────────────────────────────────────────
         n_components = self.loss_function.num_components
         self.loss_components = torch.zeros(
-            (num_epochs, n_components),
-            device=self.cfg.device,
-            dtype=self.cfg.dtype,
+            (num_epochs, n_components), device=self.device, dtype=dtype,
         )
 
-    def _default_assembly(self, signal_data, signal_targets, noise_data,
-                          noise_targets, device):
-        """Vanilla batch assembly: pad noise targets + inject ``S`` signals at
-        random positions. Returns ``(x, targets)``. Skipped when an on_sample
-        callback assembles the batch itself (no shipped callback does)."""
-        pad = torch.zeros(
-            noise_targets.shape[0], self.num_point_estimate,
-            device=device, dtype=noise_targets.dtype,
+    def _default_assembly(self, signal_data, signal_targets, noise_data, noise_targets):
+        """Vanilla batch assembly (:func:`assemble_batch`). Returns ``(x, targets)``.
+        Skipped when an on_sample callback assembles the batch itself (no shipped
+        callback does)."""
+        x, targets, _ = assemble_batch(
+            signal_data, signal_targets, noise_data, noise_targets, self.signal_batch_size, self.num_estimates,
         )
-        noise_targets = torch.cat((pad, noise_targets), dim=1)
-
-        idx        = torch.randperm(self.B, device=device)[: self.S]
-        signal_pad = torch.zeros_like(noise_data)
-        target_pad = torch.zeros(
-            self.B, self.num_targets, device=device, dtype=signal_targets.dtype,
-        )
-        signal_pad[idx] = signal_data
-        target_pad[idx] = signal_targets
-
-        return noise_data + signal_pad, noise_targets + target_pad
+        return x, targets
 
     def metric_step(self, metric):
         """
@@ -202,7 +209,6 @@ class SageVanillaTraining(torch.nn.Module):
     def forward(self, nepoch):
 
         self.model.train()
-        device = self.cfg.device
 
         # A progress bar is useful interactively and actively harmful in a
         # batch job: tqdm repaints with carriage returns, which a SLURM .out
@@ -215,7 +221,7 @@ class SageVanillaTraining(torch.nn.Module):
 
         logger.info(
             "Epoch %d | training: %d iterations, batch %d",
-            nepoch, self.num_iterations, self.cfg.batch_size,
+            nepoch, self.num_iterations, self.batch_size,
         )
 
         _iter = tqdm(
@@ -230,14 +236,7 @@ class SageVanillaTraining(torch.nn.Module):
             signal_data, signal_targets = self.signal_sampler()
             noise_data,  noise_targets  = self.noise_sampler()
 
-            # ── 2. Auto-multiband noise (zero user action required) ───────
-            # If the signal sampler uses worst-case multibanding, the signal
-            # is already at N_coarse points.  Apply the same selector to the
-            # full-resolution noise so both are on the same coarse grid.
-            if self._selector is not None:
-                noise_data = self._selector(noise_data)
-
-            # ── 3. Per-batch context + on_sample callbacks ────────────────
+            # ── 2. Per-batch context + on_sample callbacks ────────────────
             # ctx is built only when callbacks are present and threaded to each
             # callback's on_sample hook. A callback MAY assemble the batch by
             # setting ctx['x'] / ctx['targets'] (a generic extension point — no
@@ -253,36 +252,26 @@ class SageVanillaTraining(torch.nn.Module):
                 for cb in self.callbacks:
                     cb.on_sample(ctx, self)
 
-            # ── 4. Default assembly (random signal injection) unless a
+            # ── 3. Default assembly (random signal injection) unless a
             #        callback already produced ctx['x'] / ctx['targets']. ────
             if ctx is not None and ctx.get("x") is not None:
                 x, targets = ctx["x"], ctx["targets"]
             else:
-                x, targets = self._default_assembly(
-                    signal_data, signal_targets, noise_data, noise_targets, device
-                )
+                x, targets = self._default_assembly(signal_data, signal_targets, noise_data, noise_targets)
                 if ctx is not None:
                     ctx["x"], ctx["targets"] = x, targets
 
-            # ── 5. Wrap in GWBatch and preprocess ─────────────────────────
-            batch = GWBatch(
-                x,
-                state          = self._initial_state,
-                freqs          = self._freqs,
-                coarse_indices = self._coarse_indices,
-            )
-            batch = self.processor(batch)
+            # ── 4. Wrap in GWBatch and preprocess ─────────────────────────
+            batch = self.processor(GWBatch(x, state=self.processor.input_state))
 
-            # to_network_input(): TD → (B,D,T) float32 unchanged;
-            #                     FD_COARSE → (B, 2D, N_coarse) float32
             net_input = batch.to_network_input()
 
-            # ── 6. Forward + backward ─────────────────────────────────────
+            # ── 5. Forward + backward ─────────────────────────────────────
             self.optimiser.zero_grad(set_to_none=True)
 
             with (
-                torch.autocast(device_type="cuda", dtype=self.amp_dtype)
-                if self.cfg.autocast
+                torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype)
+                if self.autocast_dtype is not None
                 else nullcontext()
             ):
                 out = self.model(net_input)
@@ -297,7 +286,7 @@ class SageVanillaTraining(torch.nn.Module):
                 total.backward()
 
             torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(), max_norm=self.cfg.clip_norm,
+                self.model.parameters(), max_norm=self.clip_norm,
             )
 
             if self.scaler is not None:
@@ -306,7 +295,7 @@ class SageVanillaTraining(torch.nn.Module):
             else:
                 self.optimiser.step()
 
-            self.scheduler.batch_step(nepoch, nbatch, self.num_iterations)
+            self.scheduler.batch_step()
             self.loss_components[nepoch] += loss.detach()
 
             # ── Progress reporting ────────────────────────────────────────
