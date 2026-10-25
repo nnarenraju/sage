@@ -84,6 +84,9 @@ where = ["."]
 include = ["sage*"]
 exclude = ["sage.egg-info*"]
 
+[tool.setuptools.package-data]
+"sage.presets" = ["runs/*.yaml", "priors/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short --strict-markers"
