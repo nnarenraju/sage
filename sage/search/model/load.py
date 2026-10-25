@@ -1,56 +1,32 @@
-"""Load a trained network and what a search needs to run it.
+"""Load a trained network and what a search needs to run it, from one checkpoint.
 
-The network, its training configs, the whitening and multirate
-preprocessor, and the constants that decode its point estimates.
+The checkpoint's record gives the network, the preprocessor (fiducial ASDs
+included) and the target scaling that decodes the point estimates.
 """
 
-import inspect
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Dict, List, Tuple, Type
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
+import yaml
 
-from sage.core.config import register_configs
-from sage.data.waveform import read_from_config
-from sage.factory.contract import make_processor
-
-
-def as_namespace(config: dict) -> SimpleNamespace:
-    """Config dict as attributes, with a stored dtype name made a dtype.
-
-    Parameters
-    ----------
-    config : dict
-        Config recorded in a checkpoint.
-
-    Returns
-    -------
-    types.SimpleNamespace
-        The same values, readable as attributes.
-    """
-    values = dict(config)
-    if isinstance(values.get("dtype"), str):
-        values["dtype"] = getattr(torch, values["dtype"].split(".")[-1])
-    return SimpleNamespace(**values)
+from sage.config.loader import load_run_record, read_yaml_text
+from sage.config.prior import check_prior
+from sage.core.pipeline import Grid, ProcessingState
+from sage.data.asd import fiducial_asds_from_record
+from sage.data.waveform import prior_sampler
+from sage.dsp.multirate_sampling import MultirateSampler
+from sage.factory.build import build_data, build_model, build_preprocess, resolve_loss
 
 
-def load_network(
-    path: Path, architecture: Type[torch.nn.Module], device: str = "cuda"
-) -> Tuple[torch.nn.Module, dict, dict]:
-    """Build a network and load its trained weights.
-
-    Constructor arguments of ``architecture`` are read from the training
-    config by name. The configs are registered globally, with ``device``
-    set to the one requested, since other modules read them from there.
+def load_network(path: Path, device: str = "cuda") -> Tuple[torch.nn.Module, dict, dict]:
+    """Build the network a checkpoint names and load its weights.
 
     Parameters
     ----------
     path : Path
-        Checkpoint file.
-    architecture : type
-        Network class the checkpoint was trained as.
+        Checkpoint file (``latest.pt``, ``best.pt``, ``ema.pt``, ...).
     device : str
         Device to load the network onto.
 
@@ -58,120 +34,80 @@ def load_network(
     -------
     model : torch.nn.Module
         Network in evaluation mode.
-    cfg, data_cfg : dict
-        Training and data configs recorded in the checkpoint.
+    settings : dict
+        The run settings the checkpoint records.
+    record : dict
+        The checkpoint's run record.
     """
     checkpoint = torch.load(path, map_location=device, weights_only=False)
-    cfg = dict(checkpoint["cfg"], device=device)
-    data_cfg = checkpoint["data_cfg"]
-    register_configs(as_namespace(cfg), as_namespace(data_cfg))
-
-    parameters = inspect.signature(architecture).parameters
-    model = architecture(**{name: cfg[name] for name in parameters if name in cfg})
-
-    # torch.compile prefixes every weight name with "_orig_mod.".
-    state = {
-        name.removeprefix("_orig_mod."): tensor
-        for name, tensor in checkpoint["model_state_dict"].items()
-    }
-    model.load_state_dict(state)
-    model = model.to(device=device, dtype=torch.float32)
-    return model.eval(), cfg, data_cfg
-
-
-def encoding(
-    param_sampler: object, targets: List[str], minmax: bool = False
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Offset and scale each target was encoded with during training.
-
-    Parameters
-    ----------
-    param_sampler : DistributionSampler
-        Training parameter sampler holding the encoding buffers.
-    targets : list of str
-        Point-estimate targets in head order, ``cfg.do_point_estimate``.
-    minmax : bool
-        Whether training used min-max encoding, ``cfg.pe_target_minmax``.
-
-    Returns
-    -------
-    offsets, scales : numpy.ndarray
-        Encoding constants per target, as float64.
-    """
-    names = ("_norm_mins", "_norm_scales", "_norm_indices")
-    if not minmax:
-        names = ("_std_means", "_std_stds", "_std_indices")
-    offsets, scales, indices = (
-        getattr(param_sampler, name).detach().cpu().numpy().ravel() for name in names
+    record = checkpoint["record"]
+    settings = load_run_record(record["run"])
+    model = build_model(
+        settings["model"], len(settings["data"]["detectors"]), len(settings["signal"]["targets"]),
+        device, torch.float32,
     )
-
-    columns = indices.tolist()
-    positions = [columns.index(param_sampler.param_index[name]) for name in targets]
-    return offsets[positions].astype(np.float64), scales[positions].astype(np.float64)
+    model.load_state_dict(checkpoint["model"])
+    return model.eval(), settings, record
 
 
-def load_search_network(
-    checkpoint: Path,
-    architecture: Type[torch.nn.Module],
-    gwconfig: Path,
-    device: str = "cuda",
-    sampler_seed: int = 150914,
-) -> Dict[str, object]:
+def load_search_network(checkpoint: Path, device: str = "cuda") -> Dict[str, object]:
     """Network, preprocessor and decoding constants for a search.
-
-    The parameter sampler is the training one, built from the training
-    ``gwconfig.yaml``. It sets the multirate binning and the encoding
-    the point estimates are decoded with.
 
     Parameters
     ----------
     checkpoint : Path
         Training checkpoint.
-    architecture : type
-        Network class the checkpoint was trained as.
-    gwconfig : Path
-        Parameter prior the network was trained under.
     device : str
         Device to score on.
-    sampler_seed : int
-        Seed of the sampler; its encoding constants are Monte Carlo
-        estimates.
 
     Returns
     -------
     dict of str to object
         ``model``, ``processor``, ``detectors``, ``window_samples``,
         ``sample_rate``, ``padding_s``, ``targets``, ``offsets``, ``scales``,
-        and the ``provenance`` written into every trigger file.
+        ``width_bounds``, and the ``provenance`` written into every trigger file.
+
+    Raises
+    ------
+    ValueError
+        If the multirate bins rebuilt from the record differ from those the
+        network was trained with.
     """
-    model, cfg, data_cfg = load_network(checkpoint, architecture, device)
+    model, settings, record = load_network(checkpoint, device)
+    window, detectors, dtype = build_data(settings["data"])
+    prior = check_prior(read_yaml_text(record["prior"], "checkpoint record prior.yaml"))
+    derived = yaml.safe_load(record["derived"])
 
-    sampler = read_from_config(str(gwconfig), seed=sampler_seed)
-    # Training compiles these inside the waveform generator, which a
-    # search does not build.
-    sampler._compile_batch_normaliser()
-    sampler._compile_batch_standardiser()
+    # Bounds are theoretical, so the sampler's seed does not enter them.
+    bounds = prior_sampler(prior, 0, device, dtype).bounds
+    asds = fiducial_asds_from_record(record["fiducial"], detectors, window, device)
+    processor = build_preprocess(
+        settings["preprocess"], asds, window, bounds,
+        settings["signal"]["low_frequency_cutoff_in_hz"], ProcessingState(Grid.FD_UNIFORM), device, dtype,
+    )
+    bins = [step.bins.tolist() for step in processor.seq if isinstance(step, MultirateSampler)]
+    if bins != derived["multirate_bins"]:
+        raise ValueError(
+            f"{checkpoint}: multirate bins rebuilt from the record differ from training's; "
+            "the binning code has changed since this network was trained"
+        )
 
-    targets = list(cfg["do_point_estimate"])
-    offsets, scales = encoding(sampler, targets, bool(cfg.get("pe_target_minmax")))
-    sample_rate = data_cfg["sample_rate"]
-    padding_s = data_cfg["padding_length_in_s"]
-    window_s = data_cfg["sample_length_in_s"] + 2 * padding_s
-
+    targets = list(settings["signal"]["targets"])
+    scaling = derived["target_scaling"]
+    loss = resolve_loss(settings["loss"])
     return {
         "model": model,
-        "processor": make_processor(sampler.bounds),
-        "detectors": list(cfg["detectors"]),
-        "window_samples": round(window_s * sample_rate),
-        "sample_rate": sample_rate,
-        "padding_s": padding_s,
+        "processor": processor,
+        "detectors": detectors,
+        "window_samples": window.padded_length_in_samples,
+        "sample_rate": window.sample_rate_in_hz,
+        "padding_s": window.padding_length_in_s,
         "targets": targets,
-        "offsets": offsets,
-        "scales": scales,
+        "offsets": np.array([scaling[target]["offset"] for target in targets], dtype=np.float64),
+        "scales": np.array([scaling[target]["scale"] for target in targets], dtype=np.float64),
+        "width_bounds": (loss["sigma_min"], loss["sigma_max"]),
         "provenance": {
             "checkpoint": str(Path(checkpoint).resolve()),
-            "architecture": architecture.__name__,
-            "gwconfig": str(Path(gwconfig).resolve()),
-            "sampler_seed": sampler_seed,
+            "model": settings["model"]["name"],
         },
     }

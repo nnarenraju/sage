@@ -9,7 +9,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 
-from sage.core.pipeline import GWBatch, Grid, ProcessingState
+from sage.core.pipeline import GWBatch
 from sage.factory.contract import forward_batch
 from sage.search.model.split import backend, frontend
 
@@ -119,7 +119,7 @@ def frontend_features(
     list of torch.Tensor
         Features of each detector, in channel order.
     """
-    batch = GWBatch(spectra, state=ProcessingState(Grid.FD_UNIFORM))
+    batch = GWBatch(spectra, state=network["processor"].input_state)
     with torch.inference_mode():
         prepared = network["processor"](batch).to_network_input()
         return [

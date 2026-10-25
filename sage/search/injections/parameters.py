@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Dict
 
 import numpy as np
+import torch
 from astropy import units as u
 from astropy.cosmology import Planck15
 from astropy.cosmology import units as cu
 from pycbc.conversions import mchirp_from_mass1_mass2
 
-from sage.data.waveform import read_from_config
+from sage.config.prior import load_prior_file
+from sage.data.waveform import prior_sampler
 
 
 def injection_parameters(
@@ -22,6 +24,8 @@ def injection_parameters(
     gps_start: float,
     gps_end: float,
     seed: int,
+    device,
+    dtype: torch.dtype,
 ) -> Dict[str, np.ndarray]:
     """PyCBC-named waveform parameters of each binary.
 
@@ -36,6 +40,10 @@ def injection_parameters(
         drawn uniformly within it.
     seed : int
         Seed of the spin azimuths, projection times and prior draws.
+    device : str or torch.device
+        Device of the prior draws.
+    dtype : torch.dtype
+        Dtype of the prior draws.
 
     Returns
     -------
@@ -68,7 +76,7 @@ def injection_parameters(
         "injection_time": injection_time,
     }
 
-    prior = read_from_config(str(gwconfig), seed=seed)
+    prior = prior_sampler(load_prior_file(gwconfig), seed, device, dtype)
     draws = prior(n).cpu().numpy()
     for name in ("ra", "dec", "inclination", "coa_phase", "polarization", "tc"):
         parameters[name] = draws[:, prior.param_index[name]].astype(np.float64)

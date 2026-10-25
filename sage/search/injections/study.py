@@ -273,6 +273,7 @@ def injection_study(
             network["targets"],
             network["offsets"],
             network["scales"],
+            network["width_bounds"],
             network["padding_s"],
         )
         columns["stat"] = statistic

@@ -15,8 +15,8 @@ def decode(
     estimates: np.ndarray,
     offsets: np.ndarray,
     scales: np.ndarray,
-    sigma_min: float = 1e-3,
-    sigma_max: float = 10.0,
+    sigma_min: float,
+    sigma_max: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Physical means and widths from the point-estimate head.
 
@@ -29,9 +29,9 @@ def decode(
         Head output, shape ``(windows, 2 * targets)``: means, then raw
         widths.
     offsets, scales : numpy.ndarray
-        Encoding constants from ``encoding``.
+        Target scaling the network was trained with.
     sigma_min, sigma_max : float
-        Width bounds used by the training loss.
+        Width bounds of the training loss.
 
     Returns
     -------
@@ -61,6 +61,7 @@ def trigger_columns(
     targets: List[str],
     offsets: np.ndarray,
     scales: np.ndarray,
+    width_bounds: Tuple[float, float],
     padding_s: float,
 ) -> Dict[str, np.ndarray]:
     """Point-estimate columns of a trigger file.
@@ -77,7 +78,9 @@ def trigger_columns(
     targets : list of str
         Point-estimate targets in head order.
     offsets, scales : numpy.ndarray
-        Encoding constants from ``encoding``.
+        Target scaling the network was trained with.
+    width_bounds : tuple of float
+        ``(sigma_min, sigma_max)`` of the training loss.
     padding_s : float
         Whitening padding at each end of a window, in seconds.
 
@@ -87,7 +90,7 @@ def trigger_columns(
         ``<target>`` and ``<target>_sigma`` per target, with ``tc``
         replaced by ``tc_gps``.
     """
-    means, widths = decode(estimates, offsets, scales)
+    means, widths = decode(estimates, offsets, scales, *width_bounds)
 
     columns = {}
     for index, name in enumerate(targets):
@@ -131,6 +134,7 @@ def loud_triggers(
         network["targets"],
         network["offsets"],
         network["scales"],
+        network["width_bounds"],
         network["padding_s"],
     )
     columns["stat"] = statistic[loud]

@@ -84,9 +84,15 @@ def check_split(model: torch.nn.Module, strain: torch.Tensor) -> None:
     Raises
     ------
     ValueError
-        If the halves do not reproduce ``model.forward``, or replacing
-        one detector's data changes another detector's features.
+        If the network mixes detectors before its backend, the halves do
+        not reproduce ``model.forward``, or replacing one detector's data
+        changes another detector's features.
     """
+    if not model.separable:
+        raise ValueError(
+            f"{type(model).__name__} mixes detectors before its backend, "
+            "so it has no per-detector half"
+        )
     n_detectors = strain.shape[1]
     generator = torch.Generator().manual_seed(20260821)
     with torch.no_grad():
