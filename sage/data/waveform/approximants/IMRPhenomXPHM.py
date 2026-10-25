@@ -63,7 +63,7 @@ import math
 
 import torch
 
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.geometry import Window
 from sage.core.math import safe_sqrt
 from sage.data.waveform import taper as _taper_mod
 from sage.data.waveform import waveform_utils
@@ -94,24 +94,38 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
     function is stateless and vectorized over (B, F) (the C code mutates
     struct fields per frequency; the port re-derives them locally).
 
-    Construction (two modes, dispatched on the first argument):
+    Construction:
 
-    IMRPhenomXPHM(f, f_ref)
-        Research mode: explicit frequency grid, as IMRPhenomXAS/XHM.
+    IMRPhenomXPHM(param_sampler, waveform_project, augment, window, ...)
+        Signal sampler, as IMRPhenomPv2: the signal-band grid comes from the
+        window and :meth:`forward` yields (projected strain, targets) batches.
 
-    IMRPhenomXPHM(param_sampler, waveform_project, augment=...)
-        Production signal-sampler mode, mirroring IMRPhenomPv2: the grid
-        is built from the registered configs and :meth:`forward` yields
-        (projected strain, targets) batches.
+    IMRPhenomXPHM.from_grid(f, f_ref, **kwargs)
+        The model on an explicit frequency grid, as IMRPhenomXAS/XHM.
 
-    Parameters (research mode)
-    --------------------------
-    f : torch.Tensor, shape (B, F)
-        Frequency grid in Hz.
-    f_ref : torch.Tensor, shape (B, 1)
-        Reference frequency in Hz.
-    **kwargs
-        Forwarded to IMRPhenomXHM / IMRPhenomXAS / PhenomConstants.
+    Parameters
+    ----------
+    param_sampler : DistributionSampler
+        Parameter sampler.
+    waveform_project : ConstantProjection
+        Multi-detector projection module.
+    augment : callable or None
+        SNR-rescaling augmentation.
+    window : Window
+        Window geometry; the grid runs from the low cutoff to Nyquist with
+        ``df = 1 / padded_length_in_s``.
+    signal_batch_size : int
+        Signals per call.
+    low_frequency_cutoff_in_hz, reference_frequency_in_hz : float
+        Low cutoff and reference frequency.
+    targets : list of str
+        Estimated parameters, in head order (must include ``mchirp``).
+    device : str or torch.device
+        Device of the batches.
+    dtype : torch.dtype
+        Dtype of the data tensors (the waveform interior is float64).
+    append_per_det_targets : bool
+        Append per-detector targets after the class column.
     """
 
     # v6.1.0 defaults (empirically verified against the installed
@@ -124,57 +138,63 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
     FINAL_SPIN_MOD = 3          # default 4 remapped for non-SpinTaylor
                                 # (precession.c:1160)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        param_sampler,
+        waveform_project,
+        augment,
+        window: Window,
+        signal_batch_size: int,
+        low_frequency_cutoff_in_hz: float,
+        reference_frequency_in_hz: float,
+        targets: list,
+        device,
+        dtype: torch.dtype,
+        append_per_det_targets: bool = False,
+    ):
         torch.nn.Module.__init__(self)
-        if args and torch.is_tensor(args[0]):
-            IMRPhenomXHM.__init__(self, *args, **kwargs)
-        else:
-            self._init_production(*args, **kwargs)
+        self.signal_batch_size = signal_batch_size
 
-    def _init_production(self, param_sampler=None, waveform_project=None,
-                         augment=None, append_per_det_targets=False,
-                         extra_batch=0):
-        """
-        Production signal-sampler construction, mirroring IMRPhenomPv2:
-        frequency grid from the registered configs, parameter-column
-        wiring into the waveform layout, and target-normaliser
-        compilation.
-        """
-        self.cfg = get_cfg()
-        self.data_cfg = get_data_cfg()
-
-        self.signal_batch_size = (
-            int(self.cfg.batch_size * self.cfg.class_balance) + int(extra_batch)
-        )
-
-        f, f_ref = waveform_utils.get_freqs(
-            self.data_cfg.signal_low_frequency_cutoff,
-            self.data_cfg.sample_rate / 2.0,
-            self.data_cfg.padded_length_in_s,
-            self.signal_batch_size,
-            self.cfg.device,
+        f = waveform_utils.get_freqs(
+            low_frequency_cutoff_in_hz,
+            window.sample_rate_in_hz / 2.0,
+            window.padded_length_in_s,
+            signal_batch_size,
+            device,
             torch.float64,
         )
-        IMRPhenomXHM.__init__(self, f, f_ref)
-        self.sample_length_in_s = float(self.data_cfg.padded_length_in_s)
-        self._out_cdtype = torch.promote_types(self.cfg.dtype, torch.complex64)
+        f_ref = waveform_utils.reference_frequencies(reference_frequency_in_hz, signal_batch_size, device)
+        IMRPhenomXHM.__init__(self, f, f_ref, padding_length_in_s=window.padding_length_in_s)
+        self.sample_length_in_s = float(window.padded_length_in_s)
+        self._out_cdtype = torch.promote_types(dtype, torch.complex64)
 
         self.param_sampler = param_sampler
         self.waveform_project = waveform_project
         self.augment = augment
         self.append_per_det_targets = bool(append_per_det_targets)
-        self.mc_pe_idx = list(self.cfg.do_point_estimate).index("mchirp")
+        self.mc_pe_idx = list(targets).index("mchirp")
 
         param_index = self.param_sampler.param_index
-        self.source, self.target = waveform_utils.layout_columns(param_index)
+        parameters = waveform_utils.PRECESSING_PARAMETERS
+        self.source, self.target = waveform_utils.layout_columns(param_index, parameters, type(self).__name__)
+        self.extras = waveform_utils.given_extras(param_index, parameters)
         self.dist_col = param_index["distance"]
         self.tc_col = param_index["tc"]
 
-        self.param_sampler._compile_batch_normaliser()
-        self.param_sampler._compile_batch_standardiser()
+        self.param_sampler._compile_batch_normaliser(targets, dtype)
+        self.param_sampler._compile_batch_standardiser(targets)
 
-        self.param_sampler.to(self.cfg.device)
-        self.waveform_project.to(self.cfg.device)
+        self.param_sampler.to(device)
+        self.waveform_project.to(device)
+
+    @classmethod
+    def from_grid(cls, f, f_ref, **kwargs):
+        """The model on an explicit frequency grid ``f`` (B, F) with reference ``f_ref`` (B, 1)."""
+        model = cls.__new__(cls)
+        torch.nn.Module.__init__(model)
+        IMRPhenomXHM.__init__(model, f, f_ref, **kwargs)
+        model.extras = waveform_utils.TIDAL_PARAMETERS
+        return model
 
     @torch.no_grad()
     def forward(self, return_theta=False):
@@ -213,10 +233,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
                 all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
             )
 
-        if getattr(self.cfg, "pe_target_minmax", False):
-            normed_targets = self.param_sampler.norm_from_batch(all_theta)
-        else:
-            normed_targets = self.param_sampler.standardise_from_batch(all_theta)
+        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )
@@ -1987,7 +2004,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         """
         # [m1, m2, chi1x, chi1y, chi1z, chi2x, chi2y, chi2z, distance, tc,
         #  phic, inclination]
-        theta = waveform_utils.fill_defaults(theta)[:, :12]
+        theta = waveform_utils.precessing_layout(theta, self.extras)
         theta = self.check_masses_and_spins(theta)
         tc = theta[:, 9:10]
         theta_aligned = torch.cat(

@@ -1910,7 +1910,10 @@ class IMRPhenomXHM(IMRPhenomXAS):
         ValueError
             If any transverse spin is non-zero.
         """
-        theta = waveform_utils.aligned_layout(theta, waveform_utils.ALIGNED_COLUMNS)
+        theta = waveform_utils.aligned_layout(
+            theta, waveform_utils.ALIGNED_COLUMNS,
+            waveform_utils.TRANSVERSE_SPIN_PARAMETERS + waveform_utils.TIDAL_PARAMETERS,
+        )
         iota = theta[:, 7:8]
         tc = theta[:, 5:6]
         derived = self.compute_derived_parameters(theta)

@@ -44,7 +44,7 @@ from sage.core.math import safe_sqrt
 
 from sage.data.waveform import taper
 from sage.data.waveform import waveform_utils
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.geometry import Window
 
 
 class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
@@ -62,53 +62,66 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
     Parameters
     ----------
-    param_sampler : callable or None
-        Waveform parameter sampler; if ``None``, a default
-        :class:`~sage.data.waveform.sampler.DistributionSampler` is used.
-    waveform_project : callable or None
-        Detector projection module; if ``None``, defaults to
-        :class:`~sage.data.waveform.project.ConstantProjection`.
+    param_sampler : DistributionSampler
+        Waveform parameter sampler.
+    waveform_project : ConstantProjection
+        Detector projection.
     augment : callable or None
-        Optional augmentation callable applied to the projected strain.
+        Augmentation applied to the projected strain (the SNR rescaler).
+    window : Window
+        Window geometry; sets the frequency grid and tc placement.
+    signal_batch_size : int
+        Signals drawn per call.
+    low_frequency_cutoff_in_hz : float
+        Lowest frequency of the waveform grid.
+    reference_frequency_in_hz : float
+        Reference frequency of the waveform phase.
+    targets : list of str
+        Point-estimate targets, in head order.
+    device : str or torch.device
+        Device of the batches.
+    dtype : torch.dtype
+        Real dtype of the output; strain is its complex counterpart.
+    append_per_det_targets : bool
+        Append per-detector targets after the class column (masker only).
     """
 
     GRAPH_READY = True
 
     def __init__(
         self,
-        param_sampler=None,
-        waveform_project=None,
-        augment=None,
-        append_per_det_targets=False,
-        extra_batch=0,
+        param_sampler,
+        waveform_project,
+        augment,
+        window: Window,
+        signal_batch_size: int,
+        low_frequency_cutoff_in_hz: float,
+        reference_frequency_in_hz: float,
+        targets: list,
+        device,
+        dtype: torch.dtype,
+        append_per_det_targets: bool = False,
     ):
 
         torch.nn.Module.__init__(self)
 
-        # Setup configs
-        self.cfg = get_cfg()
-        self.data_cfg = get_data_cfg()
-
-        # Base signal count = class_balance * batch_size. ``extra_batch`` adds
-        # more signals beyond that — used by the consistency loop to build
-        # non-astrophysical (class-0) samples without eating into the coherent
-        # (class-1) signal budget.
-        self.signal_batch_size = (
-            int(self.cfg.batch_size * self.cfg.class_balance) + int(extra_batch)
-        )
+        self.signal_batch_size = signal_batch_size
 
         # Fixed frequency grid
-        f, f_ref = waveform_utils.get_freqs(
-            self.data_cfg.signal_low_frequency_cutoff,
-            self.data_cfg.sample_rate / 2.0,
-            self.data_cfg.padded_length_in_s,
-            self.signal_batch_size,
-            self.cfg.device,
+        f = waveform_utils.get_freqs(
+            low_frequency_cutoff_in_hz,
+            window.sample_rate_in_hz / 2.0,
+            window.padded_length_in_s,
+            signal_batch_size,
+            device,
             torch.float64,
         )
-        IMRPhenomD.IMRPhenomD.__init__(self, f, f_ref)
-        self.sample_length_in_s = float(self.data_cfg.padded_length_in_s)
-        self._out_cdtype = torch.promote_types(self.cfg.dtype, torch.complex64)
+        f_ref = waveform_utils.reference_frequencies(
+            reference_frequency_in_hz, signal_batch_size, device
+        )
+        IMRPhenomD.IMRPhenomD.__init__(self, f, f_ref, window.padding_length_in_s)
+        self.sample_length_in_s = float(window.padded_length_in_s)
+        self._out_cdtype = torch.promote_types(dtype, torch.complex64)
 
         # Parameter sampler
         self.param_sampler = param_sampler
@@ -121,23 +134,25 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # the standard [pe..., class] target (and everything that reads
         # targets[:, -1] / [:, :-1]) is unchanged.
         self.append_per_det_targets = bool(append_per_det_targets)
-        # Index of mchirp within do_point_estimate (its standardised column).
-        self.mc_pe_idx = list(self.cfg.do_point_estimate).index("mchirp")
+        # Index of mchirp within the targets (its standardised column).
+        self.mc_pe_idx = list(targets).index("mchirp")
 
         param_index = self.param_sampler.param_index
-        self.source, self.target = waveform_utils.layout_columns(param_index)
+        parameters = waveform_utils.PRECESSING_PARAMETERS
+        self.source, self.target = waveform_utils.layout_columns(param_index, parameters, type(self).__name__)
+        self.extras = waveform_utils.given_extras(param_index, parameters)
         # Columns of distance and geocentric tc in the full all_theta tensor;
         # tc builds per-detector arrival times (tc_det = tc + projection delay).
         self.dist_col = param_index["distance"]
         self.tc_col = param_index["tc"]
 
         # Target handling
-        self.param_sampler._compile_batch_normaliser()
-        self.param_sampler._compile_batch_standardiser()
+        self.param_sampler._compile_batch_normaliser(targets, dtype)
+        self.param_sampler._compile_batch_standardiser(targets)
 
         # Move to correct device
-        self.param_sampler.to(self.cfg.device)
-        self.waveform_project.to(self.cfg.device)
+        self.param_sampler.to(device)
+        self.waveform_project.to(device)
 
     @torch.no_grad()
     def forward(self, return_theta=False):
@@ -169,13 +184,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
                 all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
             )
 
-        # Target handling. Default: z-score (standardise). Opt in to the year-old
-        # [0,1] min-max normalisation with pe_target_minmax=True -- shrinks the PE
-        # target variance, hence the PE gradient at a given regression_weight.
-        if getattr(self.cfg, "pe_target_minmax", False):
-            normed_targets = self.param_sampler.norm_from_batch(all_theta)
-        else:
-            normed_targets = self.param_sampler.standardise_from_batch(all_theta)
+        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )
@@ -226,7 +235,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         """
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
         # s2z=7, dist_mpc=8, tc=9, phiRef=10, incl=11
-        theta = self.order_bodies(waveform_utils.fill_defaults(theta)[:, :12])
+        theta = self.order_bodies(waveform_utils.precessing_layout(theta, self.extras))
 
         # Compute generic derived quantities from masses
         derived = self.compute_derived_parameters(theta)

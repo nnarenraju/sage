@@ -21,7 +21,7 @@ GitHub Repository: NULL
 
 Documentation:
 
-    sampler = read_from_config("gw_config.yaml", device="cuda")
+    sampler = prior_sampler(load_prior("bbh_narrow", run_dir), seed, "cuda", torch.float32)
 
     batch = sampler.sample(4096)
 
@@ -32,7 +32,6 @@ Documentation:
 """
 
 # Packages
-import yaml
 import torch
 
 from typing import Any, Dict
@@ -47,7 +46,6 @@ from sage.data.waveform.distributions import (
 )
 
 from sage.core.math import Normalise
-from sage.core.config import get_cfg, get_data_cfg
 
 # Conversions
 from sage.core.conversions import distance_from_chirp_distance_mchirp
@@ -55,128 +53,6 @@ from sage.data.waveform.conversions import mass1_mass2_to_mchirp_q
 
 # Transformation constraints
 import sage.data.waveform.constraints as constraints
-
-# Keys a prior file and each of its entries may hold besides ``name``.
-_TOP_LEVEL_KEYS = {"variable_params", "priors", "waveform_transforms", "constraints"}
-_REQUIRED_TOP_LEVEL_KEYS = {"variable_params", "priors"}
-_PRIOR_KEYS = {
-    "uniform": {"min", "max"},
-    "uniform_angle": set(),
-    "sin_angle": set(),
-    "uniform_sky": {"ra", "dec"},
-    "uniform_solidangle": {"polar-angle", "azimuthal-angle"},
-    "uniform_radius": {"min", "max"},
-    "uniform_comoving_volume": {"min", "max", "cosmology"},
-}
-_TRANSFORM_KEYS = {
-    "spherical_to_cartesian": {"x", "y", "z", "radial", "polar", "azimuthal"},
-    "mass1_mass2_to_mchirp_q": set(),
-    "chirp_distance_to_distance": set(),
-}
-_CONSTRAINT_KEYS = {"params"}
-
-
-def _check_keys(where: str, given, allowed: set) -> None:
-    """
-    Raise if ``given`` holds a key outside ``allowed``.
-
-    Parameters
-    ----------
-    where : str
-        Location named in the error message.
-    given : iterable of str
-        Keys found in the prior file.
-    allowed : set of str
-        Keys accepted at that location.
-
-    Raises
-    ------
-    ValueError
-        If any key is not accepted.
-    """
-    unknown = sorted(set(given) - set(allowed))
-    if unknown:
-        raise ValueError(f"unknown key(s) {unknown} in {where}; allowed: {sorted(allowed)}")
-
-
-def validate_prior_config(config: Dict[str, Any]) -> None:
-    """
-    Check a prior file for unknown or inconsistent entries.
-
-    Parameters
-    ----------
-    config : dict
-        Parsed prior YAML.
-
-    Raises
-    ------
-    ValueError
-        On an unknown key, distribution, transform or constraint, a missing
-        required key, a transform used before its inputs exist, an output
-        produced twice, or ``variable_params`` not matching the priors.
-    """
-    if not isinstance(config, dict):
-        raise ValueError(f"prior file must be a mapping, got {type(config).__name__}")
-    _check_keys("the prior file", config, _TOP_LEVEL_KEYS)
-    missing = sorted(_REQUIRED_TOP_LEVEL_KEYS - set(config))
-    if missing:
-        raise ValueError(f"prior file is missing {missing}")
-
-    sampled = []
-    for pname, pcfg in config["priors"].items():
-        name = pcfg.get("name")
-        if name not in _PRIOR_KEYS:
-            raise ValueError(
-                f"unknown distribution {name!r} for prior {pname!r}; "
-                f"allowed: {sorted(_PRIOR_KEYS)}"
-            )
-        _check_keys(f"prior {pname!r}", pcfg, _PRIOR_KEYS[name] | {"name"})
-        if name == "uniform_solidangle":
-            sampled += [pcfg["polar-angle"], pcfg["azimuthal-angle"]]
-        elif name == "uniform_sky":
-            sampled += [pcfg["ra"], pcfg["dec"]]
-        else:
-            sampled.append(pname)
-
-    listed = set(config["variable_params"])
-    if listed != set(sampled) or len(config["variable_params"]) != len(listed):
-        raise ValueError(
-            "variable_params does not match the parameters the priors draw: "
-            f"missing {sorted(set(sampled) - listed)}, "
-            f"not drawn {sorted(listed - set(sampled))}"
-        )
-
-    produced = list(sampled)
-    for tname, tcfg in config.get("waveform_transforms", {}).items():
-        name = tcfg.get("name")
-        if name not in _TRANSFORM_KEYS:
-            raise ValueError(
-                f"unknown transform {name!r} in {tname!r}; "
-                f"allowed: {sorted(_TRANSFORM_KEYS)}"
-            )
-        _check_keys(f"transform {tname!r}", tcfg, _TRANSFORM_KEYS[name] | {"name"})
-        if name == "spherical_to_cartesian":
-            needs = [tcfg["radial"], tcfg["polar"], tcfg["azimuthal"]]
-            outputs = [tcfg["x"], tcfg["y"], tcfg["z"]]
-        elif name == "mass1_mass2_to_mchirp_q":
-            needs, outputs = ["mass1", "mass2"], ["mchirp", "q"]
-        else:
-            needs, outputs = ["chirp_distance", "mchirp"], ["distance"]
-        absent = [n for n in needs if n not in produced]
-        if absent:
-            raise ValueError(
-                f"transform {tname!r} needs {absent}, which no earlier prior or "
-                "transform produces"
-            )
-        produced += outputs
-
-    duplicates = sorted({n for n in produced if produced.count(n) > 1})
-    if duplicates:
-        raise ValueError(f"parameter(s) {duplicates} are produced more than once")
-
-    for c in config.get("constraints", []):
-        _check_keys(f"constraint {c.get('name')!r}", c, _CONSTRAINT_KEYS | {"name"})
-
 
 def spherical_to_cartesian(radial, polar, azimuthal):
     """
@@ -204,38 +80,29 @@ def spherical_to_cartesian(radial, polar, azimuthal):
     )
 
 
-def read_from_config(path, seed):
+def prior_sampler(prior: Dict[str, Any], seed: int, device, dtype) -> "DistributionSampler":
     """
-    Construct a :class:`DistributionSampler` from a YAML prior configuration.
+    Build a seeded sampler for a checked prior.
 
     Parameters
     ----------
-    path : str
-        Path to the YAML file describing the prior distributions, transforms,
-        and constraints.
+    prior : dict
+        Checked prior, from :mod:`sage.config.prior`.
     seed : int
-        Seed for the internal :class:`torch.Generator`.
+        Seed of the sampler's own generator.
+    device : str or torch.device
+        Device to sample on.
+    dtype : torch.dtype
+        Dtype of the samples.
 
     Returns
     -------
     DistributionSampler
-        Configured sampler ready to draw waveform parameters.
+        Sampler ready to draw waveform parameters.
     """
-    with open(path, "r") as f:
-        config = yaml.safe_load(f)
-
-    sage_cfg = get_cfg()
-
-    # Create a generator with a specific seed
-    gen = torch.Generator(device=sage_cfg.device)
-    gen.manual_seed(seed)
-
-    return DistributionSampler(
-        config,
-        device=sage_cfg.device,
-        dtype=sage_cfg.dtype,
-        generator=gen,
-    )
+    generator = torch.Generator(device=device)
+    generator.manual_seed(seed)
+    return DistributionSampler(prior, device=device, dtype=dtype, generator=generator)
 
 
 class NamedConstraint:
@@ -306,13 +173,9 @@ class DistributionSampler(torch.nn.Module):
 
         super().__init__()
 
-        # Shared config
-        self.sage_cfg = get_cfg()
-
         # Generator
         self.generator = generator
 
-        validate_prior_config(config)
         self.cfg = config
         self.device = device
         self.dtype = dtype
@@ -666,12 +529,19 @@ class DistributionSampler(torch.nn.Module):
 
         return normalisers
 
-    def _compile_batch_normaliser(self):
+    def _compile_batch_normaliser(self, targets, dtype):
         """
         Precompute tensors used for fast batch normalisation.
+
+        Parameters
+        ----------
+        targets : list of str
+            Parameters to normalise, in head order.
+        dtype : torch.dtype
+            Dtype of the buffers.
         """
 
-        selected_names = self.sage_cfg.do_point_estimate
+        selected_names = targets
 
         # Convert to tensor (register as buffer)
         idxs = [self.param_index[key] for key in selected_names]
@@ -680,11 +550,11 @@ class DistributionSampler(torch.nn.Module):
         # Get min/max for selected names
         mins = torch.tensor(
             [self.normalisers[name].min_val for name in selected_names],
-            dtype=self.sage_cfg.dtype,
+            dtype=dtype,
         )
         maxs = torch.tensor(
             [self.normalisers[name].max_val for name in selected_names],
-            dtype=self.sage_cfg.dtype,
+            dtype=dtype,
         )
         scales = maxs - mins
 
@@ -733,13 +603,15 @@ class DistributionSampler(torch.nn.Module):
 
         return normed_batch * self._norm_scales + self._norm_mins
 
-    def _compile_batch_standardiser(self, N: int = 1_000_000):
+    def _compile_batch_standardiser(self, targets, N: int = 1_000_000):
         """
         Compute mean and std for standardisation from a large sample of parameters
         and register them as buffers for fast batch standardisation.
 
         Parameters
         ----------
+        targets : list of str
+            Parameters to standardise, in head order.
         N : int
             Number of samples to use to estimate mean and stddev
             Default is set to 1_000_000
@@ -750,7 +622,7 @@ class DistributionSampler(torch.nn.Module):
         all_samples = self._enforce_constraints(all_samples)
         self._apply_transforms(all_samples)
 
-        selected_names = self.sage_cfg.do_point_estimate
+        selected_names = targets
         idxs = [self.param_index[key] for key in selected_names]
         indices_tensor = torch.tensor(idxs, dtype=torch.long)
 

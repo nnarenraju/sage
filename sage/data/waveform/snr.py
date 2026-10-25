@@ -21,13 +21,7 @@ GitHub Repository: NULL
 
 Documentation:
 
-    snr = OptimalSNREstimator(
-        asds=fiducial_asds,     # (D, F)
-        delta_f=delta_f,
-        f_low=20.0,
-        f_high=1024.0,
-        device="cuda"
-    )
+    snr = OptimalSNREstimator(fiducial_asds, window, f_low=20.0, device="cuda")
 
     rho_net, rho_det = snr(h_batch)
 
@@ -40,8 +34,7 @@ from torch import Tensor
 from typing import Callable
 
 # LOCAL
-from sage.core.config import get_cfg, get_data_cfg
-from sage.data.asd import get_fiducial_asds
+from sage.core.geometry import Window
 
 
 class OptimalSNREstimator(torch.nn.Module):
@@ -73,41 +66,29 @@ class OptimalSNREstimator(torch.nn.Module):
     h   : ``(B, D, F)`` complex tensor — detector-projected FD waveforms.
     """
 
-    def __init__(self):
+    def __init__(self, asds: Tensor, window: Window, f_low: float, device):
         """
         Parameters
         ----------
-        asd : (D, F) tensor
-            Fiducial ASD per detector
-        delta_f : float
-        f_low, f_high : float or None
-            Frequency cutoffs
+        asds : torch.Tensor, shape ``(D, F)``
+            Fiducial ASD per detector.
+        window : Window
+            Window geometry; the waveforms live on its padded grid.
+        f_low : float
+            Lower edge of the integration band in Hz; the upper edge is
+            the Nyquist frequency.
+        device : str or torch.device
+            Device of the mask.
         """
 
         super().__init__()
 
-        # Shared config
-        cfg = get_cfg()
-        data_cfg = get_data_cfg()
+        self.device = device
+        self.delta_f = window.delta_f_in_hz
+        self.asds = asds.unsqueeze(0)  # (1, D, F)
 
-        self.device = cfg.device
-        # The projected FD waveform lives on the PADDED grid (padded_length_in_s),
-        # so its bin spacing is padded_delta_f = 1/(sample_length + 2*padding).
-        # Using the unpadded data_cfg.delta_f (1/sample_length) would mis-scale the
-        # optimal-SNR integral AND shift the frequency mask onto the wrong bins.
-        self.delta_f = data_cfg.padded_delta_f
-
-        # store the ASD once (broadcast ready)
-        self.asds = get_fiducial_asds()
-        self.asds = self.asds.unsqueeze(0)  # (1, D, F)
-
-        # precompute mask once (compile safe)
-        self.mask = None
-        f_low = data_cfg.signal_low_frequency_cutoff
-        f_high = data_cfg.sample_rate // 2
-        if f_low is not None and f_high is not None:
-            F = self.asds.shape[-1]
-            self.mask = self._make_frequency_mask(F, f_low, f_high)
+        F = self.asds.shape[-1]
+        self.mask = self._make_frequency_mask(F, f_low, window.sample_rate_in_hz // 2)
 
     def _make_frequency_mask(self, F, f_low, f_high):
         k_low = int(torch.ceil(torch.tensor(f_low / self.delta_f)).item())
@@ -165,13 +146,24 @@ class OptimalSNRRescaler(torch.nn.Module):
     """
     Rescales a batch of signals to match target SNRs.
 
-    Args:
-        target_snr_sampler: callable(batch_size) -> Tensor of target SNRs
+    Parameters
+    ----------
+    target_snr_sampler : callable
+        ``batch_size -> Tensor`` of target network SNRs.
+    asds, window, f_low, device
+        Passed to :class:`OptimalSNREstimator`.
     """
 
-    def __init__(self, target_snr_sampler: Callable[[int], Tensor]):
+    def __init__(
+        self,
+        target_snr_sampler: Callable[[int], Tensor],
+        asds: Tensor,
+        window: Window,
+        f_low: float,
+        device,
+    ):
         super().__init__()
-        self.snr_estimator = OptimalSNREstimator()
+        self.snr_estimator = OptimalSNREstimator(asds, window, f_low, device)
         self.target_snr_sampler = target_snr_sampler
 
     @torch.no_grad()
@@ -259,9 +251,16 @@ class MatchedFilterSNRRescaler(torch.nn.Module):
         Samples target *matched-filter* network SNRs (e.g. :class:`HalfNorm`).
     """
 
-    def __init__(self, target_snr_sampler: Callable[[int], Tensor]):
+    def __init__(
+        self,
+        target_snr_sampler: Callable[[int], Tensor],
+        asds: Tensor,
+        window: Window,
+        f_low: float,
+        device,
+    ):
         super().__init__()
-        self.snr_estimator = OptimalSNREstimator()
+        self.snr_estimator = OptimalSNREstimator(asds, window, f_low, device)
         self.target_snr_sampler = target_snr_sampler
 
     def _noise_projection(self, noise: Tensor, signal: Tensor) -> Tensor:
@@ -380,9 +379,17 @@ class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
         Number of equal-power χ² bins ``p`` (PyCBC default region ~16).
     """
 
-    def __init__(self, target_snr_sampler: Callable[[int], Tensor], num_bins: int = 16):
+    def __init__(
+        self,
+        target_snr_sampler: Callable[[int], Tensor],
+        asds: Tensor,
+        window: Window,
+        f_low: float,
+        device,
+        num_bins: int = 16,
+    ):
         super().__init__()
-        self.snr_estimator = OptimalSNREstimator()
+        self.snr_estimator = OptimalSNREstimator(asds, window, f_low, device)
         self.target_snr_sampler = target_snr_sampler
         self.num_bins = int(num_bins)
 

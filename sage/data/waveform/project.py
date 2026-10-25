@@ -34,7 +34,7 @@ from sage.core.constants import PI, C
 from sage.core.math import rotation_matrix
 from sage.core.hardcode import _DETMETADATA
 from sage.data.waveform import waveform_utils
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.geometry import Window
 
 
 class ConstantProjection(torch.nn.Module):
@@ -58,8 +58,14 @@ class ConstantProjection(torch.nn.Module):
 
     Parameters
     ----------
-    None — all configuration is read from :func:`~sage.core.config.get_cfg`
-    and :func:`~sage.core.config.get_data_cfg` at construction time.
+    detectors : list of str
+        Detectors, in channel order.
+    window : Window
+        Window geometry; sets the frequency grid.
+    device : str or torch.device
+        Device of the cached tensors.
+    dtype : torch.dtype
+        Dtype of the cached tensors.
 
     Inputs to :meth:`forward`
     -------------------------
@@ -74,33 +80,26 @@ class ConstantProjection(torch.nn.Module):
         Detector-frame frequency-domain strain for each detector.
     """
 
-    def __init__(self):
+    def __init__(self, detectors: list, window: Window, device, dtype: torch.dtype):
 
         super().__init__()
 
-        # Setup configs
-        cfg = get_cfg()
-        data_cfg = get_data_cfg()
-
-        # CUDA device
-        self.device = cfg.device
-        self.dtype = cfg.dtype
-        self.batch_size = int(cfg.batch_size * cfg.class_balance)
-        # Detector
-        self.detnames = cfg.detectors
+        self.device = device
+        self.dtype = dtype
+        self.detnames = list(detectors)
 
         # Frequencies
-        freqs, _ = waveform_utils.get_freqs(
+        freqs = waveform_utils.get_freqs(
             f_l=0.0,
-            f_u=data_cfg.sample_rate / 2.0,
-            sample_length_in_s=data_cfg.padded_length_in_s,
-            device=cfg.device,
-            dtype=cfg.dtype,
+            f_u=window.sample_rate_in_hz / 2.0,
+            sample_length_in_s=window.padded_length_in_s,
+            device=device,
+            dtype=dtype,
         )
         self.freqs = freqs
 
         # Detector tensor
-        # self.response shape is (batch_size, num_dets, response)
+        # self.response shape is (num_dets, 3, 3)
         self.response = torch.empty(
             (len(self.detnames), 3, 3),
             device=self.device,
@@ -209,47 +208,24 @@ class ConstantProjection(torch.nn.Module):
 
         return torch.tensor(resps[0] - resps[1], device=self.device, dtype=self.dtype)
 
-    def random_gmst_estimate(self, B=None):
+    def random_gmst_estimate(self, B: int) -> torch.Tensor:
         """
-        Return a batch of uniformly random GMST values in ``[0, 2π)``.
+        Draw uniformly random GMST values in ``[0, 2 pi)``.
 
-        Exact GPS-to-GMST conversion requires expensive table look-ups.
-        Randomising GMST instead effectively marginalises over Earth's
-        rotation, which is equivalent to drawing uniformly from all
-        possible observation times.
+        Randomising GMST marginalises over Earth's rotation, equivalent
+        to drawing uniformly from all observation times.
 
         Parameters
         ----------
-        B : int or None
-            Batch size to use.  When ``None``, falls back to
-            ``self.batch_size`` (the value fixed at construction time from
-            ``cfg.batch_size * cfg.class_balance``).  Pass an explicit value
-            when calling from a context where the runtime batch size may
-            differ from the training batch size (e.g. validation), because
-            using the fixed ``self.batch_size`` would produce a shape mismatch.
-            NOTE: torch.compile with static shapes requires a fixed batch size;
-            if you re-enable compilation, revert to the ``self.batch_size``
-            path and ensure the caller always uses the same B.
+        B : int
+            Number of values.
 
         Returns
         -------
         torch.Tensor, shape ``(B,)``
             GMST values in radians.
         """
-        # Random GMST in radians to compute the antenna patterns
-        # Reference times to GMST requires table reads and is expensive
-        # Instead we simply randomise GMST in [0, 2PI)
-        #
-        # NOTE (kept for torch.compile compatibility reference):
-        # The original implementation used self.batch_size (a fixed integer
-        # baked in at construction time) so that torch.compile sees a static
-        # shape and does not retrace.  The dynamic version below uses the
-        # caller-supplied B; this triggers retracing if B changes between
-        # calls, which breaks torch.compile with static-shape assumptions.
-        # Old line (static, compile-safe but wrong at validation time):
-        #   return 2 * PI * torch.rand(self.batch_size, device=self.device)
-        _B = self.batch_size if B is None else B
-        return 2 * PI * torch.rand(_B, device=self.device)
+        return 2 * PI * torch.rand(B, device=self.device)
 
     def antenna_pattern(
         self, right_ascension, declination, polarization, gmst_estimate
@@ -353,7 +329,7 @@ class ConstantProjection(torch.nn.Module):
         # Detector.time_delay_from_location (pycbc/detector/ground.py:449).
         return torch.einsum("bi,di->bd", ehat, self.dx) / C
 
-    def forward(self, hp, hc, ra, dec, polarization, freqs=None, return_delay=False):
+    def forward(self, hp, hc, ra, dec, polarization, return_delay=False):
         """Return the strain of a waveform as measured by all detectors.
         Apply the time shift for all given detectors relative to the assumed
         geocentric frame and apply the antenna patterns to the plus and cross
@@ -376,19 +352,9 @@ class ConstantProjection(torch.nn.Module):
             Declination of source location
         polarization: float
             Polarization angle of the source
-        freqs: torch.Tensor, shape (F,) or None
-            Frequency array in Hz.  When None the module's stored full
-            uniform grid (self.freqs) is used.  Pass the coarse multibanding
-            frequency array here when hp/hc are already in the coarse
-            representation so the time-delay phase is computed at the right
-            frequencies.
         """
-        if freqs is None:
-            freqs = self.freqs
-        # Get GMST estimates for entire batch.
-        # Pass the actual runtime batch size so validation (where B may differ
-        # from self.batch_size) does not produce a shape mismatch.
-        gmst_estimate = self.random_gmst_estimate(B=ra.shape[0])
+        freqs = self.freqs
+        gmst_estimate = self.random_gmst_estimate(ra.shape[0])
         # 'constant' assume fixed orientation relative to source over the
         # duration of the signal, accurate for short duration signals
         fp, fc = self.antenna_pattern(ra, dec, polarization, gmst_estimate)

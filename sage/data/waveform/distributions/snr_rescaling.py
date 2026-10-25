@@ -27,9 +27,6 @@ Documentation: NULL
 import torch
 import torch.nn as nn
 
-# LOCAL
-from sage.core.config import get_cfg
-
 
 class HalfNorm(nn.Module):
     """
@@ -45,24 +42,23 @@ class HalfNorm(nn.Module):
     Parameters
     ----------
     scale : float
-        Scale parameter of the half-normal (default ``1.0``).
+        Scale parameter of the half-normal.
     loc : float
-        Location shift added after folding (default ``0.0``).
-    seed : int or None
+        Location shift added after folding.
+    seed : int
         Seed for the internal :class:`torch.Generator`.
+    device : str or torch.device
+        Device of the draws.
     """
 
-    def __init__(self, scale=1.0, loc=0.0, seed=None):
+    def __init__(self, scale: float, loc: float, seed: int, device):
         super().__init__()
 
-        # Shared config
-        cfg = get_cfg()
-
-        self.register_buffer("scale", torch.tensor(scale).to(device=cfg.device))
-        self.register_buffer("loc", torch.tensor(loc).to(device=cfg.device))
+        self.register_buffer("scale", torch.tensor(scale).to(device=device))
+        self.register_buffer("loc", torch.tensor(loc).to(device=device))
 
         # Create a generator with a specific seed
-        self.gen = torch.Generator(device=cfg.device)
+        self.gen = torch.Generator(device=device)
         self.gen.manual_seed(seed)
 
         # Most recent draw, read by SageVanillaTesting.run_signal.

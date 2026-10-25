@@ -65,9 +65,7 @@ import torch
 from sage.data.waveform.approximants.IMRPhenomXAS import IMRPhenomXAS
 from sage.data.waveform import taper as _taper_mod
 from sage.data.waveform import waveform_utils
-from sage.data.waveform.multiband_selector import MultibandSelector
-from sage.core.config import get_cfg, get_data_cfg
-from sage.core.pipeline import Grid, ProcessingState
+from sage.core.geometry import Window
 
 
 class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
@@ -81,163 +79,84 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
     When constructed with a ``param_sampler`` this class also acts as a
     signal-sampler ``torch.nn.Module`` (same pattern as ``IMRPhenomPv2``).
     Call ``forward()`` to obtain a batch of detector-frame strain tensors
-    and normalised parameter targets ready for network training.
+    and normalised parameter targets ready for network training. Without a
+    sampler the instance is pure waveform math on the signal-band grid.
 
-    Unlike :class:`IMRPhenomD` and :class:`IMRPhenomXAS`, the frequency grid is
-    **not** passed to the constructor.  It is built at construction time from
-    the active data config — ``signal_low_frequency_cutoff`` up to
-    ``sample_rate / 2``, with ``df = 1 / padded_length_in_s`` — so
-    :func:`sage.core.config.register_configs` must have been called first.
-    Instantiate with no arguments for pure waveform math.
-
-    Parameters (signal-sampler mode)
-    ---------------------------------
+    Parameters
+    ----------
     param_sampler : DistributionSampler or None
-        BNS parameter sampler, built from the ``gwconfig.yaml`` of whichever
-        run driver is in use.
-        When ``None`` the instance can still be used as pure waveform math.
+        BNS parameter sampler (with ``lambda1`` and ``lambda2``).
     waveform_project : ConstantProjection or None
         Multi-detector projection module.
     augment : callable or None
         Optional SNR-rescaling augmentation.
+    window : Window
+        Window geometry; the grid runs from the low cutoff to Nyquist with
+        ``df = 1 / padded_length_in_s``.
+    signal_batch_size : int
+        Signals per call.
+    low_frequency_cutoff_in_hz, reference_frequency_in_hz : float
+        Low cutoff and reference frequency.
+    targets : list of str
+        Estimated parameters, in head order.
+    device : str or torch.device
+        Device of the batches.
+    dtype : torch.dtype
+        Dtype of the data tensors.
+    append_per_det_targets : bool
+        Must be False: this model has no per-detector targets.
     """
 
     GRAPH_READY = True
 
-    # Multibanding modes
-    MULTIBAND_NONE       = 'none'        # full uniform FD grid (default)
-    MULTIBAND_WORST_CASE = 'worst_case'  # single coarse grid, worst-case masses
-    MULTIBAND_PER_SIGNAL = 'per_signal'  # per-signal LAL grid (future / not yet implemented)
-
-    @property
-    def output_state(self) -> ProcessingState:
-        """
-        Processing state of the waveform batch returned by forward().
-
-        Used by :class:`~sage.factory.training.SageVanillaTraining` to
-        automatically configure GWBatch tracking and noise multibanding.
-
-        Returns
-        -------
-        ProcessingState
-            ``Grid.FD_COARSE`` when ``multiband_mode='worst_case'``;
-            ``Grid.FD_UNIFORM`` otherwise.
-        """
-        if self.multiband_mode == self.MULTIBAND_WORST_CASE:
-            return ProcessingState(Grid.FD_COARSE)
-        return ProcessingState(Grid.FD_UNIFORM)
-
     def __init__(
         self,
-        param_sampler=None,
-        waveform_project=None,
-        augment=None,
-        multiband_mode='none',
-        m1_worst=None,
-        m2_worst=None,
+        param_sampler,
+        waveform_project,
+        augment,
+        window: Window,
+        signal_batch_size: int,
+        low_frequency_cutoff_in_hz: float,
+        reference_frequency_in_hz: float,
+        targets: list,
+        device,
+        dtype: torch.dtype,
+        append_per_det_targets: bool = False,
     ):
-        """
-        Parameters
-        ----------
-        param_sampler : DistributionSampler or None
-        waveform_project : ConstantProjection or None
-        augment : callable or None
-        multiband_mode : str
-            'none'        — full uniform FD grid, behaviour unchanged (default).
-            'worst_case'  — waveforms generated directly at the worst-case
-                            coarse grid; self.selector is available for noise.
-            'per_signal'  — per-signal LAL grid (not yet implemented).
-        m1_worst, m2_worst : float or None
-            Component masses (M_sun) used to build the worst-case grid.
-            When both are None (default) the worst-case pair is found
-            automatically by scanning param_sampler.bounds at startup —
-            no hardcoded values.  Provide explicit masses only to skip the
-            scan (e.g. for reproducibility in tests).
-            Only used when multiband_mode='worst_case'.
-        """
         torch.nn.Module.__init__(self)
+        if append_per_det_targets:
+            raise ValueError("IMRPhenomXAS_NRTidalv3 has no per-detector targets")
 
-        self.cfg = get_cfg()
-        self.data_cfg = get_data_cfg()
-        self.multiband_mode = multiband_mode
-        self.selector = None
+        self.signal_batch_size = signal_batch_size
 
-        if multiband_mode == self.MULTIBAND_PER_SIGNAL:
-            raise NotImplementedError(
-                "multiband_mode='per_signal' is not yet implemented. "
-                "Future: per-signal SimInspiralChooseFDWaveformSequence + interpolation. "
-                "Use 'none' or 'worst_case'."
-            )
-
-        self.signal_batch_size = int(self.cfg.batch_size * self.cfg.class_balance)
-
-        # Build the full-resolution uniform frequency grid.  In worst_case
-        # mode we still need it briefly so that df and sample_length_in_s are
-        # set from the base delta_f before we swap self.f for the coarse grid.
-        f, f_ref = waveform_utils.get_freqs(
-            self.data_cfg.signal_low_frequency_cutoff,
-            self.data_cfg.sample_rate / 2.0,
-            self.data_cfg.padded_length_in_s,
-            self.signal_batch_size,
-            self.cfg.device,
+        # Full-resolution uniform frequency grid of the signal band.
+        f = waveform_utils.get_freqs(
+            low_frequency_cutoff_in_hz,
+            window.sample_rate_in_hz / 2.0,
+            window.padded_length_in_s,
+            signal_batch_size,
+            device,
             torch.float64,
         )
+        f_ref = waveform_utils.reference_frequencies(reference_frequency_in_hz, signal_batch_size, device)
         self.f_ref = f_ref
-        self._out_cdtype = torch.promote_types(self.cfg.dtype, torch.complex64)
+        self._out_cdtype = torch.promote_types(dtype, torch.complex64)
 
         # Initialise the BBH backbone with the full-resolution grid.
         # IMRPhenomXAS.__init__ sets self.df via the endpoint formula
         # (f[-1]-f[0])/(n-1), which is exact for the production grid —
         # same pattern as IMRPhenomD does for IMRPhenomPv2.
-        IMRPhenomXAS.__init__(self, f, f_ref)
+        IMRPhenomXAS.__init__(self, f, f_ref, padding_length_in_s=window.padding_length_in_s)
         self.B = f.shape[0]
-
-        if multiband_mode == self.MULTIBAND_WORST_CASE:
-            # Build the worst-case MultibandSelector.
-            #
-            # If explicit masses are provided, use them directly (useful for
-            # reproducibility or when the caller has already run the scan).
-            # Otherwise scan the mass prior at runtime to find the pair that
-            # maximises N_coarse — no hardcoded masses, always consistent with
-            # the gwconfig being used.
-            if m1_worst is not None and m2_worst is not None:
-                self.selector = MultibandSelector.from_prior(
-                    m1_worst=m1_worst,
-                    m2_worst=m2_worst,
-                    data_cfg=self.data_cfg,
-                    device=self.cfg.device,
-                )
-            elif param_sampler is not None:
-                self.selector = MultibandSelector.from_prior_scan(
-                    param_sampler=param_sampler,
-                    data_cfg=self.data_cfg,
-                    device=self.cfg.device,
-                )
-            else:
-                raise ValueError(
-                    "multiband_mode='worst_case' requires either a param_sampler "
-                    "(so the prior mass bounds can be read) or explicit m1_worst "
-                    "and m2_worst masses."
-                )
-            # Replace the uniform signal-band frequency grid with the coarse
-            # grid so that all waveform computations run at N_coarse points and
-            # the full-resolution waveform is never materialised.
-            coarse_freqs = self.selector.coarse_freqs.to(torch.float64)  # (N_coarse,)
-            self.f = coarse_freqs.unsqueeze(0).expand(self.signal_batch_size, -1)  # (B, N_coarse)
-            self.f_numel = int(self.f[0].numel())   # N_coarse
-            self.n_pad   = 0   # no DC-to-f_min region in the coarse representation
-        else:
-            self.f = f
-            self.f_numel = self.f[0].numel()
-            # n_pad: bins from 0 Hz to f_low on the full padded grid.
-            # Computed via exact integer arithmetic to avoid float rounding.
-            F_total = int(self.data_cfg.sample_rate * self.data_cfg.padded_length_in_s / 2) + 1
-            self.n_pad = F_total - self.f_numel
+        self.f = f
+        self.f_numel = self.f[0].numel()
+        # n_pad: bins from 0 Hz to f_low on the full padded grid.
+        self.n_pad = window.n_frequency_bins - self.f_numel
 
         self.hp_buffer = torch.empty(
             (self.B, self.n_pad + self.f_numel),
             dtype=torch.complex128,
-            device=self.cfg.device,
+            device=device,
         )
         self.hc_buffer = torch.empty_like(self.hp_buffer)
 
@@ -245,33 +164,23 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         self.waveform_project = waveform_project
         self.augment = augment
 
-        # In worst_case multibanding the forward pass produces (B, D, N_coarse).
-        # OptimalSNREstimator was built for (B, D, F_full); slice its ASD and
-        # mask to the coarse indices so the SNR computation is dimensionally
-        # consistent.  The SNR integral uses the base padded delta_f at each
-        # coarse bin, which is a good approximation since all coarse bins are
-        # in the signal band and the multibanding grid preserves the PN phase
-        # accumulation rate — the SNR integral converges to the correct value.
-        if self.augment is not None and multiband_mode == self.MULTIBAND_WORST_CASE:
-            idx     = self.selector.coarse_indices        # (N_coarse,)
-            snr_est = self.augment.snr_estimator
-            snr_est.asds = snr_est.asds[:, :, idx]        # (1, D, N_coarse)
-            if snr_est.mask is not None:
-                snr_est.mask = snr_est.mask[:, :, idx]    # (1, 1, N_coarse)
-
+        # Without a sampler every parameter it does not take is checked.
+        self.extras = waveform_utils.TRANSVERSE_SPIN_PARAMETERS
         if self.param_sampler is not None:
             param_index = self.param_sampler.param_index
-            self.source, self.target = waveform_utils.layout_columns(param_index)
+            parameters = waveform_utils.TIDAL_ALIGNED_PARAMETERS
+            self.source, self.target = waveform_utils.layout_columns(param_index, parameters, type(self).__name__)
+            self.extras = waveform_utils.given_extras(param_index, parameters)
             # Column of "distance" in the full all_theta tensor — used
             # by the SNR-rescaling augmentation to keep distance consistent.
             self.dist_col = param_index["distance"]
 
-            self.param_sampler._compile_batch_normaliser()
-            self.param_sampler._compile_batch_standardiser()
-            self.param_sampler.to(self.cfg.device)
+            self.param_sampler._compile_batch_normaliser(targets, dtype)
+            self.param_sampler._compile_batch_standardiser(targets)
+            self.param_sampler.to(device)
 
         if self.waveform_project is not None:
-            self.waveform_project.to(self.cfg.device)
+            self.waveform_project.to(device)
 
     @torch.no_grad()
     def forward(self, return_theta=False):
@@ -295,26 +204,13 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         hp = hp.to(self._out_cdtype)
         hc = hc.to(self._out_cdtype)
 
-        if self.multiband_mode == self.MULTIBAND_WORST_CASE:
-            # hp, hc are (B, N_coarse) at the coarse frequencies.
-            # Pass the 1-D coarse freq array so the time-delay phase in
-            # ConstantProjection is evaluated at the correct frequencies.
-            hf = self.waveform_project(
-                hp,
-                hc,
-                ra=theta[:, -2],
-                dec=theta[:, -1],
-                polarization=theta[:, -3],
-                freqs=self.f[0].to(self.cfg.dtype),  # (N_coarse,)
-            )
-        else:
-            hf = self.waveform_project(
-                hp,
-                hc,
-                ra=theta[:, -2],
-                dec=theta[:, -1],
-                polarization=theta[:, -3],
-            )
+        hf = self.waveform_project(
+            hp,
+            hc,
+            ra=theta[:, -2],
+            dec=theta[:, -1],
+            polarization=theta[:, -3],
+        )
 
         if self.augment:
             hf, scale = self.augment(hf)
@@ -1023,7 +919,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         # ----------------------------------------------------------------
         # [m1, m2, chi1, chi2, distance, tc, phic, inclination, lambda1,
         #  lambda2]
-        theta = waveform_utils.aligned_layout(theta, waveform_utils.TIDAL_COLUMNS)
+        theta = waveform_utils.aligned_layout(theta, waveform_utils.TIDAL_COLUMNS, self.extras)
         m1       = theta[:, 0:1]
         m2       = theta[:, 1:2]
         dist_Mpc = theta[:, 4:5]
@@ -1224,13 +1120,6 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             hp, hc = self.apply_tc(hp, hc, tc_val)
             hp = hp * self.df
             hc = hc * self.df
-
-        # In worst_case multibanding mode the waveform is already in the coarse
-        # representation (N_coarse points from f_min to f_max).  No DC-to-f_low
-        # zero-padding is needed or correct here — the coarse noise will be
-        # selected from the full FD noise array using self.selector externally.
-        if self.multiband_mode == self.MULTIBAND_WORST_CASE:
-            return hp, hc
 
         # Zero-pad from DC to f_low so the output matches the full 0→Nyquist
         # frequency grid expected by ConstantProjection.

@@ -61,25 +61,41 @@ def get_freqs(
 
     Returns
     -------
-    f : torch.Tensor
+    torch.Tensor
         Frequency array, shape ``(F,)`` or ``(batch_size, F)``.
-    f_ref : torch.Tensor
-        Reference frequency (``f_l``), shape ``()`` or ``(batch_size, 1)``.
     """
     # Generate the frequency grid
     del_f = 1.0 / sample_length_in_s
     n = int(np.round((f_u - f_l) / del_f)) + 1
     # This way it will include both f_l and f_u
     f = f_l + del_f * torch.arange(n, device=device, dtype=dtype)
-    # Assuming f_ref is f_l
-    f_ref = torch.tensor(f_l, device=device, dtype=dtype)
 
     # Batchify
     if batch_size is not None:
         f = f.unsqueeze(0).expand(batch_size, -1).clone()
-        f_ref = f_ref.unsqueeze(0).expand(batch_size, -1).clone()
 
-    return f, f_ref
+    return f
+
+
+def reference_frequencies(f_ref, batch_size, device):
+    """
+    Reference frequency for every row of a batch.
+
+    Parameters
+    ----------
+    f_ref : float
+        Reference frequency in Hz.
+    batch_size : int
+        Rows in the batch.
+    device : str or torch.device
+        Device of the result.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(batch_size, 1)``, float64
+        ``f_ref`` repeated.
+    """
+    return torch.full((batch_size, 1), f_ref, device=device, dtype=torch.float64)
 
 
 # Column layout of every waveform parameter batch, in PyCBC names.
@@ -102,9 +118,18 @@ WAVEFORM_PARAMETERS = (
     "ra",
     "dec",
 )
-# Parameters that take the LAL default of zero when the prior lacks them.
-OPTIONAL_PARAMETERS = ("spin1x", "spin1y", "spin2x", "spin2y", "lambda1", "lambda2")
-TRANSVERSE_SPINS = [WAVEFORM_PARAMETERS.index(p) for p in OPTIONAL_PARAMETERS[:4]]
+# Waveform parameters every model takes, and each family's.
+COMMON_PARAMETERS = ("mass1", "mass2", "distance", "tc", "coa_phase", "inclination", "polarization", "ra", "dec")
+TRANSVERSE_SPIN_PARAMETERS = ("spin1x", "spin1y", "spin2x", "spin2y")
+TIDAL_PARAMETERS = ("lambda1", "lambda2")
+ALIGNED_PARAMETERS = COMMON_PARAMETERS + ("spin1z", "spin2z")
+PRECESSING_PARAMETERS = ALIGNED_PARAMETERS + TRANSVERSE_SPIN_PARAMETERS
+TIDAL_ALIGNED_PARAMETERS = ALIGNED_PARAMETERS + TIDAL_PARAMETERS
+# XLALSimInspiralChooseFDWaveform's refusals of non-zero parameters an approximant does not take.
+REFUSALS = {
+    TRANSVERSE_SPIN_PARAMETERS: "Non-zero transverse spins were given, but this is a non-precessing approximant.",
+    TIDAL_PARAMETERS: "Non-zero tidal parameters were given, but this is approximant doe not have tidal corrections.",
+}
 # Columns of the aligned-spin internal layout and its tidal extension.
 ALIGNED_COLUMNS = [
     WAVEFORM_PARAMETERS.index(p)
@@ -122,10 +147,9 @@ ALIGNED_COLUMNS = [
 TIDAL_COLUMNS = ALIGNED_COLUMNS + [
     WAVEFORM_PARAMETERS.index(p) for p in ("lambda1", "lambda2")
 ]
-_OPTIONAL = torch.tensor([p in OPTIONAL_PARAMETERS for p in WAVEFORM_PARAMETERS])
 
 
-def layout_columns(param_index: dict) -> tuple[list[int], list[int]]:
+def layout_columns(param_index: dict, parameters: tuple, model: str) -> tuple[list[int], list[int]]:
     """
     Sampler and layout columns of the waveform parameters a prior holds.
 
@@ -133,6 +157,10 @@ def layout_columns(param_index: dict) -> tuple[list[int], list[int]]:
     ----------
     param_index : dict
         Sampler parameter name to column.
+    parameters : tuple of str
+        Waveform parameters the model takes.
+    model : str
+        Model name, for the error.
 
     Returns
     -------
@@ -142,18 +170,43 @@ def layout_columns(param_index: dict) -> tuple[list[int], list[int]]:
     Raises
     ------
     ValueError
-        If the prior lacks a parameter without a LAL default.
+        If the prior lacks a parameter the model takes.
     """
-    missing = [
-        p
-        for p in WAVEFORM_PARAMETERS
-        if p not in param_index and p not in OPTIONAL_PARAMETERS
-    ]
+    missing = [p for p in parameters if p not in param_index]
     if missing:
-        raise ValueError(f"prior lacks waveform parameters {missing}")
+        raise ValueError(f"{model} takes the waveform parameters {missing}, which the prior lacks")
 
     present = [i for i, p in enumerate(WAVEFORM_PARAMETERS) if p in param_index]
     return [param_index[WAVEFORM_PARAMETERS[i]] for i in present], present
+
+
+def given_extras(param_index: dict, parameters: tuple) -> tuple:
+    """Waveform parameters the prior gives that the model does not take."""
+    return tuple(p for p in WAVEFORM_PARAMETERS if p in param_index and p not in parameters)
+
+
+def refuse_nonzero(theta: torch.Tensor, extras: tuple) -> None:
+    """
+    Raise as XLALSimInspiralChooseFDWaveform does when a parameter the
+    approximant does not take is non-zero; an absent value (NaN) is not given.
+
+    Parameters
+    ----------
+    theta : torch.Tensor, shape (B, 17)
+    extras : tuple of str
+        Parameters the approximant does not take.
+
+    Raises
+    ------
+    ValueError
+        With LAL's message, if any of them is non-zero.
+    """
+    for group, message in REFUSALS.items():
+        names = [p for p in extras if p in group]
+        if names:
+            values = theta[:, [WAVEFORM_PARAMETERS.index(p) for p in names]]
+            if (values.nan_to_num(0.0) != 0).any():
+                raise ValueError(message)
 
 
 def to_layout(all_theta: torch.Tensor, source: list, target: list) -> torch.Tensor:
@@ -176,23 +229,7 @@ def to_layout(all_theta: torch.Tensor, source: list, target: list) -> torch.Tens
     return theta
 
 
-def fill_defaults(theta: torch.Tensor) -> torch.Tensor:
-    """
-    float64 copy of a waveform-layout batch, absent optional values zero.
-
-    Parameters
-    ----------
-    theta : torch.Tensor, shape (B, 17)
-
-    Returns
-    -------
-    torch.Tensor, shape (B, 17), float64
-    """
-    theta = theta.to(torch.float64)
-    return torch.where(_OPTIONAL.to(theta.device) & theta.isnan(), 0.0, theta)
-
-
-def aligned_layout(theta: torch.Tensor, columns: list) -> torch.Tensor:
+def aligned_layout(theta: torch.Tensor, columns: list, extras: tuple) -> torch.Tensor:
     """
     Internal layout of a non-precessing approximant, checked as LAL does.
 
@@ -201,21 +238,33 @@ def aligned_layout(theta: torch.Tensor, columns: list) -> torch.Tensor:
     theta : torch.Tensor, shape (B, 17)
     columns : list of int
         :data:`ALIGNED_COLUMNS` or :data:`TIDAL_COLUMNS`.
+    extras : tuple of str
+        Parameters the approximant does not take (:func:`refuse_nonzero`).
 
     Returns
     -------
     torch.Tensor, shape (B, len(columns)), float64
-
-    Raises
-    ------
-    ValueError
-        If any transverse spin is non-zero
-        (XLALSimInspiralChooseFDWaveform).
     """
-    theta = fill_defaults(theta)
-    if (theta[:, TRANSVERSE_SPINS] != 0).any():
-        raise ValueError(
-            "Non-zero transverse spins were given, but this is a "
-            "non-precessing approximant."
-        )
+    theta = theta.to(torch.float64)
+    refuse_nonzero(theta, extras)
     return theta[:, columns]
+
+
+def precessing_layout(theta: torch.Tensor, extras: tuple) -> torch.Tensor:
+    """
+    Internal layout of a precessing approximant (masses, spins, distance, tc,
+    coa_phase, inclination), checked as LAL does.
+
+    Parameters
+    ----------
+    theta : torch.Tensor, shape (B, 17)
+    extras : tuple of str
+        Parameters the approximant does not take (:func:`refuse_nonzero`).
+
+    Returns
+    -------
+    torch.Tensor, shape (B, 12), float64
+    """
+    theta = theta.to(torch.float64)
+    refuse_nonzero(theta, extras)
+    return theta[:, :12]

@@ -43,7 +43,6 @@ import math
 
 import torch
 
-from sage.core.config import get_data_cfg
 from sage.data.waveform.approximants.phenom import PhenomConstants
 from sage.data.waveform import taper as _taper_mod
 from sage.data.waveform import waveform_utils
@@ -64,11 +63,13 @@ class IMRPhenomXAS(PhenomConstants):
         Frequency grid in Hz.
     f_ref : torch.Tensor, shape (B, 1)
         Reference frequency in Hz.
+    padding_length_in_s : float
+        Leading padding; tc is measured from its end.
     **kwargs
         Forwarded to PhenomConstants.
     """
 
-    def __init__(self, f, f_ref, **kwargs):
+    def __init__(self, f, f_ref, padding_length_in_s, **kwargs):
         f = f.to(torch.float64)
         f_ref = f_ref.to(torch.float64)
         super().__init__(
@@ -88,6 +89,7 @@ class IMRPhenomXAS(PhenomConstants):
         self.sample_length_in_s = 1.0 / self.df
         self.f_numel = _n
         self.f_ref  = f_ref
+        self.padding_length_in_s = padding_length_in_s
         self.B      = f.shape[0]
 
         # Pre-allocate output buffers (complex128 matches LAL double precision)
@@ -313,7 +315,10 @@ class IMRPhenomXAS(PhenomConstants):
         # ----------------------------------------------------------------
         # 1. Parameters and derived quantities
         # ----------------------------------------------------------------
-        theta = waveform_utils.aligned_layout(theta, waveform_utils.ALIGNED_COLUMNS)
+        theta = waveform_utils.aligned_layout(
+            theta, waveform_utils.ALIGNED_COLUMNS,
+            waveform_utils.TRANSVERSE_SPIN_PARAMETERS + waveform_utils.TIDAL_PARAMETERS,
+        )
         dist_Mpc = theta[:, 4:5]   # Mpc
         tc       = theta[:, 5:6]   # s
         phic     = theta[:, 6:7]   # rad  (orbital phase at f_ref)
@@ -440,7 +445,7 @@ class IMRPhenomXAS(PhenomConstants):
         convention of training and search, so the merger lands
         ``padding_length_in_s + tc`` into the padded segment.
         """
-        _tc = (tc + get_data_cfg().padding_length_in_s) - self.sample_length_in_s
+        _tc = (tc + self.padding_length_in_s) - self.sample_length_in_s
         hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
         hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
         return hp, hc
