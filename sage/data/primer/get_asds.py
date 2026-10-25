@@ -38,8 +38,6 @@ from pycbc import DYN_RANGE_FAC
 from sage.data.primer import NoBlackout
 from sage.dsp.inverse_spectrum_truncation import inverse_spectrum_truncation_single
 
-from sage.core.config import get_cfg, get_data_cfg
-
 
 class EstimateASD:
     """
@@ -54,12 +52,25 @@ class EstimateASD:
 
     The output files keep their historical ``*_psd*`` names so existing data
     releases and run exports stay readable; only the code was renamed.
+
+    Parameters (besides the estimation settings)
+    ----------
+    sample_rate : float
+        Sample rate of the strain (Hz).
+    data_dir : Path
+        The observing run's data directory; the recolour and segment ASD banks
+        go under it.
+    fiducial_dir : Path
+        Directory the fiducial ASD is written to.
     """
 
     def __init__(
         self,
         *,
         detector: str,
+        sample_rate: float,
+        data_dir,
+        fiducial_dir,
         num_samples: int = 200_000,
         asd_method=None,
         blackout_policy=None,
@@ -72,13 +83,11 @@ class EstimateASD:
         interpolate_asd: bool = False,
         training_sample_length=None,
         asd_smoothener=None,
-        **kwargs,
     ):
-        # Pull required runtime context
-        self.cfg = get_cfg()
-        self.data_cfg = get_data_cfg()
-
         self.detector = detector
+        self.sample_rate = float(sample_rate)
+        self.data_dir = Path(data_dir)
+        self.fiducial_dir = Path(fiducial_dir)
         self.num_samples = int(num_samples)
         self.asd_method = asd_method
         self.blackout_policy = blackout_policy or NoBlackout()
@@ -203,12 +212,12 @@ class EstimateASD:
 
     def estimate_raw_asds(self, *, noise_sampler, duration, return_fiducial=False):
         """Run ASD estimation to produce the recolour bank and the fiducial."""
-        sample_rate = self.data_cfg.sample_rate
+        sample_rate = self.sample_rate
 
         # Output directories. The ``*_psds`` names are historical -- the files
         # hold ASDs -- and are kept so existing data releases stay readable.
-        fiducial_dir = os.path.join(self.cfg.export_dir, "fiducial_psds")
-        recolour_dir = os.path.join(self.data_cfg.data_dir, "recolour_psds")
+        fiducial_dir = str(self.fiducial_dir)
+        recolour_dir = os.path.join(self.data_dir, "recolour_psds")
 
         os.makedirs(fiducial_dir, exist_ok=True)
         os.makedirs(recolour_dir, exist_ok=True)
@@ -487,7 +496,7 @@ class EstimateASD:
             output_dir: directory to write the ASD bin + metadata
         """
         noise_segments_file = Path(noise_segments_file)
-        output_dir = Path(self.data_cfg.data_dir) / "segment_psds"
+        output_dir = self.data_dir / "segment_psds"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         meta_path = (
@@ -552,7 +561,7 @@ class EstimateASD:
                         asd=asd,
                         delta_f_asd=delta_f,
                         sample_length=self.training_sample_length,
-                        sample_rate=self.data_cfg.sample_rate,
+                        sample_rate=self.sample_rate,
                     )
 
                 # Spline smooth the ASD before saving.

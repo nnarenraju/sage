@@ -63,6 +63,7 @@ colouring is applied afterwards over the whole padded span.
 """
 
 # Packages
+import difflib
 import math
 import warnings
 from typing import Callable, Optional, Sequence, Tuple, Union
@@ -71,13 +72,15 @@ import numpy as np
 import torch
 
 # LOCAL
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.geometry import Window
+from sage.core.hardcode import PYCBC_FILTER_DURATION, PYCBC_LOW_FREQUENCY_CUTOFF
 
 
 __all__ = [
     "BLOCK_SAMPLES",
     "sample_synthetic_noise",
     "available_asds",
+    "check_detector_asds",
     "white_series",
     "coloured_series",
     "white_noise_td",
@@ -166,7 +169,7 @@ def _resolve_asd_cached(spec, **kwargs):
 # Which interferometer each detector label and each analytic model belongs to.
 # Only used to warn about an obvious mismatch — nothing here changes the output.
 _DETECTOR_FAMILY = {
-    "H1": "LIGO", "L1": "LIGO", "I1": "LIGO", "A1": "LIGO",
+    "H1": "LIGO", "H2": "LIGO", "L1": "LIGO", "I1": "LIGO", "A1": "LIGO",
     "V1": "Virgo", "K1": "KAGRA", "G1": "GEO",
     "E1": "ET", "E2": "ET", "E3": "ET", "C1": "CE",
 }
@@ -211,7 +214,52 @@ def _model_family(name):
         return "CE"
     if "ligo" in n:
         return "LIGO"
+    if n.startswith("geo"):
+        return "GEO"
     return None
+
+
+def check_detector_asds(asd: dict, detectors: list) -> list:
+    """
+    Check a per-detector choice of analytic curves; return them in order.
+
+    Parameters
+    ----------
+    asd : dict of str to str
+        Detector to analytic model name (see :func:`available_asds`).
+    detectors : list of str
+        Detectors, in channel order.
+
+    Returns
+    -------
+    list of str
+        Model names in channel order.
+
+    Raises
+    ------
+    ValueError
+        If a detector is missing or extra, a name is unknown, or a curve
+        belongs to another interferometer.
+    """
+    missing = [d for d in detectors if d not in asd]
+    extra = [d for d in asd if d not in detectors]
+    if missing or extra:
+        raise ValueError(f"asd needs one curve per detector: missing {missing}, extra {extra}")
+
+    names = available_asds()
+    for detector in detectors:
+        curve = asd[detector]
+        if curve not in names:
+            close = difflib.get_close_matches(str(curve), names, n=1)
+            hint = f"did you mean {close[0]!r}?" if close else "see available_asds()"
+            raise ValueError(f"asd {detector}: unknown curve {curve!r}; {hint}")
+        want, got = _DETECTOR_FAMILY.get(detector), _model_family(curve)
+        if want is None or want != got:
+            raise ValueError(
+                f"asd {detector}: {curve!r} is a {got or 'unknown'} curve, "
+                f"{detector} is {want or 'unknown'}"
+            )
+    return [asd[detector] for detector in detectors]
 
 
 def _expand_asd_spec(asd, detectors):
@@ -309,31 +357,21 @@ def _default_cutoff(spec, low_frequency_cutoff):
     """
     Choose a low-frequency cutoff for ``spec`` when the caller gave none.
 
-    Analytic models only.  They rise near-vertically into the seismic wall, so
-    evaluating one down to 0 Hz buries the sample under low-frequency power some
-    sixteen orders of magnitude above the mid-band.  An ASD the caller supplied
-    is returned untouched — their array is their business.
+    Analytic models get the default of PyCBC's ``colored_noise``; an ASD the
+    caller supplied is used as given, with no cutoff.
     """
     if low_frequency_cutoff is not None:
         return low_frequency_cutoff
     if not isinstance(spec, str) or spec.lower() in ("flat", "white", "none"):
         return None
-    try:
-        data_cfg = get_data_cfg()
-        return float(
-            getattr(data_cfg, "noise_low_frequency_cutoff", None)
-            or getattr(data_cfg, "signal_low_frequency_cutoff", None)
-            or 10.0
-        )
-    except Exception:
-        return 10.0
+    return PYCBC_LOW_FREQUENCY_CUTOFF
 
 
-def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
+def sample_synthetic_noise(duration, asd=None, *, sample_rate, batch=None,
                            detectors=None, domain="td", seed=None,
                            unit_psd=True, low_frequency_cutoff=None,
-                           filter_duration=None, numpy=False, device=None,
-                           threads=1, dtype=torch.float32):
+                           filter_duration=PYCBC_FILTER_DURATION, numpy=False,
+                           device=None, threads=1, dtype=torch.float32):
     """
     Draw a synthetic noise sample of a given duration.  The one to reach for.
 
@@ -345,21 +383,21 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
     Four seconds of white noise::
 
         from sage.data.noise import sample_synthetic_noise
-        x = sample_synthetic_noise(4.0)               # -> (8192,) at 2048 Hz
+        x = sample_synthetic_noise(4.0, sample_rate=2048.0)   # -> (8192,)
 
     Four seconds coloured by a detector ASD (see :func:`available_asds`)::
 
-        x = sample_synthetic_noise(4.0, "aLIGOZeroDetHighPower")
+        x = sample_synthetic_noise(4.0, "aLIGOZeroDetHighPower", sample_rate=2048.0)
 
     A batch for two detectors, reproducibly::
 
-        x = sample_synthetic_noise(4.0, "aLIGOZeroDetHighPower",
+        x = sample_synthetic_noise(4.0, "aLIGOZeroDetHighPower", sample_rate=2048.0,
                                    batch=32, detectors=2, seed=0)  # (32,2,8192)
 
     Straight to the frequency domain, in sage's ``rfft(norm="forward")``
     convention::
 
-        X = sample_synthetic_noise(4.0, domain="fd")  # -> (4097,) complex
+        X = sample_synthetic_noise(4.0, sample_rate=2048.0, domain="fd")  # (4097,)
 
     Parameters
     ----------
@@ -381,10 +419,9 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
         own noise curve — the one way detectors genuinely differ for noise::
 
             sample_synthetic_noise(4.0, ["aLIGOZeroDetHighPower", "AdVO4T1800545"],
-                                   detectors=["H1", "V1"])
-    sample_rate : float or None
-        Samples per second.  Defaults to the registered data config's
-        ``sample_rate`` if there is one, else 2048 Hz.
+                                   sample_rate=2048.0, detectors=["H1", "V1"])
+    sample_rate : float
+        Samples per second.
     batch : int or None
         Number of independent samples.  ``None`` (default) omits the axis.
     detectors : int or sequence or None
@@ -410,21 +447,16 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
         output is then in the ASD's own units.
     low_frequency_cutoff : float or None
         Zero the ASD below this frequency (Hz).  For an **analytic model name**
-        this defaults to the registered config's noise cutoff, or 10 Hz — the
-        analytic curves rise near-vertically into the seismic wall, and
-        evaluating one down to 0 Hz produces low-frequency power some sixteen
-        orders of magnitude above the mid-band that swamps the sample.  For an
-        ASD you supplied yourself, the default is ``None``: your array is used
-        as given, untouched.
-    filter_duration : float or None
-        Inverse-spectrum-truncation length in seconds.  ``None`` (default)
-        applies no truncation, which colours with the exact ASD.
+        this defaults to PyCBC's ``colored_noise`` default of 1 Hz.  For an ASD
+        you supplied yourself, the default is ``None``: your array is used as
+        given, untouched.
+    filter_duration : float
+        Colouring-filter (inverse-spectrum-truncation) length in seconds, also
+        the edge padding; PyCBC's ``colored_noise`` default of 128 s.
     numpy : bool
         Return a NumPy array instead of a torch tensor.
     device : optional
-        Where to generate.  Defaults to the registered config's ``device``, so a
-        configured run generates straight onto the GPU rather than building the
-        batch on the CPU and copying it over.
+        Where to generate; ``None`` uses PyTorch's default device.
     threads : int
         Worker threads for the CPU random draw, which is otherwise the bottleneck
         — torch's CPU normal generator is single-threaded, and on a big batch it
@@ -457,20 +489,6 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
         raise ValueError(f"duration must be positive, got {duration}")
     if domain not in ("td", "fd"):
         raise ValueError(f"domain must be 'td' or 'fd', got {domain!r}")
-
-    if sample_rate is None:
-        try:
-            sample_rate = float(get_data_cfg().sample_rate)
-        except Exception:
-            sample_rate = 2048.0
-
-    # Follow the run's device by default — generating a big batch on the CPU and
-    # copying it across is far slower than generating it where it will be used.
-    if device is None:
-        try:
-            device = get_cfg().device
-        except Exception:
-            device = None
 
     n_time = int(round(duration * sample_rate))
     if n_time < 1:
@@ -509,8 +527,7 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
                 f"{detectors!r}; pass one ASD per detector, or a single ASD "
                 f"(as an array, not a list) to share across detectors"
             )
-        pad_seconds = (filter_duration if filter_duration is not None
-                       else duration / 4.0)
+        pad_seconds = filter_duration
         n_full = _fast_fft_len(n_time + 2 * int(round(pad_seconds * sample_rate)))
         freqs = torch.fft.rfftfreq(n_full, d=1.0 / sample_rate, device=device,
                                    dtype=torch.float64)
@@ -523,8 +540,11 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
                                 device=device, dtype=dtype)
             for spec in asd
         ])
-        # Already resolved, already cut off — do not re-apply either downstream.
+        # Already resolved, already cut off: do not re-apply either downstream,
+        # but keep the padding the ASD was resolved for.
         low_frequency_cutoff, filter_duration = None, None
+    else:
+        pad_seconds = filter_duration
 
     low_frequency_cutoff = _default_cutoff(asd, low_frequency_cutoff)
 
@@ -543,8 +563,8 @@ def sample_synthetic_noise(duration, asd=None, *, sample_rate=None, batch=None,
         out = coloured_noise_td(
             asd, shape, sample_rate, generator=gen,
             low_frequency_cutoff=low_frequency_cutoff,
-            filter_duration=filter_duration, device=device, threads=threads,
-            dtype=dtype,
+            filter_duration=filter_duration, pad_seconds=pad_seconds,
+            device=device, threads=threads, dtype=dtype,
         )
         if domain == "fd":
             out = torch.fft.rfft(out, dim=-1, norm="forward")
@@ -654,7 +674,7 @@ def _td_sigma(sample_rate: float, unit_psd: bool) -> float:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def white_series(start, end, sample_rate=2048.0, seed=0, *, unit_psd=True,
+def white_series(start, end, sample_rate, seed=0, *, unit_psd=True,
                  legacy_pycbc=False, block_samples=BLOCK_SAMPLES):
     """
     Block-addressable white Gaussian noise over a GPS interval.
@@ -737,8 +757,8 @@ def white_series(start, end, sample_rate=2048.0, seed=0, *, unit_psd=True,
     return out
 
 
-def coloured_series(asd, start, end, sample_rate=2048.0, seed=0, *,
-                    low_frequency_cutoff=None, filter_duration=128.0,
+def coloured_series(asd, start, end, sample_rate, seed=0, *,
+                    low_frequency_cutoff=None, filter_duration=PYCBC_FILTER_DURATION,
                     is_psd=False, scale=1.0, legacy_pycbc=False,
                     block_samples=BLOCK_SAMPLES):
     """
@@ -792,7 +812,7 @@ def coloured_series(asd, start, end, sample_rate=2048.0, seed=0, *,
     freqs = torch.fft.rfftfreq(n, d=1.0 / sample_rate, dtype=torch.float64)
     asd_t = resolve_asd(
         asd, freqs=freqs, sample_rate=sample_rate, is_psd=is_psd,
-        low_frequency_cutoff=low_frequency_cutoff,
+        low_frequency_cutoff=_default_cutoff(asd, low_frequency_cutoff),
         filter_duration=filter_duration, dtype=torch.float64,
     )
 
@@ -1270,7 +1290,8 @@ def colour_fd(noise_fd: torch.Tensor, asd: Optional[torch.Tensor]) -> torch.Tens
 
 def coloured_noise_td(asd, shape, sample_rate: float, *, seed=None,
                       generator=None, low_frequency_cutoff=None, is_psd=False,
-                      filter_duration=None, pad_seconds=None, device=None,
+                      filter_duration=PYCBC_FILTER_DURATION, pad_seconds=None,
+                      device=None,
                       threads: int = 1, dtype=torch.float32) -> torch.Tensor:
     """
     Coloured Gaussian noise in the time domain, generated faithfully.
@@ -1293,12 +1314,12 @@ def coloured_noise_td(asd, shape, sample_rate: float, *, seed=None,
         Forwarded to :func:`resolve_asd`.
     filter_duration : float or None
         Inverse-spectrum-truncation length in seconds, forwarded to
-        :func:`resolve_asd`.  Also sets the edge padding unless ``pad_seconds``
-        overrides it.  ``None`` skips the truncation.
+        :func:`resolve_asd` (PyCBC's ``colored_noise`` default of 128 s). Also
+        sets the edge padding unless ``pad_seconds`` overrides it. ``None``
+        skips the truncation; ``pad_seconds`` is then required.
     pad_seconds : float or None
         Edge padding in seconds, decoupled from ``filter_duration`` so that a
-        pre-resolved ASD can be reused without re-truncating it.  Defaults to
-        ``filter_duration``, or a quarter of the requested duration.
+        pre-resolved ASD can be reused without re-truncating it.
 
     Returns
     -------
@@ -1313,8 +1334,9 @@ def coloured_noise_td(asd, shape, sample_rate: float, *, seed=None,
                               dtype=dtype)
 
     if pad_seconds is None:
-        pad_seconds = (filter_duration if filter_duration is not None
-                       else (n_time / sample_rate) / 4.0)
+        if filter_duration is None:
+            raise ValueError("pad_seconds is required when filter_duration is None")
+        pad_seconds = filter_duration
     n_pad = int(round(pad_seconds * sample_rate))
     # Round the transform length up to a 5-smooth size; the extra lands in the
     # cropped-away tail and buys back several-fold on a bad factorisation.
@@ -1355,6 +1377,8 @@ class WhiteNoiseGenerator:
 
     Parameters
     ----------
+    n_detectors : int
+        Detectors per sample.
     asd : see :func:`resolve_asd`
         Optional colouring.  ``None`` (default) gives white noise.
     unit_psd : bool
@@ -1364,12 +1388,14 @@ class WhiteNoiseGenerator:
         Set when ``asd`` is really a PSD.
     low_frequency_cutoff : float or None
         Zero the ASD below this frequency.
-    filter_duration : float or None
-        Colouring-filter length in seconds.
+    filter_duration : float
+        Colouring-filter length and edge padding in seconds; PyCBC's
+        ``colored_noise`` default of 128 s.
     """
 
-    def __init__(self, asd=None, *, unit_psd=True, is_psd=False,
-                 low_frequency_cutoff=None, filter_duration=None):
+    def __init__(self, n_detectors: int, asd=None, *, unit_psd=True, is_psd=False,
+                 low_frequency_cutoff=None, filter_duration=PYCBC_FILTER_DURATION):
+        self.n_detectors = int(n_detectors)
         self.asd = asd
         self.unit_psd = unit_psd
         self.is_psd = is_psd
@@ -1393,7 +1419,7 @@ class WhiteNoiseGenerator:
             )
         return self._asd_cache[key]
 
-    def generate(self, sample_length_in_num, seed=0, sample_rate=2048.0):
+    def generate(self, sample_length_in_num, seed=0, *, sample_rate):
         """
         Draw a single noise realisation.
 
@@ -1415,9 +1441,7 @@ class WhiteNoiseGenerator:
             sigma = _td_sigma(sample_rate, self.unit_psd)
             return rng.normal(scale=sigma, size=sample_length_in_num)
 
-        pad_seconds = (self.filter_duration if self.filter_duration is not None
-                       else (sample_length_in_num / sample_rate) / 4.0)
-        n_pad = int(round(pad_seconds * sample_rate))
+        n_pad = int(round(self.filter_duration * sample_rate))
         n_full = sample_length_in_num + 2 * n_pad
 
         gen = _make_generator(_derive_seed(seed))
@@ -1443,24 +1467,17 @@ class WhiteNoiseGenerator:
         Returns
         -------
         numpy.ndarray, shape ``(D, N)``
-            Stacked per-detector noise.  ``D`` is 2 (H1, L1) unless the
-            registered config says otherwise.
+            Stacked per-detector noise, ``D = n_detectors``.
         """
         data_cfg = special["data_cfg"]
         sample_rate = data_cfg.sample_rate
         n_samples = int(data_cfg.signal_length * sample_rate)
-
-        try:
-            n_detectors = len(get_cfg().detectors)
-        except Exception:
-            n_detectors = 2
-
         seed = special["sample_seed"]
         return np.stack(
             [
                 self.generate(n_samples, seed=_derive_seed(seed, d),
                               sample_rate=sample_rate)
-                for d in range(n_detectors)
+                for d in range(self.n_detectors)
             ],
             axis=0,
         )
@@ -1475,7 +1492,7 @@ class WhiteGaussianNoiseSampler(torch.nn.Module):
     """
     Batch Gaussian noise sampler — white or coloured, frequency or time domain.
 
-    Generates noise natively on ``cfg.device`` (no NumPy round trip, no host-to-
+    Generates noise natively on ``device`` (no NumPy round trip, no host-to-
     device copy) and returns a batch that mirrors the
     :class:`~sage.data.noise.real_noise.MemmapNoiseSampler` API, so it can be
     dropped in wherever real noise is used.
@@ -1493,80 +1510,85 @@ class WhiteGaussianNoiseSampler(torch.nn.Module):
 
     Parameters
     ----------
-    seed : int or None
-        Root seed.  ``None`` means unseeded (fresh OS entropy each batch).
     asd : see :func:`resolve_asd`
-        Optional colouring — a ``(freqs, values)`` pair, a callable, a scalar, an
-        array on the padded grid, or an analytic model name such as
-        ``"aLIGOZeroDetHighPower"``.  ``None`` (default) gives white noise.
+        Colouring, e.g. a list of analytic model names, one per detector
+        (see :func:`available_asds`). ``None`` gives white noise.
+    detectors : list of str
+        Detectors, in channel order.
+    window : Window
+        Window geometry; sets the window length and sample rate.
+    batch_size : int
+        Windows per batch.
+    seed : int
+        Root seed; batch ``n`` depends only on ``(seed, n)``.
+    low_frequency_cutoff : float
+        Zero the ASD below this frequency (Hz).
+    filter_duration : float
+        Colouring-filter length in seconds; also the edge padding.
+    device : str or torch.device
+        Device of the batches.
+    dtype : torch.dtype
+        Dtype of the noise targets.
     domain : {"fd", "td"}
         ``"fd"`` returns ``(B, D, F)`` complex in the ``rfft(norm="forward")``
-        convention (the default, matching the real-noise samplers).
-        ``"td"`` returns ``(B, D, N)`` real.
+        convention (matching the real-noise samplers); ``"td"`` returns
+        ``(B, D, N)`` real.
     unit_psd : bool
-        ``True`` (default) → one-sided PSD ≡ 1, so colouring by an ASD lands
-        directly in strain units.  ``False`` → unit time-domain variance.
-        Ignored when ``asd`` is set.
+        ``True`` -> one-sided PSD = 1, so colouring by an ASD lands directly
+        in strain units. ``False`` -> unit time-domain variance. Ignored when
+        ``asd`` is set.
     is_psd : bool
         Set when ``asd`` is really a PSD (``1/Hz``) rather than an ASD.
-    low_frequency_cutoff : float or None
-        Zero the ASD below this frequency.  Defaults to the data config's
-        ``signal_low_frequency_cutoff`` when an ASD is given.
-    filter_duration : float or None
-        Colouring-filter length in seconds; also the edge padding.  Defaults to
-        a quarter of the segment duration.
 
     Attributes
     ----------
     GRAPH_READY : bool
-        ``False`` — seeded RNG calls are not traceable by ``torch.compile``.
+        ``False`` -- seeded RNG calls are not traceable by ``torch.compile``.
 
     Input / Output
     --------------
-    forward() : () → ``((B, D, F) complex | (B, D, N) float, (B, 1) float)``
+    forward() : () -> ``((B, D, F) complex | (B, D, N) float, (B, 1) float)``
         Noise batch and its all-zero targets.
     """
 
     GRAPH_READY = False
 
-    def __init__(self, seed=None, *, asd=None, domain="fd", unit_psd=True,
-                 is_psd=False, low_frequency_cutoff=None, filter_duration=None):
+    def __init__(
+        self,
+        asd,
+        detectors: list,
+        window: Window,
+        batch_size: int,
+        seed: int,
+        low_frequency_cutoff: float,
+        filter_duration: float,
+        device,
+        dtype: torch.dtype,
+        *,
+        domain: str = "fd",
+        unit_psd: bool = True,
+        is_psd: bool = False,
+    ):
         super().__init__()
 
         if domain not in ("fd", "td"):
             raise ValueError(f"domain must be 'fd' or 'td', got {domain!r}")
 
-        cfg = get_cfg()
-        data_cfg = get_data_cfg()
-
-        self.seq_len = data_cfg.padded_length_in_nsamples
-        self.sample_rate = float(data_cfg.sample_rate)
-        self.device = cfg.device
-        self.n_detectors = len(cfg.detectors)
-        self.batch_size = cfg.batch_size
+        self.seq_len = window.padded_length_in_samples
+        self.sample_rate = float(window.sample_rate_in_hz)
+        self.device = device
+        self.n_detectors = len(detectors)
+        self.batch_size = batch_size
         self.real_dtype = torch.float32
 
-        self.seed = seed
+        self.seed = int(seed)
         self.domain = domain
         self.unit_psd = unit_psd
         self.filter_duration = filter_duration
         self._step = 0
 
-        # Accept the same friendly vocabulary as ``sample_synthetic_noise`` —
-        # "auto", "LIGO", "Virgo" and so on.  Unlike that function this keeps
-        # ``asd=None`` meaning white noise: the sampler's job is to stand in for
-        # the real-noise samplers, and silently colouring would change what a
-        # default-constructed sampler feeds a training loop.
-        if asd is not None:
-            asd = _expand_asd_spec(asd, cfg.detectors)
-
-        if asd is not None and low_frequency_cutoff is None:
-            low_frequency_cutoff = getattr(
-                data_cfg, "signal_low_frequency_cutoff", None
-            )
-
         # Colouring happens on a padded grid (see the class docstring), so the
-        # ASD is resolved there — once, here, rather than on every batch:
+        # ASD is resolved there -- once, here, rather than on every batch:
         # interpolation and inverse-spectrum truncation are far too expensive to
         # repeat per step, and resolving eagerly surfaces a bad spec at
         # construction time rather than mid-run.
@@ -1574,30 +1596,24 @@ class WhiteGaussianNoiseSampler(torch.nn.Module):
         self._n_full = self.seq_len
         resolved = None
         if asd is not None:
-            pad_seconds = (filter_duration if filter_duration is not None
-                           else (self.seq_len / self.sample_rate) / 4.0)
-            self._pad_nsamples = int(round(pad_seconds * self.sample_rate))
+            self._pad_nsamples = int(round(filter_duration * self.sample_rate))
             n_full = _fast_fft_len(self.seq_len + 2 * self._pad_nsamples)
             self._n_full = n_full
             freqs = torch.fft.rfftfreq(
                 n_full, d=1.0 / self.sample_rate, device=self.device,
                 dtype=torch.float64,
             )
-            try:
-                resolved = _resolve_asd_cached(
-                    asd, freqs=freqs, sample_rate=self.sample_rate,
-                    is_psd=is_psd, low_frequency_cutoff=low_frequency_cutoff,
-                    filter_duration=filter_duration,
-                    n_detectors=self.n_detectors,
-                    device=self.device, dtype=self.real_dtype,
-                )
-            except ValueError as exc:
-                raise ValueError(
-                    f"colouring runs on a padded grid of {n_full} samples, but "
-                    f"this ASD could not be resolved there ({exc}).  Pass it as a "
-                    f"(freqs, values) pair or an analytic model name so it can be "
-                    f"evaluated on any grid."
-                ) from exc
+            options = dict(
+                freqs=freqs, sample_rate=self.sample_rate, is_psd=is_psd,
+                low_frequency_cutoff=low_frequency_cutoff,
+                filter_duration=filter_duration, device=self.device,
+                dtype=self.real_dtype,
+            )
+            if isinstance(asd, list):
+                # One spec per detector, stacked into a (D, F) ASD.
+                resolved = torch.stack([_resolve_asd_cached(spec, **options) for spec in asd])
+            else:
+                resolved = _resolve_asd_cached(asd, n_detectors=self.n_detectors, **options)
 
         self._has_asd = resolved is not None
         # Registered so it follows the module across devices and into state dicts.
@@ -1606,15 +1622,8 @@ class WhiteGaussianNoiseSampler(torch.nn.Module):
             else torch.empty(0, device=self.device)
         )
 
-        if self._has_asd and unit_psd is False:
-            warnings.warn(
-                "unit_psd=False is ignored when an ASD is supplied — coloured "
-                "noise is returned in the ASD's own units.",
-                stacklevel=2,
-            )
-
         self.noise_target = torch.zeros(
-            (self.batch_size, 1), dtype=cfg.dtype, device=cfg.device
+            (self.batch_size, 1), dtype=dtype, device=device
         )
 
     # ── Stream addressing ─────────────────────────────────────────────────────
@@ -1629,9 +1638,7 @@ class WhiteGaussianNoiseSampler(torch.nn.Module):
         return self._step
 
     def _generator(self):
-        """Generator for the current step, or ``None`` when unseeded."""
-        if self.seed is None:
-            return None
+        """Generator for the current step."""
         return _make_generator(_derive_seed(self.seed, self._step), self.device)
 
     # ── Generation ────────────────────────────────────────────────────────────
@@ -1680,3 +1687,6 @@ class WhiteGaussianNoiseSampler(torch.nn.Module):
         batch = self._sample_batch()
         self._step += 1
         return batch, self.noise_target
+
+    def shutdown(self):
+        """Nothing to release (no prefetching); as ``MemmapNoiseSampler.shutdown``."""

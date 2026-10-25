@@ -32,7 +32,7 @@ import numpy as np
 from pathlib import Path
 
 # LOCAL
-from sage.core.config import get_cfg, get_data_cfg
+from sage.core.geometry import Window
 from sage.core.interpolation import torch_linear_interp
 
 
@@ -91,14 +91,14 @@ class RecolourPostprocess(torch.nn.Module):
     ----------
     Sage trains on O3b noise but evaluates on O3a noise (different GPS epoch,
     different spectral shape).  Simply whitening with O3b ASDs and testing on
-    O3a produces a distribution shift.  With ``p_recolour`` probability, each
+    O3a produces a distribution shift.  With ``probability``, each
     training sample is:
 
     1. **Whitened** using the segment's own O3b ASD (removing O3b colour).
     2. **Recoloured** by multiplying with a randomly chosen O3a ASD (adding
        O3a colour).
 
-    The remaining ``1 - p_recolour`` fraction of the batch passes through
+    The remaining ``1 - probability`` fraction of the batch passes through
     unchanged (plain FD conversion only).
 
     This bridges the spectral gap between training and evaluation epochs
@@ -119,16 +119,25 @@ class RecolourPostprocess(torch.nn.Module):
 
     Parameters
     ----------
-    p_recolour : float in [0, 1]
-        Per-sample probability of applying the whiten + recolour transform.
-        Typical value: 0.37.
-    recolour_dataset_dir : str
-        Root directory of the *target* noise epoch dataset (e.g. the O3a
-        data release directory).  Must contain a ``data_dir/recolour_psds/``
-        sub-directory with pre-computed per-detector ASD banks.
-    eps : float
-        Small value added to ASDs before division/multiplication to prevent
-        division by zero in very quiet frequency bins.
+    runs : list of dict
+        The training sampler's runs, ``{"run", "data_dir", "bins"}``, in its
+        order; ``data_dir`` holds each run's per-segment whitening ASDs.
+    target_asd_dir : Path
+        ASD directory of the target observing run; its ``recolour_psds/``
+        holds the per-detector recolour ASD banks.
+    probability : float in [0, 1]
+        Per-window probability of applying the whiten + recolour transform.
+    asd_jitter_gain : float in [0, 1]
+        Bound of the smooth gain jitter on the target ASD, as a fraction of
+        the bank's own per-frequency spread; 0 disables it.
+    seed : int
+        Seed of the recolour draws.
+    detectors : list of str
+        Detectors, in channel order.
+    window : Window
+        Window geometry; sets the frequency grid.
+    device : str or torch.device
+        Device of the output.
 
     Inputs / Outputs
     ----------------
@@ -145,43 +154,37 @@ class RecolourPostprocess(torch.nn.Module):
     def __init__(
         self,
         *,
-        p_recolour: float,
-        recolour_dataset_dir: str,
-        eps: float = 1e-38,
-        seed: int | None = None,
-        dr_gain: float = 0.5,
+        runs: list,
+        target_asd_dir: Path,
+        probability: float,
+        asd_jitter_gain: float,
+        seed: int,
+        detectors: list,
+        window: Window,
+        device,
     ):
         super().__init__()
 
-        # Setup configs
-        cfg = get_cfg()
-        data_cfg = get_data_cfg()
+        # The training sampler's runs, in its order, so the per-run segment
+        # banks line up with the run ids the sampler emits.
+        self._runs = runs
 
-        # Resolve the SAME run set (and ordering) the training noise sampler uses,
-        # so recolour's per-run segment banks line up with the run ids the
-        # sampler emits. Single-run training -> one run (id 0).
-        from sage.data.noise.real_noise import MemmapNoiseSampler
-        self._runs = MemmapNoiseSampler._resolve_runs(cfg, data_cfg, training=True)
-
-        self.recolour_dataset_dir = Path(recolour_dataset_dir)
-        self.detectors = cfg.detectors
-        self.seq_len = data_cfg.padded_length_in_nsamples
-        self.sample_rate = data_cfg.sample_rate
-        self.p_recolour = float(p_recolour)
-        self.device = cfg.device
-        self.eps = eps
+        self.target_asd_dir = Path(target_asd_dir)
+        self.detectors = list(detectors)
+        self.seq_len = window.padded_length_in_samples
+        self.sample_rate = window.sample_rate_in_hz
+        self.probability = float(probability)
+        self.device = device
+        # Added to ASDs before dividing or multiplying, for quiet bins.
+        self.eps = 1e-38
 
         # Dedicated CPU generator so the recolour augmentation draws (the
         # per-sample mask + the random target-ASD pick) are reproducible and
         # resume-aware, isolated from the main thread's global-RNG draws (this
-        # runs inside the noise-sampler prefetch thread). seed=None -> the global
-        # RNG (legacy, unseeded).
-        self._gen = None
-        if seed is not None:
-            self._gen = torch.Generator()
-            self._gen.manual_seed(int(seed))
+        # runs inside the noise-sampler prefetch thread).
+        self._gen = torch.Generator()
+        self._gen.manual_seed(int(seed))
 
-        self.B = cfg.batch_size
         self.D = len(self.detectors)
 
         # Signal-grid rFFT length + frequency axis.  delta_f is set by the PADDED
@@ -203,7 +206,7 @@ class RecolourPostprocess(torch.nn.Module):
         #
         # The per-frequency jitter is capped at ``k * sigma(f)``, where
         # ``sigma(f)`` is the EMPIRICAL fractional spread (std/mean) of the
-        # resident target ASD bank at that frequency and ``k = dr_gain`` in
+        # resident target ASD bank at that frequency and ``k = asd_jitter_gain`` in
         # [0, 1]. This makes the perturbation an interpolation strictly WITHIN the
         # real-ASD manifold (physical by construction, never extrapolation), and
         # it is naturally low-frequency weighted because the real ASDs vary most
@@ -212,7 +215,7 @@ class RecolourPostprocess(torch.nn.Module):
         # / dB perturbation -- correct in the log-ASD space where the real
         # variation lives. ``k = 0.5`` -> up to half the real per-frequency
         # spread. 0 disables. See notebooks/recolour_augmentation.ipynb.
-        self.dr_gain = float(dr_gain)
+        self.asd_jitter_gain = float(asd_jitter_gain)
         # Smooth Legendre-like shape basis (linear + quadratic tilt), precomputed
         # as compile-friendly constants. Combined in forward with random O(1)
         # coeffs and normalised so |shape| <= 1, so k*sigma(f) is a true per-bin
@@ -227,7 +230,7 @@ class RecolourPostprocess(torch.nn.Module):
 
         # Data-driven per-frequency jitter bound sigma(f) (float64; see method).
         self._dr_sigma = None
-        if self.dr_gain > 0.0:
+        if self.asd_jitter_gain > 0.0:
             self._compute_dr_sigma()
 
     def _load_segment_asds(self):
@@ -285,9 +288,7 @@ class RecolourPostprocess(torch.nn.Module):
         self.n_recolour_asd = None
 
         for det in self.detectors:
-            # Recolour ASDs can be different from that for training
-            data_dir = Path(os.path.join(self.recolour_dataset_dir, "data_dir"))
-            asd_dir = data_dir / "recolour_psds"
+            asd_dir = self.target_asd_dir / "recolour_psds"
             bin_path = asd_dir / f"raw_{det}_psds.bin"
             meta_path = asd_dir / f"raw_{det}_psds.json"
 
@@ -367,9 +368,7 @@ class RecolourPostprocess(torch.nn.Module):
         # TD to FD (B, D, F)
         X = torch.fft.rfft(batch_td, dim=-1, norm="forward")
 
-        # Actual batch size from the input — may differ from the configured
-        # training batch ``self.B`` (e.g. the hard-noise miner reads variable
-        # batches), so everything below is sized off ``B``, not ``self.B``.
+        # Sized from the input: the hard-noise miner reads variable batches.
         B = batch_td.shape[0]
 
         mask, seg_asd, target_asd = self._draw(
@@ -406,9 +405,7 @@ class RecolourPostprocess(torch.nn.Module):
         run without recolouring. ``segment_ids`` index that run's segment sidecar.
         """
         if getattr(self, "_target_segment_banks", None) is None:
-            banks, n_freq = load_segment_asds(
-                self.recolour_dataset_dir / "data_dir", self.detectors
-            )
+            banks, n_freq = load_segment_asds(self.target_asd_dir, self.detectors)
             self._target_segment_banks = banks
             self._target_seg_src_freqs = self._bank_src_freqs(n_freq)
         asd = self._gather(
@@ -424,7 +421,7 @@ class RecolourPostprocess(torch.nn.Module):
         on ``device``.
         """
         # Bernoulli recolour mask (B, D, 1)
-        mask_cpu = torch.rand(B, self.D, 1, generator=generator) < self.p_recolour
+        mask_cpu = torch.rand(B, self.D, 1, generator=generator) < self.probability
         mask = mask_cpu.to(device, non_blocking=True)
 
         # Whitening: each window's own segment ASD, keyed by (run, segment).
@@ -448,8 +445,8 @@ class RecolourPostprocess(torch.nn.Module):
         # Multiplicative -> constant fractional / dB perturbation (log-scale
         # correct); per-frequency -> naturally low-frequency weighted. Drawn from
         # the same seeded generator as the mask (reproducible / resume-aware).
-        if self.dr_gain > 0.0:
-            k = self.dr_gain
+        if self.asd_jitter_gain > 0.0:
+            k = self.asd_jitter_gain
             g = generator
             # Random O(1) shape coeffs per (sample, detector), normalised so the
             # smooth shape lies in ~[-1, 1] (max |b0| + |b1*t| + |b2*(t^2-1/3)|

@@ -34,7 +34,6 @@ logger = get_logger(__name__)
 
 _CFG = None
 _DATA_CFG = None
-_BAD_SEGMENTS = None
 
 
 def register_configs(cfg, data_cfg):
@@ -94,42 +93,6 @@ def get_data_cfg():
     if _DATA_CFG is None:
         raise RuntimeError("data_cfg has not been registered.")
     return _DATA_CFG
-
-
-def register_bad_segments(segments):
-    """
-    Register the GWOSC bad time of every noise run and detector.
-
-    Called once at the start of a run, right after :func:`register_configs`;
-    noise samplers drop the segments that overlap it.
-
-    Parameters
-    ----------
-    segments : dict
-        ``sage.data.noise.data_quality.bad_segments`` keyed by
-        ``(run, detector)``.
-    """
-    global _BAD_SEGMENTS
-    _BAD_SEGMENTS = segments
-
-
-def get_bad_segments():
-    """
-    Return the registered GWOSC bad time.
-
-    Returns
-    -------
-    dict
-        The segments registered via :func:`register_bad_segments`.
-
-    Raises
-    ------
-    RuntimeError
-        If :func:`register_bad_segments` has not been called yet.
-    """
-    if _BAD_SEGMENTS is None:
-        raise RuntimeError("bad segments have not been registered.")
-    return _BAD_SEGMENTS
 
 
 def inject_configs(cfg_cls, data_cfg_cls):

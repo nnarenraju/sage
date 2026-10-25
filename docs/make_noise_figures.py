@@ -103,7 +103,7 @@ print("wrote noise_asd_models.png")
 # ── Figure 2: what a sample looks like, and that it matches the request ─────
 MODEL = "aLIGOZeroDetHighPower"
 DUR = 8.0
-x = sample_synthetic_noise(DUR, MODEL, batch=256, seed=0,
+x = sample_synthetic_noise(DUR, MODEL, sample_rate=FS, batch=256, seed=0,
                            low_frequency_cutoff=FLOW, dtype=torch.float64)
 
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 6.6), dpi=150)

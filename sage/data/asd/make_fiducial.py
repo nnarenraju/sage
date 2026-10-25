@@ -10,7 +10,7 @@ production (:meth:`EstimateASD._interpolate` -> ``np.interp``, linear, edge-clam
 This is a one-time data-prep step (output kept on disk): the smooth broadband ASD
 is resampled to the target ``delta_f``.  It does NOT add real spectral resolution
 — that is set by the Welch window used at production — it only lands the real ASD
-on the analysis grid.  The whitener (:func:`sage.data.asd.read_asds.get_fiducial_asds`)
+on the analysis grid.  The whitener (:func:`sage.data.asd.read_asds.read_fiducial_asds`)
 then loads it verbatim, so the on-disk file must already be at the run's grid.
 
 The ``fiducial_{det}_psd.{bin,json}`` filenames are historical; the contents are

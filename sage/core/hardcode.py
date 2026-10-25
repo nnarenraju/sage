@@ -53,6 +53,10 @@ _GWOSC_HOST = "https://gwosc.org"
 _GWOSC_TIMELINE_URL = _GWOSC_HOST + "/timeline/segments/json/{run}/{flag}/{start}/{duration}/"
 _GWOSC_ARCHIVE_URL = _GWOSC_HOST + "/archive/data/{tag}/{parent}/"
 
+# Defaults of PyCBC's pycbc.noise.reproduceable.colored_noise.
+PYCBC_FILTER_DURATION = 128.0
+PYCBC_LOW_FREQUENCY_CUTOFF = 1.0
+
 
 def _check_detector_prefixes(dets: Union[str, Sequence[str]]):
     """Checking if detector prefixes are known

@@ -43,15 +43,14 @@ from concurrent.futures import ThreadPoolExecutor
 # pycbc is an optional dependency; pull its dynamic-range constant lazily so the
 # noise package imports without pycbc (see ._pycbc_lazy).
 from ._pycbc_lazy import dyn_range_fac
-from .data_quality import clean, noise_bad_segments
+from .data_quality import clean
+from .selection import select_records, summary
 
 # LOCAL
-from sage.core.config import (
-    get_bad_segments,
-    get_cfg,
-    get_data_cfg,
-    register_bad_segments,
-)
+from sage.core.geometry import Window
+from sage.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class HDF5SingleNoiseSampler:
@@ -345,17 +344,39 @@ class MemmapNoiseSampler(torch.nn.Module):
 
     Parameters
     ----------
-    postprocess_fn : callable or None
-        Applied to ``(batch_td, segment_ids)`` to convert from TD to FD.
-        If ``None``, a plain ``torch.fft.rfft`` is used.  The typical
-        choice is :class:`RecolourPostprocess`.
-    prefetch : int
+    runs : list of dict
+        Observing runs to pool, each ``{"run", "data_dir", "bins"}``: the
+        run name, its ASD directory, and one strain file per detector in
+        channel order; optional ``portion`` or ``gps_range`` restrict the
+        segments drawn from (:mod:`sage.data.noise.selection`).
+    detectors : list of str
+        Detectors, in channel order.
+    window : Window
+        Window geometry; sets the window length.
+    batch_size : int
+        Windows per batch.
+    bad_segments : dict
+        GWOSC bad time keyed by ``(observing run, detector)``, from
+        :func:`sage.data.noise.data_quality.noise_bad_segments`; segments
+        overlapping it are never drawn.
+    seed : int
+        Seed for the internal NumPy RNG.
+    prefetch_batches : int
         Maximum number of batches held in the prefetch queue.
-    seed : int or None
-        Seed for the internal NumPy RNG (for reproducibility).
-    training : bool
-        If ``True``, reads from ``data_cfg.training_noise_files``;
-        otherwise from ``data_cfg.validation_noise_files``.
+    read_workers : int
+        Threads reading windows from disk.
+    hard_start_jitter_s : float
+        Replayed hard windows are shifted by up to this many seconds.
+    hard_focal_gamma : float
+        Focal weighting exponent of hard-window replay; 0 is uniform.
+    device : str or torch.device
+        Device of the batches.
+    dtype : torch.dtype
+        Dtype of the noise targets.
+    postprocess_fn : callable or None
+        Applied to ``(batch_td, segment_ids, run_ids)`` to convert from TD
+        to FD. If ``None``, a plain ``torch.fft.rfft`` is used. The typical
+        choice is :class:`RecolourPostprocess`.
 
     Attributes
     ----------
@@ -368,23 +389,24 @@ class MemmapNoiseSampler(torch.nn.Module):
 
     def __init__(
         self,
+        runs: list,
+        detectors: list,
+        window: Window,
+        batch_size: int,
+        bad_segments: dict,
+        seed: int,
+        prefetch_batches: int,
+        read_workers: int,
+        hard_start_jitter_s: float,
+        hard_focal_gamma: float,
+        device,
+        dtype: torch.dtype,
         postprocess_fn=None,
-        prefetch: int = 3,
-        seed=None,
-        training=True,
-        hard_bias_prob: float = 0.0,
-        num_read_workers: int = 16,
-        hard_start_jitter_s: float = 2.0,
-        hard_focal_gamma: float = 0.0,
     ):
         super().__init__()
 
-        # Setup configs
-        cfg = get_cfg()
-        data_cfg = get_data_cfg()
-
-        self.seq_len = data_cfg.padded_length_in_nsamples
-        self.sample_rate = float(data_cfg.sample_rate)
+        self.seq_len = window.padded_length_in_samples
+        self.sample_rate = float(window.sample_rate_in_hz)
         # Replayed hard windows are jittered by +/- this many seconds around the
         # mined start (uniform, clamped to the SAME segment) so biasing toward a
         # mined window keeps yielding varied (overlapping) noise rather than the
@@ -392,41 +414,18 @@ class MemmapNoiseSampler(torch.nn.Module):
         # unchanged, so the whitening ASD and recolour keys still match.
         self._hard_jitter_s = float(hard_start_jitter_s)
         self._seg_bounds_lut = None            # lazily built: (run,seg)->(lo,hi)/det
-        self.device = cfg.device
-        self.prefetch = prefetch
-        self.n_detectors = len(cfg.detectors)
-        self.batch_size = cfg.batch_size
+        self.device = device
+        self.prefetch_batches = prefetch_batches
+        self.detectors = list(detectors)
+        self.n_detectors = len(detectors)
+        self.batch_size = batch_size
         self.postprocess_fn = postprocess_fn
 
-        # ── Resolve the run set (multi-run pooling) ───────────────────────────
-        # New form: data_cfg.training_noise = [{run, data_dir, bins:[per det]}]
-        # pools several observing runs. Legacy form: the flat
-        # training/validation_noise_files list -> a single run. A run id is
-        # carried through every window so it can be read from the right run's
-        # mmap and recoloured with the right run's per-segment ASD.
-        runs = self._resolve_runs(cfg, data_cfg, training)
+        # A run id is carried through every window so it can be read from the
+        # right run's mmap and recoloured with the right run's per-segment ASD.
         self.run_names = [r["run"] for r in runs]
         self.run_data_dirs = [r["data_dir"] for r in runs]
         self.n_runs = len(runs)
-        for r in runs:
-            if len(r["bins"]) != self.n_detectors:
-                raise ValueError(
-                    f"noise run {r['run']!r}: {len(r['bins'])} bins != "
-                    f"{self.n_detectors} detectors"
-                )
-            # Config-layer guard: bins bind to channels positionally, so a run
-            # whose detector order differs from cfg.detectors would cross-map
-            # channels. run_noise records the order; enforce it here (the sidecar
-            # detector check below is the authoritative runtime backstop).
-            r_dets = r.get("detectors")
-            if r_dets is not None and (
-                [str(x).upper() for x in r_dets]
-                != [str(x).upper() for x in cfg.detectors]
-            ):
-                raise ValueError(
-                    f"noise run {r['run']!r}: detectors {list(r_dets)} != cfg.detectors "
-                    f"{list(cfg.detectors)}. Order each run's bins to match cfg.detectors."
-                )
 
         self.mmaps = [[] for _ in range(self.n_detectors)]      # [d][run] -> memmap
         self.seg_index = [None] * self.n_detectors              # [d] -> pooled struct
@@ -436,8 +435,43 @@ class MemmapNoiseSampler(torch.nn.Module):
 
         # Targets for noise batch
         self.noise_target = torch.zeros((self.batch_size, 1)).to(
-            dtype=cfg.dtype, device=cfg.device
+            dtype=dtype, device=device
         )
+
+        # Sidecar records of every run, all detectors read first: a portion
+        # cut is shared across a run's detectors.
+        records = []                                            # [run][d] -> records
+        for r in runs:
+            by_detector = {}
+            for d, detector in enumerate(self.detectors):
+                p = Path(r["bins"][d])
+                meta_path = p.parent / f"{p.stem}_segments.json"
+                if not meta_path.exists():
+                    raise FileNotFoundError(
+                        f"noise run {r['run']!r} provides no data for detector "
+                        f"{detector!r}: expected {meta_path}"
+                    )
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                # Bins bind to channels positionally (mmaps[d] <- bins[d]), so
+                # the sidecar's own detector and observing run must match.
+                meta_det = str(meta[0].get("detector", "")).upper()
+                if meta_det != str(detector).upper():
+                    raise ValueError(
+                        f"noise run {r['run']!r}: {p.name} holds detector {meta_det!r}, "
+                        f"channel {d} is {detector}"
+                    )
+                meta_run = str(meta[0].get("observing_run", "")).upper()
+                if meta_run != str(r["run"]).upper():
+                    raise ValueError(
+                        f"noise run {r['run']!r}: {p.name} is from observing run "
+                        f"{meta_run!r}"
+                    )
+                by_detector[detector] = meta
+            selected = select_records(by_detector, r)
+            for detector in self.detectors:
+                logger.info("noise %s %s: %s", r["run"], detector, summary(selected[detector]))
+            records.append([selected[detector] for detector in self.detectors])
 
         # Segment table carries a run id so pooled runs never collide on the
         # per-(detector,run) dense ``segment_index``.
@@ -448,40 +482,7 @@ class MemmapNoiseSampler(torch.nn.Module):
             for run_id, r in enumerate(runs):
                 p = Path(r["bins"][d])
                 self.bin_files.append(p)
-                meta_path = p.parent / f"{p.stem}_segments.json"
-                if not meta_path.exists():
-                    raise FileNotFoundError(
-                        f"noise run {r['run']!r} provides no data for detector "
-                        f"{cfg.detectors[d]!r}: expected {meta_path}. If this run lacks "
-                        f"that detector it cannot be pooled for a {list(cfg.detectors)} network."
-                    )
-                with open(meta_path, "r") as f:
-                    meta = json.load(f)
-                # Multi-run identity guards. Bins bind to channels POSITIONALLY
-                # (mmaps[d] <- bins[d]), so a mis-ordered or wrong-run bin would
-                # silently feed the wrong detector's strain into channel d and be
-                # whitened/recoloured with the wrong PSD. Validate the sidecar's own
-                # detector / observing-run against the expected (channel d, run r).
-                meta_det = str(meta[0].get("detector", "")).upper()
-                if meta_det and meta_det != str(cfg.detectors[d]).upper():
-                    raise ValueError(
-                        f"noise run {r['run']!r}: bins[{d}] ({p.name}) holds detector "
-                        f"{meta_det}, but cfg.detectors[{d}] = {cfg.detectors[d]}. Order "
-                        f"each run's bins to match cfg.detectors."
-                    )
-                # Observing-run identity only matters when >1 run is pooled (the
-                # run id keys the per-run recolour PSD bank). A single run takes
-                # the legacy path, which labels it from cfg.train_runs[0] -- the
-                # first TRAIN run -- and that legitimately differs from a cross-run
-                # validation set (e.g. train O3b+O3a, validate O3a), so enforce
-                # this only for genuine multi-run pools.
-                meta_run = str(meta[0].get("observing_run", "")).upper()
-                if self.n_runs > 1 and meta_run and meta_run != str(r["run"]).upper():
-                    raise ValueError(
-                        f"noise bin {p.name} is from observing run {meta_run}, but was placed "
-                        f"in the {r['run']!r} run slot. Fix training_noise so each run's bins "
-                        f"come from that run."
-                    )
+                meta = records[run_id][d]
                 dtype = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])
                 self.dtypes[d].append(dtype)
                 self.mmaps[d].append(np.memmap(p, dtype=dtype, mode="r"))
@@ -506,7 +507,7 @@ class MemmapNoiseSampler(torch.nn.Module):
                 usable[usable < 0] = 0
                 # Skip segments holding CBC Category 2 or hardware-injection time.
                 key = (meta[0]["observing_run"], meta[0]["detector"])
-                usable[~clean(meta, get_bad_segments()[key])] = 0
+                usable[~clean(meta, bad_segments[key])] = 0
                 usable_parts.append(usable)
             pooled = (seg_tables[0] if len(seg_tables) == 1
                       else np.concatenate(seg_tables))
@@ -527,7 +528,7 @@ class MemmapNoiseSampler(torch.nn.Module):
         # randomly.  Populated live by HardMiningCallback via set_hard_bank()
         # (which calls set_hard_dataset) between epochs; starts empty.
         self._hard_dataset   = None
-        self._hard_bias_prob = float(hard_bias_prob)
+        self._hard_bias_prob = 0.0
         self._hard_lock      = threading.Lock()
         # Focal-style replay weighting: a window with ranking stat s is drawn with
         # weight sigmoid(s)**gamma (see _sample_hard_starts). 0.0 -> uniform.
@@ -539,11 +540,10 @@ class MemmapNoiseSampler(torch.nn.Module):
         # parallel. NFS random reads are latency-bound, so reading a detector's
         # 128 windows serially costs ~1 s and starves the GPU; a wide pool
         # overlaps the read latency (~100x faster on the data mount).
-        self.num_read_workers = int(num_read_workers)
-        self._read_pool = ThreadPoolExecutor(max_workers=self.num_read_workers)
+        self._read_pool = ThreadPoolExecutor(max_workers=int(read_workers))
 
         # Prefetch queue
-        self.queue = Queue(maxsize=self.prefetch)
+        self.queue = Queue(maxsize=self.prefetch_batches)
         self._stop_event = threading.Event()
         self._closed = False
         self._prefetch_thread = threading.Thread(
@@ -564,28 +564,6 @@ class MemmapNoiseSampler(torch.nn.Module):
                 obj.shutdown()
 
         atexit.register(_stop_at_exit)
-
-    @staticmethod
-    def _resolve_runs(cfg, data_cfg, training):
-        """Return the run set as ``[{run, data_dir, bins:[per detector]}]``.
-
-        Multi-run training reads ``data_cfg.training_noise`` (a list of such
-        dicts, one per observing run). Otherwise (validation, or single-run
-        training) the flat ``training/validation_noise_files`` list is wrapped as
-        a single run tagged with the config's run name + ``data_dir``.
-        """
-        if training and getattr(data_cfg, "training_noise", None):
-            return [
-                {"run": s["run"], "data_dir": s.get("data_dir"),
-                 "bins": list(s["bins"]), "detectors": s.get("detectors")}
-                for s in data_cfg.training_noise
-            ]
-        files = (data_cfg.training_noise_files if training
-                 else data_cfg.validation_noise_files)
-        run = (getattr(cfg, "train_runs", None)
-               or [getattr(cfg, "run", "unknown")])[0]
-        return [{"run": run, "data_dir": getattr(data_cfg, "data_dir", None),
-                 "bins": list(files)}]
 
     def set_hard_dataset(self, dataset, hard_bias_prob: float | None = None):
         """
@@ -944,7 +922,8 @@ class MemmapNoiseSampler(torch.nn.Module):
         return self.sample_batch(), self.noise_target
 
     def shutdown(self):
-        """Stop the prefetch thread and release memmaps.
+        """Stop the prefetch thread and release the memmaps and the
+        postprocess (the recolour banks, ~16 GB per detector).
 
         Idempotent and safe to call explicitly, from atexit, or twice.
         """
@@ -968,20 +947,4 @@ class MemmapNoiseSampler(torch.nn.Module):
         for mm in getattr(self, "mmaps", []):
             del mm
         self.mmaps = []
-
-
-def register_noise_bad_segments():
-    """
-    Fetch, once, the GWOSC bad time of all training and validation noise.
-
-    Called right after the configs are registered, before any noise sampler
-    is built; the samplers read it from :func:`get_bad_segments`.
-    """
-    cfg, data_cfg = get_cfg(), get_data_cfg()
-    bins = [
-        path
-        for training in (True, False)
-        for run in MemmapNoiseSampler._resolve_runs(cfg, data_cfg, training)
-        for path in run["bins"]
-    ]
-    register_bad_segments(noise_bad_segments(bins))
+        self.postprocess_fn = None

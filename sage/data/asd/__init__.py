@@ -32,6 +32,6 @@ strain/sqrt(Hz).  The files on disk keep their historical ``*_psd*`` names so
 that existing data releases and run exports remain readable.
 """
 
-from .read_asds import get_fiducial_asds
+from .read_asds import fiducial_asds_from_record, read_fiducial_asds
 
-__all__ = ["get_fiducial_asds"]
+__all__ = ["fiducial_asds_from_record", "read_fiducial_asds"]
