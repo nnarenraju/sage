@@ -24,6 +24,7 @@ Documentation: NULL
 """
 
 from .calibration_curve import plot_calibration_curve
+from .corner_hexbin import plot_corner_hexbin
 from .correllation_matrix import plot_correlation_matrix
 from .cumulative_volume import plot_cumulative_volume
 from .density2d import plot_2d_param_density
