@@ -70,9 +70,12 @@ def lambda_order(params, param_index, extra_params=None):
     l1 = params[:, idx_l1]
     l2 = params[:, idx_l2]
 
-    # lambda1 (heavier star) <= lambda2 (lighter star), no branching
-    params[:, idx_l1] = torch.minimum(l1, l2)
-    params[:, idx_l2] = torch.maximum(l1, l2)
+    # lambda1 (heavier star) <= lambda2 (lighter star), no branching;
+    # both computed before writing, since l1 and l2 are views of params
+    l1_new = torch.minimum(l1, l2)
+    l2_new = torch.maximum(l1, l2)
+    params[:, idx_l1] = l1_new
+    params[:, idx_l2] = l2_new
 
     return params
 
