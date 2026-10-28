@@ -1,0 +1,121 @@
+# BNS prior for generate_fd_waveform / sample_fd_waveform, IMRPhenomXAS_NRTidalv3 (aligned spin + NRTidalv3 tides).
+# From sage-bns gwconfig_standard.yaml; tc is the geocentric GPS merger time, over the O3a span.
+#
+#   MASSES   m1,m2 ~ U[1.0, 3.0] Msun (mass_order: m1 >= m2), detector frame.
+#   SPINS    isotropic on the sphere, |chi| <= 0.05; only the aligned z component (spin1z, spin2z)
+#            reaches the aligned waveform; chi1x/chi1y/chi2x/chi2y are drawn and returned only.
+#   TIDES    lambda1,lambda2 ~ U[0, 5000] (lambda_order: lambda1 <= lambda2).
+#   DISTANCE uniform in comoving volume, [10, 450] Mpc (astropy Planck18).
+#   TC       uniform GPS time over O3a, 1238166018 - 1253977218.
+
+variable_params:
+  - mass1
+  - mass2
+  - spin1_a
+  - spin1_azimuthal
+  - spin1_polar
+  - spin2_a
+  - spin2_azimuthal
+  - spin2_polar
+  - lambda1
+  - lambda2
+  - distance
+  - tc
+  - coa_phase
+  - inclination
+  - polarization
+  - ra
+  - dec
+
+priors:
+
+  tc:
+    name: uniform
+    min: 1238166018
+    max: 1253977218
+
+  mass1:
+    name: uniform
+    min: 1.0
+    max: 3.0
+
+  mass2:
+    name: uniform
+    min: 1.0
+    max: 3.0
+
+  spin1_a:
+    name: uniform
+    min: 0.0
+    max: 0.05
+
+  spin1_orientation:
+    name: uniform_solidangle
+    polar-angle: spin1_polar
+    azimuthal-angle: spin1_azimuthal
+
+  spin2_a:
+    name: uniform
+    min: 0.0
+    max: 0.05
+
+  spin2_orientation:
+    name: uniform_solidangle
+    polar-angle: spin2_polar
+    azimuthal-angle: spin2_azimuthal
+
+  lambda1:
+    name: uniform
+    min:    0
+    max: 5000
+
+  lambda2:
+    name: uniform
+    min:    0
+    max: 5000
+
+  distance:
+    name: uniform_comoving_volume
+    min:  10.0
+    max: 450.0
+
+  inclination:
+    name: sin_angle
+
+  coa_phase:
+    name: uniform_angle
+
+  polarization:
+    name: uniform_angle
+
+  sky:
+    name: uniform_sky
+    ra: ra
+    dec: dec
+
+constraints:
+  - name: mass_order
+  - name: lambda_order
+
+waveform_transforms:
+
+  spin1_cartesian:
+    name: spherical_to_cartesian
+    x: chi1x
+    y: chi1y
+    z: spin1z
+    radial: spin1_a
+    polar: spin1_polar
+    azimuthal: spin1_azimuthal
+
+  spin2_cartesian:
+    name: spherical_to_cartesian
+    x: chi2x
+    y: chi2y
+    z: spin2z
+    radial: spin2_a
+    polar: spin2_polar
+    azimuthal: spin2_azimuthal
+
+  mass_params:
+    name: mass1_mass2_to_mchirp_q

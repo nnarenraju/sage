@@ -31,3 +31,4 @@ from .approximants.IMRPhenomXPHM import IMRPhenomXPHM
 from .project import ConstantProjection
 from .sampler import prior_sampler
 from .distributions.snr_rescaling import HalfNorm
+from .generate import generate_fd_waveform, sample_fd_waveform
