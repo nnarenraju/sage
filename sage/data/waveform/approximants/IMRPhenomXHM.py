@@ -435,7 +435,6 @@ class IMRPhenomXHM(IMRPhenomXAS):
             Jimenez-Forteza 2017 fit inherited from IMRPhenomXAS.
         """
         eta = derived[:, 3:4]
-        delta = derived[:, 4:5]
         chiPNHat = derived[:, 8:9]
         STotR = derived[:, 9:10]
         dchi = derived[:, 10:11]
@@ -455,7 +454,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
 
         # wf->ampNorm = wf22->ampNorm ; wf->fMECOlm = wf22->fMECO*emm*0.5
         ampNorm = torch.sqrt(2.0 * eta / 3.0) * (math.pi ** (-1.0 / 6.0))
-        fMECOlm = self.fMECO(eta, chiPNHat, dchi, delta) * (emm * 0.5)
+        fMECOlm = self.fMECO(eta, chiPNHat, dchi) * (emm * 0.5)
 
         # wf->Amp0 = wf22->amp0 = M_meters * M_s / dist_m (internals.c:606)
         dist_m = theta[:, 4:5] * self.Mpc
@@ -503,9 +502,9 @@ class IMRPhenomXHM(IMRPhenomXAS):
 
         # Ringdown and damping frequencies (internals.c:393-394)
         if afinal is None:
-            afinal = self.final_spin_2017(eta, STotR, dchi, delta)
+            afinal = self.final_spin_2017(eta, STotR, dchi)
         if Mfinal is None:
-            Mfinal = self.final_mass_2017(eta, STotR, dchi, delta)
+            Mfinal = self.final_mass_2017(eta, STotR, dchi)
         pWFHM["fRING"], pWFHM["fDAMP"] = self.get_fring_fdamp_lm(
             afinal, Mfinal, ell, emm
         )
@@ -1062,11 +1061,10 @@ class IMRPhenomXHM(IMRPhenomXAS):
         eta = derived[:, 3:4]
         chiPNHat = derived[:, 8:9]
         dchi = derived[:, 10:11]
-        delta = derived[:, 4:5]
         fring = pWFHM["fRING"]
         fdamp = pWFHM["fDAMP"]
 
-        fMECO = self.fMECO(eta, chiPNHat, dchi, delta)
+        fMECO = self.fMECO(eta, chiPNHat, dchi)
         eta_factor = 1.0 + 0.001 * (0.25 / eta - 1.)
         fcut = eta_factor * pWFHM["emm"] * 0.5 * fMECO
 
@@ -1343,7 +1341,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
 
         # ---- mode alignment deltaphiLM at falign, Eq. (4.13)
         # (internals.c:2337-2370) ----
-        fMECO22 = self.fMECO(eta, chiPNHat, dchi, delta)
+        fMECO22 = self.fMECO(eta, chiPNHat, dchi)
         falign = torch.where(eta > pWFHM["etaEMR"],
                              0.6 * m_over_2 * fMECO22, m_over_2 * fMECO22)
         deltaphiLM = (m_over_2 * (1. / eta * self.phase(two_over_m * falign, phase22_coeffs, derived)

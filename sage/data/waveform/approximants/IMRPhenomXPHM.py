@@ -584,7 +584,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         precession.c:1101-1345.
         """
         eta = prec["eta"]
-        delta = derived[:, 4:5]
         chi1z = prec["chi1z"]
         chi2z = prec["chi2z"]
         m1_2 = prec["m1"] * prec["m1"]
@@ -593,8 +592,8 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         # reparametrization of the Jimenez-Forteza fits (binary-verified)
         STotR = (m1_2 * chi1z + m2_2 * chi2z) / (m1_2 + m2_2)
         dchi = chi1z - chi2z
-        af_parallel = self.final_spin_2017(eta, STotR, dchi, delta)
-        Mfinal = self.final_mass_2017(eta, STotR, dchi, delta)
+        af_parallel = self.final_spin_2017(eta, STotR, dchi)
+        Mfinal = self.final_mass_2017(eta, STotR, dchi)
 
         # Lfinal = M^2 afinal - m1^2 chi1z - m2^2 chi2z, M = 1
         # (precession.c:1157)

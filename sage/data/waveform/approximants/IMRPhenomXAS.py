@@ -454,8 +454,8 @@ class IMRPhenomXAS(PhenomConstants):
         """Zero-pad hp/hc from DC to f_min."""
         hp_pad = torch.zeros_like(self.hp_buffer)
         hc_pad = torch.zeros_like(self.hc_buffer)
-        hp_pad[:, self.n_pad:] = hp
-        hc_pad[:, self.n_pad:] = hc
+        hp_pad[:, self.n_pad:self.n_pad + hp.shape[1]] = hp
+        hc_pad[:, self.n_pad:self.n_pad + hc.shape[1]] = hc
         return hp_pad, hc_pad
 
     def get_fcut(self, M_s):
@@ -485,10 +485,10 @@ class IMRPhenomXAS(PhenomConstants):
             │  0  │ m1_s   = m1 * GM               (seconds)              │
             │  1  │ m2_s   = m2 * GM                                      │
             │  2  │ M_s    = (m1+m2) * GM                                 │
-            │  3  │ eta    = m1*m2 / M²            (symmetric mass ratio) │
-            │  4  │ delta  = sqrt(1 - 4*eta)       (PN asymmetry)         │
-            │  5  │ Xa     = m1/M  = 0.5*(1+delta) (dimensionless)        │
-            │  6  │ Xb     = m2/M  = 0.5*(1-delta)                        │
+            │  3  │ eta    = |0.25*(1 - delta²)|   (symmetric mass ratio) │
+            │  4  │ delta  = |m1-m2|/(m1+m2)       (PN asymmetry)         │
+            │  5  │ Xa     = 0.5*(1+sqrt(1-4*eta)) (dimensionless)        │
+            │  6  │ Xb     = 0.5*(1-sqrt(1-4*eta))                        │
             │  7  │ chiEff = Xa*chi1 + Xb*chi2                            │
             │  8  │ chiPNHat (= S in all XAS fits)                        │
             │  9  │ STotR  = (Xa²*chi1 + Xb²*chi2)/(Xa²+Xb²)            │
@@ -504,20 +504,19 @@ class IMRPhenomXAS(PhenomConstants):
 
         m1_s = m1 * self.GM
         m2_s = m2 * self.GM
-        M_s  = m1_s + m2_s
+        M_s  = (m1 + m2) * self.GM
 
-        # Symmetric mass ratio — clip at 0.25 to handle roundoff (mirrors LALSim:
-        # "if(eta > 0.25) eta = 0.25;")
-        # delta = sqrt(1 - 4*eta) is 0 for equal-mass; no divisions by delta
-        # exist in the fit functions, so eta = 0.25 is safe.
-        eta = m1_s * m2_s / (M_s * M_s)
+        # delta, eta and the eta > 0.25 rule as LAL sets them
+        # (LALSimIMRPhenomX_internals.c 389-396).
+        delta = torch.abs((m1 - m2) / (m1 + m2))
+        eta = torch.abs(0.25 * (1.0 - delta * delta))
         eta.clamp_(max=0.25)
 
-        # PN asymmetry parameter and dimensionless mass fractions
-        # delta = sqrt(1 - 4*eta);  Xa = 0.5*(1+delta);  Xb = 0.5*(1-delta)
-        delta = torch.sqrt(1.0 - 4.0 * eta)
-        Xa    = 0.5 * (1.0 + delta)   # = m1/M
-        Xb    = 0.5 * (1.0 - delta)   # = m2/M
+        # LAL's spin utilities rebuild the mass fractions from eta
+        # (LALSimIMRPhenomXUtilities.c: delta = sqrt(1 - 4 eta)).
+        delta_eta = torch.sqrt(1.0 - 4.0 * eta)
+        Xa    = 0.5 * (1.0 + delta_eta)
+        Xb    = 0.5 * (1.0 - delta_eta)
 
         # Spin combinations
         chiEff   = IMRPhenomXAS._chiEff(Xa, Xb, chi1, chi2)
@@ -583,7 +582,7 @@ class IMRPhenomXAS(PhenomConstants):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def final_mass_2017(eta, S, dchi, delta):
+    def final_mass_2017(eta, S, dchi):
         """
         Remnant mass fraction  Mfinal / M  =  1 − E_rad  from the 2017 fit.
 
@@ -595,12 +594,12 @@ class IMRPhenomXAS(PhenomConstants):
         eta   : (B, 1) — symmetric mass ratio
         S     : (B, 1) — STotR  = (Xa²·χ₁ + Xb²·χ₂)/(Xa²+Xb²)
         dchi  : (B, 1) — χ₁ − χ₂
-        delta : (B, 1) — sqrt(1 − 4η)
 
         Returns
         -------
         Mfinal : (B, 1) — dimensionless remnant mass fraction (< 1)
         """
+        delta = torch.sqrt(1.0 - 4.0 * eta)
         eta2  = eta  * eta
         eta3  = eta2 * eta
         eta4  = eta3 * eta
@@ -640,7 +639,7 @@ class IMRPhenomXAS(PhenomConstants):
         return 1.0 - (noSpin + eqSpin + uneqSpin)
 
     @staticmethod
-    def final_spin_2017(eta, S, dchi, delta):
+    def final_spin_2017(eta, S, dchi):
         """
         Remnant dimensionless spin  a_f  from the 2017 fit.
 
@@ -652,7 +651,6 @@ class IMRPhenomXAS(PhenomConstants):
         eta   : (B, 1) — symmetric mass ratio
         S     : (B, 1) — STotR  = (Xa²·χ₁ + Xb²·χ₂)/(Xa²+Xb²)
         dchi  : (B, 1) — χ₁ − χ₂
-        delta : (B, 1) — sqrt(1 − 4η)
 
         Returns
         -------
@@ -663,6 +661,7 @@ class IMRPhenomXAS(PhenomConstants):
         Uses the identity  Xa² + Xb² = 1 − 2η  to avoid recomputing
         individual mass fractions (verifiable from Xa = (1+δ)/2).
         """
+        delta = torch.sqrt(1.0 - 4.0 * eta)
         eta2  = eta  * eta
         eta3  = eta2 * eta
         S2    = S    * S
@@ -763,7 +762,7 @@ class IMRPhenomXAS(PhenomConstants):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def fMECO(eta, chiPNHat, dchi, delta):
+    def fMECO(eta, chiPNHat, dchi):
         """
         Hybrid minimum energy circular orbit (MECO) frequency  (dimensionless Mf).
 
@@ -775,12 +774,12 @@ class IMRPhenomXAS(PhenomConstants):
         eta      : (B, 1) — symmetric mass ratio
         chiPNHat : (B, 1) — hatted PN effective spin (used as S in XAS fits)
         dchi     : (B, 1) — χ₁ − χ₂
-        delta    : (B, 1) — sqrt(1 − 4η)
 
         Returns
         -------
         fMECO : (B, 1) — dimensionless frequency Mf at MECO
         """
+        delta = torch.sqrt(1.0 - 4.0 * eta)
         eta2  = eta  * eta
         eta3  = eta2 * eta
         eta4  = eta3 * eta
@@ -911,8 +910,8 @@ class IMRPhenomXAS(PhenomConstants):
         # ------------------------------------------------------------------
         # 1. Final mass and spin → fRING, fDAMP  (dimensionless Mf units)
         # ------------------------------------------------------------------
-        Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi, delta)
-        afinal_aligned = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi)
+        afinal_aligned = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi)
         if afinal is None:
             afinal = afinal_aligned
         fRING, fDAMP = IMRPhenomXAS.get_fRD_fdamp(afinal, Mfinal)
@@ -922,7 +921,7 @@ class IMRPhenomXAS(PhenomConstants):
         # fISCO keeps the aligned-spin value: the precessing remnant
         # override does not refresh pWF->fISCO (precession.c:1290)
         # ------------------------------------------------------------------
-        fmeco = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi, delta)
+        fmeco = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi)
         fisco = IMRPhenomXAS.fISCO(afinal_aligned)
 
         # ------------------------------------------------------------------
@@ -1460,12 +1459,12 @@ class IMRPhenomXAS(PhenomConstants):
         # ---------------------------------------------------------------
         # 1. Final mass / spin → QNM frequencies (same as amplitude)
         # ---------------------------------------------------------------
-        Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi, delta)
-        afinal_aligned = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi, delta)
+        Mfinal = IMRPhenomXAS.final_mass_2017(eta, STotR, dchi)
+        afinal_aligned = IMRPhenomXAS.final_spin_2017(eta, STotR, dchi)
         if afinal is None:
             afinal = afinal_aligned
         fRING, fDAMP = IMRPhenomXAS.get_fRD_fdamp(afinal, Mfinal)
-        fmeco  = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi, delta)
+        fmeco  = IMRPhenomXAS.fMECO(eta, chiPNHat, dchi)
         # fISCO keeps the aligned-spin value: the precessing remnant
         # override does not refresh pWF->fISCO (precession.c:1290)
         fisco  = IMRPhenomXAS.fISCO(afinal_aligned)

@@ -59,10 +59,13 @@ BBH backbone   : Garcia-Quiros et al. (2020), arXiv:2001.10914
 """
 
 import math
+import warnings
 
 import torch
 
+from sage.core.constants import GM, MSUN
 from sage.data.waveform.approximants.IMRPhenomXAS import IMRPhenomXAS
+from sage.data.waveform.approximants.IMRPhenomXHM import IMRPhenomXHM
 from sage.data.waveform import taper as _taper_mod
 from sage.data.waveform import waveform_utils
 from sage.core.geometry import Window
@@ -128,38 +131,11 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             raise ValueError("IMRPhenomXAS_NRTidalv3 has no per-detector targets")
 
         self.signal_batch_size = signal_batch_size
-
-        # Full-resolution uniform frequency grid of the signal band.
-        f = waveform_utils.get_freqs(
-            low_frequency_cutoff_in_hz,
-            window.sample_rate_in_hz / 2.0,
-            window.padded_length_in_s,
-            signal_batch_size,
-            device,
-            torch.float64,
+        self.set_band(
+            low_frequency_cutoff_in_hz, reference_frequency_in_hz, window.sample_rate_in_hz / 2.0,
+            window.delta_f_in_hz, window.n_frequency_bins, window.padding_length_in_s,
+            signal_batch_size, device, dtype,
         )
-        f_ref = waveform_utils.reference_frequencies(reference_frequency_in_hz, signal_batch_size, device)
-        self.f_ref = f_ref
-        self._out_cdtype = torch.promote_types(dtype, torch.complex64)
-
-        # Initialise the BBH backbone with the full-resolution grid.
-        # IMRPhenomXAS.__init__ sets self.df via the endpoint formula
-        # (f[-1]-f[0])/(n-1), which is exact for the production grid —
-        # same pattern as IMRPhenomD does for IMRPhenomPv2.
-        IMRPhenomXAS.__init__(self, f, f_ref, padding_length_in_s=window.padding_length_in_s)
-        self.B = f.shape[0]
-        self.f = f
-        self.f_numel = self.f[0].numel()
-        # n_pad: bins from 0 Hz to f_low on the full padded grid.
-        self.n_pad = window.n_frequency_bins - self.f_numel
-
-        self.hp_buffer = torch.empty(
-            (self.B, self.n_pad + self.f_numel),
-            dtype=torch.complex128,
-            device=device,
-        )
-        self.hc_buffer = torch.empty_like(self.hp_buffer)
-
         self.param_sampler = param_sampler
         self.waveform_project = waveform_project
         self.augment = augment
@@ -181,6 +157,99 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
 
         if self.waveform_project is not None:
             self.waveform_project.to(device)
+
+    @classmethod
+    def from_band(cls, delta_f, low_frequency_cutoff_in_hz, f_max, reference_frequency_in_hz, batch_size, device):
+        """
+        The waveform alone, for LAL's deltaF, f_min, f_max and fRef.
+
+        The output has LAL's NextPow2(f_max/deltaF) + 1 bins
+        (LALSimIMRPhenomX.c 286-303), zeros above the grid.
+
+        Parameters
+        ----------
+        delta_f, low_frequency_cutoff_in_hz, f_max, reference_frequency_in_hz : float
+            LAL's deltaF, f_min, f_max and fRef, in Hz.
+        batch_size : int
+            Signals per call.
+        device : str or torch.device
+            Device of the batches.
+
+        Returns
+        -------
+        IMRPhenomXAS_NRTidalv3
+            Model with no sampler, projection or augmentation.
+        """
+        model = cls.__new__(cls)
+        torch.nn.Module.__init__(model)
+        model.signal_batch_size = batch_size
+        n_bins = int(2 ** math.ceil(math.log2(int(f_max / delta_f)))) + 1
+        model.set_band(low_frequency_cutoff_in_hz, reference_frequency_in_hz, f_max, delta_f, n_bins, 0.0,
+                       batch_size, device, torch.float64)
+        model.param_sampler = model.waveform_project = model.augment = None
+        model.extras = waveform_utils.TRANSVERSE_SPIN_PARAMETERS
+        return model
+
+    def set_band(self, f_min, f_ref, f_max, delta_f, n_bins, padding_length_in_s, batch_size, device, dtype):
+        """
+        Set LAL's frequency grid, reference frequency and output buffers.
+
+        Parameters
+        ----------
+        f_min, f_ref, f_max, delta_f : float
+            LAL's f_min, fRef, f_max and deltaF, in Hz.
+        n_bins : int
+            Bins of the output, from DC.
+        padding_length_in_s : float
+            Window padding, for the training-path tc placement.
+        batch_size : int
+            Signals per call.
+        device : str or torch.device
+            Device of the batches.
+        dtype : torch.dtype
+            Real dtype of the training-path output.
+
+        Raises
+        ------
+        ValueError
+            On LAL's frequency checks.
+        """
+        # LAL's frequency checks and fRef default (LALSimIMRPhenomX.c 209-239).
+        if f_ref < 0.0:
+            raise ValueError("fRef_In must be positive or set to 0 to ignore.")
+        if delta_f <= 0.0:
+            raise ValueError("deltaF must be positive.")
+        if f_min <= 0.0:
+            raise ValueError("f_min must be positive.")
+        if f_max < 0.0:
+            raise ValueError("f_max must be non-negative.")
+        if f_ref == 0.0:
+            f_ref = f_min
+
+        # LAL's grid i * deltaF for i in [(size_t)(f_min/deltaF), (size_t)(f_max/deltaF)]
+        # (LALSimIMRPhenomX.c 589-605).
+        self.f_min = f_min
+        self.f_max = f_max
+        self.delta_f = delta_f
+        i_start = int(f_min / delta_f)
+        i_stop = int(f_max / delta_f) + 1
+        f = torch.arange(i_start, i_stop, device=device, dtype=torch.float64) * delta_f
+        f = f.unsqueeze(0).expand(batch_size, -1).clone()
+        f_ref = waveform_utils.reference_frequencies(f_ref, batch_size, device)
+        self._out_cdtype = torch.promote_types(dtype, torch.complex64)
+
+        # Initialise the BBH backbone with the full-resolution grid.
+        # IMRPhenomXAS.__init__ sets self.df via the endpoint formula
+        # (f[-1]-f[0])/(n-1), which is exact for the production grid —
+        # same pattern as IMRPhenomD does for IMRPhenomPv2.
+        IMRPhenomXAS.__init__(self, f, f_ref, padding_length_in_s=padding_length_in_s)
+        self.B = f.shape[0]
+        self.f = f
+        self.f_numel = self.f[0].numel()
+        # n_pad: bins from 0 Hz to the first grid bin; bins above the grid stay zero.
+        self.n_pad = i_start
+        self.hp_buffer = torch.empty((self.B, n_bins), dtype=torch.complex128, device=device)
+        self.hc_buffer = torch.empty_like(self.hp_buffer)
 
     @torch.no_grad()
     def forward(self, return_theta=False):
@@ -335,7 +404,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         s3 = s30 + s31*kappa2T + s32*q*kappa2T
 
         s2s3    = s2 * s3
-        exps2s3 = torch.exp(s2s3)   # = exp(s2*s3)
+        exps2s3 = torch.cosh(s2s3) + torch.sinh(s2s3)   # LAL's form of exp(s2*s3)
 
         # --- exponent parameters for kappa^alpha and X^beta ---
         alpha, beta = -8.08155404e-3, -1.13695919e+0
@@ -387,23 +456,21 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         )
 
     # ----------------------------------------------------------------
-    # 5. BNS merger frequency in dimensionless Mf
+    # 5. BNS merger frequency in Hz
     #    Source: XLALSimNRTunedTidesMergerFrequency_v3
     #            LALSimNRTunedTides.c lines 209-291
     #    Reference: Eq. (23) of arXiv:2210.16366
-    #
-    #    Key identity: Mfmerger = nu * Qfit  (mass-independent!)
     # ----------------------------------------------------------------
     @staticmethod
-    def _merger_freq_v3(Xa, Xb, lambda1, lambda2, chi1L, chi2L):
+    def _merger_frequency_v3(mtot, lambda1, lambda2, q, chi1L, chi2L):
         """
-        BNS merger frequency in dimensionless Mf = f * M_total.
+        BNS merger frequency in Hz, with LAL's arguments and arithmetic.
 
-        The result is mass-independent: Mfmerger = eta * Qfit.
-
-        Parameters: all (B, 1).
-        Returns Mfmerger (B, 1).
+        Parameters: all (B, 1); mtot in solar masses, q >= 1.
+        Returns f_merger (B, 1) in Hz.
         """
+        Xa   = q / (1.0 + q)
+        Xb   = 1.0 - Xa
         nu   = Xa * Xb
         Xa2  = Xa*Xa;  Xa3 = Xa2*Xa
         Xb2  = Xb*Xb;  Xb3 = Xb2*Xb
@@ -435,8 +502,9 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         QT  = (1.0 + p_1T*kappa2eff + p_2T*kappa2eff2) / \
               (1.0 + p_3T*kappa2eff + p_4T*kappa2eff2)
 
-        # Mfmerger = nu * a_0 * QM * QS * QT  (dimensionless)
-        return nu * a_0 * QM * QS * QT
+        Qfit = a_0 * QM * QS * QT
+        Momega_merger = nu * Qfit * (2.0 * math.pi)
+        return Momega_merger / (2.0 * math.pi) / (mtot * GM)
 
     # ----------------------------------------------------------------
     # 6. NRTidalv3 raw tidal phase (no clipping, no Planck taper)
@@ -477,11 +545,9 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
 
         # --- Dynamic effective Love-number enhancement (Eq. 27 of 2311.07456) ---
         # s2Mf = -2 * s2 * M_omega = -2 * s2 * pi * Mf
-        # Use torch.exp directly: cosh(x)+sinh(x) overflows to NaN for
-        # large |x| (cosh→+∞, sinh→−∞, inf−inf=NaN), whereas exp(x)
-        # gracefully underflows to 0 for large negative x.
+        # LAL's cosh(x) + sinh(x) form of exp(x) (LALSimNRTunedTides.c 588).
         s2Mf    = -2.0 * s2 * math.pi * Mf
-        exps2Mf = torch.exp(s2Mf)
+        exps2Mf = torch.cosh(s2Mf) + torch.sinh(s2Mf)
 
         inv_1p_exps2s3 = 1.0 / (1.0 + exps2s3)
         dynk2bar = (
@@ -517,6 +583,66 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         return phi_A + phi_B
 
     # ----------------------------------------------------------------
+    # 6b. Derivative of the NRTidalv3 Pade tidal phase
+    #     Source: IMRPhenomX_TidalPhaseDerivative (NRTidalv3 branch),
+    #             LALSimIMRPhenomX_internals.c lines 3141-3227
+    #     At Mf <= Mfmerger < 1.15*Mfmerger the Planck taper and its
+    #     derivative are zero, so only NRTuned_dphaseNRT survives.
+    # ----------------------------------------------------------------
+    @staticmethod
+    def _dphi_tidal_nrt(Mf, PN, tc):
+        """
+        d/dMf of the NRTidalv3 Pade tidal phase, LAL's analytic form.
+
+        Parameters
+        ----------
+        Mf : (B, 1)
+        PN : (B, 10) from _PN_coeffs
+        tc : dict of (B, 1) tensors from _nrtv3_coeffs
+
+        Returns
+        -------
+        dphi_nrt : (B, 1)
+        """
+        s1, s2, s3 = tc['s1'], tc['s2'], tc['s3']
+        exps2s3 = tc['exps2s3']
+        pi = math.pi
+        piMf = pi * Mf
+        x23, x43, x53 = piMf.pow(2.0/3.0), piMf.pow(4.0/3.0), piMf.pow(5.0/3.0)
+        x2, x73, x83, x3 = piMf.pow(2.0), piMf.pow(7.0/3.0), piMf.pow(8.0/3.0), piMf.pow(3.0)
+
+        s2Mf = -s2 * Mf * pi * 2.0
+        exps2Mf = torch.cosh(s2Mf) + torch.sinh(s2Mf)
+        dynk2bar = (1.0 + (s1 - 1.0) * (1.0 / (1.0 + exps2Mf * exps2s3))
+                    - (s1 - 1.0) / (1.0 + exps2s3)
+                    - 2.0 * piMf * (s1 - 1.0) * s2 * exps2s3 / ((1.0 + exps2s3) * (1.0 + exps2s3)))
+        s2s3b, s2Mfb = -s2 * s3, s2 * Mf * pi * 2.0
+        exps2s3b = torch.cosh(s2s3b) + torch.sinh(s2s3b)
+        exps2Mfb = torch.cosh(s2Mfb) + torch.sinh(s2Mfb)
+        dynk2bar_deriv = ((s1 - 1.0) * (2.0 * pi) * s2 * exps2Mfb * exps2s3b
+                          * (1.0 / ((1.0 + exps2Mfb * exps2s3b) * (1.0 + exps2Mfb * exps2s3b)))
+                          - 2.0 * pi * (s1 - 1.0) * s2 * exps2s3 / ((1.0 + exps2s3) * (1.0 + exps2s3)))
+
+        def star(c_newt, kappa, n_1, n_3o2, n_2, n_5o2, n_3, d_1, d_3o2):
+            num = 1.0 + n_1 * x23 + n_3o2 * piMf + n_2 * x43 + n_5o2 * x53 + n_3 * x2
+            den = 1.0 + d_1 * x23 + d_3o2 * piMf
+            dphase1 = -(c_newt * kappa * dynk2bar_deriv * x53 * num) / den
+            dphase2 = (c_newt * kappa * dynk2bar * x23 * pi * (
+                -5.0 - x23 * (3.0 * d_1 + 7.0 * n_1) - 2.0 * piMf * (d_3o2 + 4.0 * n_3o2)
+                - x43 * (5.0 * d_1 * n_1 + 9.0 * n_2)
+                - 2.0 * x53 * (2.0 * d_3o2 * n_1 + 3.0 * d_1 * n_3o2 + 5.0 * n_5o2)
+                - x2 * (7.0 * d_1 * n_2 + 11.0 * n_3 + 5.0 * d_3o2 * n_3o2)
+                - 2.0 * x73 * (3.0 * d_3o2 * n_2 + 4.0 * d_1 * n_5o2)
+                - x83 * (9.0 * d_1 * n_3 + 7.0 * d_3o2 * n_5o2)
+                - 2.0 * x3 * (4.0 * d_3o2 * n_3))) / (3.0 * den * den)
+            return dphase1 + dphase2
+
+        return (star(PN[:, 0:1], tc['kappaA'], tc['n_1A'], tc['n_3o2A'], tc['n_2A'],
+                     tc['n_5o2A'], tc['n_3A'], tc['d_1A'], tc['d_3o2A'])
+                + star(PN[:, 5:6], tc['kappaB'], tc['n_1B'], tc['n_3o2B'], tc['n_2B'],
+                       tc['n_5o2B'], tc['n_3B'], tc['d_1B'], tc['d_3o2B']))
+
+    # ----------------------------------------------------------------
     # 7. 7.5PN tidal phase (for post-merger Planck taper transition)
     #    Source: SimNRTunedTidesFDTidalPhase_PN
     #            LALSimNRTunedTides.c lines 655-698
@@ -550,21 +676,19 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
     #    Source: PlanckTaper in LALSimNRTunedTides.c lines 44-53
     # ----------------------------------------------------------------
     @staticmethod
-    def _planck_taper(f, f1, f2):
+    def _planck_taper(f, f1, f2, exp=torch.exp):
         """
         Planck taper: 0 at f <= f1, smooth rise, 1 at f >= f2.
 
-        Parameters: f (B, F), f1 / f2 (B, 1).
+        Parameters: f (B, F), f1 / f2 (B, 1); exp, the exponential as the
+        LAL caller writes it (PlanckTaper uses exp, IMRPhenomX_TidalPhase
+        cosh + sinh).
         Returns window (B, F).
         """
         mid    = (f > f1) & (f < f2)
         f_safe = torch.where(mid, f, 0.5*(f1 + f2))   # avoid /0 outside mid
         arg    = (f2 - f1)/(f_safe - f1) + (f2 - f1)/(f_safe - f2)
-        # Must use torch.exp, NOT cosh(arg)+sinh(arg).
-        # When f → f2⁻, arg → −∞  (e.g. −10 918 at one grid step from the
-        # upper edge for a 32 s segment).  exp(−10918) = 0 gracefully, but
-        # cosh(−10918) = +∞ and sinh(−10918) = −∞  ⟹  ∞ + (−∞) = NaN.
-        exp_fn = torch.exp(arg)
+        exp_fn = exp(arg)
         taper_mid = 1.0 / (exp_fn + 1.0)
 
         return torch.where(f <= f1, torch.zeros_like(f),
@@ -590,16 +714,17 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
     #    Lambda).  LAL's sequential first-increase check fires before the
     #    singularity, correctly freezing at the last decreasing value.
     # ----------------------------------------------------------------
-    def _tidal_phase_full(self, Mf, PN, tc, Mfmerger):
+    def _tidal_phase_full(self, f, Mf, PN, tc, f_merger):
         """
         NRTidalv3 tidal phase with minimum-clamping and Planck taper.
 
         Parameters
         ----------
+        f        : (B, F) — grid in Hz, where LAL places its boundaries
         Mf       : (B, F)
         PN       : (B, 10)
         tc       : dict of (B, 1) tensors
-        Mfmerger : (B, 1)
+        f_merger : (B, 1) — merger frequency in Hz
 
         Returns
         -------
@@ -620,23 +745,19 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         #     +/-inf) because the phase starts increasing toward the pole.
         #
         #     Vectorised equivalent:
-        #       1. Compute finite-difference increments phi_raw[k+1] - phi_raw[k].
+        #       1. Compare phi_raw[k+1] >= phi_raw[k], as LAL does.
         #       2. Within the check region (f >= 0.9*fmerger), mark the FIRST
-        #          non-negative increment.
+        #          non-decrease.
         #       3. "Freeze" flag: True for every bin at or after that first
         #          non-decrease.
         #       4. Freeze value = phi_raw[first_non_decrease_index] (the last
         #          decreasing value, i.e. the minimum before the singularity).
         #
-        check_region = (Mf >= 0.9 * Mfmerger)                 # (B, F)  bool
+        check_region = (f >= 0.9 * f_merger)                  # (B, F)  bool
 
-        # Finite differences: shape (B, F-1)
-        # diff[k] = phi_raw[k+1] - phi_raw[k]  (positive = increasing)
-        phi_diff = phi_raw[:, 1:] - phi_raw[:, :-1]           # (B, F-1)
-
-        # A "triggering" step: non-decreasing increment inside the check region.
+        # A "triggering" step: phi_raw[k+1] >= phi_raw[k] inside the check region.
         # check_region[:, 1:] aligns with the step from k → k+1.
-        trigger = (phi_diff >= 0) & check_region[:, 1:]        # (B, F-1) bool
+        trigger = (phi_raw[:, 1:] >= phi_raw[:, :-1]) & check_region[:, 1:]  # (B, F-1) bool
 
         # Once triggered, the freeze flag stays True for all later bins.
         # cumsum > 0 means "trigger has been seen at or before this step".
@@ -671,9 +792,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         phi_clipped = torch.where(freeze_flag, freeze_vals, phi_raw)  # (B, F)
 
         # (c) Smooth post-merger transition to 7.5PN tidal phase
-        Mf_t1  = 1.15 * Mfmerger                              # (B, 1)
-        Mf_t2  = 1.35 * Mfmerger
-        planck = self._planck_taper(Mf, Mf_t1, Mf_t2)        # (B, F)
+        planck = self._planck_taper(f, 1.15 * f_merger, 1.35 * f_merger)  # (B, F)
         phi_PN = self._phi_tidal_PN(Mf, PN, kappaA, kappaB)   # (B, F)
 
         return phi_clipped * (1.0 - planck) + phi_PN * planck
@@ -889,6 +1008,88 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
 
         return three_pn_dphi + c3p5_dphi
 
+    # ----------------------------------------------------------------
+    # 13. LAL's parameter checks and body order
+    #     Sources: XLALSimIMRPhenomXHM (LALSimIMRPhenomXHM.c 1424-1443),
+    #              XLALSimIMRPhenomXASGenerateFD (LALSimIMRPhenomX.c 209-235),
+    #              IMRPhenomXSetWaveformVariables (internals.c 326-385, 510-600),
+    #              IMRPhenomXASGenerateFD (LALSimIMRPhenomX.c 589-595)
+    # ----------------------------------------------------------------
+    @staticmethod
+    def raise_first(failures):
+        """
+        Raise the message of the first failing check of the first failing row.
+
+        Parameters
+        ----------
+        failures : list of (torch.Tensor, callable)
+            Per-row failure masks, shape (B,), in LAL's order, each with a
+            function of the row index that returns LAL's message.
+
+        Raises
+        ------
+        ValueError
+            When any row fails a check.
+        """
+        failed = torch.stack([mask for mask, _ in failures])        # (checks, B)
+        if not failed.any():
+            return
+        row = int(failed.any(dim=0).nonzero()[0])
+        check = int(failed[:, row].nonzero()[0])
+        raise ValueError(f"signal {row}: {failures[check][1](row)}")
+
+    @classmethod
+    def check_parameters(cls, theta):
+        """
+        Raise LAL's error for parameters it rejects before ordering the bodies.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 10)
+            Tidal aligned layout.
+
+        Raises
+        ------
+        ValueError
+            With LAL's message, for the first failing row.
+        """
+        m1, m2, chi1, chi2, distance = (theta[:, k] for k in range(5))
+        lambda1, lambda2 = theta[:, 8], theta[:, 9]
+        m1_SI, m2_SI = m1 * MSUN, m2 * MSUN
+        mass_ratio = torch.where(m1_SI > m2_SI, m1_SI / m2_SI, m2_SI / m1_SI)
+        cls.raise_first([
+            (~(distance > 0), lambda i: "distance must be positive."),
+            ((mass_ratio > 1000.0) & (torch.abs(mass_ratio - 1000.0) > 1e-12),
+             lambda i: "ERROR: Model not valid at mass ratios beyond 1000."),
+            (m1_SI <= 0.0, lambda i: "m1 must be positive."),
+            (m2_SI <= 0.0, lambda i: "m2 must be positive."),
+            ((lambda1 < 0) | (lambda2 < 0),
+             lambda i: f"lambda1 = {lambda1[i]:f}, lambda2 = {lambda2[i]:f}. "
+                       "Both should be greater than zero for NRTidalv2 and NRTidalv3"),
+            ((chi1 > 1.0) | (chi1 < -1.0) | (chi2 > 1.0) | (chi2 < -1.0),
+             lambda i: "Unphysical spins requested: must obey the Kerr bound [-1,1]."),
+        ])
+
+    @staticmethod
+    def order_bodies(theta):
+        """
+        Swap masses, spins and tidal deformabilities where mass1 < mass2, as LAL does.
+
+        Parameters
+        ----------
+        theta : torch.Tensor, shape (B, 10)
+            Tidal aligned layout.
+
+        Returns
+        -------
+        torch.Tensor, shape (B, 10)
+        """
+        swap = ~(theta[:, 0:1] >= theta[:, 1:2])
+        if swap.any():
+            warnings.warn("Warning: m1 < m2, swapping the masses, spins, tidal deformabilities, "
+                          "and spin-induced quadrupole parameters.")
+        return torch.where(swap, theta[:, [1, 0, 3, 2, 4, 5, 6, 7, 9, 8]], theta)
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
@@ -907,12 +1108,12 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
 
         Returns
         -------
-        hp, hc : torch.Tensor, shape (B, n_pad + F), complex128
+        hp, hc : torch.Tensor, shape (B, n_frequency_bins), complex128
 
         Raises
         ------
         ValueError
-            If any transverse spin is non-zero.
+            If any transverse spin is non-zero, or LAL rejects the parameters.
         """
         # ----------------------------------------------------------------
         # 1. Extract intrinsic + extrinsic parameters
@@ -920,6 +1121,8 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         # [m1, m2, chi1, chi2, distance, tc, phic, inclination, lambda1,
         #  lambda2]
         theta = waveform_utils.aligned_layout(theta, waveform_utils.TIDAL_COLUMNS, self.extras)
+        self.check_parameters(theta)
+        theta = self.order_bodies(theta)
         m1       = theta[:, 0:1]
         m2       = theta[:, 1:2]
         dist_Mpc = theta[:, 4:5]
@@ -935,21 +1138,56 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         derived  = self.compute_derived_parameters(theta)
         M_s   = derived[:, 2:3]    # total mass in seconds          (B, 1)
         eta   = derived[:, 3:4]    # symmetric mass ratio
-        delta = derived[:, 4:5]    # sqrt(1 - 4*eta)
+        delta = derived[:, 4:5]    # |m1 - m2| / (m1 + m2)
         STotR = derived[:, 9:10]   # effective spin for fits
         dchi  = derived[:, 10:11]  # chi1 - chi2
         chi1L = derived[:, 11:12]  # aligned spin body 1
         chi2L = derived[:, 12:13]  # aligned spin body 2
 
-        # For TIDAL computations use EXACT mass fractions from the
-        # raw input masses — bypassing the eta nudge that biases kappa2T
-        # and all NRTidalv3 coefficients for near-equal-mass binaries.
-        # LALSim uses m1/(m1+m2) directly in all NRTidal functions.
-        # (The BBH backbone goes through `derived` internally so it is
-        #  unaffected by this separate Xa/Xb definition.)
+        # Tidal mass fractions are pWF->m1, pWF->m2 = m / Mtot (internals.c 422-423).
         Mtot   = m1 + m2
         Xa     = m1 / Mtot                                          # (B, 1)
         Xb     = m2 / Mtot
+        # pWF->q, set to 1 when eta == 0.25 (internals.c 391-402), sets the
+        # merger frequency of the alignment and of the tidal phase at fRef;
+        # the tidal series uses m1/m2 from the SI masses (LALSimNRTunedTides.c 797-799).
+        q_wf = torch.where(eta == 0.25, torch.ones_like(m1), m1 / m2)
+        m1_tides, m2_tides = (m1 * MSUN) / MSUN, (m2 * MSUN) / MSUN
+        f_merger_wf = self._merger_frequency_v3(Mtot, lambda1, lambda2, q_wf, chi1L, chi2L)
+        f_merger_tides = self._merger_frequency_v3(
+            m1_tides + m2_tides, lambda1, lambda2, m1_tides / m2_tides, chi1L, chi2L)
+        unequal = ((q_wf == 1.0) | (m1_tides == m2_tides)) & (lambda1 != lambda2)
+        if unequal.any():
+            i = int(unequal[:, 0].nonzero()[0])
+            warnings.warn(f"m1 == m2 ({float(m1[i]):g}), but lambda1 != lambda2 "
+                          f"({float(lambda1[i]):g}, {float(lambda2[i]):g}).")
+
+        # LAL's cut and its checks on it (internals.c 503-540, 574-600; LALSimIMRPhenomX.c 589-595).
+        f_cut = torch.where(derived[:, 7:8] > 0.99, torch.full_like(M_s, 0.33), torch.full_like(M_s, 0.3)) / M_s
+        f_max_prime = torch.clamp(f_cut, max=self.f_max)
+        for fails, message in ((f_cut <= self.f_min, "(fCut = {:g} Hz) <= f_min = {:g}"),
+                               (f_max_prime <= self.f_min, "f_max <= f_min")):
+            if fails.any():
+                i = int(fails[:, 0].nonzero()[0])
+                warnings.warn(message.format(float(f_cut[i]), self.f_min))
+        Mfinal = self.final_mass_2017(eta, STotR, dchi)
+        afinal = self.final_spin_2017(eta, STotR, dchi)
+        i_start = int(self.f_min / self.delta_f)
+        i_stop = (f_max_prime / self.delta_f).floor() + 1
+        self.raise_first([
+            (Mfinal[:, 0] > 1.0, lambda i: "IMRPhenomX_FinalMass2018: Final mass > 1.0 not physical."),
+            (torch.abs(afinal[:, 0]) > 1.0, lambda i: "IMRPhenomX_FinalSpin2018: Final spin > 1.0 is not physical."),
+            (self.fMECO(eta, derived[:, 8:9], dchi)[:, 0] > self.fISCO(afinal)[:, 0],
+             lambda i: "Error: f_MECO cannot be greater than f_ISCO."),
+            (i_start > i_stop[:, 0],
+             lambda i: f"minimum freq index {i_start} and maximum freq index {int(i_stop[i])} do not fulfill "
+                       f"0<=ind_min<=ind_max<=htilde->data>length={int(i_stop[i])}."),
+            # LAL's tidal-phase minimum search compares phi_tidal[i] with phi_tidal[i-1] from
+            # 0.9 f_merger on; at i = 0 the unsigned i-1 wraps and LAL reads outside the array
+            # and crashes (LALSimNRTunedTides.c 834-836), so LAL has no result here.
+            (self.f[:, 0] >= 0.9 * f_merger_tides[:, 0],
+             lambda i: f"f_min = {self.f_min:g} Hz is too high."),
+        ])
 
         # ----------------------------------------------------------------
         # 3. BBH amplitude and phase coefficients
@@ -976,7 +1214,6 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         kappaA, kappaB = self._kappaAB(Xa, Xb, lambda1, lambda2)
         PN             = self._PN_coeffs(Xa)                       # (B, 10)
         tc_d           = self._nrtv3_coeffs(Xa, Xb, kappa2T, kappaA, kappaB, PN)
-        Mfmerger       = self._merger_freq_v3(Xa, Xb, lambda1, lambda2, chi1L, chi2L)
 
         # Spin-induced quadrupole/octupole parameters (non-zero for BNS)
         # Source: XLALSimInspiralSetQuadMonParamsFromLambdas →
@@ -1001,28 +1238,29 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         # 7. Tidal correction to linb
         #    Source: LALSimIMRPhenomX.c lines 716-742
         #
-        #    At Mf_final = Mfmerger the total group delay d phi_total/d Mf
-        #    is forced to zero:
+        #    At Mf_final = min(Mfmerger, last grid frequency) the total
+        #    group delay d phi_total/d Mf is forced to zero:
         #
         #      dphi_fmerger = (1/eta)*dphi_BBH(Mf_final) + linb_bbh
         #                     - dphi_tidal(Mf_final)
         #      linb         = linb_bbh - dphi_fmerger
         #
-        #    dphi_tidal(Mf_final) is computed by central finite difference
-        #    on _phi_tidal_nrt (Planck taper = 0 at Mf_final = Mfmerger
-        #    since Mfmerger < 1.15*Mfmerger, so unclipped formula applies).
+        #    The last grid frequency is LAL's floor(f_max_prime/deltaF)*deltaF,
+        #    f_max_prime = min(f_max, fCutDef/M_s), fCutDef = 0.33 if
+        #    chiEff > 0.99 else 0.3 (LALSimIMRPhenomX_internals.c 503-533,
+        #    LALSimIMRPhenomX.c 590-605).
+        #
+        #    dphi_tidal(Mf_final) is LAL's analytic derivative (_dphi_tidal_nrt
+        #    plus the spin-tidal PN terms).
         # ----------------------------------------------------------------
-        Mf_final = Mfmerger                                        # (B, 1)
+        f_last = (i_stop - 1) * self.delta_f
+        Mf_final = torch.where(f_merger_wf < f_last, f_merger_wf, f_last) * M_s   # (B, 1)
 
         dphi_bbh_fmerger = (1.0/eta) * self.dphase(Mf_final, phase_coeffs, derived)
 
-        h_fd = Mf_final * 1e-6
-        dphi_tid_fmerger = (
-            self._phi_tidal_nrt(Mf_final + h_fd, PN, tc_d)
-            - self._phi_tidal_nrt(Mf_final - h_fd, PN, tc_d)
-        ) / (2.0 * h_fd)
+        dphi_tid_fmerger = self._dphi_tidal_nrt(Mf_final, PN, tc_d)
 
-        # Add spin-tidal PN derivative: d(2PN+3PN+3.5PN spin phase)/dMf at Mfmerger
+        # Add spin-tidal PN derivative: d(2PN+3PN+3.5PN spin phase)/dMf at Mf_final
         # Source: IMRPhenomX_TidalPhaseDerivative, internals.c line 3102, 3134
         dphi_tid_fmerger = dphi_tid_fmerger + self._spin_tidal_pn_dphase(
             Mf_final, Xa, Xb, chi1L, chi2L, quadparam1, quadparam2,
@@ -1035,22 +1273,24 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         # 8. Reference-frequency tidal phase shift
         #    Source: LALSimIMRPhenomX.c line 740-748
         #
-        #    phiTfRef = -phi_tidal(MfRef)
-        #             (MfRef << Mfmerger => Planck taper = 0,
-        #              so raw _phi_tidal_nrt is the correct formula)
+        #    phiTfRef = -phi_tidal(MfRef): the Pade phase blended with the
+        #    7.5PN phase over [1.15, 1.35]*Mfmerger, without the minimum
+        #    clamp (IMRPhenomX_TidalPhase, internals.c 3044-3070)
         #
         #    phifRef = -(1/eta * phi_BBH(MfRef) + phiTfRef + linb*MfRef)
         #              + 2*phic + pi/4
         # ----------------------------------------------------------------
         MfRef    = self.f_ref * M_s                                # (B, 1)
         phi22ref = self.phase(MfRef, phase_coeffs, derived)
-        # phiTfRef = -IMRPhenomX_TidalPhase(MfRef, ...) which includes
-        # NRTidalv3 Padé + 2PN + 3PN + 3.5PN spin-tidal terms.
-        phiTfRef = -(self._phi_tidal_nrt(MfRef, PN, tc_d)
+        Mfmerger_wf = f_merger_wf * M_s
+        planck_ref = self._planck_taper(MfRef, 1.15 * Mfmerger_wf, 1.35 * Mfmerger_wf,
+                                        exp=lambda x: torch.cosh(x) + torch.sinh(x))
+        phiTfRef = -(self._phi_tidal_nrt(MfRef, PN, tc_d) * (1.0 - planck_ref)
+                     + self._phi_tidal_PN(MfRef, PN, kappaA, kappaB) * planck_ref
                      + self._spin_tidal_pn_phase(
                          MfRef, Xa, Xb, chi1L, chi2L,
                          quadparam1, quadparam2, octparam1, octparam2))
-        phifRef  = (-(phi22ref/eta + phiTfRef + linb*MfRef)
+        phifRef  = (-((1.0/eta)*phi22ref + phiTfRef + linb*MfRef)
                     + 2.0*phic + 0.25*math.pi)
 
         # ----------------------------------------------------------------
@@ -1060,12 +1300,12 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
 
         # BBH phase
         phi22   = self.phase(Mf, phase_coeffs, derived)            # (B, F)
-        phi_bbh = phi22/eta + linb*Mf + phifRef                    # (B, F)
+        phi_bbh = phi22*(1.0/eta) + linb*Mf + phifRef              # (B, F)
 
         # Tidal phase (with minimum-clamping and Planck taper)
         # phi_tidal < 0; subtracting it increases the total phase
         # matching LALSim's  cexp(I*(phi - phaseTidal)) with phaseTidal < 0
-        phi_tidal = (self._tidal_phase_full(Mf, PN, tc_d, Mfmerger)
+        phi_tidal = (self._tidal_phase_full(self.f, Mf, PN, tc_d, f_merger_tides)
                      + self._spin_tidal_pn_phase(
                          Mf, Xa, Xb, chi1L, chi2L,
                          quadparam1, quadparam2, octparam1, octparam2))  # (B, F)
@@ -1086,23 +1326,20 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
                           + coeff_tidal * ampT)                     # (B, F)
 
         # Planck amplitude taper: 1 below fmerger, tapers to 0 at 1.2*fmerger
-        amp_win = 1.0 - self._planck_taper(Mf, Mfmerger, 1.2*Mfmerger)
-        A_total = A_total * amp_win
+        amp_win = 1.0 - self._planck_taper(self.f, f_merger_tides, 1.2*f_merger_tides)
+        h22 = A_total * torch.polar(torch.ones_like(phi_total), phi_total) * amp_win
+        # LAL leaves bins above its cut at zero (LALSimIMRPhenomX.c 806-807, 906).
+        h22 = torch.where((self.f <= f_last) & (Mf <= f_max_prime * M_s), h22, torch.zeros_like(h22))
 
         # ----------------------------------------------------------------
-        # 11. hp / hc from inclination (same projection as BBH baseline)
+        # 11. hp / hc: the (2,-2) mode added with its m = +-2 harmonics at
+        #     phi = pi/2, as IMRPhenomXHM_MultiMode and IMRPhenomXHMFDAddMode
+        #     do (LALSimIMRPhenomXHM.c 1880-1888, 2282-2328)
         # ----------------------------------------------------------------
-        YLM      = math.sqrt(5.0 / (4.0 * math.pi)) / 2.0
-        cos_iota = torch.cos(iota)
-
-        hp = torch.polar(
-            YLM * 0.5 * A_total * (1.0 + cos_iota*cos_iota),
-            phi_total + math.pi,
-        )
-        hc = torch.polar(
-            YLM * A_total * cos_iota,
-            phi_total + 0.5*math.pi,
-        )
+        Ym = IMRPhenomXHM.spin_weighted_Y(iota, math.pi / 2, -2, 2, -2)
+        Ystar = torch.conj(IMRPhenomXHM.spin_weighted_Y(iota, math.pi / 2, -2, 2, 2))
+        hp = 0.5 * (Ym + Ystar) * h22
+        hc = 1j * 0.5 * (Ym - Ystar) * h22
 
         # ----------------------------------------------------------------
         # 12. Optional: FD taper, tc shift, df normalisation
