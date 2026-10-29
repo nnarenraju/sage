@@ -107,8 +107,9 @@ class IMRPhenomD(phenom.PhenomConstants):
             Parameters in the :data:`waveform_utils.WAVEFORM_PARAMETERS`
             layout.
         reproduce_lal : bool
-            If ``True``, skip FD tapering and ``tc`` application to
-            reproduce raw LALSuite output (default ``False``).
+            If ``True``, skip FD tapering and ``tc`` application and keep
+            LAL's band (:meth:`lal_band`), to reproduce raw LALSuite output
+            (default ``False``).
 
         Returns
         -------
@@ -167,6 +168,8 @@ class IMRPhenomD(phenom.PhenomConstants):
             # LAL works in continuous Fourier regime
             hp *= self.df
             hc *= self.df
+        else:
+            hp, hc = self.lal_band(hp, hc, fcut_true)
 
         # Pad missing frequencies from DC to f_low
         # Pad *AFTER* taper; not before
@@ -988,6 +991,16 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
 
         return phi_Ins, TF2_coeffs, TF2_log_coeffs
+
+    def lal_band(self, hp, hc, f_cut):
+        """
+        Zero the bins LAL leaves empty: it fills ``i * deltaF`` for
+        ``i < floor(min(f_max, fCut) / deltaF)`` and zeros the rest
+        (``IMRPhenomDGenerateFD``, ``PhenomPCore``).
+        """
+        stop = torch.floor(torch.minimum(f_cut, self.f[:, -1:]) / self.df)
+        keep = torch.round(self.f / self.df) < stop
+        return torch.where(keep, hp, 0), torch.where(keep, hc, 0)
 
     def get_fcut_true(self, M_s):
         """Return the physical frequency cutoff in Hz from the dimensionless ``fM_CUT``."""

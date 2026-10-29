@@ -353,9 +353,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             final_hp *= self.df
             final_hc *= self.df
         else:
-            # LAL evaluates [f_min, f_max); the bin at f_max stays zero.
-            final_hp[:, -1] = 0
-            final_hc[:, -1] = 0
+            final_hp, final_hc = self.lal_band(final_hp, final_hc, fcut_true)
 
         # Accounting for DC components and zero-padding below f_min
         # We start from 0 Hz, df Hz, 2df Hz; not including f_min
