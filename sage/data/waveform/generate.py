@@ -116,7 +116,7 @@ def project(hp, hc, rows, detectors, delta_f, epoch):
     return out
 
 
-def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sample_rate=4096.0,
+def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sample_rate=4096.0, f_max=None,
                          f_lower=20.0, f_ref=20.0, epoch=None, device="cpu", numpy=False):
     """
     LAL's frequency-domain waveforms for given parameters, optionally projected onto detectors.
@@ -150,6 +150,8 @@ def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sa
         and polarization then have no effect.
     sample_rate : float
         Sets LAL's f_max = sample_rate / 2.
+    f_max : float or None
+        LAL's f_max in Hz instead; 0 ends each signal at LAL's cutoff fCut.
     f_lower, f_ref : float
         LAL's f_min and fRef in Hz; fRef = 0 means f_min.
     epoch : None, float or sequence
@@ -162,7 +164,8 @@ def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sa
     Returns
     -------
     (n, D, F) complex strain with detectors, else (hplus, hcross) of shape (n, F), on LAL's
-    grid of NextPow2(f_max / delta_f) + 1 bins from DC.
+    grid of NextPow2(f_max / delta_f) + 1 bins from DC; with f_max = 0, LAL's grid of the
+    signal with the highest fCut.
 
     Raises
     ------
@@ -195,8 +198,8 @@ def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sa
         if unknown:
             raise ValueError(f"detectors {unknown}: not LAL detectors; known: {', '.join(lal.cached_detector_by_prefix)}")
 
-    f_max = sample_rate / 2.0
-    for i, row in enumerate(rows):
+    f_max = sample_rate / 2.0 if f_max is None else f_max
+    for i, row in enumerate(rows if f_max else ()):
         duration = chirp_duration(row["mass1"], row["mass2"], row["spin1z"], row["spin2z"], f_lower, f_max, delta_f)
         if delta_f > 1.0 / duration:
             warnings.warn(f"signal {i}: Specified frequency interval of {delta_f:g} Hz is too large for a chirp "
@@ -222,7 +225,8 @@ def load_waveform_prior(prior) -> dict:
 
 
 def sample_fd_waveform(num_waveforms, prior, *, approximant, delta_f, detectors=None, seed=None,
-                       sample_rate=4096.0, f_lower=20.0, f_ref=20.0, epoch=None, device="cpu", numpy=False):
+                       sample_rate=4096.0, f_max=None, f_lower=20.0, f_ref=20.0, epoch=None, device="cpu",
+                       numpy=False):
     """
     Draw signals from a prior and make their waveforms with :func:`generate_fd_waveform`.
 
@@ -243,7 +247,7 @@ def sample_fd_waveform(num_waveforms, prior, *, approximant, delta_f, detectors=
         geocentric GPS time.
     seed : int or None
         Seed of the prior draws; None draws fresh entropy.
-    approximant, delta_f, detectors, sample_rate, f_lower, f_ref, epoch, device, numpy
+    approximant, delta_f, detectors, sample_rate, f_max, f_lower, f_ref, epoch, device, numpy
         As for :func:`generate_fd_waveform`.
 
     Returns
@@ -260,7 +264,7 @@ def sample_fd_waveform(num_waveforms, prior, *, approximant, delta_f, detectors=
     names = [name for name in waveform_utils.WAVEFORM_PARAMETERS if name in columns]
     rows = [{name: float(columns[name][i]) for name in names} for i in range(num_waveforms)]
     waveforms = generate_fd_waveform(rows, approximant=approximant, delta_f=delta_f, detectors=detectors,
-                                     sample_rate=sample_rate, f_lower=f_lower, f_ref=f_ref, epoch=epoch,
-                                     device=device, numpy=numpy)
+                                     sample_rate=sample_rate, f_max=f_max, f_lower=f_lower, f_ref=f_ref,
+                                     epoch=epoch, device=device, numpy=numpy)
     parameters = {name: column.numpy() if numpy else column.to(device) for name, column in columns.items()}
     return waveforms, parameters

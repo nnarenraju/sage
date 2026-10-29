@@ -1190,7 +1190,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
                 insp_vals = []
                 for i in range(3):
                     FF = two_over_m * freqs[i]
-                    insp_vals.append((1. / eta) * self.dphase(FF, phase22_coeffs, derived))
+                    insp_vals.append((1. / eta) * self.dphase(FF, phase22_coeffs))
                 diff12 = insp_vals[0] - insp_vals[1]
                 diff23 = insp_vals[1] - insp_vals[2]
                 new1 = values[2] + diff23
@@ -1327,10 +1327,10 @@ class IMRPhenomXHM(IMRPhenomXAS):
             linb_fit = self._linb_fit(eta, STotR, dchi, delta)
             psi4 = self._psi4tostrain_fit(eta, STotR, dchi)
             frefFit = phase22_coeffs["fRING"] - phase22_coeffs["fDAMP"]
-            dphi22Ref = (1. / eta) * self.dphase(frefFit, phase22_coeffs, derived)
+            dphi22Ref = (1. / eta) * self.dphase(frefFit, phase22_coeffs)
             timeshift = linb_fit - dphi22Ref - 2. * math.pi * (500. + psi4)
             MfRef = self.f_ref * M_s
-            phiref22 = (-1. / eta * self.phase(MfRef, phase22_coeffs, derived)
+            phiref22 = (-1. / eta * self.phase(MfRef, phase22_coeffs)
                         - timeshift * MfRef - pWFHM["phaseshift"]
                         + 2.0 * phic + math.pi / 4.)
             pWFHM["timeshift"] = timeshift
@@ -1344,7 +1344,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
         fMECO22 = self.fMECO(eta, chiPNHat, dchi)
         falign = torch.where(eta > pWFHM["etaEMR"],
                              0.6 * m_over_2 * fMECO22, m_over_2 * fMECO22)
-        deltaphiLM = (m_over_2 * (1. / eta * self.phase(two_over_m * falign, phase22_coeffs, derived)
+        deltaphiLM = (m_over_2 * (1. / eta * self.phase(two_over_m * falign, phase22_coeffs)
                                   + pWFHM["phaseshift"] + phiref22)
                       + timeshift * falign - 3. * math.pi / 4. * (1 - m_over_2)
                       - (self._insp_phase_ansatz_int(falign, pPhase)
@@ -1438,22 +1438,22 @@ class IMRPhenomXHM(IMRPhenomXAS):
         # timeshift = IMRPhenomX_TimeShift_22 (the XAS linb)
         linb_fit = self._linb_fit(eta, STotR, dchi, delta)
         psi4 = self._psi4tostrain_fit(eta, STotR, dchi)
-        dphi22Ref = (1. / eta) * self.dphase(fring22 - fdamp22, phase22_coeffs, derived)
+        dphi22Ref = (1. / eta) * self.dphase(fring22 - fdamp22, phase22_coeffs)
         timeshift = linb_fit - dphi22Ref - 2. * math.pi * (500. + psi4)
         pWFHM["timeshift"] = timeshift
         # impose that dphiS(fref) - dphi22(fref) has the value of the fit
-        dphi22ref = (1. / eta) * self.dphase(frefRD, phase22_coeffs, derived) + timeshift
+        dphi22ref = (1. / eta) * self.dphase(frefRD, phase22_coeffs) + timeshift
         sph["alpha0_S"] = sph["alpha0_S"] + dphi22ref + tshift \
             - self._rd_phase_ansatz_spheroidal(frefRD, pWFHM, sph)
 
         # ---- phase-shift of spheroidal ansatz (internals.c:2601-2624) ----
         frefRD = fring22
         MfRef = self.f_ref * M_s
-        phiref22 = (-1. / eta * self.phase(MfRef, phase22_coeffs, derived)
+        phiref22 = (-1. / eta * self.phase(MfRef, phase22_coeffs)
                     - timeshift * MfRef - pWFHM["phaseshift"]
                     + 2.0 * phic + math.pi / 4.)
         pWFHM["phiref22"] = phiref22
-        phi22ref = (1. / eta * self.phase(frefRD, phase22_coeffs, derived)
+        phi22ref = (1. / eta * self.phase(frefRD, phase22_coeffs)
                     + timeshift * frefRD + pWFHM["phaseshift"] + phiref22)
         phishift = _RD_PHASE_32_PHASESHIFT(pfit)
         sph["phi0_S"] = phi22ref \
@@ -1515,7 +1515,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
         """
         eta = derived[:, 3:4]
         amp22 = self._rd22_amp_analytical(Mf, amp22_coeffs)
-        phi22 = (1. / eta * self.phase(Mf, phase22_coeffs, derived)
+        phi22 = (1. / eta * self.phase(Mf, phase22_coeffs)
                  + pWFHM["timeshift"] * Mf + pWFHM["phaseshift"] + pWFHM["phiref22"])
         wf22R = amp22 * torch.polar(torch.ones_like(phi22), phi22)
         # RingdownAmpVersion 1: strain units (internals.c:2660-2662);
@@ -1817,14 +1817,14 @@ class IMRPhenomXHM(IMRPhenomXAS):
             linb_fit = self._linb_fit(eta, STotR, dchi, delta)
             psi4 = self._psi4tostrain_fit(eta, STotR, dchi)
             frefFit = phase22_coeffs["fRING"] - phase22_coeffs["fDAMP"]
-            dphi22Ref = (1. / eta) * self.dphase(frefFit, phase22_coeffs, derived)
+            dphi22Ref = (1. / eta) * self.dphase(frefFit, phase22_coeffs)
             linb = linb_fit - dphi22Ref - 2. * math.pi * (500. + psi4)
             MfRef = self.f_ref * M_s
-            phifRef = (-(self.phase(MfRef, phase22_coeffs, derived) / eta
+            phifRef = (-(self.phase(MfRef, phase22_coeffs) / eta
                          + linb * MfRef) + 2.0 * phic + 0.25 * math.pi)
-            phi_total = (self.phase(Mf, phase22_coeffs, derived) / eta
+            phi_total = (self.phase(Mf, phase22_coeffs) / eta
                          + linb * Mf + phifRef)
-            A_total = Amp0 * Mf.pow(-7.0 / 6.0) * self.amp(Mf, amp22_coeffs, derived)
+            A_total = Amp0 * Mf.pow(-7.0 / 6.0) * self.amp(Mf, amp22_coeffs)
             h = A_total * torch.polar(torch.ones_like(phi_total), phi_total)
             return torch.where(Mf <= fcutdef, h, torch.zeros_like(h))
 

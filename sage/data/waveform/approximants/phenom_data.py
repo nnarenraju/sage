@@ -27,9 +27,7 @@ This file is part of Sage and is distributed under GPL-3.0-or-later.
 Portions derive from the MIT-licensed JAX reference implementation by
 Adam Coogan and Thomas Edwards; that notice is retained verbatim in
 ``THIRD_PARTY_LICENSE`` in this directory and must not be removed.  The MIT
-terms cover those derived portions only.  See ``README.md`` here for the
-full provenance chain (LALSuite GPL-2+ -> MIT JAX reference -> this PyTorch
-reimplementation, validated directly against LALSuite).
+terms cover those derived portions only.
 
 """
 
