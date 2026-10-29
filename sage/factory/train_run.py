@@ -58,11 +58,12 @@ from sage.factory.ema_calibration import calibration_inputs, recalibrate_batchno
 from sage.factory.training import SageVanillaTraining
 from sage.factory.validation import SageVanillaValidation
 from sage.core.seed import STREAMS, generator, stream_seed
-from sage.utils.checkpoint import CheckpointManager, atomic_torch_save, next_epoch, restore
+from sage.utils.checkpoint import CheckpointManager, atomic_json_dump, atomic_torch_save, next_epoch, restore
 
 logger = get_logger(__name__)
 
 STOP_FILE = "STOP"  # written by `sage stop`; training stops before its next epoch
+FINAL_CHECK_ESTIMATE = "final_check_estimate.json"  # in results/; written at every validation pass
 
 
 def derived_values(settings: dict, window, processor, signal) -> dict:
@@ -311,6 +312,20 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run) -
     return signal, noise, generator(seed, "placement", 0, run.device)
 
 
+def final_check_seconds(settings: dict, pass_seconds: float, epoch_seconds: float, batches: int) -> float:
+    """
+    Time the final check takes, from one regular validation pass and one training epoch of the run.
+
+    Each checkpoint's pass is ``final_samples / samples`` regular passes; with EMA a second pass, and the
+    calibration's ``calibration_batches`` batches at the training rate.
+    """
+    validation, ema = settings["validation"], settings["ema"]
+    seconds = (2 if ema["enabled"] else 1) * validation["final_samples"] / validation["samples"] * pass_seconds
+    if ema["enabled"]:
+        seconds += ema["calibration_batches"] / batches * epoch_seconds
+    return seconds
+
+
 def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> SageVanillaTraining:
     """The trainer of a built run (``build_run``), ``num_iterations`` batches per epoch."""
     train = settings["train"]
@@ -336,7 +351,9 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
         Continue a started run on changed Sage code.
     stop_after : float or None
         Seconds after which to stop: no epoch starts once the time left is
-        less than the longest epoch so far. None trains to the end. Training
+        less than the longest epoch so far, and the final check does not start
+        when it would not end in time (``final_check_seconds``). None trains to
+        the end. Training
         also stops before an epoch while ``STOP_FILE`` exists in ``run_dir``.
 
     Raises
@@ -416,7 +433,7 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
         if mining["enabled"]:
             miner.attach_for_resume(trainer)
 
-    longest = 0.0
+    longest, estimate = 0.0, None
     for epoch in range(start_epoch, train["epochs"]):
         if (run_dir / STOP_FILE).exists():
             logger.info("Stopping before epoch %d: %s exists", epoch, run_dir / STOP_FILE)
@@ -428,16 +445,20 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
             return
         begun = time.monotonic()
         trainer(nepoch=epoch)
+        trained = time.monotonic() - begun
         losses.log(trainer.loss_components, epoch, split="training")
         validation_loss = None
         if validates(epoch, validation, train["epochs"]):
             # The same windows every pass: the validation streams start afresh.
             signal, noise, placement = fresh_streams("validation", settings, prior, data_dir, run)
             validate = validator(signal, noise, placement, validation["samples"], train["epochs"])
+            passed = time.monotonic()
             try:
                 validate(nepoch=epoch)
             finally:
                 noise.shutdown()
+            estimate = final_check_seconds(settings, time.monotonic() - passed, trained, run.batches)
+            atomic_json_dump({"seconds": estimate, "epoch": epoch}, run_dir / "results" / FINAL_CHECK_ESTIMATE)
             losses.log(validate.loss_components, epoch, split="validation")
             validation_loss = float(validate.loss_components[epoch][0].item())
             trainer.metric_step(validation_loss)
@@ -445,6 +466,11 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
         longest = max(longest, time.monotonic() - begun)
 
     if next_epoch(run_dir) == train["epochs"] and not (run_dir / "results" / "final_check.json").exists():
+        left = None if stop_after is None else stop_after - (time.monotonic() - clock)
+        if left is not None and estimate is not None and estimate > left:
+            logger.info("Stopping before the final check: %.0f s left, it takes about %.0f s; the next job runs it",
+                        left, estimate)
+            return
         final_check(
             run_dir, settings, run.network, run.processor, run.loss, run.noise,
             lambda role: fresh_streams(role, settings, prior, data_dir, run), validator, run.signal_batch_size,

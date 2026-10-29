@@ -158,6 +158,7 @@ def check(arguments: list) -> None:
 def train(arguments: list) -> None:
     """Train the run to its last epoch, then run the final check; ``--stop-after`` ends a job segment early."""
     from sage.factory.train_run import STOP_FILE, train_run
+    from sage.utils.checkpoint import next_epoch
 
     options = parse(
         "train", "Train the run, resuming from its latest checkpoint", arguments,
@@ -188,6 +189,9 @@ def train(arguments: list) -> None:
         print(f"Trained to the end. Next: {on('status', options.directory)}")
     elif stop_file.exists():
         print(f"Stopped by sage stop. Next, to train on: rm {stop_file} && {on('train', options.directory)}")
+    elif next_epoch(directory) == settings["train"]["epochs"]:
+        print(f"Stopped before the final check, which would not end in time; the next job runs it. "
+              f"Next: {on('train', options.directory)}")
     else:
         print(f"Stopped before an epoch that would not end in time; the next job resumes. "
               f"Next: {on('train', options.directory)}")
@@ -213,7 +217,7 @@ def status(arguments: list) -> None:
     """Print the epochs trained, the latest and lowest losses, the final check and when the log was last written."""
     from sage.config.loader import load_run_record
     from sage.factory.build import validates
-    from sage.factory.train_run import STOP_FILE
+    from sage.factory.train_run import FINAL_CHECK_ESTIMATE, STOP_FILE
     from sage.utils.checkpoint import next_epoch
 
     options = parse("status", "Show how far the run has trained and its latest losses", arguments)
@@ -254,6 +258,11 @@ def status(arguments: list) -> None:
             if file in result:
                 lines.append(f"Final check, {file} (epoch {result[file]['epoch']}): loss "
                              f"{result[file]['loss']['total']:.5f} on {result['samples']} samples")
+    elif (directory / "results" / FINAL_CHECK_ESTIMATE).exists():
+        estimate = json.loads((directory / "results" / FINAL_CHECK_ESTIMATE).read_text())
+        when = "not finished" if done == epochs else "runs after the last epoch"
+        lines.append(f"Final check: {when}; takes about {datetime.timedelta(seconds=round(estimate['seconds']))} "
+                     f"(estimated at epoch {estimate['epoch']}), so leave a job for it")
     elif done == epochs:
         lines.append("Final check: not finished")
     log = directory / "logs" / "run.log"

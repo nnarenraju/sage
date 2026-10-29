@@ -14,7 +14,7 @@ from sage.config import machine
 from sage.core.logger import setup_logging
 from sage.factory.callbacks import EMACallback
 from sage.factory.compare import recovered_fractions
-from sage.factory.train_run import train_run
+from sage.factory.train_run import final_check_seconds, train_run
 from sage.utils.checkpoint import CheckpointManager
 
 RUN = """
@@ -308,3 +308,28 @@ def test_compare(tmp_path, monkeypatch, capsys):
         for key in ("signal_params", "signal_idx"):
             first = passes[0][key][:]
             assert all(np.array_equal(first, group[key][:len(first)], equal_nan=True) for group in passes[1:])
+
+
+def test_final_check_seconds():
+    settings = {"validation": {"final_samples": 20_000_000, "samples": 200_000},
+                "ema": {"enabled": True, "calibration_batches": 500}}
+    assert final_check_seconds(settings, 180.0, 3125.0, 31250) == 2 * 100 * 180.0 + 500 / 31250 * 3125.0
+
+
+def test_final_check_waits(tmp_path, monkeypatch, capsys):
+    use_machine(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.yaml").write_text(RUN)
+    monkeypatch.setattr("sage.factory.train_run.final_check_seconds", lambda *args: 1e6)  # longer than the job
+    try:
+        assert main(["train", str(run_dir), "--stop-after", "2h"]) == 0
+        assert "Stopped before the final check" in capsys.readouterr().out
+        assert not (run_dir / "results" / "final_check.json").exists()
+        assert main(["status", str(run_dir)]) == 0
+        assert "Final check: not finished; takes about 11 days, 13:46:40" in capsys.readouterr().out
+        assert main(["train", str(run_dir)]) == 0  # the next job runs it
+        assert (run_dir / "results" / "final_check.json").exists()
+    finally:
+        setup_logging(None, console=False)
+

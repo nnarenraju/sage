@@ -70,3 +70,9 @@ def test_mass_order_rejects(tmp_path):
     mass1, mass2 = draws[:, sampler.param_index["mass1"]], draws[:, sampler.param_index["mass2"]]
     assert mass1.max() <= 30.0 and (mass1 >= mass2).all()  # a swap put mass1 up to 50
 
+
+def test_broad_preset():
+    narrow, broad = (load_prior(name, Path("."))["priors"] for name in ("bbh_narrow", "bbh_broad"))
+    assert broad["mass1"] == broad["mass2"] == {"name": "uniform", "min": 5.0, "max": 100.0}
+    assert {**broad, "mass1": narrow["mass1"], "mass2": narrow["mass2"]} == narrow
+

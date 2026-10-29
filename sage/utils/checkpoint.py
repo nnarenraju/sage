@@ -42,7 +42,7 @@ def atomic_torch_save(obj, path):
     os.replace(tmp, path)
 
 
-def _atomic_json_dump(obj, path):
+def atomic_json_dump(obj, path):
     """``json.dump`` via a temp file + atomic ``os.replace`` (same rationale)."""
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
@@ -182,7 +182,7 @@ class CheckpointManager:
         state = self._state(epoch, validation_loss)
 
         atomic_torch_save(state, self.dir / "latest.pt")
-        _atomic_json_dump({"epoch": epoch}, self.dir / "progress.json")
+        atomic_json_dump({"epoch": epoch}, self.dir / "progress.json")
         atomic_torch_save(state, self.dir / f"epoch_{epoch:04d}.pt")
         if self.keep != "all":
             for path in sorted(self.dir.glob("epoch_*.pt"))[: -self.keep]:
