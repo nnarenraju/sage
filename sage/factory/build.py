@@ -16,7 +16,18 @@ from sage.architecture.network import (
 )
 from sage.architecture.network.common import FrontendTap
 from sage.config.loader import component_arguments, convert, suggestion
-from sage.config.machine import observing_run_dir, strain_file
+from sage.config.machine import (
+    asds_file,
+    bad_time_file,
+    dataset_file,
+    fiducial_dir,
+    fiducial_file,
+    observing_run_dir,
+    recolour_bank_file,
+    segment_asd_file,
+    segments_file,
+    strain_file,
+)
 from sage.core.checks import (
     check_on_grid,
     check_tc_window,
@@ -319,7 +330,7 @@ def selected_records(run: dict, detectors: list) -> dict:
     """
     records = {}
     for detector, path in zip(detectors, run["bins"]):
-        sidecar = Path(path).parent / f"{Path(path).stem}_segments.json"
+        sidecar = segments_file(path)
         records[detector] = json.loads(sidecar.read_text())
     return select_records(records, run)
 
@@ -379,6 +390,67 @@ def recoloured(noise: dict, role: str) -> bool:
     if on and noise[role]["name"] != "real":
         raise ValueError(f"noise.recolour applies to real noise; noise.{role} is synthetic")
     return on
+
+
+def strain_runs(noise: dict) -> list:
+    """Observing runs whose strain the real noise sources read, sorted."""
+    return sorted({run for role in ("training", "validation") if noise[role]["name"] == "real" for run in noise[role]["runs"]})
+
+
+def asd_runs(noise: dict) -> list:
+    """Observing runs whose per-segment ASDs the recoloured noise sources read, sorted."""
+    return sorted({run for role in ("training", "validation") if recoloured(noise, role) for run in noise[role]["runs"]})
+
+
+def bank_runs(noise: dict) -> list:
+    """Observing runs whose recolour bank the run reads: the recolour target, if any noise is recoloured."""
+    return [noise["recolour"]["target"]] if recoloured(noise, "training") or recoloured(noise, "validation") else []
+
+
+def data_files(settings: dict, data_dir: Path, fiducial: bool = True) -> list:
+    """
+    Every file a run reads from the data directory, in a fixed order, without repeats.
+
+    Parameters
+    ----------
+    settings : dict
+        Checked run settings.
+    data_dir : Path
+        Directory from the machine file.
+    fiducial : bool
+        Include the fiducial ASDs; a started run reads its own copy.
+
+    Returns
+    -------
+    list of Path
+        Strain records, strain files with their sidecars and bad time, the recoloured runs' ASD records
+        and per-segment ASDs and the recolour target's bank, then the fiducial ASDs.
+    """
+    noise, detectors = settings["noise"], settings["data"]["detectors"]
+    files = [dataset_file(data_dir, run) for run in strain_runs(noise)]
+    for role in ("training", "validation"):
+        if noise[role]["name"] != "real":
+            continue
+        runs = noise_runs(noise[role], data_dir, detectors)
+        for run in runs:
+            for path in map(Path, run["bins"]):
+                files += [path, segments_file(path), bad_time_file(path)]
+        if recoloured(noise, role):
+            for run in runs:
+                files.append(asds_file(data_dir, run["run"]))
+                for detector in detectors:
+                    asds = segment_asd_file(run["data_dir"], detector)
+                    files += [asds, segments_file(asds)]
+            files.append(asds_file(data_dir, noise["recolour"]["target"]))
+            target = observing_run_dir(data_dir, noise["recolour"]["target"], "asds")
+            for detector in detectors:
+                bank = recolour_bank_file(target, detector)
+                files += [bank, bank.with_suffix(".json")]
+    if fiducial:
+        for detector in detectors:
+            asd = fiducial_file(fiducial_dir(data_dir, noise["fiducial"]), detector)
+            files += [asd, asd.with_suffix(".json")]
+    return list(dict.fromkeys(files))
 
 
 def build_noise_stream(
@@ -922,7 +994,7 @@ def check_train(train: dict) -> None:
     ValueError
         If an epoch is not whole batches, the signal fraction gives a
         fractional count, the compile settings are invalid, fewer than one
-        checkpoint is kept, or the device or precision is unavailable.
+        checkpoint is kept, or the device is not a device name.
     """
     check_whole_batches("train.samples_per_epoch", train["samples_per_epoch"], train["batch_size"])
     check_whole_signals(train["signal_fraction"], train["batch_size"])
@@ -930,10 +1002,26 @@ def check_train(train: dict) -> None:
     if train["keep_checkpoints"] != "all" and train["keep_checkpoints"] < 1:
         raise ValueError(f"train.keep_checkpoints {train['keep_checkpoints']} must be at least 1, or all")
     try:
-        device = torch.device(train["device"])
+        torch.device(train["device"])
     except RuntimeError as error:
         raise ValueError(f"train.device: {error}") from None
-    if device.type == "cuda":
+
+
+def check_device(train: dict) -> None:
+    """
+    Check that ``train.device`` and ``train.precision`` are available here.
+
+    Parameters
+    ----------
+    train : dict
+        ``train`` section passed by ``check_train``.
+
+    Raises
+    ------
+    ValueError
+        If the device is a GPU and none is visible, or the GPU lacks bf16.
+    """
+    if torch.device(train["device"]).type == "cuda":
         if not torch.cuda.is_available():
             raise ValueError(f"train.device {train['device']}: no GPU is visible here")
         if train["precision"] == "bf16" and not torch.cuda.is_bf16_supported():

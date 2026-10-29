@@ -18,9 +18,35 @@ import torch
 import yaml
 
 from sage.config.loader import load_run
+from sage.config.machine import fiducial_file
 from sage.config.prior import load_prior_file
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+class SettingsChanged(ValueError):
+    """The settings, prior or derived values differ from the record after training started."""
+
+
+class CodeChanged(ValueError):
+    """The Sage code differs from the commit a started run last trained on."""
+
+
+class StateMismatch(ValueError):
+    """
+    The settings differ from a checkpoint's in a way its saved state cannot take.
+
+    Parameters
+    ----------
+    message : str
+        The changes.
+    weights_only : bool
+        Whether a weights-only clone takes them.
+    """
+
+    def __init__(self, message: str, weights_only: bool):
+        super().__init__(message)
+        self.weights_only = weights_only
 
 
 def training_started(run_dir: Path) -> bool:
@@ -71,12 +97,9 @@ def write_yaml(path: Path, values: dict) -> None:
         yaml.safe_dump(values, file, sort_keys=False, default_flow_style=None)
 
 
-def prepare_run_dir(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
+def check_record(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
     """
-    Record the resolved settings and prior, or check them against the record.
-
-    Before training starts the record is rewritten; after, both must
-    resolve exactly as recorded.
+    Check that a started run's settings and prior resolve exactly as recorded.
 
     Parameters
     ----------
@@ -91,30 +114,80 @@ def prepare_run_dir(run_dir: Path, settings: dict, prior: dict, resolve) -> None
 
     Raises
     ------
+    SettingsChanged
+        If the settings or prior differ from the record.
     ValueError
-        If training has started and the settings or prior differ from the
-        record, or checkpoints exist without a record.
+        If the record is missing.
     """
     run_dir = Path(run_dir)
-    records = {
-        "run.yaml": (settings, lambda path: resolve(load_run(path))),
-        "prior.yaml": (prior, load_prior_file),
-    }
-    if not training_started(run_dir):
-        for name, (values, _) in records.items():
-            write_yaml(run_dir / "resolved" / name, values)
-        return
-
+    records = {"run.yaml": (settings, lambda path: resolve(load_run(path))), "prior.yaml": (prior, load_prior_file)}
     for name, (values, load) in records.items():
         path = run_dir / "resolved" / name
         if not path.exists():
             raise ValueError(f"{run_dir}: checkpoints exist but resolved/{name} is missing")
         changed = differences(load(path), values)
         if changed:
-            raise ValueError(
+            raise SettingsChanged(
                 f"{run_dir}: resolved/{name} differs after training started "
-                f"({'; '.join(changed)}); use a new run directory"
+                f"({'; '.join(changed)}); the changed settings continue in a clone of this run"
             )
+
+
+def prepare_run_dir(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
+    """
+    Record the resolved settings and prior, or check them against the record.
+
+    Before training starts the record is rewritten; after, both must
+    resolve exactly as recorded (``check_record``).
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+    settings : dict
+        Resolved settings, ``resolve(load_run(...))``.
+    prior : dict
+        Checked prior, from ``load_prior``.
+    resolve : callable
+        Fills a loaded run file's components (``build.resolve_settings``).
+
+    Raises
+    ------
+    SettingsChanged
+        If training has started and the settings or prior differ from the record.
+    ValueError
+        If checkpoints exist without a record.
+    """
+    run_dir = Path(run_dir)
+    if training_started(run_dir):
+        check_record(run_dir, settings, prior, resolve)
+        return
+    write_yaml(run_dir / "resolved" / "run.yaml", settings)
+    write_yaml(run_dir / "resolved" / "prior.yaml", prior)
+
+
+def check_derived(run_dir: Path, derived: dict) -> None:
+    """
+    Check that a started run's derived values equal ``resolved/derived.yaml``.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+    derived : dict
+        Values from ``train_run.derived_values``.
+
+    Raises
+    ------
+    SettingsChanged
+        If the derived values differ from the record.
+    """
+    changed = differences(yaml.safe_load((Path(run_dir) / "resolved" / "derived.yaml").read_text()), derived)
+    if changed:
+        raise SettingsChanged(
+            f"{run_dir}: derived values differ after training started ({'; '.join(changed)}); "
+            "the network input or scaling would change mid-run"
+        )
 
 
 def record_derived(run_dir: Path, derived: dict) -> None:
@@ -131,19 +204,13 @@ def record_derived(run_dir: Path, derived: dict) -> None:
 
     Raises
     ------
-    ValueError
+    SettingsChanged
         If training has started and the derived values differ from the record.
     """
-    path = Path(run_dir) / "resolved" / "derived.yaml"
-    if not training_started(run_dir):
-        write_yaml(path, derived)
+    if training_started(run_dir):
+        check_derived(run_dir, derived)
         return
-    changed = differences(yaml.safe_load(path.read_text()), derived)
-    if changed:
-        raise ValueError(
-            f"{run_dir}: derived values differ after training started ({'; '.join(changed)}); "
-            "the network input or scaling would change mid-run"
-        )
+    write_yaml(Path(run_dir) / "resolved" / "derived.yaml", derived)
 
 
 def git(*args) -> str:
@@ -197,6 +264,33 @@ def environment(device) -> dict:
     }
 
 
+def check_code(run_dir: Path, accept_code_change: bool) -> bool:
+    """
+    Whether a started run's Sage code differs in any way from the commit its last segment trained on.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+    accept_code_change : bool
+        Continue on changed code.
+
+    Raises
+    ------
+    CodeChanged
+        If the code differs and ``accept_code_change`` is not set.
+    """
+    path = Path(run_dir) / "resolved" / "versions.yaml"
+    segments = yaml.safe_load(path.read_text())["segments"] if path.exists() else []
+    changed = bool(segments) and training_started(run_dir) and code_differs(segments[-1]["sage_commit"])
+    if changed and not accept_code_change:
+        raise CodeChanged(
+            f"{run_dir}: the Sage code differs from commit {segments[-1]['sage_commit']}, which this run last "
+            "trained on. To continue on the current code, run again with --accept-code-change"
+        )
+    return changed
+
+
 def record_versions(run_dir: Path, start_epoch: int, device, accept_code_change: bool) -> None:
     """
     Append this job segment to ``resolved/versions.yaml``.
@@ -218,19 +312,13 @@ def record_versions(run_dir: Path, start_epoch: int, device, accept_code_change:
 
     Raises
     ------
-    ValueError
-        If training has started, the code differs from the last segment's
-        commit and ``accept_code_change`` is not set.
+    CodeChanged
+        As ``check_code``.
     """
+    changed = check_code(run_dir, accept_code_change)
     path = Path(run_dir) / "resolved" / "versions.yaml"
     segments = yaml.safe_load(path.read_text())["segments"] if path.exists() else []
     version = code_version()
-    changed = bool(segments) and training_started(run_dir) and code_differs(segments[-1]["sage_commit"])
-    if changed and not accept_code_change:
-        raise ValueError(
-            f"{run_dir}: the Sage code differs from commit {segments[-1]['sage_commit']}, which this run last "
-            "trained on. To continue on the current code, run again with --accept-code-change"
-        )
     segments.append(
         {
             "started": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -277,6 +365,6 @@ def record_fiducial(run_dir: Path, fiducial_dir: Path, detectors: list) -> Path:
     copy.mkdir(parents=True, exist_ok=True)
     for detector in detectors:
         for suffix in (".bin", ".json"):
-            name = f"fiducial_{detector}_psd{suffix}"
+            name = fiducial_file(fiducial_dir, detector).with_suffix(suffix).name
             shutil.copy2(Path(fiducial_dir) / name, copy / name)
     return copy

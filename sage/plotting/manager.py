@@ -25,6 +25,7 @@ Documentation: NULL
 
 # Packages
 import os
+import re
 import h5py
 import numpy as np
 
@@ -65,35 +66,31 @@ from sage.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Ordered list matching signal_params column layout (from gwconfig param_names)
-_PARAM_NAMES = [
-    "chirp_distance", "coa_phase", "dec", "distance", "inclination",
-    "injection_time", "mass1", "mass2", "mchirp", "polarization", "q", "ra",
-    "spin1_a", "spin1_azimuthal", "spin1_polar", "spin1x", "spin1y", "spin1z",
-    "spin2_a", "spin2_azimuthal", "spin2_polar", "spin2x", "spin2y", "spin2z",
-    "tc",
-]
+EPOCH_GROUP = re.compile(r"epoch_\d+")  # a regular pass; final checks and sage validate use other names
 
 
 class ValidationPlotManager:
     """
     Loads saved validation results from HDF5 and dispatches all diagnostic plots.
 
-    Reads the per-epoch validation HDF5 (network outputs, targets, signal
+    Reads the validation HDF5 files (network outputs, targets, signal
     parameters, signal injection indices) and the losses HDF5, then exposes
-    a single :meth:`plot_all` method that generates the full suite of
+    a single :meth:`make_all_plots` method that generates the full suite of
     training-diagnostics plots (ROC, loss curves, efficiency, parameter
     recovery, etc.) into ``export_dir``.
 
     Parameters
     ----------
-    validation_h5 : str
-        Path to the per-epoch validation output HDF5 file.
+    validation_h5 : str or list of str
+        Validation output files; their groups are read together.
     losses_h5 : str
         Path to the epoch loss HDF5 file produced by
         :class:`~sage.utils.checkpoint.HDF5LossLogger`.
     export_dir : str or None
         Directory to save plots.  Subdirectories are created per plot type.
+    param_names : list of str or None
+        Column names of ``signal_params`` for files written before they were
+        recorded with it (2026-10-29); recorded names are always used.
     """
 
     #: Parameter pairs used for the two-dimensional views.
@@ -115,8 +112,10 @@ class ValidationPlotManager:
         param_pairs=None,
         efficiency_threshold=0.5,
         min_abs_correlation=0.05,
+        param_names=None,
     ):
-        self.validation_h5 = validation_h5
+        self.validation_h5 = [validation_h5] if isinstance(validation_h5, (str, os.PathLike)) else list(validation_h5)
+        self.param_names = param_names
         self.losses_h5 = losses_h5
         self.export_dir = export_dir
         #: Which source parameters to sweep over. None = all available.
@@ -140,18 +139,32 @@ class ValidationPlotManager:
     # -------------------------------------------------------
 
     def _load_losses(self):
-        with h5py.File(self.losses_h5, "r") as fp:
+        # Unlocked: a reader's lock would make a running training job's next write fail.
+        with h5py.File(self.losses_h5, "r", locking=False) as fp:
             self.training_loss = fp["training"]["loss"][:]
             self.validation_loss = fp["validation"]["loss"][:]
+            components = fp["training"]["loss"].attrs.get("components")  # recorded since 2026-10
+            self.loss_components = None if components is None else [str(name) for name in components]
 
     def _load_validation(self):
-        with h5py.File(self.validation_h5, "r") as fp:
+        for path in self.validation_h5:
+            self._load_validation_file(path)
+
+    def _load_validation_file(self, path):
+        with h5py.File(path, "r", locking=False) as fp:
 
             for epoch_key in fp.keys():
+                if epoch_key in self.validation_data:
+                    raise ValueError(f"{path}: group {epoch_key} is also in another validation file")
+                names = fp[epoch_key]["signal_params"].attrs.get("names", self.param_names)
+                if names is None:
+                    raise ValueError(f"{path}: {epoch_key}/signal_params has no recorded column names; "
+                                     "pass param_names")
+                names = [str(name) for name in names]
 
-                network_output = fp[epoch_key]["network_output"][:]   # (N, 5)
-                network_target = fp[epoch_key]["network_target"][:]   # (N, 3)
-                signal_params_raw = fp[epoch_key]["signal_params"][:] # (S_total, 25)
+                network_output = fp[epoch_key]["network_output"][:]   # (N, 1 + 2 targets)
+                network_target = fp[epoch_key]["network_target"][:]   # (N, targets + 1)
+                signal_params_raw = fp[epoch_key]["signal_params"][:] # (S_total, names)
 
                 ranking_stat = network_output[:, 0]
                 labels = network_target[:, -1]
@@ -177,15 +190,15 @@ class ValidationPlotManager:
                         batch_params = signal_params_raw[k * S : (k + 1) * S]
                         batch_idx = signal_idx[k]
                         aligned.append(batch_params[np.argsort(batch_idx)])
-                    aligned_params = np.concatenate(aligned, axis=0)  # (S_total, 25)
+                    aligned_params = np.concatenate(aligned, axis=0)  # (S_total, names)
 
                     # Embed into full-length array (NaN for noise rows)
-                    full_params = np.full((len(network_output), len(_PARAM_NAMES)), np.nan)
+                    full_params = np.full((len(network_output), len(names)), np.nan)
                     full_params[signal_mask] = aligned_params
 
                     source_params = {
                         name: full_params[:, i]
-                        for i, name in enumerate(_PARAM_NAMES)
+                        for i, name in enumerate(names)
                     }
 
                 entry = {
@@ -303,41 +316,37 @@ class ValidationPlotManager:
     def resolve_epochs(self, epochs=None):
         """Normalise an epoch selection to keys present in the data.
 
-        Accepts epoch numbers (``127``), full keys (``"epoch_0127"``), the
-        string ``"best"``, or ``"all"``. ``None`` selects the best validated
-        epoch, which is almost always the one you want to look at.
+        Accepts epoch numbers (``127``), group names (``"epoch_0127"``,
+        ``"final_best"``), the string ``"best"``, or ``"all"`` (every regular
+        pass). ``None`` selects the best validated epoch, which is almost
+        always the one you want to look at.
         """
-        available = sorted(self.validation_data)
+        available = sorted(key for key in self.validation_data if EPOCH_GROUP.fullmatch(key))
         if not available:
             return []
         if epochs == "all":
             return available
 
         by_number = {epoch_number(k): k for k in available}
-        best_idx = best_validated_epoch(self.validation_loss)
-        best_key = by_number.get(best_idx, available[-1])
-
-        if epochs is None or epochs == "best":
-            return [best_key]
-
         if isinstance(epochs, (str, int)):
             epochs = [epochs]
 
         out = []
-        for e in epochs:
-            if e == "best":
-                out.append(best_key)
+        for e in [None] if epochs is None else epochs:
+            if e is None or e == "best":
+                best_idx = best_validated_epoch(self.validation_loss)
+                if best_idx not in by_number:
+                    raise KeyError(f"the best validated epoch, {best_idx}, has no validation group; "
+                                   f"groups: {sorted(self.validation_data)}")
+                out.append(by_number[best_idx])
             elif e in self.validation_data:
                 out.append(e)
             elif epoch_number(e) in by_number:
                 out.append(by_number[epoch_number(e)])
             else:
-                raise KeyError(
-                    f"epoch {e!r} not in this run. Available: "
-                    f"{[epoch_number(k) for k in available]}"
-                )
-        # preserve chronological order, drop duplicates
-        return [k for k in available if k in set(out)]
+                raise KeyError(f"no validation group {e!r}; groups: {sorted(self.validation_data)}")
+        # preserve chronological order (regular passes first), drop duplicates
+        return [k for k in [*available, *sorted(set(self.validation_data) - set(available))] if k in set(out)]
 
     def make_all_plots(self, save=True, epochs=None):
         """
@@ -359,7 +368,9 @@ class ValidationPlotManager:
         # every available epoch -- a "residual over epochs" heatmap built from
         # a single epoch is a blank strip, which is exactly what happened.
         selected = self.resolve_epochs(epochs)
-        all_epochs = sorted(self.validation_data.keys())
+        all_epochs = self.resolve_epochs("all")
+        if save:
+            os.makedirs(self.export_dir, exist_ok=True)
         # Ignore epochs where validation never ran: losses.h5 is pre-allocated
         # and those rows are still zero, so a plain argmin returns the first
         # unwritten row instead of the best epoch.
@@ -374,6 +385,7 @@ class ValidationPlotManager:
             export_dir=self.export_dir,
             save=save,
             best_epoch=best_epoch,
+            component_names=self.loss_components,
         )
 
         # -------------------------------------------------------

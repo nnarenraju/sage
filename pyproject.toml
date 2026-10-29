@@ -46,14 +46,36 @@ dependencies = [
   "astropy>=5.3",
   "gwpy>=3.0",
   "torch>=2.1",
-  # Read by sage.data.waveform.sampler.read_from_config, which parses the
-  # gwconfig.yaml on the main training path — not optional.
+  # Run files, priors and the run record are YAML -- not optional.
   "pyyaml>=6.0",
   # Imported at module level on the training path (sage.dsp.filters,
   # sage.dsp.multirate_sampling) and by the search -- not optional.
   "lalsuite>=7.0",
   "pycbc>=2.2",
 ]
+
+# Every command is `sage <command>`; `sgw` and `sage-<command>` run the same code.
+[project.scripts]
+sage = "sage.cli:main"
+sgw = "sage.cli:main"
+sage-chain = "sage.cli:main"
+sage-check = "sage.cli:main"
+sage-clone = "sage.cli:main"
+sage-compare = "sage.cli:main"
+sage-copy-prior = "sage.cli:main"
+sage-download = "sage.cli:main"
+sage-help = "sage.cli:main"
+sage-init = "sage.cli:main"
+sage-list = "sage.cli:main"
+sage-log = "sage.cli:main"
+sage-machine = "sage.cli:main"
+sage-machine-setup = "sage.cli:main"
+sage-plot = "sage.cli:main"
+sage-show = "sage.cli:main"
+sage-status = "sage.cli:main"
+sage-stop = "sage.cli:main"
+sage-train = "sage.cli:main"
+sage-validate = "sage.cli:main"
 
 [project.optional-dependencies]
 # GWOSC data download and segment preparation (sage.data.primer).

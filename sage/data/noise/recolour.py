@@ -32,6 +32,7 @@ import numpy as np
 from pathlib import Path
 
 # LOCAL
+from sage.config.machine import recolour_bank_file, segment_asd_file, segments_file
 from sage.core.geometry import Window
 from sage.core.interpolation import torch_linear_interp
 
@@ -43,12 +44,11 @@ def load_segment_asds(data_dir, detectors):
     Returns one ``(N_seg, F)`` float32 array per detector, in sidecar order, and
     ``F``. Every detector must share one frequency grid.
     """
-    asd_dir = Path(data_dir) / "segment_psds"
     banks = []
     n_freq = None
     for det in detectors:
-        bin_path = asd_dir / f"data_{det}_psds.bin"
-        meta_path = asd_dir / f"data_{det}_psds_segments.json"
+        bin_path = segment_asd_file(data_dir, det)
+        meta_path = segments_file(bin_path)
 
         with open(meta_path, "r") as f:
             meta = json.load(f)
@@ -288,9 +288,8 @@ class RecolourPostprocess(torch.nn.Module):
         self.n_recolour_asd = None
 
         for det in self.detectors:
-            asd_dir = self.target_asd_dir / "recolour_psds"
-            bin_path = asd_dir / f"raw_{det}_psds.bin"
-            meta_path = asd_dir / f"raw_{det}_psds.json"
+            bin_path = recolour_bank_file(self.target_asd_dir, det)
+            meta_path = bin_path.with_suffix(".json")
 
             with open(meta_path, "r") as f:
                 meta = json.load(f)

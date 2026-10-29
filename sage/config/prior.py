@@ -198,5 +198,8 @@ def load_prior(setting: str, run_dir: Path) -> Dict[str, Any]:
         Checked prior.
     """
     if setting.endswith(".yaml"):
-        return load_prior_file(Path(run_dir) / setting)
+        path = Path(run_dir) / setting
+        if not path.is_file():
+            raise FileNotFoundError(f"signal.prior: no prior file {path}")
+        return load_prior_file(path)
     return check_prior(read_preset("priors", setting))

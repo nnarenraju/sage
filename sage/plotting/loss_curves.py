@@ -105,23 +105,26 @@ def plot_loss_curves(
     Notes
     -----
     Only epochs where validation actually ran are drawn for the validation
-    curves -- see :func:`validated_epochs`.
+    curves, and only epochs trained for the training curves -- see
+    :func:`validated_epochs`. Epochs are numbered from 0, as the checkpoints.
     """
 
     training_loss = np.asarray(training_loss)
     validation_loss = np.asarray(validation_loss)
 
-    epochs = np.arange(1, len(training_loss) + 1)
-    # Validation usually runs every Nth epoch; the rows in between are still
-    # zero from pre-allocation and must not be drawn. See validated_epochs.
+    epochs = np.arange(len(training_loss))
+    # Validation usually runs every Nth epoch, and a run stopped early has not
+    # written its later rows: those are still zero from pre-allocation and
+    # must not be drawn. See validated_epochs.
     val_idx = validated_epochs(validation_loss)
+    train_idx = validated_epochs(training_loss)
 
     # --------------------------------------------
     # TOTAL LOSS CURVE
     # --------------------------------------------
     plt.figure(figsize=(7, 6))
 
-    plt.plot(epochs, training_loss[:, 0], label="Training Loss")
+    plt.plot(epochs[train_idx], training_loss[train_idx, 0], label="Training Loss")
     plt.plot(
         epochs[val_idx],
         validation_loss[val_idx, 0],
@@ -170,7 +173,7 @@ def plot_loss_curves(
             else f"component {lidx}"
         )
         # Share a colour between the train/val pair so they read together.
-        line, = plt.plot(epochs, training_loss[:, lidx], label=f"{name} (train)")
+        line, = plt.plot(epochs[train_idx], training_loss[train_idx, lidx], label=f"{name} (train)")
         plt.plot(
             epochs[val_idx],
             validation_loss[val_idx, lidx],

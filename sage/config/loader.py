@@ -122,6 +122,11 @@ def suggestion(name: str, valid: list) -> str:
     return f"valid: {', '.join(valid)}"
 
 
+def preset_names(kind: str) -> list:
+    """Names of the ``"runs"`` or ``"priors"`` presets."""
+    return sorted(p.stem for p in (PRESETS / kind).glob("*.yaml"))
+
+
 def read_preset(kind: str, name: str) -> dict:
     """
     Read a preset, which may not extend another preset.
@@ -144,7 +149,7 @@ def read_preset(kind: str, name: str) -> dict:
         If the preset is unknown or itself extends another preset.
     """
     label = kind.removesuffix("s")
-    presets = sorted(p.stem for p in (PRESETS / kind).glob("*.yaml"))
+    presets = preset_names(kind)
     if name not in presets:
         raise ValueError(f"unknown {label} preset {name!r}; {suggestion(name, presets)}")
     values = read_yaml(PRESETS / kind / f"{name}.yaml")

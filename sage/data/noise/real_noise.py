@@ -47,6 +47,7 @@ from .data_quality import clean
 from .selection import select_records, summary
 
 # LOCAL
+from sage.config.machine import segments_file
 from sage.core.geometry import Window
 from sage.core.logger import get_logger
 
@@ -201,7 +202,7 @@ class MemmapSingleNoiseSampler:
         self.return_tensor = return_tensor
         self.tensor_dtype = tensor_dtype
 
-        meta_path = source.parent / f"{source.stem}_segments.json"
+        meta_path = segments_file(source)
         if not meta_path.exists():
             raise FileNotFoundError(meta_path)
 
@@ -445,7 +446,7 @@ class MemmapNoiseSampler(torch.nn.Module):
             by_detector = {}
             for d, detector in enumerate(self.detectors):
                 p = Path(r["bins"][d])
-                meta_path = p.parent / f"{p.stem}_segments.json"
+                meta_path = segments_file(p)
                 if not meta_path.exists():
                     raise FileNotFoundError(
                         f"noise run {r['run']!r} provides no data for detector "

@@ -75,11 +75,14 @@ def append_h5(path):
     is instead handled on the next open, by moving the damaged file aside to
     ``<path>.corrupt`` and starting a fresh one. The run therefore survives a
     mid-write kill either way -- it loses the earlier epochs' diagnostics rather
-    than paying to copy them every epoch.
+    than paying to copy them every epoch. A file another process holds open is
+    not damaged: that raises and leaves the file as it is.
     """
     path = str(path)
     try:
         f = h5py.File(path, "a")
+    except BlockingIOError as error:
+        raise BlockingIOError(error.errno, f"{path} is open in another process; it was left as it is") from None
     except OSError:
         # Unreadable: truncated by an earlier kill, or not HDF5 at all. Keep the
         # evidence, do not let it take the run down on open.

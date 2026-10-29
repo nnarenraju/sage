@@ -70,6 +70,27 @@ def set_rng_state(state: dict) -> None:
     random.setstate(state["python"])
 
 
+def restore(state: dict, model, optimiser, schedule, scaler, ema_model) -> None:
+    """
+    Load a checkpoint's training state into a run and the global generators.
+
+    Parameters
+    ----------
+    state : dict
+        A checkpoint.
+    model, optimiser, schedule, scaler, ema_model
+        As :class:`CheckpointManager` takes them.
+    """
+    model.load_state_dict(state["model"])
+    optimiser.load_state_dict(state["optimiser"])
+    schedule.load_state_dict(state["schedule"])
+    if scaler is not None:
+        scaler.load_state_dict(state["scaler"])
+    if ema_model is not None and state["ema"] is not None:  # a clone turning EMA on keeps it at the cloned weights
+        ema_model.load_state_dict(state["ema"])
+    set_rng_state(state["rng"])
+
+
 def run_record(run_dir: Path) -> dict:
     """
     The record every checkpoint of a run carries.
@@ -188,12 +209,5 @@ class CheckpointManager:
         """
         state = torch.load(self.dir / "latest.pt", map_location=map_location, weights_only=False)
         self.best_validation_loss = state["best_validation_loss"]
-        self.model.load_state_dict(state["model"])
-        self.optimiser.load_state_dict(state["optimiser"])
-        self.schedule.load_state_dict(state["schedule"])
-        if self.scaler is not None:
-            self.scaler.load_state_dict(state["scaler"])
-        if self.ema_model is not None:
-            self.ema_model.load_state_dict(state["ema"])
-        set_rng_state(state["rng"])
+        restore(state, self.model, self.optimiser, self.schedule, self.scaler, self.ema_model)
         return state["epoch"] + 1

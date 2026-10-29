@@ -27,7 +27,7 @@ from sage.utils.atomic_io import append_h5
 logger = get_logger(__name__)
 
 
-def save_validation(name, output, target, params, signal_idx, savepath):
+def save_validation(name, output, target, params, param_names, signal_idx, savepath):
     """
     Append one validation pass's results to an HDF5 file.
 
@@ -46,6 +46,8 @@ def save_validation(name, output, target, params, signal_idx, savepath):
         Ground-truth targets (regression values + class label).
     params : torch.Tensor, shape ``(N, num_params)``
         Raw waveform parameters (``theta``) returned by the signal sampler.
+    param_names : list of str
+        Name of each ``params`` column, recorded as its ``names`` attribute.
     signal_idx : torch.Tensor, shape ``(num_iter, S)``
         Batch positions where signals were injected for each iteration.
     savepath : str
@@ -65,6 +67,7 @@ def save_validation(name, output, target, params, signal_idx, savepath):
         grp.create_dataset("network_output", data=output.numpy(), compression="gzip")
         grp.create_dataset("network_target", data=target.numpy(), compression="gzip")
         grp.create_dataset("signal_params",  data=params.numpy(),  compression="gzip")
+        grp["signal_params"].attrs["names"] = param_names
         grp.create_dataset("signal_idx",     data=signal_idx.numpy(), compression="gzip")
 
 
@@ -279,5 +282,5 @@ class SageVanillaValidation(torch.nn.Module):
         self.results_path.parent.mkdir(parents=True, exist_ok=True)
         save_validation(
             name or f"epoch_{nepoch:04d}", network_output, network_target,
-            signal_params, signal_idx, self.results_path,
+            signal_params, self.signal_sampler.param_sampler.param_names, signal_idx, self.results_path,
         )

@@ -213,13 +213,54 @@ class EstimateASD:
     def estimate_raw_asds(self, *, noise_sampler, duration, return_fiducial=False):
         """Run ASD estimation to produce the recolour bank and the fiducial."""
         sample_rate = self.sample_rate
-
-        # Output directories. The ``*_psds`` names are historical -- the files
-        # hold ASDs -- and are kept so existing data releases stay readable.
         fiducial_dir = str(self.fiducial_dir)
-        recolour_dir = os.path.join(self.data_dir, "recolour_psds")
-
         os.makedirs(fiducial_dir, exist_ok=True)
+        recolour_dir, stream_path, num_freq, freqs, max_asd = self.write_raw_asds(
+            noise_sampler=noise_sampler, duration=duration
+        )
+        n = self.num_samples
+        keep_bin = self.store_asds_as_bin
+
+        # Optional gzip-HDF5 archival of the bank (chunked, low memory)
+        if self.store_asds_as_hdf5:
+            self._save_raw_asds_hdf5(
+                stream_path, recolour_dir, n, num_freq, freqs, sample_rate
+            )
+
+        # Compute the median ASD by streaming the on-disk bank in chunks, so the
+        # full (num_samples, F) array is never resident in memory.
+        bank = np.memmap(
+            stream_path, dtype=np.float32, mode="r", shape=(n, num_freq)
+        )
+        median_asd = self._aggregate_asds(bank)
+        del bank
+
+        # Drop the scratch bank if we were not asked to keep it
+        if not keep_bin:
+            os.remove(stream_path)
+
+        # Compute fiducial ASD; blackout policies need only the per-bin maximum
+        fiducial_asd, blackout_idxs = self.blackout_policy.apply(median_asd, max_asd)
+
+        # Saving fiducial ASD in export_dir of run
+        self._save_fiducial_asd(
+            fiducial_asd,
+            freqs,
+            blackout_idxs,
+            fiducial_dir,
+            sample_rate,
+        )
+
+        if return_fiducial:
+            return freqs, fiducial_asd
+
+    def write_raw_asds(self, *, noise_sampler, duration):
+        """Write the recolour bank and its sidecar; return its directory, file, bins, frequencies and per-bin maximum."""
+        sample_rate = self.sample_rate
+
+        # Output directory. The ``*_psds`` names are historical -- the files
+        # hold ASDs -- and are kept so existing data releases stay readable.
+        recolour_dir = os.path.join(self.data_dir, "recolour_psds")
         os.makedirs(recolour_dir, exist_ok=True)
 
         n = self.num_samples
@@ -305,39 +346,7 @@ class EstimateASD:
             self._write_recolour_bank_meta(
                 recolour_dir, n, num_freq, freqs, sample_rate
             )
-
-        # Optional gzip-HDF5 archival of the bank (chunked, low memory)
-        if self.store_asds_as_hdf5:
-            self._save_raw_asds_hdf5(
-                stream_path, recolour_dir, n, num_freq, freqs, sample_rate
-            )
-
-        # Compute the median ASD by streaming the on-disk bank in chunks, so the
-        # full (num_samples, F) array is never resident in memory.
-        bank = np.memmap(
-            stream_path, dtype=np.float32, mode="r", shape=(n, num_freq)
-        )
-        median_asd = self._aggregate_asds(bank)
-        del bank
-
-        # Drop the scratch bank if we were not asked to keep it
-        if not keep_bin:
-            os.remove(stream_path)
-
-        # Compute fiducial ASD; blackout policies need only the per-bin maximum
-        fiducial_asd, blackout_idxs = self.blackout_policy.apply(median_asd, max_asd)
-
-        # Saving fiducial ASD in export_dir of run
-        self._save_fiducial_asd(
-            fiducial_asd,
-            freqs,
-            blackout_idxs,
-            fiducial_dir,
-            sample_rate,
-        )
-
-        if return_fiducial:
-            return freqs, fiducial_asd
+        return recolour_dir, stream_path, num_freq, freqs, max_asd
 
     def _aggregate_asds(self, bank):
         # Median of medians, reading the on-disk bank one chunk at a time so the

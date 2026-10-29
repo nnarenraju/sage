@@ -6,10 +6,16 @@ observing run's data and every fiducial live at fixed places below it.
 
 from pathlib import Path
 
+import yaml
+
 from sage.config.loader import check, read_yaml
 
 MACHINE_FILE = Path.home() / ".config" / "sage" / "machine.yaml"
 SCHEMA = {"data_dir": str}
+
+
+class MissingData(FileNotFoundError):
+    """Files a run reads are missing from the data directory."""
 
 
 def read_data_dir() -> Path:
@@ -34,6 +40,12 @@ def read_data_dir() -> Path:
     if not data_dir.is_dir():
         raise FileNotFoundError(f"{MACHINE_FILE}: data_dir {data_dir} is not a directory")
     return data_dir
+
+
+def write_data_dir(data_dir: Path) -> None:
+    """Write ``data_dir`` to the machine file, creating the file's directory."""
+    MACHINE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MACHINE_FILE.write_text(yaml.safe_dump({"data_dir": str(data_dir)}))
 
 
 def observing_run_dir(data_dir: Path, run: str, part: str) -> Path:
@@ -101,3 +113,46 @@ def fiducial_dir(data_dir: Path, runs: list) -> Path:
     if len(names) == 1:
         return Path(data_dir) / names[0] / "fiducial"
     return Path(data_dir) / "fiducials" / "+".join(names)
+
+
+def segments_file(path: Path) -> Path:
+    """The ``_segments.json`` sidecar of a strain or per-segment ASD ``.bin`` file."""
+    path = Path(path)
+    return path.parent / f"{path.stem}_segments.json"
+
+
+def failed_file(path: Path) -> Path:
+    """The ``_failed_segments.json`` list of pieces a strain file's download could not fetch."""
+    path = Path(path)
+    return path.parent / f"{path.stem}_failed_segments.json"
+
+
+def bad_time_file(path: Path) -> Path:
+    """The ``_bad_time.json`` data-quality time of a strain ``.bin`` file."""
+    path = Path(path)
+    return path.parent / f"{path.stem}_bad_time.json"
+
+
+def dataset_file(data_dir: Path, run: str) -> Path:
+    """Record of an observing run's strain, ``<data_dir>/<run>/training/dataset.yaml``."""
+    return observing_run_dir(data_dir, run, "training") / "dataset.yaml"
+
+
+def asds_file(data_dir: Path, run: str) -> Path:
+    """Record of an observing run's ASDs, ``<data_dir>/<run>/asds/asds.yaml``."""
+    return observing_run_dir(data_dir, run, "asds") / "asds.yaml"
+
+
+def segment_asd_file(asd_dir: Path, detector: str) -> Path:
+    """Per-segment ASDs of one detector, ``<asd_dir>/segment_psds/data_<detector>_psds.bin``."""
+    return Path(asd_dir) / "segment_psds" / f"data_{detector}_psds.bin"
+
+
+def recolour_bank_file(asd_dir: Path, detector: str) -> Path:
+    """Recolour ASD bank of one detector, ``<asd_dir>/recolour_psds/raw_<detector>_psds.bin``; ``.json`` beside it."""
+    return Path(asd_dir) / "recolour_psds" / f"raw_{detector}_psds.bin"
+
+
+def fiducial_file(fiducial_dir: Path, detector: str) -> Path:
+    """Fiducial ASD of one detector, ``<fiducial_dir>/fiducial_<detector>_psd.bin``; ``.json`` beside it."""
+    return Path(fiducial_dir) / f"fiducial_{detector}_psd.bin"

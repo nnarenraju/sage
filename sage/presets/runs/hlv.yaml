@@ -1,0 +1,53 @@
+# H1, L1 and V1, trained on O3b noise and validated on O3a, without hard noise mining.
+data:
+  detectors: [H1, L1, V1]
+  sample_rate_in_hz: 2048
+  sample_length_in_s: 12
+  padding_length_in_s: 2
+  dtype: float32
+signal:
+  prior: bbh_narrow
+  low_frequency_cutoff_in_hz: 20
+  reference_frequency_in_hz: 20
+  waveform: {name: IMRPhenomPv2}
+  projection: {name: constant}
+  snr: {name: halfnorm, scale: 4.0, loc: 5.0}
+  targets: [tc, mchirp]
+noise:
+  training: {name: real, runs: [o3b]}
+  validation: {name: real, runs: [o3a]}
+  recolour: {target: o3a, probability: 0.37, asd_jitter_gain: 0.5, validation: false}
+  fiducial: [o3a, o3b]
+  prefetch_batches: 8
+  read_workers: 16
+preprocess:
+  - name: whiten
+  - name: multirate
+    lowest_sample_rate_in_hz: 64
+    nyquist_margin_in_hz: 20
+    min_bin_length_in_s: 0.05
+    pre_merger_leeway_in_s: 0
+    post_merger_leeway_in_s: 0
+model: {name: MSCNN1Datt_2DResNetCBAM}
+loss: {name: BCE_PE_Sigma}
+optimiser: {name: AdamW}
+schedule: {name: WarmupPolynomialDecayFlatTail}
+train:
+  epochs: 128
+  samples_per_epoch: 2000000
+  batch_size: 64
+  signal_fraction: 0.5
+  device: cuda
+  precision: bf16
+  clip_norm: 100.0
+  compile: {mode: max-autotune, fullgraph: true, dynamic: true}
+  seed: 150914
+  keep_checkpoints: 2
+validation:
+  samples: 200000
+  every_n_epochs: 5
+  final_samples: 20000000
+  seed: 170817
+  snr: {name: halfnorm, scale: 4.0, loc: 5.0}
+mining: {enabled: false}
+ema: {enabled: true}

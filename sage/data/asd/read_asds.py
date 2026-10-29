@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from sage.config.machine import fiducial_file
 from sage.core.geometry import Window
 
 
@@ -83,7 +84,7 @@ def read_fiducial_asds(
     """
     asds = []
     for detector in detectors:
-        meta_path = Path(fiducial_dir) / f"fiducial_{detector}_psd.json"
+        meta_path = fiducial_file(fiducial_dir, detector).with_suffix(".json")
         if not meta_path.exists():
             raise FileNotFoundError(f"fiducial ASD for {detector} missing: {meta_path}")
         asd = np.fromfile(meta_path.with_suffix(".bin"), dtype=np.float32)
@@ -121,7 +122,7 @@ def fiducial_asds_from_record(
     """
     asds = []
     for detector in detectors:
-        name = f"fiducial_{detector}_psd"
+        name = fiducial_file(Path(), detector).stem
         if f"{name}.json" not in files:
             raise ValueError(f"checkpoint record has no fiducial ASD for {detector}")
         asd = np.frombuffer(files[f"{name}.bin"], dtype=np.float32)

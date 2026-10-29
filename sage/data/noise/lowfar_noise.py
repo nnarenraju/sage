@@ -31,6 +31,8 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from tqdm import tqdm
 
+from sage.config.machine import segments_file
+
 # pycbc is optional; pull DYN_RANGE_FAC lazily (see ._pycbc_lazy).
 from ._pycbc_lazy import dyn_range_fac
 
@@ -271,7 +273,7 @@ class _MiningReader:
         self.gps_meta = []   # per det (run 0): {segment_index -> {...}}
         for d in range(self.n_detectors):
             p = noise_sampler.bin_files[d * self.n_runs]     # detector d, run 0
-            meta_path = p.parent / f"{p.stem}_segments.json"
+            meta_path = segments_file(p)
             with open(meta_path) as f:
                 raw = json.load(f)
             self.gps_meta.append({

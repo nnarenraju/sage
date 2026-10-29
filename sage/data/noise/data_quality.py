@@ -5,6 +5,7 @@ injections, per detector and observing run.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -14,9 +15,11 @@ from gwosc.datasets import run_segment
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from sage.config.machine import bad_time_file, segments_file
 from sage.core.hardcode import _GWOSC_TIMELINE_URL
 
 Interval = Tuple[float, float]
+FLAGS = ("CBC_CAT2", "NO_CBC_HW_INJ", "NO_BURST_HW_INJ", "NO_DETCHAR_HW_INJ", "NO_STOCH_HW_INJ")
 
 
 def get_segments(
@@ -114,13 +117,7 @@ def bad_segments(run: str, detector: str) -> List[Interval]:
     data = get_segments(session, run, f"{detector}_DATA", start, end)
 
     bad = []
-    for flag in (
-        "CBC_CAT2",
-        "NO_CBC_HW_INJ",
-        "NO_BURST_HW_INJ",
-        "NO_DETCHAR_HW_INJ",
-        "NO_STOCH_HW_INJ",
-    ):
+    for flag in FLAGS:
         passing = get_segments(session, run, f"{detector}_{flag}", start, end)
         bad += subtract(data, passing)
 
@@ -133,25 +130,69 @@ def bad_segments(run: str, detector: str) -> List[Interval]:
     return merged
 
 
+def write_bad_time(path: Path, run: str, detector: str) -> None:
+    """Save ``bad_segments`` beside a strain file, with the flags they come from.
+
+    Parameters
+    ----------
+    path : Path
+        Strain ``.bin`` file.
+    run : str
+        GWOSC observing run, e.g. ``O3a``.
+    detector : str
+        Detector, e.g. ``H1``.
+    """
+    file = bad_time_file(path)
+    part = file.with_name(f"{file.name}.part")
+    part.write_text(json.dumps({"flags": list(FLAGS), "intervals": bad_segments(run, detector)}))
+    os.replace(part, file)
+
+
+def read_bad_time(path: Path) -> List[Interval]:
+    """The bad time saved beside a strain file by ``write_bad_time``.
+
+    Parameters
+    ----------
+    path : Path
+        Strain ``.bin`` file.
+
+    Returns
+    -------
+    list of tuple of float
+        Sorted, non-overlapping bad intervals.
+
+    Raises
+    ------
+    ValueError
+        If the file was saved from other flags.
+    """
+    file = bad_time_file(path)
+    saved = json.loads(file.read_text())
+    if saved["flags"] != list(FLAGS):
+        raise ValueError(f"{file} holds the flags {saved['flags']}, not {list(FLAGS)}: "
+                         f"move it aside, then sage download")
+    return [tuple(interval) for interval in saved["intervals"]]
+
+
 def noise_bad_segments(bins: List[str]) -> Dict[Tuple[str, str], List[Interval]]:
     """Bad time of every observing run and detector among noise files.
 
     Parameters
     ----------
     bins : list of str
-        Noise ``.bin`` files, each with its ``_segments.json`` sidecar.
+        Noise ``.bin`` files, each with its ``_segments.json`` sidecar and
+        ``_bad_time.json``.
 
     Returns
     -------
     dict of tuple of str to list of tuple of float
-        ``bad_segments`` keyed by ``(run, detector)``.
+        ``read_bad_time`` keyed by ``(run, detector)``.
     """
-    keys = set()
+    bad = {}
     for path in map(Path, bins):
-        sidecar = path.parent / f"{path.stem}_segments.json"
-        first = json.loads(sidecar.read_text())[0]
-        keys.add((first["observing_run"], first["detector"]))
-    return {key: bad_segments(*key) for key in sorted(keys)}
+        first = json.loads(segments_file(path).read_text())[0]
+        bad[(first["observing_run"], first["detector"])] = read_bad_time(path)
+    return dict(sorted(bad.items()))
 
 
 def overlaps(
