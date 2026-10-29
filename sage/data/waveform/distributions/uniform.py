@@ -45,8 +45,9 @@ class Uniform:
     """
 
     def __init__(self, low, high):
-        self.low = torch.tensor(low)
-        self.scale = torch.tensor(high - low)
+        # Python floats: a float64 draw uses the exact bounds (float32 tensors rounded them).
+        self.low = float(low)
+        self.scale = float(high) - float(low)
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         """

@@ -156,9 +156,8 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
     Score every run's ``best.pt`` on the same windows; write ``compare.h5`` and the report.
 
     The windows are the first run's validation noise, prior and SNR
-    distribution, seeded by ``seed``, which also seeds the global generator
-    (the projection's GMST draws). The networks are built first, so the
-    windows depend on the first run and ``seed`` alone.
+    distribution, their streams seeded from ``seed`` (``stream_seed``), so they
+    depend on the first run and ``seed`` alone.
 
     Parameters
     ----------
@@ -214,13 +213,12 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
 
     train, validation, replay = reference["train"], reference["validation"], reference["mining"]["replay"]
     _, _, dtype = build_data(reference["data"])
-    torch.manual_seed(seed)  # also every GPU; the projection's GMST draws from it
     signal = build_signal(
         {**reference["signal"], "snr": validation["snr"]}, prior, first.window, first.detectors, first.asds,
-        round(train["batch_size"] * train["signal_fraction"]), seed, device, dtype,
+        round(train["batch_size"] * train["signal_fraction"]), seed, 0, device, dtype,
     )
     noise = build_noise_stream(
-        reference["noise"], "validation", data_dir, first.window, first.detectors, train["batch_size"], seed,
+        reference["noise"], "validation", data_dir, first.window, first.detectors, train["batch_size"], seed, 0,
         replay["start_jitter_in_s"], replay["focal_gamma"], device, dtype,
     )
     path.parent.mkdir(parents=True, exist_ok=True)

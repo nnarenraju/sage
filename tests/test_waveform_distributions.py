@@ -26,6 +26,7 @@ _bypass_pkg("sage.data.waveform")
 _bypass_pkg("sage.data.waveform.distributions")
 
 from sage.data.waveform.distributions.uniform import Uniform
+from sage.data.waveform.distributions.cosmology import UniformComovingVolume
 from sage.data.waveform.distributions.powerlaw import UniformPowerLaw, UniformRadius
 
 N = 50_000  # large enough for statistical checks
@@ -46,6 +47,11 @@ class TestUniform:
         u = Uniform(low=0.0, high=10.0)
         s = u.sample((N,))
         assert s.mean().item() == pytest.approx(5.0, abs=0.1)
+
+    def test_float64_uses_exact_bounds(self):
+        s = Uniform(low=0.1, high=0.99).sample((1000,), dtype=torch.float64, generator=torch.Generator().manual_seed(0))
+        u = torch.rand((1000,), dtype=torch.float64, generator=torch.Generator().manual_seed(0))
+        assert torch.equal(s, 0.1 + (0.99 - 0.1) * u)
 
 
     def test_generator_reproducible(self):
@@ -76,13 +82,9 @@ class TestUniform:
 # ---------------------------------------------------------------------------
 
 class TestUniformPowerLaw:
-    @pytest.mark.xfail(
-        strict=False,
-        reason="float32 rounding can put a sample one ulp above high; fixed in step 6",
-    )
     def test_samples_in_range(self):
         p = UniformPowerLaw(low=10.0, high=1000.0, dim=3)
-        s = p.sample((N,))
+        s = p.sample((100_000,), generator=torch.Generator().manual_seed(56))  # a float32 inverse CDF passed high
         assert s.min().item() >= 10.0
         assert s.max().item() <= 1000.0
 
@@ -106,7 +108,7 @@ class TestUniformPowerLaw:
 
 
     def test_generator_reproducible(self):
-        p = UniformPowerLaw(low=1.0, high=100.0)
+        p = UniformPowerLaw(low=1.0, high=100.0, dim=3)
         g1 = torch.Generator().manual_seed(7)
         g2 = torch.Generator().manual_seed(7)
         a = p.sample((20,), generator=g1)
@@ -127,3 +129,7 @@ class TestUniformRadius:
         assert s.min().item() >= 10.0
         assert s.max().item() <= 500.0
 
+
+def test_comoving_volume_warns():
+    with pytest.warns(UserWarning, match="not a PyCBC distribution"):
+        UniformComovingVolume(100.0, 200.0)

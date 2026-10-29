@@ -26,6 +26,8 @@ Documentation: NULL
 # Packages
 import torch
 
+from sage.core.conversions import mchirp_from_mass1_mass2
+
 
 def mass1_mass2_to_mchirp_q(m1, m2):
     """
@@ -41,10 +43,10 @@ def mass1_mass2_to_mchirp_q(m1, m2):
     Returns
     -------
     mchirp : same type as input
-        Chirp mass ``(m1*m2)^(3/5) / (m1+m2)^(1/5)``.
+        Chirp mass ``eta^(3/5) (m1 + m2)``, as ``pycbc.conversions.mchirp_from_mass1_mass2``.
     q : same type as input
         Mass ratio ``m1 / m2`` (>= 1 when m1 >= m2).
     """
     q = m1 / m2
-    mchirp = (m1 * m2) ** (3 / 5) / (m1 + m2) ** (1 / 5)
+    mchirp = mchirp_from_mass1_mass2(m1, m2)
     return mchirp, q

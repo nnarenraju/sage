@@ -13,15 +13,9 @@ variable_params:
   - spin2_a
   - spin2_azimuthal
   - spin2_polar
-  - injection_time
   - tc
 
 priors:
-
-  injection_time:
-    name: uniform
-    min: 1238166018
-    max: 1253977218
 
   tc:
     name: uniform
@@ -60,8 +54,8 @@ priors:
 
   sky:
     name: uniform_sky
-    ra: ra
-    dec: dec
+    polar-angle: dec
+    azimuthal-angle: ra
 
   inclination:
     name: sin_angle

@@ -181,8 +181,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         self.dist_col = param_index["distance"]
         self.tc_col = param_index["tc"]
 
-        self.param_sampler._compile_batch_normaliser(targets, dtype)
-        self.param_sampler._compile_batch_standardiser(targets)
+        self.param_sampler.compile_target_scaling(targets, dtype)
 
         self.param_sampler.to(device)
         self.waveform_project.to(device)
@@ -233,7 +232,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
                 all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
             )
 
-        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
+        normed_targets = self.param_sampler.scale_targets(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )

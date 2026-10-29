@@ -165,9 +165,8 @@ def test_train_run(tmp_path, monkeypatch, capsys):
         assert main(["validate", str(run_dir)]) == 0
         assert "Validated best.pt (epoch 0) on 16 validation samples" in capsys.readouterr().out
         first = group("validate_best")
-        a, b = first["signal_params"], group("final_best", "validation.h5")["signal_params"]
-        same = ((a == b) | (np.isnan(a) & np.isnan(b))).all(axis=0)
-        assert same.sum() == same.size - 1  # the final check's prior draws; distance follows the unseeded GMST draw
+        final = group("final_best", "validation.h5")
+        assert all(np.array_equal(first[key], final[key], equal_nan=True) for key in final)  # the final check's pass
         assert main(["validate", str(run_dir)]) == 0  # the same checkpoint, the same result
         assert all(np.array_equal(first[key], value, equal_nan=True) for key, value in group("validate_best").items())
         assert main(["validate", str(run_dir), "--ema-calibrated"]) == 0
@@ -280,9 +279,9 @@ def test_compare(tmp_path, monkeypatch, capsys):
     use_machine(tmp_path, monkeypatch)
     run = tmp_path / "run"
     run.mkdir()
-    (run / "run.yaml").write_text(RUN)
+    (run / "run.yaml").write_text(RUN.replace("epochs: 1", "epochs: 2"))
     try:
-        train_run(run)
+        train_run(run)  # two validation passes in one segment
         twin = tmp_path / "twin"
         shutil.copytree(run, twin)
         windows = ["--noise-windows", "8", "--signal-windows", "8"]
@@ -304,3 +303,8 @@ def test_compare(tmp_path, monkeypatch, capsys):
             assert np.array_equal(both[group]["run"][:], both[group]["twin"][:])  # one network, the same windows
             assert np.array_equal(both[group]["run"][:], alone[group]["run"][:])  # windows: first run and seed only
     assert (tmp_path / "both" / "report.txt").read_text().startswith("background windows 8, foreground signals 8")
+    with h5py.File(run / "results" / "validation.h5", "r") as file:  # every pass on the same windows
+        passes = [file[group] for group in ("epoch_0000", "epoch_0001", "final_best")]
+        for key in ("signal_params", "signal_idx"):
+            first = passes[0][key][:]
+            assert all(np.array_equal(first, group[key][:len(first)], equal_nan=True) for group in passes[1:])

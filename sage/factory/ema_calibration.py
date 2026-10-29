@@ -16,7 +16,7 @@ from sage.core.pipeline import GWBatch
 from sage.factory.training import assemble_batch
 
 
-def calibration_inputs(signal_sampler, noise_sampler, processor, signal_batch_size, num_estimates, num_batches):
+def calibration_inputs(signal_sampler, noise_sampler, processor, signal_batch_size, num_estimates, num_batches, placement):
     """
     Network inputs of training batches, assembled and preprocessed as in training.
 
@@ -32,6 +32,8 @@ def calibration_inputs(signal_sampler, noise_sampler, processor, signal_batch_si
         Estimated parameters.
     num_batches : int
         Batches to yield.
+    placement : torch.Generator
+        Generator of the signal positions in a batch.
 
     Yields
     ------
@@ -42,7 +44,7 @@ def calibration_inputs(signal_sampler, noise_sampler, processor, signal_batch_si
         signal_data, signal_targets = signal_sampler()
         noise_data, noise_targets = noise_sampler()
         x, _, _ = assemble_batch(
-            signal_data, signal_targets, noise_data, noise_targets, signal_batch_size, num_estimates,
+            signal_data, signal_targets, noise_data, noise_targets, signal_batch_size, num_estimates, placement,
         )
         yield processor(GWBatch(x, state=processor.input_state)).to_network_input()
 

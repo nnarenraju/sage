@@ -90,8 +90,8 @@ priors:
 
   sky:
     name: uniform_sky
-    ra: ra
-    dec: dec
+    polar-angle: dec
+    azimuthal-angle: ra
 
 constraints:
   - name: mass_order

@@ -15,7 +15,7 @@ PRIOR_KEYS = {
     "uniform": {"min", "max"},
     "uniform_angle": set(),
     "sin_angle": set(),
-    "uniform_sky": {"ra", "dec"},
+    "uniform_sky": {"polar-angle", "azimuthal-angle"},
     "uniform_solidangle": {"polar-angle", "azimuthal-angle"},
     "uniform_radius": {"min", "max"},
     "uniform_comoving_volume": {"min", "max", "cosmology"},
@@ -26,6 +26,8 @@ TRANSFORM_KEYS = {
     "chirp_distance_to_distance": set(),
 }
 CONSTRAINT_KEYS = {"params"}
+# pycbc.distributions.sky_location.UniformSky: the angles' names when not given.
+SKY_NAMES = {"polar-angle": "dec", "azimuthal-angle": "ra"}
 NUMERIC_KEYS = {"min", "max"}
 
 
@@ -85,7 +87,7 @@ def validate_prior(config: Dict[str, Any]) -> None:
         if name == "uniform_solidangle":
             sampled += [pcfg["polar-angle"], pcfg["azimuthal-angle"]]
         elif name == "uniform_sky":
-            sampled += [pcfg["ra"], pcfg["dec"]]
+            sampled += [pcfg.get(key, default) for key, default in SKY_NAMES.items()]
         else:
             sampled.append(pname)
 
@@ -141,7 +143,7 @@ def check_prior(config: Dict[str, Any]) -> Dict[str, Any]:
     Returns
     -------
     dict
-        The same prior with numeric entries converted.
+        The same prior with numeric entries converted and the sky angles named.
 
     Raises
     ------
@@ -152,7 +154,7 @@ def check_prior(config: Dict[str, Any]) -> Dict[str, Any]:
 
     priors = {}
     for pname, pcfg in config["priors"].items():
-        entry = dict(pcfg)
+        entry = {**SKY_NAMES, **pcfg} if pcfg["name"] == "uniform_sky" else dict(pcfg)
         for key in NUMERIC_KEYS & set(entry):
             try:
                 entry[key] = float(entry[key])

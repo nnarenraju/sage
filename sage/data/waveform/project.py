@@ -66,6 +66,8 @@ class ConstantProjection(torch.nn.Module):
         Device of the cached tensors.
     dtype : torch.dtype
         Dtype of the cached tensors.
+    generator : torch.Generator
+        Generator of the GMST draws, on ``device``.
 
     Inputs to :meth:`forward`
     -------------------------
@@ -80,12 +82,13 @@ class ConstantProjection(torch.nn.Module):
         Detector-frame frequency-domain strain for each detector.
     """
 
-    def __init__(self, detectors: list, window: Window, device, dtype: torch.dtype):
+    def __init__(self, detectors: list, window: Window, device, dtype: torch.dtype, generator: torch.Generator):
 
         super().__init__()
 
         self.device = device
         self.dtype = dtype
+        self.generator = generator
         self.detnames = list(detectors)
 
         # Frequencies
@@ -225,7 +228,7 @@ class ConstantProjection(torch.nn.Module):
         torch.Tensor, shape ``(B,)``
             GMST values in radians.
         """
-        return 2 * PI * torch.rand(B, device=self.device)
+        return 2 * PI * torch.rand(B, device=self.device, generator=self.generator)
 
     def antenna_pattern(
         self, right_ascension, declination, polarization, gmst_estimate

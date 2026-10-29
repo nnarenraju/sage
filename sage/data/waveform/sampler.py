@@ -32,6 +32,8 @@ Documentation:
 """
 
 # Packages
+import math
+
 import torch
 
 from typing import Any, Dict
@@ -45,10 +47,9 @@ from sage.data.waveform.distributions import (
     uniform,
 )
 
-from sage.core.math import Normalise
 
 # Conversions
-from sage.core.conversions import distance_from_chirp_distance_mchirp
+from sage.core.conversions import distance_from_chirp_distance_mchirp, mchirp_from_mass1_mass2
 from sage.data.waveform.conversions import mass1_mass2_to_mchirp_q
 
 # Transformation constraints
@@ -135,12 +136,12 @@ class DistributionSampler(torch.nn.Module):
     * **waveform_transforms** — deterministic reparametrisations applied
       after sampling (spherical → Cartesian spins, m1/m2 → mchirp/q,
       chirp-distance → luminosity distance).
-    * **constraints** — named deterministic projections that mutate params in
-      place (e.g. ``mass_order`` to enforce m1 ≥ m2).
+    * **constraints** — named masks; samples outside them are rejected and
+      drawn again (e.g. ``mass_order`` for m1 ≥ m2).
 
-    After construction, :meth:`_compile_batch_standardiser` must be called
-    once to pre-compute mean and standard deviation buffers used by
-    :meth:`standardise_from_batch` / :meth:`unstandardise_from_batch`.
+    After construction, :meth:`compile_target_scaling` must be called once
+    to set the target scaling used by :meth:`scale_targets` /
+    :meth:`unscale_targets`.
 
     Parameters
     ----------
@@ -165,8 +166,6 @@ class DistributionSampler(torch.nn.Module):
         Total number of parameters in the output batch.
     bounds : dict[str, tuple]
         Theoretical ``(min, max)`` bounds for every parameter.
-    normalisers : dict[str, Normalise]
-        Pre-built :class:`~sage.core.math.Normalise` objects for each param.
     """
 
     def __init__(self, config: Dict[str, Any], device, dtype, generator):
@@ -198,8 +197,8 @@ class DistributionSampler(torch.nn.Module):
                 self.param_names.append(pcfg["azimuthal-angle"])
 
             elif pcfg["name"] == "uniform_sky":
-                self.param_names.append(pcfg["ra"])
-                self.param_names.append(pcfg["dec"])
+                self.param_names.append(pcfg["polar-angle"])
+                self.param_names.append(pcfg["azimuthal-angle"])
 
             else:
                 self.param_names.append(pname)
@@ -226,7 +225,9 @@ class DistributionSampler(torch.nn.Module):
         self._build_transforms()
         self._build_constraints()
         self.bounds = self.theoretical_bounds()
-        self.normalisers = self.build_normalisers()
+        for name, (low, high) in self.bounds.items():
+            if high <= low:
+                raise ValueError(f"Invalid bounds for {name}: ({low}, {high})")
 
     @staticmethod
     def get_named_constraints():
@@ -241,7 +242,7 @@ class DistributionSampler(torch.nn.Module):
         if name == "sin_angle":
             return angular.SinAngle()
         if name == "uniform_sky":
-            return sky.UniformSky()
+            return sky.UniformSky(args["polar-angle"], args["azimuthal-angle"])
         if name == "uniform_solidangle":
             return angular.UniformSolidAngle(
                 args["polar-angle"], args["azimuthal-angle"]
@@ -280,9 +281,7 @@ class DistributionSampler(torch.nn.Module):
 
         for c in self.cfg.get("constraints", []):
 
-            # deterministic projection constraint (the only supported kind: it
-            # mutates params in place, e.g. mass ordering). Rejection-style
-            # constraints are not implemented in the vectorised fixed-batch flow.
+            # a named constraint is a mask; samples outside it are rejected (_sample_accepted)
             if c["name"] in constraints._NAMED_CONSTRAINTS:
                 self.constraints.append(NamedConstraint(c["name"], c.get("params")))
 
@@ -366,29 +365,37 @@ class DistributionSampler(torch.nn.Module):
 
                 params[:, self.param_index["distance"]] = d
 
-    def _enforce_constraints(self, params):
-
-        if not self.constraints:
-            return params
-
+    def _within_constraints(self, params):
+        """Mask of the samples that satisfy every constraint."""
+        keep = torch.ones(params.shape[0], dtype=torch.bool, device=params.device)
         for c in self.constraints:
+            keep &= getattr(constraints, c.name)(params, self.param_index, c.params)
+        return keep
 
-            if c.name in constraints._NAMED_CONSTRAINTS:
-                fn = getattr(constraints, c.name)
+    def _sample_accepted(self, N):
+        """
+        ``N`` raw samples within every constraint.
 
-                params = fn(
-                    params,
-                    self.param_index,
-                    c.params,  # optional extra config
-                )
-
-            else:
-                raise ValueError(
-                    f"Unknown named constraint '{c.name}'. "
-                    f"Available: {constraints._NAMED_CONSTRAINTS}"
-                )
-
-        return params
+        Rejection sampling as ``pycbc.distributions.joint.JointDistribution.rvs``:
+        each round draws ``ndraw`` samples from every prior and keeps those
+        within the constraints, in order.
+        """
+        if not self.constraints:
+            return self._sample_base(N)
+        out = torch.empty(N, self.num_params, device=self.device, dtype=self.dtype)
+        remaining = ndraw = N
+        while remaining:
+            scratch = self._sample_base(ndraw)
+            keep = self._within_constraints(scratch)
+            nkeep = int(keep.sum())
+            kmin = N - remaining
+            kmax = min(nkeep, remaining)
+            out[kmin:kmin + kmax] = scratch[keep][:kmax]
+            remaining = max(0, remaining - nkeep)
+            # to try to speed up next go around, we'll increase the draw
+            # size by the fraction of values that were kept, but cap at 1e6
+            ndraw = int(min(1e6, ndraw * math.ceil(ndraw / (nkeep + 1.0))))
+        return out
 
     def theoretical_bounds(self):
         """
@@ -422,16 +429,18 @@ class DistributionSampler(torch.nn.Module):
                 bounds[pname] = (0.0, torch.pi)
 
             elif name == "uniform_sky":
-                bounds[pcfg["ra"]] = (0.0, 2 * torch.pi)
-                bounds[pcfg["dec"]] = (-torch.pi / 2, torch.pi / 2)
+                bounds[pcfg["polar-angle"]] = (-torch.pi / 2, torch.pi / 2)
+                bounds[pcfg["azimuthal-angle"]] = (0.0, 2 * torch.pi)
 
             elif name == "uniform_solidangle":
                 bounds[pcfg["polar-angle"]] = (0.0, torch.pi)
                 bounds[pcfg["azimuthal-angle"]] = (0.0, 2 * torch.pi)
 
-        ## MASS ORDER CONSTRAINT
+        ## MASS ORDER CONSTRAINT (configured only)
 
-        if "mass1" in bounds and "mass2" in bounds:
+        constrained = {c["name"] for c in self.cfg.get("constraints", [])}
+        transforms = list(self.cfg.get("waveform_transforms", {}).values())
+        if "mass_order" in constrained:
             m1_min, m1_max = bounds["mass1"]
             m2_min, m2_max = bounds["mass2"]
 
@@ -439,35 +448,30 @@ class DistributionSampler(torch.nn.Module):
             bounds["mass1"] = (max(m1_min, m2_min), m1_max)
             bounds["mass2"] = (m2_min, min(m2_max, m1_max))
 
-        ## DERIVED MASS PARAMETERS
+        ## DERIVED MASS PARAMETERS (the mass transform)
 
-        if "mass1" in bounds and "mass2" in bounds:
+        if any(t["name"] == "mass1_mass2_to_mchirp_q" for t in transforms):
 
             m1_min, m1_max = bounds["mass1"]
             m2_min, m2_max = bounds["mass2"]
 
-            # q = m1/m2, with m2 <= m1
-            q_min = 1.0
-            q_max = m1_max / m2_min
-            bounds["q"] = (q_min, q_max)
-
-            def mchirp(m1, m2):
-                """Compute chirp mass from component masses."""
-                return ((m1 * m2) ** (3.0 / 5.0)) / ((m1 + m2) ** (1.0 / 5.0))
+            # q = m1/m2; with m2 <= m1 it is at least 1
+            q_min = m1_min / m2_max
+            bounds["q"] = (max(1.0, q_min) if "mass_order" in constrained else q_min, m1_max / m2_min)
 
             # Extremes occur on boundary
             candidates = [
-                mchirp(m1_min, m2_min),
-                mchirp(m1_min, m2_max),
-                mchirp(m1_max, m2_min),
-                mchirp(m1_max, m2_max),
+                mchirp_from_mass1_mass2(m1_min, m2_min),
+                mchirp_from_mass1_mass2(m1_min, m2_max),
+                mchirp_from_mass1_mass2(m1_max, m2_min),
+                mchirp_from_mass1_mass2(m1_max, m2_max),
             ]
 
             bounds["mchirp"] = (min(candidates), max(candidates))
 
-        ## DISTANCE
+        ## DISTANCE (the distance transform)
 
-        if "chirp_distance" in bounds and "mchirp" in bounds:
+        if any(t["name"] == "chirp_distance_to_distance" for t in transforms):
 
             cd_min, cd_max = bounds["chirp_distance"]
             mc_min, mc_max = bounds["mchirp"]
@@ -478,20 +482,14 @@ class DistributionSampler(torch.nn.Module):
 
             bounds["distance"] = (d_min, d_max)
 
-        ## SPIN CARTESIAN COMPONENTS
+        ## SPIN CARTESIAN COMPONENTS (each transform's own keys)
 
-        for spin in ["spin1", "spin2"]:
-
-            a_name = f"{spin}_a"
-            if a_name in bounds:
-
-                a_min, a_max = bounds[a_name]
-
-                # since spherical:
-                # x,y,z in [-a, a]
-                bounds[f"{spin}x"] = (-a_max, a_max)
-                bounds[f"{spin}y"] = (-a_max, a_max)
-                bounds[f"{spin}z"] = (-a_max, a_max)
+        for tcfg in transforms:
+            if tcfg["name"] == "spherical_to_cartesian":
+                a_max = bounds[tcfg["radial"]][1]
+                # since spherical: x, y, z in [-a, a]
+                for key in ("x", "y", "z"):
+                    bounds[tcfg[key]] = (-a_max, a_max)
 
         ## Ensure ordering consistent with param_names
 
@@ -501,182 +499,38 @@ class DistributionSampler(torch.nn.Module):
 
         return ordered_bounds
 
-    def build_normalisers(self):
+    def compile_target_scaling(self, targets, dtype):
         """
-        Construct Normalise objects for all parameters
-        using theoretical bounds.
-
-        Returns
-        -------
-        dict[str, Normalise]
-            Mapping parameter name -> Normalise object
-        """
-
-        bounds = self.theoretical_bounds()
-        normalisers = {}
-
-        for name, (min_val, max_val) in bounds.items():
-
-            if max_val <= min_val:
-                raise ValueError(
-                    f"Invalid bounds for {name}: " f"({min_val}, {max_val})"
-                )
-
-            normalisers[name] = Normalise(
-                min_val=min_val,
-                max_val=max_val,
-            )
-
-        return normalisers
-
-    def _compile_batch_normaliser(self, targets, dtype):
-        """
-        Precompute tensors used for fast batch normalisation.
+        Scale ``targets`` to [-1, 1] from their bounds: ``(x - offset) / scale``,
+        offset the middle of the bounds and scale half their width.
 
         Parameters
         ----------
         targets : list of str
-            Parameters to normalise, in head order.
+            Estimated parameters, in head order.
         dtype : torch.dtype
             Dtype of the buffers.
+
+        Raises
+        ------
+        ValueError
+            If a target has no bounds.
         """
+        missing = [target for target in targets if target not in self.bounds]
+        if missing:
+            raise ValueError(f"targets {missing} have no bounds from the prior and its transforms")
+        lows, highs = zip(*(self.bounds[target] for target in targets))
+        self.register_buffer("_target_indices", torch.tensor([self.param_index[t] for t in targets], dtype=torch.long))
+        self.register_buffer("_target_offsets", torch.tensor([(a + b) / 2 for a, b in zip(lows, highs)], dtype=dtype))
+        self.register_buffer("_target_scales", torch.tensor([(b - a) / 2 for a, b in zip(lows, highs)], dtype=dtype))
 
-        selected_names = targets
+    def scale_targets(self, batch: torch.Tensor):
+        """The targets of a ``(B, num_params)`` batch, scaled to [-1, 1] (``compile_target_scaling``)."""
+        return (batch.index_select(1, self._target_indices) - self._target_offsets) / self._target_scales
 
-        # Convert to tensor (register as buffer)
-        idxs = [self.param_index[key] for key in selected_names]
-        indices_tensor = torch.tensor(idxs, dtype=torch.long)
-
-        # Get min/max for selected names
-        mins = torch.tensor(
-            [self.normalisers[name].min_val for name in selected_names],
-            dtype=dtype,
-        )
-        maxs = torch.tensor(
-            [self.normalisers[name].max_val for name in selected_names],
-            dtype=dtype,
-        )
-        scales = maxs - mins
-
-        # Register as buffers (safe and device-aware)
-        self.register_buffer("_norm_indices", indices_tensor)
-        self.register_buffer("_norm_mins", mins)
-        self.register_buffer("_norm_scales", scales)
-
-    def norm_from_batch(self, batch):
-        """
-        Min-max normalise selected parameters in a full parameter batch.
-
-        Parameters
-        ----------
-        batch : torch.Tensor, shape ``(B, total_params)``
-            Full parameter batch produced by :meth:`forward`.
-
-        Returns
-        -------
-        torch.Tensor, shape ``(B, selected_params)``
-            Selected columns normalised to ``[0, 1]`` using theoretical bounds.
-        """
-        if batch.ndim != 2:
-            raise ValueError("batch must be 2D (B, total_params)")
-
-        selected = batch.index_select(1, self._norm_indices)
-
-        return (selected - self._norm_mins) / self._norm_scales
-
-    def unnorm_from_batch(self, normed_batch):
-        """
-        Invert min-max normalisation to recover physical parameter values.
-
-        Parameters
-        ----------
-        normed_batch : torch.Tensor, shape ``(B, selected_params)``
-            Normalised batch from :meth:`norm_from_batch`.
-
-        Returns
-        -------
-        torch.Tensor, shape ``(B, selected_params)``
-            Parameters in their original physical units/range.
-        """
-        if normed_batch.ndim != 2:
-            raise ValueError("normed_batch must be 2D")
-
-        return normed_batch * self._norm_scales + self._norm_mins
-
-    def _compile_batch_standardiser(self, targets, N: int = 1_000_000):
-        """
-        Compute mean and std for standardisation from a large sample of parameters
-        and register them as buffers for fast batch standardisation.
-
-        Parameters
-        ----------
-        targets : list of str
-            Parameters to standardise, in head order.
-        N : int
-            Number of samples to use to estimate mean and stddev
-            Default is set to 1_000_000
-        """
-
-        # Sample directly
-        all_samples = self._sample_base(N)  # shape (N, total_params)
-        all_samples = self._enforce_constraints(all_samples)
-        self._apply_transforms(all_samples)
-
-        selected_names = targets
-        idxs = [self.param_index[key] for key in selected_names]
-        indices_tensor = torch.tensor(idxs, dtype=torch.long)
-
-        # Select only the parameters we care about
-        selected_samples = all_samples[:, idxs]
-
-        # Compute mean and stddev across samples (dim=0)
-        means = selected_samples.mean(dim=0)
-        stds = selected_samples.std(dim=0)
-
-        # Avoid division by zero
-        stds[stds == 0.0] = 1.0
-
-        # Register as buffers (device-aware)
-        self.register_buffer("_std_indices", indices_tensor)
-        self.register_buffer("_std_means", means)
-        self.register_buffer("_std_stds", stds)
-
-    def standardise_from_batch(self, batch: torch.Tensor):
-        """
-        Standardise batch using precomputed mean/std buffers.
-
-        Parameters
-        ----------
-        batch : torch.Tensor
-            Shape (B, total_params)
-        Returns
-        -------
-        torch.Tensor
-            Standardised batch (B, selected_params)
-        """
-        if batch.ndim != 2:
-            raise ValueError("batch must be 2D (B, total_params)")
-
-        selected = batch.index_select(1, self._std_indices)
-        return (selected - self._std_means) / self._std_stds
-
-    def unstandardise_from_batch(self, standardised_batch: torch.Tensor):
-        """
-        Convert standardised batch back to original parameter scale.
-
-        Parameters
-        ----------
-        standardised_batch : torch.Tensor
-            Shape (B, selected_params)
-        Returns
-        -------
-        torch.Tensor
-            Unstandardised batch
-        """
-        if standardised_batch.ndim != 2:
-            raise ValueError("standardised_batch must be 2D")
-
-        return standardised_batch * self._std_stds + self._std_means
+    def unscale_targets(self, scaled: torch.Tensor):
+        """Physical values of a ``(B, targets)`` batch of scaled targets."""
+        return scaled * self._target_scales + self._target_offsets
 
     def forward(self, N: int):
         """
@@ -695,8 +549,7 @@ class DistributionSampler(torch.nn.Module):
         torch.Tensor, shape ``(N, num_params)``
             Complete parameter batch with all transforms applied.
         """
-        params = self._sample_base(N)
-        params = self._enforce_constraints(params)
+        params = self._sample_accepted(N)
         # NOTE: Just so I remove panic for future me
         # Tensors are mutable and passed by reference
         # So we don't need to return params from appply_transforms

@@ -25,7 +25,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
     Batched IMRPhenomXAS with NRTidalv3 tidal corrections.
 
     With a ``param_sampler``, ``forward()`` returns detector-frame
-    strain and standardised parameter targets; without one, the
+    strain and scaled parameter targets; without one, the
     instance only generates waveforms.
 
     Parameters
@@ -92,8 +92,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             self.extras = waveform_utils.given_extras(param_index, parameters)
             self.dist_col = param_index["distance"]
 
-            self.param_sampler._compile_batch_normaliser(targets, dtype)
-            self.param_sampler._compile_batch_standardiser(targets)
+            self.param_sampler.compile_target_scaling(targets, dtype)
             self.param_sampler.to(device)
 
         if self.waveform_project is not None:
@@ -159,7 +158,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
                 all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
             )
 
-        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
+        normed_targets = self.param_sampler.scale_targets(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )

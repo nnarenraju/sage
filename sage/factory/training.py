@@ -36,7 +36,7 @@ from .schedulers import ManageScheduler
 logger = get_logger(__name__)
 
 
-def assemble_batch(signal_data, signal_targets, noise_data, noise_targets, signal_batch_size, num_estimates):
+def assemble_batch(signal_data, signal_targets, noise_data, noise_targets, signal_batch_size, num_estimates, generator):
     """
     Inject the signals into the noise batch at random positions.
 
@@ -50,6 +50,8 @@ def assemble_batch(signal_data, signal_targets, noise_data, noise_targets, signa
         Windows that receive a signal.
     num_estimates : int
         Estimated parameters.
+    generator : torch.Generator
+        Generator of the positions, on the batch's device.
 
     Returns
     -------
@@ -62,7 +64,7 @@ def assemble_batch(signal_data, signal_targets, noise_data, noise_targets, signa
     pad = torch.zeros(noise_targets.shape[0], num_estimates, device=device, dtype=noise_targets.dtype)
     noise_targets = torch.cat((pad, noise_targets), dim=1)
 
-    idx = torch.randperm(batch_size, device=device)[:signal_batch_size]
+    idx = torch.randperm(batch_size, device=device, generator=generator)[:signal_batch_size]
     signal_pad = torch.zeros_like(noise_data)
     target_pad = torch.zeros(batch_size, num_estimates + 1, device=device, dtype=signal_targets.dtype)
     signal_pad[idx] = signal_data
@@ -114,6 +116,8 @@ class SageVanillaTraining(torch.nn.Module):
         Windows per batch that receive a signal.
     num_estimates : int
         Estimated parameters (``signal.targets``).
+    placement : torch.Generator
+        Generator of the signal positions in a batch, on ``device``.
     clip_norm : float
         Gradient-norm clipping threshold.
     device : str or torch.device
@@ -144,6 +148,7 @@ class SageVanillaTraining(torch.nn.Module):
         batch_size: int,
         signal_batch_size: int,
         num_estimates: int,
+        placement: torch.Generator,
         clip_norm: float,
         device,
         dtype: torch.dtype,
@@ -173,6 +178,7 @@ class SageVanillaTraining(torch.nn.Module):
         self.batch_size        = batch_size
         self.signal_batch_size = signal_batch_size
         self.num_estimates     = num_estimates
+        self.placement         = placement
         self.clip_norm         = clip_norm
         self.autocast_dtype    = autocast_dtype
 
@@ -191,6 +197,7 @@ class SageVanillaTraining(torch.nn.Module):
         callback does)."""
         x, targets, _ = assemble_batch(
             signal_data, signal_targets, noise_data, noise_targets, self.signal_batch_size, self.num_estimates,
+            self.placement,
         )
         return x, targets
 

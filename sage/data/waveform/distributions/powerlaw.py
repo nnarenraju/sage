@@ -43,23 +43,23 @@ class UniformPowerLaw:
     high : float
         Upper bound of the distribution.
     dim : int
-        Dimensionality exponent; 3 gives uniform-in-volume (default).
+        Dimensionality exponent; 3 gives uniform-in-volume.
     """
 
     name = "uniform_power_law"
 
-    def __init__(self, low, high, dim=3):
+    def __init__(self, low, high, dim):
         self.low = low
         self.high = high
         self.dim = dim
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
-        """Sample a batch from the power-law distribution on GPU."""
-        u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
+        """Sample a batch; the inverse CDF runs in float64, so no draw passes ``high`` once cast to ``dtype``."""
+        u = torch.rand(shape, device=device, dtype=dtype, generator=generator).double()
         n = self.dim - 1
-        return (
+        return ((
             (self.high ** (n + 1) - self.low ** (n + 1)) * u + self.low ** (n + 1)
-        ) ** (1.0 / (n + 1))
+        ) ** (1.0 / (n + 1))).to(dtype)
 
 
 class UniformRadius(UniformPowerLaw):
@@ -67,5 +67,5 @@ class UniformRadius(UniformPowerLaw):
 
     name = "uniform_radius"
 
-    def __init__(self, low=0.0, high=1.0):
+    def __init__(self, low, high):
         super().__init__(low=low, high=high, dim=3)

@@ -39,6 +39,7 @@ from sage.core.geometry import Window, window_from_data
 from sage.core.graph import Preprocessor
 from sage.core.logger import get_logger
 from sage.core.pipeline import ProcessingState
+from sage.core.seed import generator, stream_seed
 from sage.data.noise.data_quality import noise_bad_segments
 from sage.data.noise.real_noise import MemmapNoiseSampler
 from sage.data.noise.recolour import RecolourPostprocess
@@ -66,7 +67,7 @@ WAVEFORMS = {
 PROJECTIONS = {"constant": ConstantProjection}
 SNR_DISTRIBUTIONS = {"halfnorm": HalfNorm}
 SNR_PROVIDED = {"seed", "device"}
-PROJECTION_PROVIDED = {"detectors", "window", "device", "dtype"}
+PROJECTION_PROVIDED = {"detectors", "window", "device", "dtype", "generator"}
 WAVEFORM_PROVIDED = {
     "param_sampler",
     "waveform_project",
@@ -191,6 +192,7 @@ def build_signal(
     asds: torch.Tensor,
     signal_batch_size: int,
     seed: int,
+    epoch: int,
     device,
     dtype: torch.dtype,
 ) -> torch.nn.Module:
@@ -211,8 +213,8 @@ def build_signal(
         Fiducial ASDs, for the SNR.
     signal_batch_size : int
         Signals drawn per call.
-    seed : int
-        Seed of the prior and SNR draws.
+    seed, epoch : int
+        The prior, SNR and GMST streams are ``stream_seed(seed, <stream>, epoch)``.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -234,7 +236,7 @@ def build_signal(
     check_on_grid("signal.low_frequency_cutoff_in_hz", f_low, window.padded_length_in_s)
     check_on_grid("signal.reference_frequency_in_hz", f_ref, window.padded_length_in_s)
 
-    sampler = prior_sampler(prior, seed, device, dtype)
+    sampler = prior_sampler(prior, stream_seed(seed, "prior", epoch), device, dtype)
     check_tc_window(*sampler.bounds["tc"], window.sample_length_in_s)
     for target in signal["targets"]:
         if target not in sampler.param_index:
@@ -246,7 +248,7 @@ def build_signal(
     snr_cls, snr_parameters = lookup(SNR_DISTRIBUTIONS, signal["snr"], "signal.snr")
     distribution = snr_cls(
         **component_arguments(snr_cls, snr_parameters, SNR_PROVIDED, "signal.snr"),
-        seed=seed,
+        seed=stream_seed(seed, "snr", epoch),
         device=device,
     )
     rescaler = OptimalSNRRescaler(distribution, asds, window, f_low, device)
@@ -262,6 +264,7 @@ def build_signal(
         window=window,
         device=device,
         dtype=dtype,
+        generator=generator(seed, "gmst", epoch, device),
     )
 
     waveform_cls, waveform_parameters = lookup(WAVEFORMS, signal["waveform"], "signal.waveform")
@@ -461,6 +464,7 @@ def build_noise_stream(
     detectors: list,
     batch_size: int,
     seed: int,
+    epoch: int,
     hard_start_jitter_s: float,
     hard_focal_gamma: float,
     device,
@@ -468,8 +472,6 @@ def build_noise_stream(
 ):
     """
     Build the training or validation noise sampler alone.
-
-    A recoloured stream's recolour draws are seeded at ``seed + 7``.
 
     Parameters
     ----------
@@ -485,8 +487,8 @@ def build_noise_stream(
         Detectors, in channel order.
     batch_size : int
         Windows per batch.
-    seed : int
-        Seed of the stream.
+    seed, epoch : int
+        The noise and recolour streams are ``stream_seed(seed, <stream>, epoch)``.
     hard_start_jitter_s, hard_focal_gamma : float
         Replay of mined windows; see ``MemmapNoiseSampler``.
     device : str or torch.device
@@ -503,16 +505,18 @@ def build_noise_stream(
     recolour = recoloured(noise, role)
     if source["name"] == "synthetic":
         return WhiteGaussianNoiseSampler(
-            check_detector_asds(source["asd"], detectors), detectors, window, batch_size, seed,
-            source["low_frequency_cutoff_in_hz"], source["filter_duration_in_s"], device, dtype,
+            check_detector_asds(source["asd"], detectors), detectors, window, batch_size,
+            stream_seed(seed, "noise", epoch), source["low_frequency_cutoff_in_hz"], source["filter_duration_in_s"], device, dtype,
         )
     runs = noise_runs(source, data_dir, detectors)
     postprocess = None
     if recolour:
-        postprocess = build_recolour(noise["recolour"], runs, data_dir, window, detectors, seed + 7, device)
+        postprocess = build_recolour(
+            noise["recolour"], runs, data_dir, window, detectors, stream_seed(seed, "recolour", epoch), device,
+        )
     return MemmapNoiseSampler(
         runs, detectors, window, batch_size, noise_bad_segments([path for run in runs for path in run["bins"]]),
-        seed, noise["prefetch_batches"], noise["read_workers"], hard_start_jitter_s, hard_focal_gamma,
+        stream_seed(seed, "noise", epoch), noise["prefetch_batches"], noise["read_workers"], hard_start_jitter_s, hard_focal_gamma,
         device, dtype, postprocess_fn=postprocess,
     )
 
@@ -524,26 +528,28 @@ def build_noise(
     detectors: list,
     batch_size: int,
     seed: int,
-    validation_seed: int,
+    epoch: int,
     hard_start_jitter_s: float,
     hard_focal_gamma: float,
     device,
     dtype: torch.dtype,
-) -> tuple:
+):
     """
-    Build the training and validation noise samplers (``build_noise_stream``).
+    Check the training and validation noise sources, then build the training noise sampler.
+
+    Validation passes build their own stream each time (``build_noise_stream``).
 
     Parameters
     ----------
     noise, data_dir, window, detectors, batch_size, hard_start_jitter_s, hard_focal_gamma, device, dtype
         As ``build_noise_stream``.
-    seed, validation_seed : int
-        Seeds of the training and validation noise streams.
+    seed, epoch : int
+        Seed of the training streams and the epoch the segment starts at.
 
     Returns
     -------
-    training, validation : MemmapNoiseSampler or WhiteGaussianNoiseSampler
-        Noise samplers.
+    MemmapNoiseSampler or WhiteGaussianNoiseSampler
+        Training noise sampler.
 
     Raises
     ------
@@ -564,15 +570,10 @@ def build_noise(
                         selected_records(validation_run, detectors),
                         training_run["run"],
                     )
-    training = build_noise_stream(
-        noise, "training", data_dir, window, detectors, batch_size, seed,
+    return build_noise_stream(
+        noise, "training", data_dir, window, detectors, batch_size, seed, epoch,
         hard_start_jitter_s, hard_focal_gamma, device, dtype,
     )
-    validation = build_noise_stream(
-        noise, "validation", data_dir, window, detectors, batch_size, validation_seed,
-        hard_start_jitter_s, hard_focal_gamma, device, dtype,
-    )
-    return training, validation
 
 
 def build_preprocess(

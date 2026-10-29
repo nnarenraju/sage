@@ -1,17 +1,14 @@
 """Train a run from its directory: record the settings, build every component, train.
 
-The components are built in the old driver's order with its seeding, so a run
-reproduces the old code bit for bit until per-stream seeds replace it.
+Every random stream has its own seed (``sage.core.seed.stream_seed``).
 """
 
 import dataclasses
 import json
-import random
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 import torch
 import yaml
 
@@ -60,14 +57,11 @@ from sage.factory.clone import check_built, check_start, clone_start, install_fu
 from sage.factory.ema_calibration import calibration_inputs, recalibrate_batchnorm
 from sage.factory.training import SageVanillaTraining
 from sage.factory.validation import SageVanillaValidation
-from sage.utils.checkpoint import CheckpointManager, atomic_torch_save, next_epoch, restore, rng_state, set_rng_state
+from sage.core.seed import STREAMS, generator, stream_seed
+from sage.utils.checkpoint import CheckpointManager, atomic_torch_save, next_epoch, restore
 
 logger = get_logger(__name__)
 
-# A run resuming at epoch K seeds its samplers and the global generator with
-# seed + SEED_STRIDE * K, so no stream replays its earlier draws (old driver).
-SEED_STRIDE = 1_000_003
-RECOLOUR_SEED_OFFSET = 7  # set in build_noise
 STOP_FILE = "STOP"  # written by `sage stop`; training stops before its next epoch
 
 
@@ -96,17 +90,15 @@ def derived_values(settings: dict, window, processor, signal) -> dict:
     sampler = signal.param_sampler
     seeds = {
         "train": settings["train"]["seed"],
-        "resume_stride": SEED_STRIDE,
-        "recolour_offset": RECOLOUR_SEED_OFFSET,
         "validation": settings["validation"]["seed"],
+        "streams": "numpy SeedSequence(seed, spawn_key=(stream, epoch of the segment; 0 for validation))",
+        "stream_keys": dict(STREAMS),
     }
-    if settings["mining"]["enabled"]:
-        seeds["mining"] = settings["train"]["seed"]
     return {
         "window": dataclasses.asdict(window),
         "multirate_bins": [step.bins.tolist() for step in processor.seq if isinstance(step, MultirateSampler)],
         "target_scaling": {
-            target: {"offset": float(sampler._std_means[i]), "scale": float(sampler._std_stds[i])}
+            target: {"offset": float(sampler._target_offsets[i]), "scale": float(sampler._target_scales[i])}
             for i, target in enumerate(targets)
         },
         "flat_tail_start_epoch": flat_tail_start_epoch(settings["schedule"], settings["train"]["epochs"]),
@@ -118,9 +110,8 @@ def recorded_scaling(run_dir: Path, start: dict | None) -> dict | None:
     """
     The target scaling a run trains against once it has one recorded.
 
-    The z-score constants are Monte Carlo estimates from the training prior
-    sampler, which a resumed segment reseeds, so recomputing them would move
-    the targets' scaling at every resume (~0.1% at 10^6 draws).
+    A started run keeps its own, and a clone the old run's, whatever the
+    current code or prior would give.
 
     Parameters
     ----------
@@ -142,7 +133,7 @@ def recorded_scaling(run_dir: Path, start: dict | None) -> dict | None:
 def use_scaling(signal, targets: list, scaling: dict) -> None:
     """Set the training signal sampler's target scaling (``recorded_scaling``), targets in head order."""
     sampler = signal.param_sampler
-    for buffer, key in ((sampler._std_means, "offset"), (sampler._std_stds, "scale")):
+    for buffer, key in ((sampler._target_offsets, "offset"), (sampler._target_scales, "scale")):
         buffer.copy_(torch.tensor([scaling[target][key] for target in targets], dtype=buffer.dtype))
 
 
@@ -212,7 +203,7 @@ def check_data(run_dir: Path, settings: dict, data_dir: Path) -> None:
 def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiducial: Path, start_epoch: int,
               scaling: dict | None):
     """
-    Build every component of a run in the old driver's order with its seeding; write nothing.
+    Build every component of a run; write nothing.
 
     Parameters
     ----------
@@ -225,7 +216,7 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     fiducial : Path
         Directory holding the fiducial ASDs.
     start_epoch : int
-        Epoch the segment starts at; offsets every seed.
+        Epoch the segment starts at; keys every training stream.
     scaling : dict or None
         Target scaling to train against (``recorded_scaling``); None keeps
         the training sampler's estimate.
@@ -237,7 +228,7 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
         uncompiled, ``model`` as trained), loss, optimiser, schedule and
         precision, with the batch sizes and seed they were built with.
     """
-    train, validation, mining = settings["train"], settings["validation"], settings["mining"]
+    train, mining = settings["train"], settings["mining"]
     torch.backends.cudnn.benchmark = True
     torch.autograd.set_detect_anomaly(False)
 
@@ -248,26 +239,18 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
 
     batches = train["samples_per_epoch"] // train["batch_size"]
     signal_batch_size = round(train["batch_size"] * train["signal_fraction"])  # whole: check_train
-    seed = train["seed"] + SEED_STRIDE * start_epoch
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    seed = train["seed"]
+    torch.manual_seed(stream_seed(seed, "global", start_epoch))  # also every GPU: model initialisation, dropout
     logger.info("Run %s from epoch %d, seed %d", run_dir, start_epoch, seed)
 
-    # The old driver's order: the global generator, seeded above, also draws the
-    # model's initial weights, so everything before the model is built first.
     signal = build_signal(
-        settings["signal"], prior, window, detectors, asds, signal_batch_size, seed, device, dtype
+        settings["signal"], prior, window, detectors, asds, signal_batch_size, seed, start_epoch, device, dtype
     )
     if scaling is not None:
         use_scaling(signal, targets, scaling)
-    noise, validation_noise = build_noise(
-        settings["noise"], data_dir, window, detectors, train["batch_size"], seed, validation["seed"],
+    noise = build_noise(
+        settings["noise"], data_dir, window, detectors, train["batch_size"], seed, start_epoch,
         mining["replay"]["start_jitter_in_s"], mining["replay"]["focal_gamma"], device, dtype,
-    )
-    validation_signal = build_signal(
-        {**settings["signal"], "snr": validation["snr"]}, prior, window, detectors, asds,
-        signal_batch_size, validation["seed"], device, dtype,
     )
     processor = build_preprocess(
         settings["preprocess"], asds, window, signal.param_sampler.bounds,
@@ -283,10 +266,49 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     return SimpleNamespace(
         window=window, detectors=detectors, dtype=dtype, device=device, targets=targets, asds=asds,
         batches=batches, signal_batch_size=signal_batch_size, seed=seed, signal=signal, noise=noise,
-        validation_noise=validation_noise, validation_signal=validation_signal, processor=processor,
-        network=network, model=model, loss=loss, optimiser=optimiser, schedule=schedule, step_every=step_every,
-        autocast_dtype=autocast_dtype, scaler=scaler,
+        processor=processor, network=network, model=model, loss=loss, optimiser=optimiser, schedule=schedule, step_every=step_every,
+        autocast_dtype=autocast_dtype, scaler=scaler, placement=generator(seed, "placement", start_epoch, device),
     )
+
+
+def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run) -> tuple:
+    """
+    The training or validation signal, noise and placement streams, rebuilt from their seed at epoch 0.
+
+    Every validation pass, the final check and ``sage validate`` start from these, so they see the same
+    windows (the final check's first ``validation.samples`` are a pass's); EMA calibration takes the
+    training ones (no mined-window replay).
+
+    Parameters
+    ----------
+    role : str
+        ``training`` or ``validation``.
+    settings, prior : dict
+        From ``check_run``.
+    data_dir : Path
+        The machine's data directory.
+    run : SimpleNamespace
+        Window, detectors, ASDs, signal batch size, device and dtype (``build_run``, or the same fields).
+
+    Returns
+    -------
+    tuple
+        ``(signal, noise, placement)``.
+    """
+    train, replay = settings["train"], settings["mining"]["replay"]
+    seed, snr = {
+        "training": (train["seed"], settings["signal"]["snr"]),
+        "validation": (settings["validation"]["seed"], settings["validation"]["snr"]),
+    }[role]
+    signal = build_signal(
+        {**settings["signal"], "snr": snr}, prior, run.window, run.detectors, run.asds, run.signal_batch_size,
+        seed, 0, run.device, run.dtype,
+    )
+    noise = build_noise_stream(
+        settings["noise"], role, data_dir, run.window, run.detectors, train["batch_size"], seed, 0,
+        replay["start_jitter_in_s"], replay["focal_gamma"], run.device, run.dtype,
+    )
+    return signal, noise, generator(seed, "placement", 0, run.device)
 
 
 def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> SageVanillaTraining:
@@ -295,7 +317,8 @@ def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> Sa
     return SageVanillaTraining(
         run.signal, run.noise, run.processor, run.model, run.loss, run.optimiser, run.schedule, run.scaler,
         num_iterations=num_iterations, num_epochs=train["epochs"], batch_size=train["batch_size"],
-        signal_batch_size=run.signal_batch_size, num_estimates=len(run.targets), clip_norm=train["clip_norm"],
+        signal_batch_size=run.signal_batch_size, num_estimates=len(run.targets), placement=run.placement,
+        clip_norm=train["clip_norm"],
         device=run.device, dtype=run.dtype, autocast_dtype=run.autocast_dtype, scheduler_mode=run.step_every,
         callbacks=callbacks,
     )
@@ -361,11 +384,11 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
 
     callbacks = []
     if mining["enabled"]:
-        # The training seed in every segment (old driver): the miner reseeds each round
-        # from it and the epoch, so a resumed run mines as an uninterrupted one.
+        # Not keyed by the segment: the miner reseeds each round from it and the
+        # epoch, so a resumed run mines as an uninterrupted one.
         miner = HardMiningCallback(
             mining, run_dir / "mining" / "bank.h5", mining_epochs(mining, settings["schedule"], train["epochs"]),
-            train["seed"], run.detectors, run.window.sample_rate_in_hz,
+            stream_seed(train["seed"], "mining"), run.detectors, run.window.sample_rate_in_hz,
         )
         callbacks.append(miner)
     averager = None
@@ -374,33 +397,15 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
         callbacks.append(averager)
     trainer = trainer_for(run, settings, run.batches, callbacks)
 
-    def validator(signal_sampler, noise_sampler, samples, num_epochs):
+    def validator(signal_sampler, noise_sampler, placement, samples, num_epochs):
         return SageVanillaValidation(
             signal_sampler, noise_sampler, run.processor, run.model, run.loss,
             num_iterations=samples // train["batch_size"], num_epochs=num_epochs,
             batch_size=train["batch_size"], signal_batch_size=run.signal_batch_size,
-            num_estimates=len(run.targets), device=run.device, dtype=run.dtype, autocast_dtype=run.autocast_dtype,
-            results_path=run_dir / "results" / "validation.h5",
+            num_estimates=len(run.targets), placement=placement, device=run.device, dtype=run.dtype,
+            autocast_dtype=run.autocast_dtype, results_path=run_dir / "results" / "validation.h5",
         )
 
-    def fresh_samplers(role):
-        """The training or validation samplers rebuilt from their seeds (no mined-window replay)."""
-        streams = {
-            "training": (train["seed"], settings["signal"]["snr"]),
-            "validation": (validation["seed"], validation["snr"]),
-        }
-        stream_seed, snr = streams[role]
-        fresh_signal = build_signal(
-            {**settings["signal"], "snr": snr}, prior, run.window, run.detectors, run.asds,
-            run.signal_batch_size, stream_seed, run.device, run.dtype,
-        )
-        fresh_noise = build_noise_stream(
-            settings["noise"], role, data_dir, run.window, run.detectors, train["batch_size"], stream_seed,
-            mining["replay"]["start_jitter_in_s"], mining["replay"]["focal_gamma"], run.device, run.dtype,
-        )
-        return fresh_signal, fresh_noise
-
-    validate = validator(run.validation_signal, run.validation_noise, validation["samples"], train["epochs"])
     checkpoints = CheckpointManager(
         run_dir, run.network, run.optimiser, run.schedule, run.scaler,
         None if averager is None else averager.ema_model, train["keep_checkpoints"],
@@ -426,7 +431,13 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
         losses.log(trainer.loss_components, epoch, split="training")
         validation_loss = None
         if validates(epoch, validation, train["epochs"]):
-            validate(nepoch=epoch)
+            # The same windows every pass: the validation streams start afresh.
+            signal, noise, placement = fresh_streams("validation", settings, prior, data_dir, run)
+            validate = validator(signal, noise, placement, validation["samples"], train["epochs"])
+            try:
+                validate(nepoch=epoch)
+            finally:
+                noise.shutdown()
             losses.log(validate.loss_components, epoch, split="validation")
             validation_loss = float(validate.loss_components[epoch][0].item())
             trainer.metric_step(validation_loss)
@@ -435,8 +446,9 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
 
     if next_epoch(run_dir) == train["epochs"] and not (run_dir / "results" / "final_check.json").exists():
         final_check(
-            run_dir, settings, run.network, run.processor, run.loss, (run.noise, run.validation_noise),
-            fresh_samplers, validator, run.signal_batch_size, run.device,
+            run_dir, settings, run.network, run.processor, run.loss, run.noise,
+            lambda role: fresh_streams(role, settings, prior, data_dir, run), validator, run.signal_batch_size,
+            run.device,
         )
 
 
@@ -504,26 +516,26 @@ def check_training(run_dir: Path, accept_code_change: bool = False, cpu: bool = 
         trainer = trainer_for(run, settings, 1, callbacks)
         epoch = min(start_epoch, settings["train"]["epochs"] - 1)  # a finished run steps at its last epoch
         trainer(nepoch=epoch)
+        fresh_streams("validation", settings, prior, data_dir, run)[1].shutdown()  # what every validation pass builds
     finally:
         run.noise.shutdown()
-        run.validation_noise.shutdown()
     return float(trainer.loss_components[epoch][0])
 
 
 def final_check(
-    run_dir: Path, settings: dict, network, processor, loss, live_noise: tuple, fresh_samplers, validator,
+    run_dir: Path, settings: dict, network, processor, loss, live_noise, fresh_samplers, validator,
     signal_batch_size: int, device,
 ) -> None:
     """
     Validate ``best.pt`` and, with EMA, the calibrated EMA weights on the same
     ``validation.final_samples`` set; write ``results/final_check.json``.
 
-    The run's noise samplers are shut down first, freeing their memory. With
+    The run's noise sampler is shut down first, freeing its memory. With
     EMA, the batch-norm statistics of ``ema.pt`` are recalibrated over
     ``ema.calibration_batches`` batches from fresh training samplers (the
     streams' first draws, no mined-window replay) and saved as
     ``ema_calibrated.pt``. Each checkpoint is validated on fresh validation
-    samplers with the global generators restored, so both see the same batches.
+    streams, so both see the same batches.
 
     Parameters
     ----------
@@ -537,43 +549,39 @@ def final_check(
         Preprocessing chain.
     loss : torch.nn.Module
         The loss (its component names label the results).
-    live_noise : tuple
-        The run's training and validation noise samplers.
+    live_noise : torch.nn.Module
+        The run's training noise sampler.
     fresh_samplers : callable
-        ``role -> (signal, noise)``: the training or validation samplers
-        rebuilt from their seeds.
+        ``role -> (signal, noise, placement)`` (``fresh_streams``).
     validator : callable
-        ``(signal, noise, samples, num_epochs) -> SageVanillaValidation``.
+        ``(signal, noise, placement, samples, num_epochs) -> SageVanillaValidation``.
     signal_batch_size : int
         Windows per batch that receive a signal.
     device : torch.device
         Device the checkpoints are loaded onto.
     """
-    for sampler in live_noise:
-        sampler.shutdown()
+    live_noise.shutdown()
     checkpoints, ema = run_dir / "checkpoints", settings["ema"]
     result = {"samples": settings["validation"]["final_samples"]}
     groups = {"best.pt": "final_best"}
     if ema["enabled"]:
         state = torch.load(checkpoints / "ema.pt", map_location=device, weights_only=False)
         network.load_state_dict(state["model"])
-        signal, noise = fresh_samplers("training")
+        signal, noise, placement = fresh_samplers("training")
         inputs = calibration_inputs(
             signal, noise, processor, signal_batch_size, len(settings["signal"]["targets"]),
-            ema["calibration_batches"],
+            ema["calibration_batches"], placement,
         )
         layers = recalibrate_batchnorm(network, inputs)
         noise.shutdown()
         atomic_torch_save({**state, "model": network.state_dict()}, checkpoints / "ema_calibrated.pt")
         groups["ema_calibrated.pt"] = "final_ema"
 
-    rng = rng_state()
     for file, group in groups.items():
         state = torch.load(checkpoints / file, map_location=device, weights_only=False)
         network.load_state_dict(state["model"])
-        set_rng_state(rng)
-        signal, noise = fresh_samplers("validation")
-        validate = validator(signal, noise, result["samples"], 1)
+        signal, noise, placement = fresh_samplers("validation")
+        validate = validator(signal, noise, placement, result["samples"], 1)
         validate(nepoch=0, name=group)
         noise.shutdown()
         losses = dict(zip(loss.component_names, validate.loss_components[0].tolist()))
@@ -597,8 +605,8 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     """
     Validate one stored checkpoint on ``validation.final_samples`` windows of the run's validation set.
 
-    The validation samplers are rebuilt from their seed, and the global generators
-    seeded with it, so a checkpoint always gives the same result. The pass is
+    The validation streams are rebuilt from their seed, so a checkpoint always
+    gives the same result, on the final check's windows. The pass is
     added to ``results/validate.h5``, which training never writes, so a running
     job is not disturbed.
 
@@ -633,7 +641,7 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
         raise FileNotFoundError(f"{run_dir}: no checkpoint to validate")
     check_record(run_dir, resolve_settings(settings), prior, resolve_settings)
     check_code(run_dir, accept_code_change)
-    train, validation, replay = settings["train"], settings["validation"], settings["mining"]["replay"]
+    train, validation = settings["train"], settings["validation"]
     check_device(train)
     data_dir = read_data_dir()
     check_data(run_dir, settings, data_dir)
@@ -658,19 +666,10 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     model = compile_network(network, train)
     loss = build_loss(settings["loss"], targets)
     signal_batch_size = round(train["batch_size"] * train["signal_fraction"])
-
-    seed = validation["seed"]
-    torch.manual_seed(seed)  # also every GPU; the batch placement draws from it
-    np.random.seed(seed)
-    random.seed(seed)
-    signal = build_signal(
-        {**settings["signal"], "snr": validation["snr"]}, prior, window, detectors, asds, signal_batch_size, seed,
-        device, dtype,
+    streams = SimpleNamespace(
+        window=window, detectors=detectors, asds=asds, signal_batch_size=signal_batch_size, device=device, dtype=dtype,
     )
-    noise = build_noise_stream(
-        settings["noise"], "validation", data_dir, window, detectors, train["batch_size"], seed,
-        replay["start_jitter_in_s"], replay["focal_gamma"], device, dtype,
-    )
+    signal, noise, placement = fresh_streams("validation", settings, prior, data_dir, streams)
     processor = build_preprocess(
         settings["preprocess"], asds, window, signal.param_sampler.bounds,
         settings["signal"]["low_frequency_cutoff_in_hz"], ProcessingState(Grid.FD_UNIFORM), device, dtype,
@@ -679,8 +678,8 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     validate = SageVanillaValidation(
         signal, noise, processor, model, loss, num_iterations=samples // train["batch_size"], num_epochs=1,
         batch_size=train["batch_size"], signal_batch_size=signal_batch_size, num_estimates=len(targets),
-        device=device, dtype=dtype, autocast_dtype=precision_setup(train)[0],
-        results_path=run_dir / "results" / "validate.h5",
+        placement=placement, device=device, dtype=dtype,
+        autocast_dtype=precision_setup(train)[0], results_path=run_dir / "results" / "validate.h5",
     )
     try:
         validate(nepoch=0, name=group)

@@ -25,6 +25,7 @@ Documentation: NULL
 
 import random
 import numpy as np
+import torch
 
 
 class SeedManager:
@@ -77,3 +78,40 @@ class SeedManager:
         """
         sub_seed = abs(hash((self.seed, name))) % (2**32)
         return np.random.default_rng(sub_seed)
+
+
+# Every random stream of a run, by its spawn key (append only: a key's meaning never changes).
+STREAMS = {"prior": 0, "snr": 1, "gmst": 2, "noise": 3, "recolour": 4, "placement": 5, "mining": 6, "global": 7}
+
+
+def stream_seed(seed: int, stream: str, epoch: int = 0) -> int:
+    """
+    Seed of one random stream: NumPy's ``SeedSequence(seed)`` child keyed by the stream and the epoch.
+
+    Parameters
+    ----------
+    seed : int
+        The run's seed (``train.seed`` or ``validation.seed``).
+    stream : str
+        One of ``STREAMS``.
+    epoch : int
+        Epoch a training segment starts at; 0 for validation.
+
+    Returns
+    -------
+    int
+        A 64-bit seed for a torch or NumPy generator.
+
+    Raises
+    ------
+    KeyError
+        If the stream is unknown.
+    """
+    if stream not in STREAMS:
+        raise KeyError(f"unknown random stream {stream!r}; streams: {', '.join(STREAMS)}")
+    return int(np.random.SeedSequence(seed, spawn_key=(STREAMS[stream], epoch)).generate_state(1, np.uint64)[0])
+
+
+def generator(seed: int, stream: str, epoch: int, device) -> torch.Generator:
+    """A torch generator on ``device`` seeded with ``stream_seed(seed, stream, epoch)``."""
+    return torch.Generator(device=device).manual_seed(stream_seed(seed, stream, epoch))

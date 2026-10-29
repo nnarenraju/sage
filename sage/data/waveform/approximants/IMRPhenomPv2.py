@@ -127,12 +127,12 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.augment = augment
 
         # When True, append per-detector targets AFTER the class column:
-        # [pe..., class, tc_det0.. (physical s), mc_det0.. (standardised)].
+        # [pe..., class, tc_det0.. (physical s), mc_det0.. (scaled)].
         # Consumed by the multi-detector consistency heads. Off by default so
         # the standard [pe..., class] target (and everything that reads
         # targets[:, -1] / [:, :-1]) is unchanged.
         self.append_per_det_targets = bool(append_per_det_targets)
-        # Index of mchirp within the targets (its standardised column).
+        # Index of mchirp within the targets (its scaled column).
         self.mc_pe_idx = list(targets).index("mchirp")
 
         param_index = self.param_sampler.param_index
@@ -145,8 +145,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.tc_col = param_index["tc"]
 
         # Target handling
-        self.param_sampler._compile_batch_normaliser(targets, dtype)
-        self.param_sampler._compile_batch_standardiser(targets)
+        self.param_sampler.compile_target_scaling(targets, dtype)
 
         # Move to correct device
         self.param_sampler.to(device)
@@ -182,7 +181,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
                 all_theta[:, self.dist_col] / scale.to(all_theta.dtype)
             )
 
-        normed_targets = self.param_sampler.standardise_from_batch(all_theta)
+        normed_targets = self.param_sampler.scale_targets(all_theta)
         targets = torch.cat(
             [normed_targets, torch.ones_like(normed_targets[:, :1])], dim=1
         )
@@ -192,7 +191,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         # [pe..., class, tc_det0..tc_det{D-1}, mc_det0..mc_det{D-1}].
         #   - tc_det = geocentric tc + projection delay, physical within-window
         #     seconds (amplitude rescaling above does not affect timing);
-        #   - mc_det = the standardised mchirp, identical across detectors for a
+        #   - mc_det = the scaled mchirp, identical across detectors for a
         #     real coherent injection (broadcast). The masker overwrites these
         #     for non-astrophysical pairs (per-detector independent mchirp).
         if self.append_per_det_targets:

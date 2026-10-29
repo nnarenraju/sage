@@ -74,7 +74,22 @@ def build(section: dict):
     window, detectors, dtype = build_data(data(["H1", "L1"], "float32"))
     asds = torch.ones(2, window.n_frequency_bins)
     prior = load_prior("bbh_narrow", Path("."))
-    return build_signal(section, prior, window, detectors, asds, 2, 1, "cpu", dtype)
+    return build_signal(section, prior, window, detectors, asds, 2, 1, 0, "cpu", dtype)
+
+
+def test_signal_ignores_global_generator():
+    def draw(global_seed):
+        torch.manual_seed(global_seed)
+        return build(signal())(return_theta=True)
+
+    assert all(torch.equal(a, b) for a, b in zip(draw(0), draw(1)))  # prior, SNR and GMST have their own streams
+
+
+def test_targets_scaled_from_bounds():
+    sampler = build(signal()).param_sampler
+    assert sampler.scale_targets(sampler(10_000)).abs().max() <= 1.0 + 1e-5  # float32 rounding at the bounds
+    ends = sampler.unscale_targets(torch.tensor([[-1.0, -1.0], [1.0, 1.0]])).T.tolist()
+    assert ends == [pytest.approx(sampler.bounds[target], rel=1e-6) for target in ("tc", "mchirp")]
 
 
 def test_signal_off_grid():
@@ -109,7 +124,7 @@ def test_recolour_synthetic(tmp_path):
         "read_workers": 1,
     }
     with pytest.raises(ValueError, match="recolour applies to real noise; noise.training is synthetic"):
-        build_noise(noise, tmp_path, window, detectors, 2, 1, 2, 2.0, 3.0, "cpu", dtype)
+        build_noise(noise, tmp_path, window, detectors, 2, 1, 0, 2.0, 3.0, "cpu", dtype)
 
 
 def preprocess(post_merger_leeway_in_s: float) -> list:

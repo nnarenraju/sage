@@ -240,10 +240,10 @@ class SageVanillaTesting(torch.nn.Module):
         """Full output ``(B, C)`` -> physical PE mean/sigma ``(B, P)`` (as validation)."""
         P = self.num_pe
         ps = self.signal_sampler.param_sampler
-        mu_phys = ps.unstandardise_from_batch(net[:, 1:1 + P])
+        mu_phys = ps.unscale_targets(net[:, 1:1 + P])
         if net.shape[1] >= 1 + 2 * P:
             sigma_std  = width_to_sigma(net[:, 1 + P:1 + 2 * P], *self.width_bounds)
-            sigma_phys = sigma_std * ps._std_stds.to(sigma_std.device)
+            sigma_phys = sigma_std * ps._target_scales.to(sigma_std.device)
         else:
             sigma_phys = torch.full_like(mu_phys, float("nan"))
         return mu_phys.float(), sigma_phys.float()

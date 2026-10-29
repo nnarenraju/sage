@@ -30,54 +30,20 @@ import inspect
 
 
 def mass_order(params, param_index, extra_params=None):
-    """
-    Enforce mass1 >= mass2 in a torch.compile-safe way.
-
-    Reorders masses per sample using pure tensor ops.
-    """
-
-    idx_m1 = param_index["mass1"]
-    idx_m2 = param_index["mass2"]
-
-    m1 = params[:, idx_m1]
-    m2 = params[:, idx_m2]
-
-    # Compute ordered masses (no branching)
-    m1_new = torch.maximum(m1, m2)
-    m2_new = torch.minimum(m1, m2)
-
-    # Write back
-    params[:, idx_m1] = m1_new
-    params[:, idx_m2] = m2_new
-
-    return params
+    """Samples with ``mass1 >= mass2`` (PyCBC's constraint), as a boolean mask."""
+    return params[:, param_index["mass1"]] >= params[:, param_index["mass2"]]
 
 
 def lambda_order(params, param_index, extra_params=None):
     """
-    Enforce lambda1 <= lambda2 in a torch.compile-safe way.
+    Samples with ``lambda1 <= lambda2``, as a boolean mask.
 
     Astrophysically the more massive component (mass1, after
     :func:`mass_order`) is more compact and has the SMALLER tidal
     deformability, so lambda1 (paired with mass1) must be the smaller of
-    the two.  Reorders the per-star tidal deformabilities using pure
-    tensor ops, mirroring :func:`mass_order`.
+    the two.
     """
-
-    idx_l1 = param_index["lambda1"]
-    idx_l2 = param_index["lambda2"]
-
-    l1 = params[:, idx_l1]
-    l2 = params[:, idx_l2]
-
-    # lambda1 (heavier star) <= lambda2 (lighter star), no branching;
-    # both computed before writing, since l1 and l2 are views of params
-    l1_new = torch.minimum(l1, l2)
-    l2_new = torch.maximum(l1, l2)
-    params[:, idx_l1] = l1_new
-    params[:, idx_l2] = l2_new
-
-    return params
+    return params[:, param_index["lambda1"]] <= params[:, param_index["lambda2"]]
 
 
 ## For automatically adding all named constraints

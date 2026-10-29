@@ -34,7 +34,7 @@ def test_autocast_follows_device():
         signals, noise, Preprocessor([], ProcessingState(Grid.FD_UNIFORM)), model,
         BCE_PE_Sigma(["tc", "mchirp"]), optimiser, torch.optim.lr_scheduler.StepLR(optimiser, 1),
         None, num_iterations=2, num_epochs=1, batch_size=4, signal_batch_size=2, num_estimates=2,
-        clip_norm=100.0, device="cpu", dtype=torch.float32, autocast_dtype=torch.bfloat16,
+        placement=torch.Generator().manual_seed(1), clip_norm=100.0, device="cpu", dtype=torch.float32, autocast_dtype=torch.bfloat16,
         scheduler_mode="batch", callbacks=[],
     )
     trainer(nepoch=0)

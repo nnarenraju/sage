@@ -80,10 +80,10 @@ class SageVanillaValidation(torch.nn.Module):
     * Runs the model in ``eval`` + ``inference_mode``.
     * Calls ``signal_sampler(return_theta=True)`` to obtain raw waveform
       parameters for parameter-recovery diagnostics.
-    * Unstandardises predicted means back to physical units.
+    * Unscales predicted means back to physical units.
     * Converts the raw widths to sigma with the loss's mapping and bounds
       (:func:`~sage.architecture.custom_losses.width_to_sigma`), then
-      un-standardises to physical units.
+      unscales to physical units.
     * Writes each pass's results to ``results_path`` (``results/validation.h5``).
 
     GWBatch tracking works as in the training loop.
@@ -92,10 +92,9 @@ class SageVanillaValidation(torch.nn.Module):
     -----------
     The *trained model* is fully resume-deterministic, but the validation
     *loss curve* is not bit-reproducible across a resume. The val signal/noise
-    samplers are seeded once at construction and advance their RNGs per call,
-    and the injection permutation below (:func:`torch.randperm`) draws from the
-    global RNG — so a run resuming at epoch K draws different validation
-    realisations than a fresh run did at epoch K. This is only Monte-Carlo
+    samplers and the injection permutation's generator are seeded once at
+    construction and advance per call, so a run resuming at epoch K draws
+    different validation realisations than a fresh run did at epoch K. This is only Monte-Carlo
     sampling noise on an unbiased estimate of the same fixed-distribution loss;
     it never affects the trained weights, only the exact val-loss value (and
     hence a marginal, MC-level wobble in best.pt selection). Making the curve
@@ -116,6 +115,8 @@ class SageVanillaValidation(torch.nn.Module):
         Windows per batch that receive a signal (the training one).
     num_estimates : int
         Estimated parameters (``signal.targets``).
+    placement : torch.Generator
+        Generator of the signal positions in a batch, on ``device``.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -138,6 +139,7 @@ class SageVanillaValidation(torch.nn.Module):
         batch_size: int,
         signal_batch_size: int,
         num_estimates: int,
+        placement: torch.Generator,
         device,
         dtype: torch.dtype,
         autocast_dtype,
@@ -160,6 +162,7 @@ class SageVanillaValidation(torch.nn.Module):
         self.batch_size        = batch_size
         self.signal_batch_size = signal_batch_size
         self.num_estimates     = num_estimates
+        self.placement         = placement
 
         # ── Loss tracking ─────────────────────────────────────────────────
         self.loss_components = torch.zeros(
@@ -212,7 +215,7 @@ class SageVanillaValidation(torch.nn.Module):
                 # ── 2. Random signal injection ────────────────────────────
                 x, targets, idx = assemble_batch(
                     signal_data, signal_targets, noise_data, noise_targets,
-                    self.signal_batch_size, self.num_estimates,
+                    self.signal_batch_size, self.num_estimates, self.placement,
                 )
                 diagnostics["signal_idx"].append(idx.cpu())
 
@@ -233,8 +236,8 @@ class SageVanillaValidation(torch.nn.Module):
                 network_output = torch.cat([*out], dim=1)
 
                 ranking   = network_output[:, 0:1]
-                mu_std    = network_output[:, 1 : 1 + self.num_estimates]
-                mu_phys   = self.signal_sampler.param_sampler.unstandardise_from_batch(mu_std)
+                mu_scaled = network_output[:, 1 : 1 + self.num_estimates]
+                mu_phys   = self.signal_sampler.param_sampler.unscale_targets(mu_scaled)
                 # Heteroscedastic models also emit a raw sigma per point estimate
                 # (columns after the means); mean-only models (e.g. with BCE_PE_Huber)
                 # do not -- their network_output has no sigma columns, so export
@@ -245,13 +248,10 @@ class SageVanillaValidation(torch.nn.Module):
                     ]
                     # The loss's own mapping and bounds, so exported sigma matches
                     # the trained parameterisation.
-                    sigma_std = width_to_sigma(
+                    sigma_scaled = width_to_sigma(
                         sigma_raw, self.loss_function.sigma_min, self.loss_function.sigma_max
                     )
-                    std_prior  = self.signal_sampler.param_sampler._std_stds.to(
-                        sigma_std.device
-                    )
-                    sigma_phys = sigma_std * std_prior
+                    sigma_phys = sigma_scaled * self.signal_sampler.param_sampler._target_scales
                     network_output = torch.cat([ranking, mu_phys, sigma_phys], dim=1)
                 else:
                     network_output = torch.cat([ranking, mu_phys], dim=1)

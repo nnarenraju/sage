@@ -16,6 +16,8 @@ __status__        = inProgress
 """
 
 # Packages
+import warnings
+
 import numpy as np
 import torch
 
@@ -56,6 +58,11 @@ class UniformComovingVolume:
         from astropy.cosmology import z_at_value
         from astropy import units as u
 
+        warnings.warn(
+            "uniform_comoving_volume is not a PyCBC distribution (PyCBC draws uniform comoving_volume with "
+            "Planck15 and transforms it to distance); its distance inversion interpolates a table "
+            "(1e-6 relative), so draws may pass max by ~1e-6 Mpc"
+        )
         cosmo = getattr(ac, cosmology)
 
         z_lo = float(z_at_value(cosmo.luminosity_distance, low * u.Mpc))
