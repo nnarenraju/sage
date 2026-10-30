@@ -38,7 +38,6 @@ from .white_noise import (
 from .recolour import RecolourPostprocess
 from .glitch_sampler import GlitchOversampledNoiseSampler
 from .lowfar_noise import StartTimeDataset
-from .split import split_observing_run, train_val_split
 
 # NOTE: the hard-negative miner lives in ``sage.data.noise.cma_mae_mining`` and
 # is imported directly by the hard-mining trainer (it pulls in pyribs).  It is
@@ -56,6 +55,4 @@ __all__ = [
     "RecolourPostprocess",
     "GlitchOversampledNoiseSampler",
     "StartTimeDataset",
-    "split_observing_run",
-    "train_val_split",
 ]

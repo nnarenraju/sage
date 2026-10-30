@@ -166,26 +166,6 @@ source/baseline/data/psds/
 # Third-party reference sources (LALSuite C, kept locally for the waveform ports)
 sage/data/waveform/lalsim_src
 
-# runs/: track only what launches a run; variant configs, analysis scripts,
-# data and outputs stay local (checkpoints/logs live on /work/nagarajan/sage_runs)
-runs/**
-!runs/*/
-!runs/README.md
-!runs/build_fiducial.py
-!runs/launch_asds.sh
-!runs/asd_memguard.sh
-!runs/*/config.py
-!runs/*/config_base.py
-!runs/*/config_HL.py
-!runs/*/config_HLV.py
-!runs/*/config_HV.py
-!runs/*/config_LV.py
-!runs/*/dataset.py
-!runs/*/gwconfig.yaml
-!runs/*/train.py
-!runs/*/train_hard.py
-!runs/*/submit.sh
-!runs/*/start.sh
 scratch
 # Reference PDFs for sage/search (fetched locally, not redistributed)
 docs/references/*.pdf

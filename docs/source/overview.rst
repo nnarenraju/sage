@@ -50,10 +50,8 @@ Modules
      - Waveform generation, noise sampling, PSD handling, data primitives
    * - :mod:`sage.dsp`
      - Digital signal processing: FFT, whitening, multirate sampling, Welch PSD
-   * - :mod:`sage.exec`
-     - Execution orchestration: ``SageDirector``, config/data/export handlers
    * - :mod:`sage.factory`
-     - Training/validation loops, callbacks, schedulers, compile manager
+     - Training/validation loops, callbacks, schedulers
    * - :mod:`sage.plotting`
      - Diagnostic plots: ROC curves, efficiency, parameter recovery, loss curves
    * - :mod:`sage.presets`

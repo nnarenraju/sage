@@ -94,9 +94,8 @@ sage/
 │   ├── exec/               # Pipeline orchestration
 │   ├── factory/            # Training, validation, schedulers, callbacks
 │   ├── plotting/           # Diagnostic and publication plotting
-│   ├── presets/            # Named run presets (being rebuilt from runs/)
+│   ├── presets/            # Run and prior presets
 │   └── utils/              # Checkpointing, timing, Condor utilities
-├── runs/                   # Run scripts for specific experiments
 ├── repro/                  # Reproducibility notebooks and configuration
 ├── notebooks/              # Exploratory notebooks
 ├── tests/                  # Lightweight tests and smoke checks
@@ -120,8 +119,7 @@ No local install needed — run Sage on a free Google Colab T4 GPU:
 ## Quick Start
 
 The full User Guide is available at **[sage-gw.readthedocs.io](https://sage-gw.readthedocs.io/en/latest/)**.
-Complete run scripts for specific experiments live under [`runs/`](runs/) — start there
-to see how the full pipeline is configured and executed.
+Run `sage` to see the steps from a new machine to a trained network.
 
 ---
 
