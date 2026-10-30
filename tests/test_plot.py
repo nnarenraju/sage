@@ -6,6 +6,8 @@ import torch
 from sage.cli import main
 from sage.core.logger import HDF5LossLogger
 from sage.factory.validation import save_validation
+from sage.plotting.prediction_probability import plot_prediction_probability
+from sage.plotting.prediction_raw import plot_prediction_raw
 
 NAMES = ["distance", "inclination", "mass1", "mass2", "mchirp", "q", "tc"]
 TARGETS = ["tc", "mchirp"]
@@ -54,3 +56,13 @@ def test_plot(tmp_path, capsys):
     assert (plots / "ROC" / "roc_curve_validate_best.png").exists()
     assert main(["plot", str(run), "--group", "final_best"]) == 1
     assert "fix: sage plot" in capsys.readouterr().err
+
+
+def test_almost_constant_output(tmp_path):
+    """An untrained network's output varies only in its last float32 bits; both prediction plots still draw."""
+    one = np.float32(0.5)
+    output = np.array([one, one, np.nextafter(one, np.float32(1))] * 4, dtype=np.float32)
+    labels = np.array([1.0, 0.0] * 6)  # each class holds both values
+    plot_prediction_probability(0, output, labels, export_dir=str(tmp_path))
+    plot_prediction_raw(0, output, labels, export_dir=str(tmp_path))
+    assert sorted(p.name for p in tmp_path.rglob("*.png")) == ["log_pred_prob_output_0.png", "log_raw_output_0.png"]

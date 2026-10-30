@@ -318,6 +318,9 @@ class EstimateASD:
                         sample_length=self.training_sample_length,
                         sample_rate=sample_rate,
                     )
+                else:
+                    # NumPy from here, as the interpolation returns
+                    pxx, pxx_freqs = pxx.cpu().numpy(), pxx_freqs.numpy()
 
                 # Spline smooth the ASD before saving
                 if self.asd_smoothener is not None:
@@ -578,6 +581,9 @@ class EstimateASD:
                         sample_length=self.training_sample_length,
                         sample_rate=self.sample_rate,
                     )
+                else:
+                    # NumPy from here, as the interpolation returns
+                    freqs = freqs.numpy()
 
                 # Spline smooth the ASD before saving.
                 # Smoothing strength is domain dependent: 0.004 * len(freqs)

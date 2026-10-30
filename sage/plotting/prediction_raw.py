@@ -87,8 +87,9 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
     fig.suptitle(f"Raw Output at {_etitle(epoch)}")
 
     # Histogram panel
-    ax[0].hist(raw_tp, bins=100, histtype="step", label="Signals")
-    ax[0].hist(raw_tn, bins=100, histtype="step", label="Noise")
+    # float64: an output varying only in its last float32 bits still splits into 100 finite bins
+    ax[0].hist(np.asarray(raw_tp, dtype=np.float64), bins=100, histtype="step", label="Signals")
+    ax[0].hist(np.asarray(raw_tn, dtype=np.float64), bins=100, histtype="step", label="Noise")
     ax[0].set_yscale("log")
     ax[0].set_xlabel("Ranking Statistic")
     ax[0].set_ylabel("Number of Occurrences")

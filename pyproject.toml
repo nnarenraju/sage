@@ -108,6 +108,7 @@ exclude = ["sage.egg-info*"]
 
 [tool.setuptools.package-data]
 "sage.presets" = ["runs/*.yaml", "priors/*.yaml", "waveform_priors/*.yaml"]
+"sage.plotting" = ["style/*.mplstyle"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

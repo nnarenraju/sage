@@ -61,12 +61,10 @@ from pycbc import DYN_RANGE_FAC
 
 # LOCAL
 from sage.core.hardcode import _GWOSC_ARCHIVE_URL
+from sage.core.logger import get_logger
 from sage.dsp.filters import pycbc_downsample
 
-# from sage.core.logger import get_logger, setup_logging
-
-# setup_logging("logs")
-# logger = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)

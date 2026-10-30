@@ -27,7 +27,7 @@ Documentation: NULL
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
+import matplotlib
 from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
@@ -84,7 +84,7 @@ def plot_diagonal_compare(
     has_snr = network_snrs is not None
     snr_sig = np.asarray(network_snrs)[signal_mask] if has_snr else None
 
-    cmap = cm.get_cmap("RdYlBu_r")
+    cmap = matplotlib.colormaps["RdYlBu_r"]
 
     for param in pred_params.keys():
 

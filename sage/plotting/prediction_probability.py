@@ -63,8 +63,9 @@ def plot_prediction_probability(epoch, pred_prob, labels, export_dir=None, save=
     signal_mask = labels == 1.0
     noise_mask = labels == 0.0
 
-    pred_prob_tp = pred_prob[signal_mask]
-    pred_prob_tn = pred_prob[noise_mask]
+    # float64: an output varying only in its last float32 bits still splits into 100 finite bins
+    pred_prob_tp = np.asarray(pred_prob[signal_mask], dtype=np.float64)
+    pred_prob_tn = np.asarray(pred_prob[noise_mask], dtype=np.float64)
 
     # Diagnostic separation metric (not returned)
     boundary_diff = np.round(np.max(pred_prob_tp) - np.max(pred_prob_tn), 8)
