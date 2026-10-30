@@ -4,8 +4,7 @@
 ``derived.yaml`` (values computed from them), ``versions.yaml`` (code and
 libraries, one entry per job segment) and ``fiducial/`` (the ASDs used).
 Training counts as started once ``checkpoints/`` holds a checkpoint; from
-then on the settings, prior and derived values may not change, and code that
-differs from the last segment's commit needs ``--accept-code-change``.
+then on the settings, prior and derived values may not change.
 """
 
 import datetime
@@ -26,10 +25,6 @@ REPO = Path(__file__).resolve().parents[2]
 
 class SettingsChanged(ValueError):
     """The settings, prior or derived values differ from the record after training started."""
-
-
-class CodeChanged(ValueError):
-    """The Sage code differs from the commit a started run last trained on."""
 
 
 class StateMismatch(ValueError):
@@ -264,40 +259,9 @@ def environment(device) -> dict:
     }
 
 
-def check_code(run_dir: Path, accept_code_change: bool) -> bool:
-    """
-    Whether a started run's Sage code differs in any way from the commit its last segment trained on.
-
-    Parameters
-    ----------
-    run_dir : Path
-        Run directory.
-    accept_code_change : bool
-        Continue on changed code.
-
-    Raises
-    ------
-    CodeChanged
-        If the code differs and ``accept_code_change`` is not set.
-    """
-    path = Path(run_dir) / "resolved" / "versions.yaml"
-    segments = yaml.safe_load(path.read_text())["segments"] if path.exists() else []
-    changed = bool(segments) and training_started(run_dir) and code_differs(segments[-1]["sage_commit"])
-    if changed and not accept_code_change:
-        raise CodeChanged(
-            f"{run_dir}: the Sage code differs from commit {segments[-1]['sage_commit']}, which this run last "
-            "trained on. To continue on the current code, run again with --accept-code-change"
-        )
-    return changed
-
-
-def record_versions(run_dir: Path, start_epoch: int, device, accept_code_change: bool) -> None:
+def record_versions(run_dir: Path, start_epoch: int, device) -> None:
     """
     Append this job segment to ``resolved/versions.yaml``.
-
-    Once training has started, code under ``sage/`` that differs in any way
-    from the last segment's commit stops the run, unless
-    ``accept_code_change``.
 
     Parameters
     ----------
@@ -307,15 +271,7 @@ def record_versions(run_dir: Path, start_epoch: int, device, accept_code_change:
         Epoch this segment starts at.
     device : str or torch.device
         Training device.
-    accept_code_change : bool
-        Continue on changed code.
-
-    Raises
-    ------
-    CodeChanged
-        As ``check_code``.
     """
-    changed = check_code(run_dir, accept_code_change)
     path = Path(run_dir) / "resolved" / "versions.yaml"
     segments = yaml.safe_load(path.read_text())["segments"] if path.exists() else []
     version = code_version()
@@ -325,7 +281,6 @@ def record_versions(run_dir: Path, start_epoch: int, device, accept_code_change:
             "start_epoch": start_epoch,
             "sage_commit": version["commit"],
             "sage_uncommitted_changes": version["uncommitted_changes"],
-            "code_change_accepted": changed,
             **environment(device),
         }
     )

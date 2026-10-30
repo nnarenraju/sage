@@ -4,7 +4,8 @@ Port of runs/o3b/compare_validation.py and compare_validation_report.py. Every
 batch is drawn once from the first run's validation streams and passed through
 every run's ``best.pt``, each through its own preprocessing. Results are
 appended to ``compare.h5`` as they are produced; a killed job keeps everything
-written so far.
+written so far, beside a file named ``incomplete``. Every comparison writes
+into a new directory.
 """
 
 import dataclasses
@@ -19,7 +20,7 @@ import yaml
 
 from sage.architecture.custom_losses import width_to_sigma
 from sage.config.machine import fiducial_dir, read_data_dir
-from sage.config.run_dir import check_code, check_record, differences, record_fiducial, training_started
+from sage.config.run_dir import check_record, differences, record_fiducial, training_started
 from sage.core.logger import get_logger
 from sage.core.pipeline import GWBatch, Grid, ProcessingState
 from sage.data.asd import read_fiducial_asds
@@ -41,6 +42,7 @@ logger = get_logger(__name__)
 
 OUTPUT_FILE = "compare.h5"
 REPORT_FILE = "report.txt"
+INCOMPLETE_FILE = "incomplete"  # removed once compare.h5 is complete
 FALSE_ALARM_PROBABILITIES = (1e-3, 1e-4, 1e-5, 1e-6, 1e-7)
 SNR_TABLE_PROBABILITIES = (1e-5, 1e-6)
 SNR_EDGES = (5, 6, 7, 8, 9, 10, 12, 15, np.inf)
@@ -74,7 +76,7 @@ class Appender:
         self.buf = []
 
 
-def load_network(run_dir: Path, device, data_dir: Path, accept_code_change: bool) -> SimpleNamespace:
+def load_network(run_dir: Path, device, data_dir: Path) -> SimpleNamespace:
     """
     A run's ``best.pt`` with its own preprocessing, target scaling and precision.
 
@@ -86,8 +88,6 @@ def load_network(run_dir: Path, device, data_dir: Path, accept_code_change: bool
         Device every network runs on.
     data_dir : Path
         The machine's data directory.
-    accept_code_change : bool
-        Load a run whose Sage code changed since it trained.
 
     Returns
     -------
@@ -100,14 +100,13 @@ def load_network(run_dir: Path, device, data_dir: Path, accept_code_change: bool
     ------
     FileNotFoundError
         If the run has no checkpoint.
-    SettingsChanged, CodeChanged
+    SettingsChanged
         As ``train_run``.
     """
     settings, prior = check_run(run_dir)
     if not training_started(run_dir):
         raise FileNotFoundError(f"{run_dir}: no checkpoint to compare")
     check_record(run_dir, resolve_settings(settings), prior, resolve_settings)
-    check_code(run_dir, accept_code_change)
     train = {**settings["train"], "device": str(device)}
     check_device(train)
     window, detectors, dtype = build_data(settings["data"])
@@ -150,8 +149,7 @@ def scores(run: SimpleNamespace, x: torch.Tensor) -> np.ndarray:
     return torch.cat(columns, dim=1).cpu().numpy()
 
 
-def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_windows: int, seed: int,
-                 accept_code_change: bool = False) -> str:
+def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_windows: int, seed: int) -> str:
     """
     Score every run's ``best.pt`` on the same windows; write ``compare.h5`` and the report.
 
@@ -165,14 +163,12 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
         Started run directories with distinct names; all share the first
         one's detectors and window geometry.
     output_dir : Path
-        Directory for ``compare.h5`` and ``report.txt``; created if missing.
+        New directory for ``compare.h5`` and ``report.txt``; it must not exist.
     noise_windows, signal_windows : int
         Noise-only windows and windows carrying a signal (whole batches: at
         least these many).
     seed : int
         Seed of the windows.
-    accept_code_change : bool
-        Load runs whose Sage code changed since they trained.
 
     Returns
     -------
@@ -186,7 +182,7 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
     WindowMismatch
         If a run does not share the first one's detectors and window geometry.
     FileExistsError
-        If ``compare.h5`` exists in ``output_dir``.
+        If ``output_dir`` exists.
     """
     if noise_windows < 1 or signal_windows < 1:
         raise ValueError(f"windows: {noise_windows} noise, {signal_windows} signal; give at least one of each")
@@ -194,14 +190,15 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
     names = [run_dir.resolve().name for run_dir in run_dirs]
     if len(set(names)) < len(names):
         raise ValueError(f"runs are named by their directories, and these repeat: {', '.join(names)}")
-    path = Path(output_dir) / OUTPUT_FILE
-    if path.exists():
-        raise FileExistsError(f"{path} exists")
+    output_dir = Path(output_dir)
+    if output_dir.exists():
+        raise FileExistsError(f"{output_dir} exists; every comparison writes into a new directory")
+    path = output_dir / OUTPUT_FILE
     data_dir = read_data_dir()
     reference, prior = check_run(run_dirs[0])
     check_data(run_dirs[0], reference, data_dir)
     device = torch.device(reference["train"]["device"])
-    runs = [load_network(run_dir, device, data_dir, accept_code_change) for run_dir in run_dirs]
+    runs = [load_network(run_dir, device, data_dir) for run_dir in run_dirs]
     first = runs[0]
     for run in runs[1:]:
         found = differences(
@@ -221,7 +218,9 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
         reference["noise"], "validation", data_dir, first.window, first.detectors, train["batch_size"], seed, 0,
         replay["start_jitter_in_s"], replay["focal_gamma"], device, dtype,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True)
+    incomplete = output_dir / INCOMPLETE_FILE
+    incomplete.write_text(f"{OUTPUT_FILE} holds only the windows scored before this comparison stopped\n")
     try:
         with h5py.File(path, "w") as file, torch.inference_mode():
             file.attrs.update(
@@ -289,6 +288,7 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
             for run in runs:
                 outputs[background.name, run.name].flush()
             file.attrs["complete"] = True
+        incomplete.unlink()
     finally:
         noise.shutdown()
     text = report(path)

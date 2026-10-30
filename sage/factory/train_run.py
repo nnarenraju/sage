@@ -16,7 +16,6 @@ from sage.config import load_run, prepare_run_dir
 from sage.config.machine import MissingData, dataset_file, fiducial_dir, read_data_dir
 from sage.config.prior import load_prior
 from sage.config.run_dir import (
-    check_code,
     check_derived,
     check_record,
     record_derived,
@@ -339,16 +338,17 @@ def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> Sa
     )
 
 
-def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float | None = None) -> None:
+def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     """
     Train the run in ``run_dir`` from ``run.yaml``, resuming from its latest checkpoint.
+
+    Once the run is trained to the end (``results/final_check.json`` written), only the
+    settings are checked.
 
     Parameters
     ----------
     run_dir : Path
         Run directory holding ``run.yaml``.
-    accept_code_change : bool
-        Continue a started run on changed Sage code.
     stop_after : float or None
         Seconds after which to stop: no epoch starts once the time left is
         less than the longest epoch so far, and the final check does not start
@@ -365,8 +365,6 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
         If a file the run reads is missing from the data directory.
     SettingsChanged
         If the settings, prior or derived values changed after training started.
-    CodeChanged
-        On a code change without ``accept_code_change``.
     """
     clock = time.monotonic()
     run_dir = Path(run_dir)
@@ -378,13 +376,15 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
     start, full_state = clone_start(run_dir) or (None, False)
     changes = None if start is None else check_start(resolve_settings(settings), start, full_state)
     prepare_run_dir(run_dir, resolve_settings(settings), prior, resolve_settings)
+    if next_epoch(run_dir) == train["epochs"] and (run_dir / "results" / "final_check.json").exists():
+        return
 
     setup_logging(run_dir)
     start_epoch = start["epoch"] + 1 if full_state else next_epoch(run_dir)
     if start is not None:
         logger.info("Starting from the cloned epoch %d (%s); settings changed: %s", start["epoch"],
                     "full state" if full_state else "weights only", "; ".join(changes) or "none")
-    record_versions(run_dir, start_epoch, train["device"], accept_code_change)
+    record_versions(run_dir, start_epoch, train["device"])
     fiducial = record_fiducial(
         run_dir, fiducial_dir(data_dir, settings["noise"]["fiducial"]), settings["data"]["detectors"]
     )
@@ -478,20 +478,18 @@ def train_run(run_dir: Path, accept_code_change: bool = False, stop_after: float
         )
 
 
-def check_training(run_dir: Path, accept_code_change: bool = False, cpu: bool = False) -> float:
+def check_training(run_dir: Path, cpu: bool = False) -> float:
     """
     Run every start-up check of ``train_run``, then one real training step; write nothing.
 
-    A started run is checked as its next segment would be (record, code,
-    derived values) and the step starts from its latest checkpoint. The step
+    A started run is checked as its next segment would be (record, derived
+    values) and the step starts from its latest checkpoint. The step
     trains without mining, which would write the bank.
 
     Parameters
     ----------
     run_dir : Path
         Run directory holding ``run.yaml``.
-    accept_code_change : bool
-        Accept a started run's code change, as ``train_run``.
     cpu : bool
         Take the step on the CPU and uncompiled, instead of ``train.device``.
 
@@ -509,7 +507,6 @@ def check_training(run_dir: Path, accept_code_change: bool = False, cpu: bool = 
     started = training_started(run_dir)
     if started:
         check_record(run_dir, resolve_settings(settings), prior, resolve_settings)
-        check_code(run_dir, accept_code_change)
     start, full_state = clone_start(run_dir) or (None, False)
     if start is not None:
         check_start(resolve_settings(settings), start, full_state)
@@ -626,8 +623,7 @@ def final_check(
     )
 
 
-def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: bool,
-                        accept_code_change: bool = False) -> dict:
+def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: bool) -> dict:
     """
     Validate one stored checkpoint on ``validation.final_samples`` windows of the run's validation set.
 
@@ -644,8 +640,6 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
         Stored epoch (``epoch_NNNN.pt`` or ``latest.pt``); None takes ``best.pt``.
     ema_calibrated : bool
         Take ``ema_calibrated.pt`` (written by the final check) instead.
-    accept_code_change : bool
-        Validate on changed Sage code.
 
     Returns
     -------
@@ -658,7 +652,7 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
         If the run has no checkpoint, or not the one asked for.
     EpochUnavailable
         If ``from_epoch`` is not stored.
-    SettingsChanged, CodeChanged
+    SettingsChanged
         As ``train_run``.
     """
     run_dir = Path(run_dir)
@@ -666,7 +660,6 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     if not training_started(run_dir):
         raise FileNotFoundError(f"{run_dir}: no checkpoint to validate")
     check_record(run_dir, resolve_settings(settings), prior, resolve_settings)
-    check_code(run_dir, accept_code_change)
     train, validation = settings["train"], settings["validation"]
     check_device(train)
     data_dir = read_data_dir()

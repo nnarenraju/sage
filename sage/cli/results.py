@@ -2,12 +2,11 @@
 
 import argparse
 import shlex
-import time
 from pathlib import Path
 
 from sage.cli.registry import CommandError, command
 from sage.cli.training import checked_settings, device_available, on, parse
-from sage.config.run_dir import CodeChanged, SettingsChanged
+from sage.config.run_dir import SettingsChanged
 
 
 @command("validate", "Validate one stored checkpoint on the run's final validation set")
@@ -22,7 +21,6 @@ def validate(arguments: list) -> None:
         "validate", "Validate one stored checkpoint on the run's final validation set", arguments,
         (["--from-epoch"], {"type": int, "help": "a stored epoch instead of best.pt"}),
         (["--ema-calibrated"], {"action": "store_true", "help": "ema_calibrated.pt instead of best.pt"}),
-        (["--accept-code-change"], {"action": "store_true", "help": "validate on changed Sage code"}),
     )
     directory = Path(options.directory)
     if options.from_epoch is not None and options.ema_calibrated:
@@ -42,9 +40,7 @@ def validate(arguments: list) -> None:
     setup_logging(None)
     again = on("validate", options.directory)
     try:
-        result = validate_checkpoint(directory, options.from_epoch, options.ema_calibrated, options.accept_code_change)
-    except CodeChanged as error:
-        raise CommandError(str(error), f"{again} --accept-code-change") from None
+        result = validate_checkpoint(directory, options.from_epoch, options.ema_calibrated)
     except SettingsChanged as error:
         raise CommandError(str(error), f"edit {directory / 'run.yaml'} back as above, then: {again}") from None
     except EpochUnavailable as error:
@@ -76,7 +72,6 @@ def plot(arguments: list) -> None:
         raise CommandError(f"{directory}: no validation results yet", on("train", options.directory))
     files = [path for path in (results / "validation.h5", results / "validate.h5") if path.exists()]
     matplotlib.use("Agg")
-    begun = time.time()
     try:
         manager = ValidationPlotManager(files, results / "losses.h5", export_dir=str(results / "plots"))
         groups = manager.resolve_epochs(options.group)
@@ -85,8 +80,7 @@ def plot(arguments: list) -> None:
         raise CommandError(error.args[0], f"{on('plot', options.directory)} --group <one of the groups above>") from None
     except OSError as error:
         raise CommandError(f"{error}; a results file may be being written", on("plot", options.directory)) from None
-    drawn = [path for path in (results / "plots").rglob("*.png") if path.stat().st_mtime >= begun]
-    print(f"Drew {len(drawn)} figures for {', '.join(groups)} in {results / 'plots'}")
+    print(f"Drew the figures for {', '.join(groups)} in {results / 'plots'}")
     print("Next: sage help")
 
 
@@ -95,16 +89,15 @@ def compare(arguments: list) -> None:
     """Score every run on the first run's validation windows; print and save the recovered-fraction report."""
     from sage.config.run_dir import training_started
     from sage.core.logger import setup_logging
-    from sage.factory.compare import OUTPUT_FILE, REPORT_FILE, WindowMismatch, compare_runs
+    from sage.factory.compare import INCOMPLETE_FILE, OUTPUT_FILE, REPORT_FILE, WindowMismatch, compare_runs
 
     parser = argparse.ArgumentParser(prog="sage compare", description="Score several runs' best.pt on identical "
                                      "validation windows.")
     parser.add_argument("runs", nargs="+", help="run directories; the first one's validation settings define the windows")
-    parser.add_argument("--output", required=True, help=f"directory for {OUTPUT_FILE} and {REPORT_FILE}")
+    parser.add_argument("--output", required=True, help=f"new directory for {OUTPUT_FILE} and {REPORT_FILE}")
     parser.add_argument("--noise-windows", type=int, default=10_000_000, help="noise-only windows (default: 10000000)")
     parser.add_argument("--signal-windows", type=int, default=1_000_000, help="windows with a signal (default: 1000000)")
     parser.add_argument("--seed", type=int, default=170817, help="seed of the windows (default: 170817)")
-    parser.add_argument("--accept-code-change", action="store_true", help="compare runs on changed Sage code")
     options = parser.parse_args(arguments)
     again = shlex.join(["sage", "compare", *arguments])
     runs = [Path(run) for run in options.runs]
@@ -121,16 +114,15 @@ def compare(arguments: list) -> None:
         raise CommandError("give at least one noise and one signal window",
                            f"sage compare {shlex.join(options.runs)} --output {options.output}")
     output = Path(options.output)
-    if (output / OUTPUT_FILE).exists():
-        raise CommandError(f"{output / OUTPUT_FILE} exists", f"sage compare {shlex.join(options.runs)} --output <new directory>")
+    if output.exists():
+        stopped = f"; {INCOMPLETE_FILE} there: that comparison stopped early" if (output / INCOMPLETE_FILE).exists() else ""
+        raise CommandError(f"{output} exists{stopped}; every comparison writes into a new directory",
+                           f"sage compare {shlex.join(options.runs)} --output <new directory>")
     settings = checked_settings("check", options.runs[0])
     device_available(settings, f"put `{again}` in a job script on a node that has it, then: sbatch <your job script>")
     setup_logging(None)
     try:
-        text = compare_runs(runs, output, options.noise_windows, options.signal_windows, options.seed,
-                            options.accept_code_change)
-    except CodeChanged as error:
-        raise CommandError(str(error), f"{again} --accept-code-change") from None
+        text = compare_runs(runs, output, options.noise_windows, options.signal_windows, options.seed)
     except SettingsChanged as error:
         raise CommandError(str(error), f"edit that run.yaml back as above, then: {again}") from None
     except WindowMismatch as error:

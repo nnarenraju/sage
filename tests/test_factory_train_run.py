@@ -6,6 +6,7 @@ import shutil
 
 import h5py
 import numpy as np
+import pytest
 import torch
 import yaml
 
@@ -13,7 +14,7 @@ from sage.cli import main
 from sage.config import machine
 from sage.core.logger import setup_logging
 from sage.factory.callbacks import EMACallback
-from sage.factory.compare import recovered_fractions
+from sage.factory.compare import compare_runs, recovered_fractions
 from sage.factory.train_run import final_check_seconds, train_run
 from sage.utils.checkpoint import CheckpointManager
 
@@ -124,8 +125,8 @@ def test_train_run(tmp_path, monkeypatch, capsys):
         assert main(["train", str(run_dir), "--stop-after", "0s"]) == 0  # stops before epoch 0
         assert not (run_dir / "checkpoints" / "progress.json").exists()
         train_run(run_dir)
-        assert main(["train", str(run_dir)]) == 0  # resumes at epoch 1 = epochs: records a segment, trains nothing
         before = files()
+        assert main(["train", str(run_dir)]) == 0 and files() == before  # trained to the end: returns at once
         assert main(["check", str(run_dir)]) == 0 and files() == before  # a started run, from its checkpoint
     finally:
         setup_logging(None, console=False)
@@ -133,7 +134,7 @@ def test_train_run(tmp_path, monkeypatch, capsys):
     resolved = run_dir / "resolved"
     derived = yaml.safe_load((resolved / "derived.yaml").read_text())
     assert set(derived) == {"window", "multirate_bins", "target_scaling", "flat_tail_start_epoch", "seeds"}
-    assert [s["start_epoch"] for s in yaml.safe_load((resolved / "versions.yaml").read_text())["segments"]] == [0, 0, 1]
+    assert [s["start_epoch"] for s in yaml.safe_load((resolved / "versions.yaml").read_text())["segments"]] == [0, 0]
     assert sorted(p.name for p in (resolved / "fiducial").iterdir()) == [
         "fiducial_H1_psd.bin", "fiducial_H1_psd.json", "fiducial_L1_psd.bin", "fiducial_L1_psd.json",
     ]
@@ -289,8 +290,20 @@ def test_compare(tmp_path, monkeypatch, capsys):
         assert "Recovered fraction at fixed noise false-alarm probability per window" in capsys.readouterr().out
         assert main(["compare", str(run), "--output", str(tmp_path / "alone"), *windows]) == 0
         assert main(["compare", str(run), "--output", str(tmp_path / "alone"), *windows]) == 1  # never overwritten
+        (tmp_path / "empty").mkdir()
+        assert main(["compare", str(run), "--output", str(tmp_path / "empty"), *windows]) == 1  # always a new directory
         assert main(["compare", str(run), str(run), "--output", str(tmp_path / "same"), *windows]) == 1
         assert "these repeat: run, run" in capsys.readouterr().err
+
+        def stop(run, x):
+            raise RuntimeError("stopped")
+
+        monkeypatch.setattr("sage.factory.compare.scores", stop)
+        with pytest.raises(RuntimeError, match="stopped"):
+            compare_runs([run], tmp_path / "stopped", 8, 8, 170817)
+        assert sorted(p.name for p in (tmp_path / "stopped").iterdir()) == ["compare.h5", "incomplete"]
+        assert main(["compare", str(run), "--output", str(tmp_path / "stopped"), *windows]) == 1
+        assert "incomplete there: that comparison stopped early" in capsys.readouterr().err
     finally:
         setup_logging(None, console=False)
 
@@ -303,6 +316,7 @@ def test_compare(tmp_path, monkeypatch, capsys):
             assert np.array_equal(both[group]["run"][:], both[group]["twin"][:])  # one network, the same windows
             assert np.array_equal(both[group]["run"][:], alone[group]["run"][:])  # windows: first run and seed only
     assert (tmp_path / "both" / "report.txt").read_text().startswith("background windows 8, foreground signals 8")
+    assert not (tmp_path / "both" / "incomplete").exists()
     with h5py.File(run / "results" / "validation.h5", "r") as file:  # every pass on the same windows
         passes = [file[group] for group in ("epoch_0000", "epoch_0001", "final_best")]
         for key in ("signal_params", "signal_idx"):

@@ -282,19 +282,16 @@ def test_derived_changed(tmp_path):
         record_derived(tmp_path, {"bins": [[0, 12, 64]]})
 
 
-def test_code_change(tmp_path, monkeypatch):
-    differs = {"now": True}
+def test_code_change_recorded(tmp_path, monkeypatch):
+    differs = {"now": False}
     monkeypatch.setattr("sage.config.run_dir.code_differs", lambda commit: differs["now"])
-    record_versions(tmp_path, 0, "cpu", accept_code_change=False)  # no training yet: proceeds
+    record_versions(tmp_path, 0, "cpu")
     write(tmp_path / "checkpoints", "latest.pt", "")
-    with pytest.raises(ValueError, match="Sage code differs from commit .*--accept-code-change"):
-        record_versions(tmp_path, 1, "cpu", accept_code_change=False)
-    record_versions(tmp_path, 1, "cpu", accept_code_change=True)
-    differs["now"] = False
-    record_versions(tmp_path, 2, "cpu", accept_code_change=False)
+    differs["now"] = True
+    record_versions(tmp_path, 1, "cpu")  # a started run on changed code goes on
     path = tmp_path / "resolved" / "versions.yaml"
-    accepted = [s["code_change_accepted"] for s in yaml.safe_load(path.read_text())["segments"]]
-    assert accepted == [False, True, False]
+    changed = [s["sage_uncommitted_changes"] for s in yaml.safe_load(path.read_text())["segments"]]
+    assert changed == [False, True]
 
 
 class Component:

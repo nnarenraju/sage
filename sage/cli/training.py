@@ -14,7 +14,7 @@ import yaml
 
 from sage.cli.registry import CommandError, command
 from sage.config import machine
-from sage.config.run_dir import CodeChanged, SettingsChanged, StateMismatch
+from sage.config.run_dir import SettingsChanged, StateMismatch
 from sage.utils.schedulers import schedulers
 
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -77,18 +77,16 @@ def device_available(settings: dict, fix: str = "sage chain <your job script> --
 
 
 def explained(name: str, directory: str, function, *args):
-    """``function(*args)``, with a changed record or changed code turned into the command that fixes it."""
+    """``function(*args)``, with a changed record turned into the command that fixes it."""
     try:
         return function(*args)
-    except CodeChanged as error:
-        raise CommandError(str(error), f"{on(name, directory)} --accept-code-change") from None
     except SettingsChanged as error:
         raise CommandError(str(error), f"sage clone {directory} <new directory> --full-state") from None
     except StateMismatch as error:
         raise CommandError(str(error), f"edit {Path(directory) / 'run.yaml'} back as above, then: {on(name, directory)}") from None
 
 
-def checked_step(name: str, directory: str, accept_code_change: bool, in_job: bool) -> None:
+def checked_step(name: str, directory: str, in_job: bool) -> None:
     """
     Run every start-up check, then one real training step, and print the loss; write nothing.
 
@@ -108,7 +106,7 @@ def checked_step(name: str, directory: str, accept_code_change: bool, in_job: bo
     else:
         device_available(settings)
     setup_logging(None)
-    loss = explained(name, directory, check_training, Path(directory), accept_code_change, cpu)
+    loss = explained(name, directory, check_training, Path(directory), cpu)
     device = "the CPU" if cpu else settings["train"]["device"]
     print(f"All checks passed; one training step on {device}: loss {loss:.5f}")
 
@@ -143,14 +141,13 @@ def check(arguments: list) -> None:
     """Check the run as ``sage train`` would start it and take one training step, here or in a job."""
     options = parse(
         "check", "Run every start-up check, then one real training step; writes nothing", arguments,
-        (["--accept-code-change"], {"action": "store_true", "help": "check a started run on changed Sage code"}),
         (["--in-job"], {"metavar": "SCRIPT", "help": "submit your job script once in check-only mode, so the "
                         "checks and the step run on a compute node"}),
     )
     if options.in_job is not None:
         submit_check(options.directory, options.in_job)
         return
-    checked_step("check", options.directory, options.accept_code_change, in_job=False)
+    checked_step("check", options.directory, in_job=False)
     print(f"Next: {on('train', options.directory)}")
 
 
@@ -163,7 +160,6 @@ def train(arguments: list) -> None:
     options = parse(
         "train", "Train the run, resuming from its latest checkpoint", arguments,
         (["--stop-after"], {"help": "save and exit before an epoch that would not end in time, e.g. 47h"}),
-        (["--accept-code-change"], {"action": "store_true", "help": "continue a started run on changed Sage code"}),
     )
     check_only = os.environ.get(CHECK_ONLY)
     if check_only is not None:
@@ -171,7 +167,7 @@ def train(arguments: list) -> None:
             raise CommandError(f"{CHECK_ONLY}={check_only}: only 1 is accepted (check only)",
                                f"unset {CHECK_ONLY} && {on('train', options.directory)}")
         print(f"{CHECK_ONLY}=1: checks and one training step only; nothing is trained or written", flush=True)
-        checked_step("train", options.directory, options.accept_code_change, in_job=True)
+        checked_step("train", options.directory, in_job=True)
         print("Next: sage chain <your job script> --jobs <number of jobs>")
         return
     try:
@@ -184,7 +180,7 @@ def train(arguments: list) -> None:
         raise CommandError(f"{directory} was stopped by sage stop", f"rm {stop_file} && {on('train', options.directory)}")
     settings = checked_settings("train", options.directory)
     device_available(settings)
-    explained("train", options.directory, train_run, directory, options.accept_code_change, stop_after)
+    explained("train", options.directory, train_run, directory, stop_after)
     if (directory / "results" / "final_check.json").exists():
         print(f"Trained to the end. Next: {on('status', options.directory)}")
     elif stop_file.exists():
