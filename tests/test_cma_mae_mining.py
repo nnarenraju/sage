@@ -4,11 +4,13 @@ A trivial multi-modal ``evaluate_fn`` (three well-separated "hard" bumps in
 start-time space, with an embedding that encodes position) stands in for the
 read-noise -> model -> embedding pipeline.  We check the pyribs ask/tell loop
 runs end-to-end, that the file-backed bank only stores above-threshold windows,
-that mining covers more than one bump (QD diversity, no collapse), and that the
-(run, segment, start) codec round-trips including the run id (multi-run).
+that mining covers more than one bump (QD diversity, no collapse), that the
+(run, segment, start) codec round-trips including the run id (multi-run), and
+that a bank creation cut short leaves no bank behind.
 """
 import os
 
+import h5py
 import numpy as np
 import pytest
 
@@ -117,7 +119,6 @@ def test_mine_keeps_only_hard_windows(tmp_path):
     assert stats["kept_starts"] > 0 and m.bank.n_starts > 0
     # every banked window cleared the keep threshold
     _, _, _ = m.bank.read_starts(np.arange(m.bank.n_starts))
-    import h5py
     with h5py.File(m.bank.path, "r") as f:
         assert (f["start_found_score"][:] >= 5.0).all()
         assert f["start_runs"].shape == f["start_times"].shape
@@ -139,3 +140,17 @@ def test_mine_empty_when_nothing_passes_threshold(tmp_path):
     ev, _ = _make_eval(0)
     stats = m.mine(ev, n_iters=5, epoch=0)
     assert stats["kept_starts"] == 0 and m.bank.n_starts == 0
+
+
+def test_bank_creation_cut_short(tmp_path, monkeypatch):
+    create = h5py.Group.create_dataset
+
+    def killed(group, name, *args, **kwargs):
+        if name == "start_runs":  # after start_times and start_segments
+            raise OSError("killed")
+        return create(group, name, *args, **kwargs)
+
+    monkeypatch.setattr(h5py.Group, "create_dataset", killed)
+    with pytest.raises(OSError, match="killed"):
+        _bank(str(tmp_path))
+    assert os.listdir(tmp_path) == []

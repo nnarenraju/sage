@@ -146,17 +146,22 @@ class HardMiningBank:
 
     # ------------------------------------------------------------------ setup
     def _ensure_file(self):
-        with h5py.File(self.path, "a") as f:
+        if os.path.exists(self.path):
+            with h5py.File(self.path, "r") as f:
+                if "start_times" in f:
+                    self._validate_existing(f)     # fail fast on incompatible reopen
+                    if "start_runs" in f:
+                        return
+        # Creation and the backfill write a copy swapped in whole, like a mine round.
+        with self.atomic_round(), h5py.File(self.path, "a") as f:
             if "start_times" in f:
-                self._validate_existing(f)     # fail fast on incompatible reopen
                 # Backfill start_runs on a pre-multi-run bank (all run 0) so an
                 # older single-run bank keeps working after the schema change.
-                if "start_runs" not in f:
-                    n = f["start_times"].shape[0]
-                    ds = f.create_dataset("start_runs", (n, self.D), dtype="i8",
-                                          maxshape=(None, self.D), chunks=True)
-                    if n:
-                        ds[:] = 0
+                n = f["start_times"].shape[0]
+                ds = f.create_dataset("start_runs", (n, self.D), dtype="i8",
+                                      maxshape=(None, self.D), chunks=True)
+                if n:
+                    ds[:] = 0
                 return
             f.attrs["detectors"] = detectors_tag(self.detectors)
             f.attrs["runs"] = self.runs
