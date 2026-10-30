@@ -24,8 +24,7 @@ Open a [GitHub Discussion](https://github.com/nnarenraju/sage/discussions) for u
    python -c "import sage.dsp; print('OK')"
    pytest tests/ -v
    ```
-4. Update `CHANGELOG.md` under `[Unreleased]` with a brief description.
-5. Open a pull request against `main` with a clear description of the motivation and approach.
+4. Open a pull request against `main` with a clear description of the motivation and approach.
 
 ## Code style
 

@@ -185,12 +185,14 @@ class MemmapSingleNoiseSampler:
     """
 
     def __init__(
-        self, source: Union[str, Path], return_tensor=False, tensor_dtype=torch.float32
+        self, source: Union[str, Path], bad: list, return_tensor=False, tensor_dtype=torch.float32
     ):
         """
         Args:
             source:
                 - path to monolithic .bin file
+            bad:
+                - bad intervals (``read_bad_time``); segments overlapping them are never drawn
         """
         source = Path(source)
         if not source.exists():
@@ -211,6 +213,9 @@ class MemmapSingleNoiseSampler:
 
         if len(meta) == 0:
             raise RuntimeError("No segments found in metadata.")
+        meta = [record for record, keep in zip(meta, clean(meta, bad)) if keep]
+        if len(meta) == 0:
+            raise RuntimeError(f"Every segment of {source} overlaps bad time.")
 
         # dtype handling
         dt = np.dtype(meta[0]["dtype"]).newbyteorder(meta[0]["endianness"])

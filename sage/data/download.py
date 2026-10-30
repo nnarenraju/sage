@@ -28,12 +28,13 @@ from sage.config.machine import (
     segment_asd_file,
     segments_file,
     strain_file,
+    zero_runs_file,
 )
 from sage.core.hardcode import _DETECTORS
 from sage.data.asd.make_fiducial import K_DEPTH, PERCENTILE, pooled_fiducial
 from sage.data.asd.smoothing import LogSplineSmoothing
 from sage.data.noise import MemmapSingleNoiseSampler
-from sage.data.noise.data_quality import read_bad_time, write_bad_time
+from sage.data.noise.data_quality import read_bad_time, write_bad_time, write_zero_runs
 from sage.data.primer import DataReleaseDownloader, EstimateASD, NoBlackout, TimelineQuery
 from sage.data.primer.retry import retry_detector
 from sage.dsp.welch import TorchWelch
@@ -307,9 +308,10 @@ def build_segment_asds(data_dir: Path, run: str, detector: str) -> None:
 
 
 def build_bank(data_dir: Path, run: str, detector: str) -> None:
-    """Draw the recolour bank from the strain, seeded, into ``asds.part``, then move it into ``asds``."""
+    """Draw the recolour bank from the strain outside its bad time, seeded, into ``asds.part``, then move it into ``asds``."""
     part = observing_run_dir(data_dir, run, "asds.part")
-    sampler = MemmapSingleNoiseSampler(strain_file(data_dir, run, detector), return_tensor=True)
+    strain = strain_file(data_dir, run, detector)
+    sampler = MemmapSingleNoiseSampler(strain, read_bad_time(strain), return_tensor=True)
     estimator(detector, part).write_raw_asds(
         noise_sampler=partial(sampler.sample, rng=np.random.default_rng(BANK_SEED)),
         duration=int(SAMPLE_RATE * ASDS["length_in_s"]),
@@ -522,8 +524,8 @@ def write_record(path: Path, numbers: dict, detectors: dict) -> Path:
 def download_run(data_dir: Path, run: str, detectors: list, workers: int, asds: bool, bank: bool) -> dict:
     """
     Download, resume or adopt each detector's strain of an observing run, check it and save its
-    data-quality time beside it; build or adopt its per-segment ASDs and recolour bank if asked;
-    record both.
+    data-quality time and zero runs beside it; build or adopt its per-segment ASDs and recolour bank
+    if asked; record both.
 
     Parameters
     ----------
@@ -545,18 +547,23 @@ def download_run(data_dir: Path, run: str, detectors: list, workers: int, asds: 
     dict of str to dict
         ``check_strain`` summary per detector.
     """
+    fetched = set()
     for detector in detectors:
         path = strain_file(data_dir, run, detector)
         if not path.exists():
             fetch_detector(data_dir, run, detector, workers)
+            fetched.add(detector)
         elif json.loads(failed_file(path).read_text()):
             retry_pieces(data_dir, run, detector, workers)
+            fetched.add(detector)
 
     summaries = {detector: check_strain(data_dir, run, detector) for detector in detectors}
     for detector in detectors:
         path = strain_file(data_dir, run, detector)
         if not bad_time_file(path).exists():
             write_bad_time(path, gwosc_name(data_dir, run), detector)
+        if detector in fetched or not zero_runs_file(path).exists():
+            write_zero_runs(path)
         read_bad_time(path)
     write_record(dataset_file(data_dir, run), DATASET, summaries)
 

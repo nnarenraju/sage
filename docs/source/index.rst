@@ -221,7 +221,6 @@ The methods are described in:
 
    benchmarks
    citation
-   changelog
    glossary
    indices
    autoapi/sage/index

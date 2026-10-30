@@ -27,6 +27,7 @@ from sage.config.machine import (
     segment_asd_file,
     segments_file,
     strain_file,
+    zero_runs_file,
 )
 from sage.core.checks import (
     check_on_grid,
@@ -426,7 +427,7 @@ def data_files(settings: dict, data_dir: Path, fiducial: bool = True) -> list:
     Returns
     -------
     list of Path
-        Strain records, strain files with their sidecars and bad time, the recoloured runs' ASD records
+        Strain records, strain files with their sidecars, bad time and zero runs, the recoloured runs' ASD records
         and per-segment ASDs and the recolour target's bank, then the fiducial ASDs.
     """
     noise, detectors = settings["noise"], settings["data"]["detectors"]
@@ -437,7 +438,7 @@ def data_files(settings: dict, data_dir: Path, fiducial: bool = True) -> list:
         runs = noise_runs(noise[role], data_dir, detectors)
         for run in runs:
             for path in map(Path, run["bins"]):
-                files += [path, segments_file(path), bad_time_file(path)]
+                files += [path, segments_file(path), bad_time_file(path), zero_runs_file(path)]
         if recoloured(noise, role):
             for run in runs:
                 files.append(asds_file(data_dir, run["run"]))

@@ -1,7 +1,8 @@
-"""GWOSC data-quality time that noise must not be drawn from.
+"""Time that noise must not be drawn from, per detector and observing run.
 
-Time failing CBC Category 2 (and so Category 1) or holding hardware
-injections, per detector and observing run.
+GWOSC time failing CBC Category 2 (and so Category 1) or holding hardware
+injections, and every span of exactly-zero strain (missing data written as
+zeros inside GWOSC's DATA segments).
 """
 
 import json
@@ -15,7 +16,7 @@ from gwosc.datasets import run_segment
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from sage.config.machine import bad_time_file, segments_file
+from sage.config.machine import bad_time_file, segments_file, zero_runs_file
 from sage.core.hardcode import _GWOSC_TIMELINE_URL
 
 Interval = Tuple[float, float]
@@ -120,9 +121,13 @@ def bad_segments(run: str, detector: str) -> List[Interval]:
     for flag in FLAGS:
         passing = get_segments(session, run, f"{detector}_{flag}", start, end)
         bad += subtract(data, passing)
+    return merge(bad)
 
+
+def merge(intervals: List[Interval]) -> List[Interval]:
+    """Intervals sorted, with overlapping or touching ones joined."""
     merged = []
-    for first, last in sorted(bad):
+    for first, last in sorted(intervals):
         if merged and first <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], last))
         else:
@@ -149,7 +154,7 @@ def write_bad_time(path: Path, run: str, detector: str) -> None:
 
 
 def read_bad_time(path: Path) -> List[Interval]:
-    """The bad time saved beside a strain file by ``write_bad_time``.
+    """The bad time saved beside a strain file: ``write_bad_time`` and ``write_zero_runs`` joined.
 
     Parameters
     ----------
@@ -164,14 +169,61 @@ def read_bad_time(path: Path) -> List[Interval]:
     Raises
     ------
     ValueError
-        If the file was saved from other flags.
+        If the bad time was saved from other flags.
+    FileNotFoundError
+        If the zero runs were never saved.
     """
     file = bad_time_file(path)
     saved = json.loads(file.read_text())
     if saved["flags"] != list(FLAGS):
         raise ValueError(f"{file} holds the flags {saved['flags']}, not {list(FLAGS)}: "
                          f"move it aside, then sage download")
-    return [tuple(interval) for interval in saved["intervals"]]
+    zeros = zero_runs_file(path)
+    if not zeros.exists():
+        raise FileNotFoundError(f"{zeros} is missing: sage download writes it")
+    return merge([tuple(interval) for interval in saved["intervals"] + json.loads(zeros.read_text())["intervals"]])
+
+
+def zero_runs(path: Path) -> List[Interval]:
+    """GPS spans of exactly-zero samples in a strain file: missing data written as zeros.
+
+    Parameters
+    ----------
+    path : Path
+        Strain ``.bin`` file with its ``_segments.json`` sidecar.
+
+    Returns
+    -------
+    list of tuple of float
+        Sorted, non-overlapping ``[start, end)`` spans; a segment overlapping
+        any of them holds a zero.
+    """
+    found = []
+    for record in json.loads(segments_file(path).read_text()):
+        dtype = np.dtype(record["dtype"]).newbyteorder(record["endianness"])
+        samples = np.memmap(path, dtype=dtype, mode="r", offset=record["byte_offset"], shape=(record["nsamples"],))
+        zero = samples == 0
+        if not zero.any():
+            continue
+        edges = np.flatnonzero(np.diff(np.concatenate(([0], zero.view(np.int8), [0]))))
+        found += [(record["gps_start"] + first / record["sample_rate"], record["gps_start"] + last / record["sample_rate"])
+                  for first, last in zip(edges[::2].tolist(), edges[1::2].tolist())]
+
+    return merge(found)
+
+
+def write_zero_runs(path: Path) -> None:
+    """Save ``zero_runs`` beside a strain file.
+
+    Parameters
+    ----------
+    path : Path
+        Strain ``.bin`` file.
+    """
+    file = zero_runs_file(path)
+    part = file.with_name(f"{file.name}.part")
+    part.write_text(json.dumps({"intervals": zero_runs(path)}))
+    os.replace(part, file)
 
 
 def noise_bad_segments(bins: List[str]) -> Dict[Tuple[str, str], List[Interval]]:

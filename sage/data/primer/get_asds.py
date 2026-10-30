@@ -293,6 +293,12 @@ class EstimateASD:
             ):
                 # Sample noise sample given duration
                 noise = noise_sampler(duration)
+                window = torch.as_tensor(noise)
+                if not torch.isfinite(window).all() or (window == 0).any():
+                    raise ValueError(
+                        f"a drawn {self.detector} window holds zero or non-finite samples; missing data "
+                        "must be bad time (sage download saves it beside the strain)"
+                    )
 
                 # Welch returns a PSD; take the square root here so everything
                 # downstream -- and everything written to disk -- is an ASD.

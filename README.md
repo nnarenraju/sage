@@ -166,7 +166,7 @@ changes, then submit a pull request against the `main` branch.
 1. Fork the repository and create a feature branch from `main`.
 2. Add or update tests for behaviour that changes.
 3. Run the relevant tests and syntax checks.
-4. Update documentation, docstrings, and `CHANGELOG.md` when applicable.
+4. Update documentation and docstrings when applicable.
 5. Open a pull request with a clear description of the motivation and approach.
 
 ---

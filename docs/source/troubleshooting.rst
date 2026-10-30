@@ -96,6 +96,6 @@ Troubleshooting
    - **Compiled vs. uncompiled state dict** — ``torch.compile`` wraps the model in a
      ``_orig_mod`` prefix. Load with ``strict=False`` or unwrap with
      ``model._orig_mod`` if mixing compiled and uncompiled saves.
-   - **Scaler state missing** — checkpoints saved before the scaler fix (see changelog
-     v0.1.0) will not have a ``scaler`` key. Pass ``strict=False`` or set
+   - **Scaler state missing** — checkpoints saved before the scaler fix (v0.1.0) will
+     not have a ``scaler`` key. Pass ``strict=False`` or set
      ``scaler=None`` and reinitialise.

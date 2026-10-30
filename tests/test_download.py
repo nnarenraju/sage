@@ -6,13 +6,15 @@ import json
 import numpy as np
 import pytest
 import requests
+import torch
 import yaml
 
 from sage.cli import main
 from sage.config import machine
 from sage.data import download
 from sage.data.download import DATASET, download_run
-from sage.data.noise.data_quality import FLAGS
+from sage.data.noise.data_quality import FLAGS, read_bad_time
+from sage.data.noise.real_noise import MemmapSingleNoiseSampler
 
 
 def write_strain(data_dir, lengths):
@@ -33,6 +35,27 @@ def write_strain(data_dir, lengths):
     machine.failed_file(path).write_text("[]")
     machine.bad_time_file(path).write_text(json.dumps({"flags": list(FLAGS), "intervals": [[1e9, 1e9 + 1.0]]}))
     return path
+
+
+def test_zero_runs(tmp_path, monkeypatch):
+    path = write_strain(tmp_path, [40960, 45056])
+    machine.bad_time_file(path).write_text(json.dumps({"flags": list(FLAGS), "intervals": []}))
+    samples = np.memmap(path, dtype="<f4", mode="r+")
+    samples[40960 + 100:40960 + 110] = 0  # missing data in the second segment
+    samples.flush()
+    download_run(tmp_path, "o3b", ["H1"], 2, False, False)
+    start = 1e9 + 600.0
+    assert json.loads(machine.zero_runs_file(path).read_text())["intervals"] == [
+        [start + 100 / 2048, start + 110 / 2048]
+    ]
+    assert read_bad_time(path) == [(start + 100 / 2048, start + 110 / 2048)]
+    sampler = MemmapSingleNoiseSampler(path, read_bad_time(path))
+    assert list(sampler.segments["start"]) == [0]  # the bank never draws the second segment
+    monkeypatch.setitem(download.ASDS, "bank_size", 1)
+    with pytest.raises(ValueError, match="zero or non-finite samples"):  # before the ASD is estimated
+        download.estimator("H1", tmp_path / "asds").write_raw_asds(
+            noise_sampler=lambda n: torch.zeros(n), duration=32768
+        )
 
 
 def unreachable(*args, **kwargs):

@@ -61,7 +61,7 @@ Release Process
 ~~~~~~~~~~~~~~~~
 
 - Versioning convention (``MAJOR.MINOR.PATCH``)
-- Steps to cut a new release: changelog, tag, PyPI upload, RTD version publish
+- Steps to cut a new release: tag, PyPI upload, RTD version publish
 - Backport policy for bug fixes
 
 Contributing Guidelines

@@ -133,6 +133,12 @@ def bad_time_file(path: Path) -> Path:
     return path.parent / f"{path.stem}_bad_time.json"
 
 
+def zero_runs_file(path: Path) -> Path:
+    """The ``_zero_runs.json`` spans of exactly-zero samples in a strain ``.bin`` file."""
+    path = Path(path)
+    return path.parent / f"{path.stem}_zero_runs.json"
+
+
 def dataset_file(data_dir: Path, run: str) -> Path:
     """Record of an observing run's strain, ``<data_dir>/<run>/training/dataset.yaml``."""
     return observing_run_dir(data_dir, run, "training") / "dataset.yaml"
