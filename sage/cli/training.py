@@ -78,8 +78,12 @@ def device_available(settings: dict, fix: str = "sage chain <your job script> --
 
 def explained(name: str, directory: str, function, *args):
     """``function(*args)``, with a changed record turned into the command that fixes it."""
+    from sage.factory.train_run import AlreadyRunning
+
     try:
         return function(*args)
+    except AlreadyRunning as error:
+        raise CommandError(str(error), on("status", directory)) from None
     except SettingsChanged as error:
         raise CommandError(str(error), f"sage clone {directory} <new directory> --full-state") from None
     except StateMismatch as error:
@@ -154,7 +158,7 @@ def check(arguments: list) -> None:
 @command("train", "Train the run, resuming from its latest checkpoint", journey=5)
 def train(arguments: list) -> None:
     """Train the run to its last epoch, then run the final check; ``--stop-after`` ends a job segment early."""
-    from sage.factory.train_run import STOP_FILE, train_run
+    from sage.factory.train_run import STOP_FLAG, flag, train_run
     from sage.utils.checkpoint import next_epoch
 
     options = parse(
@@ -175,7 +179,7 @@ def train(arguments: list) -> None:
     except ValueError as error:
         raise CommandError(str(error), f"{on('train', options.directory)} --stop-after 47h") from None
     directory = Path(options.directory)
-    stop_file = directory / STOP_FILE
+    stop_file = flag(directory, STOP_FLAG)
     if stop_file.exists():
         raise CommandError(f"{directory} was stopped by sage stop", f"rm {stop_file} && {on('train', options.directory)}")
     settings = checked_settings("train", options.directory)
@@ -195,17 +199,33 @@ def train(arguments: list) -> None:
 
 @command("stop", "Stop the run's training after its current epoch")
 def stop(arguments: list) -> None:
-    """Write the stop file: training saves after its current epoch and exits, and no later job trains on."""
-    from sage.factory.train_run import STOP_FILE
+    """Write ``flags/stop``: training saves after its current epoch and exits, and no later job trains on."""
+    from sage.factory.train_run import STOP_FLAG, flag
 
     options = parse("stop", "Stop the run's training after its current epoch", arguments)
     directory = Path(options.directory)
     if not (directory / "run.yaml").exists():
         raise CommandError(f"no run.yaml in {directory}", "sage init <directory> --preset <name>")
-    (directory / STOP_FILE).touch()
-    print(f"Wrote {directory / STOP_FILE}: training stops once its current epoch is saved, and later jobs do "
-          f"not start. To train on: rm {directory / STOP_FILE} && {on('train', options.directory)}")
+    stop_file = flag(directory, STOP_FLAG)
+    stop_file.parent.mkdir(exist_ok=True)
+    stop_file.touch()
+    print(f"Wrote {stop_file}: training stops once its current epoch is saved, and later jobs do "
+          f"not start. To train on: rm {stop_file} && {on('train', options.directory)}")
     print(f"Next: {on('status', options.directory)}")
+
+
+def flag_lines(directory: str) -> list:
+    """The run's flags with when each was set, and how to train on after ``sage stop``."""
+    from sage.factory.train_run import FLAGS_DIR, STOP_FLAG, flag
+
+    lines = []
+    flags = sorted((Path(directory) / FLAGS_DIR).glob("*"))
+    if flags:
+        set_at = lambda path: datetime.datetime.fromtimestamp(path.stat().st_mtime).astimezone()
+        lines.append("Flags: " + ", ".join(f"{path.name} (since {set_at(path):%Y-%m-%d %H:%M:%S %Z})" for path in flags))
+    if flag(directory, STOP_FLAG).exists():
+        lines.append(f"Stopped by sage stop; to train on: rm {flag(directory, STOP_FLAG)} && {on('train', directory)}")
+    return lines
 
 
 @command("status", "Show how far the run has trained and its latest losses")
@@ -213,7 +233,7 @@ def status(arguments: list) -> None:
     """Print the epochs trained, the latest and lowest losses, the final check and when the log was last written."""
     from sage.config.loader import load_run_record
     from sage.factory.build import validates
-    from sage.factory.train_run import FINAL_CHECK_ESTIMATE, STOP_FILE
+    from sage.factory.train_run import FINAL_CHECK_ESTIMATE
     from sage.utils.checkpoint import next_epoch
 
     options = parse("status", "Show how far the run has trained and its latest losses", arguments)
@@ -228,7 +248,7 @@ def status(arguments: list) -> None:
     if done == 0:
         if not (directory / "run.yaml").exists():
             raise CommandError(f"no run.yaml in {directory}", "sage init <directory> --preset <name>")
-        print("\n".join([f"{directory}: training has not started", *cloned]))
+        print("\n".join([f"{directory}: training has not started", *cloned, *flag_lines(options.directory)]))
         print(f"Next: {on('train', options.directory)}")
         return
 
@@ -266,8 +286,7 @@ def status(arguments: list) -> None:
         written = datetime.datetime.fromtimestamp(log.stat().st_mtime).astimezone()
         age = datetime.timedelta(seconds=int(time.time() - log.stat().st_mtime))
         lines.append(f"Log last written {written:%Y-%m-%d %H:%M:%S %Z}, {age} ago")
-    if (directory / STOP_FILE).exists():
-        lines.append(f"Stopped by sage stop; to train on: rm {directory / STOP_FILE} && {on('train', options.directory)}")
+    lines += flag_lines(options.directory)
     print("\n".join(lines))
     print(f"Next: {on('plot' if final.exists() else 'log', options.directory)}")
 

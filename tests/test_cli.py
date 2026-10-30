@@ -69,7 +69,7 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     out = capsys.readouterr().out
     assert "warmup_steps: 20000" in out and "# prior bbh_narrow: " in out  # defaults filled in
     assert main(["stop", str(run_dir)]) == 0 and main(["train", str(run_dir)]) == 1
-    assert capsys.readouterr().err.endswith(f"fix: rm {run_dir / 'STOP'} && sage train {run_dir}\n")
+    assert capsys.readouterr().err.endswith(f"fix: rm {run_dir / 'flags' / 'stop'} && sage train {run_dir}\n")
     assert main(["check", str(run_dir)]) == 1  # the data directory is empty
     assert capsys.readouterr().err.endswith(f"fix: sage download {run_dir}\n")
 

@@ -4,8 +4,12 @@ Every random stream has its own seed (``sage.core.seed.stream_seed``).
 """
 
 import dataclasses
+import functools
 import json
+import os
+import signal
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,7 +65,9 @@ from sage.utils.checkpoint import CheckpointManager, atomic_json_dump, atomic_to
 
 logger = get_logger(__name__)
 
-STOP_FILE = "STOP"  # written by `sage stop`; training stops before its next epoch
+FLAGS_DIR = "flags"  # empty files named for what is happening in the run directory
+STOP_FLAG = "stop"  # written by `sage stop`; training stops before its next epoch
+RUNNING_FLAG = "running"  # present while a job trains the run
 FINAL_CHECK_ESTIMATE = "final_check_estimate.json"  # in results/; written at every validation pass
 
 
@@ -135,6 +141,55 @@ def use_scaling(signal, targets: list, scaling: dict) -> None:
     sampler = signal.param_sampler
     for buffer, key in ((sampler._target_offsets, "offset"), (sampler._target_scales, "scale")):
         buffer.copy_(torch.tensor([scaling[target][key] for target in targets], dtype=buffer.dtype))
+
+
+def flag(run_dir: Path, name: str) -> Path:
+    """A run directory's flag file, ``<run_dir>/flags/<name>``."""
+    return Path(run_dir) / FLAGS_DIR / name
+
+
+class AlreadyRunning(RuntimeError):
+    """A job already trains the run directory: its ``flags/running`` exists."""
+
+
+def terminate(signum, frame):
+    """SIGTERM (a scheduler ending the job) as ``SystemExit``, so ``finally`` blocks run."""
+    raise SystemExit(128 + signum)
+
+
+@contextmanager
+def running(run_dir: Path):
+    """
+    Hold ``flags/running`` while a job trains: made atomically, removed when the job ends, fails or gets SIGTERM.
+
+    Raises
+    ------
+    AlreadyRunning
+        If the flag exists.
+    """
+    path = flag(run_dir, RUNNING_FLAG)
+    path.parent.mkdir(exist_ok=True)
+    try:
+        os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        raise AlreadyRunning(f"{path} exists: a job trains this run") from None
+    previous = signal.signal(signal.SIGTERM, terminate)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        path.unlink()
+
+
+def one_job(train):
+    """``train(run_dir, ...)`` inside ``running(run_dir)``: one job at a time per run directory."""
+
+    @functools.wraps(train)
+    def wrapper(run_dir, *args, **kwargs):
+        with running(run_dir):
+            return train(run_dir, *args, **kwargs)
+
+    return wrapper
 
 
 def check_run(run_dir: Path) -> tuple:
@@ -338,6 +393,7 @@ def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> Sa
     )
 
 
+@one_job
 def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     """
     Train the run in ``run_dir`` from ``run.yaml``, resuming from its latest checkpoint.
@@ -354,7 +410,7 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         less than the longest epoch so far, and the final check does not start
         when it would not end in time (``final_check_seconds``). None trains to
         the end. Training
-        also stops before an epoch while ``STOP_FILE`` exists in ``run_dir``.
+        also stops before an epoch while ``flags/stop`` exists in ``run_dir``.
 
     Raises
     ------
@@ -365,6 +421,8 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         If a file the run reads is missing from the data directory.
     SettingsChanged
         If the settings, prior or derived values changed after training started.
+    AlreadyRunning
+        If another job trains the run (``one_job``).
     """
     clock = time.monotonic()
     run_dir = Path(run_dir)
@@ -435,8 +493,8 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
 
     longest, estimate = 0.0, None
     for epoch in range(start_epoch, train["epochs"]):
-        if (run_dir / STOP_FILE).exists():
-            logger.info("Stopping before epoch %d: %s exists", epoch, run_dir / STOP_FILE)
+        if flag(run_dir, STOP_FLAG).exists():
+            logger.info("Stopping before epoch %d: %s exists", epoch, flag(run_dir, STOP_FLAG))
             return
         elapsed = time.monotonic() - clock
         if stop_after is not None and elapsed + longest > stop_after:

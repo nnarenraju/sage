@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import signal
 
 import h5py
 import numpy as np
@@ -15,7 +16,7 @@ from sage.config import machine
 from sage.core.logger import setup_logging
 from sage.factory.callbacks import EMACallback
 from sage.factory.compare import compare_runs, recovered_fractions
-from sage.factory.train_run import final_check_seconds, train_run
+from sage.factory.train_run import RUNNING_FLAG, STOP_FLAG, final_check_seconds, flag, train_run
 from sage.utils.checkpoint import CheckpointManager
 
 RUN = """
@@ -104,7 +105,7 @@ def test_train_run(tmp_path, monkeypatch, capsys):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "run.yaml").write_text(RUN)
-    files = lambda: {path: path.stat().st_mtime_ns for path in run_dir.rglob("*")}
+    files = lambda: {path: path.stat().st_mtime_ns for path in run_dir.rglob("*") if path.is_file()}
     bin_dir = tmp_path / "bin"  # stand-in sbatch and scontrol
     bin_dir.mkdir()
     (bin_dir / "sbatch").write_text('#!/bin/bash\necho "$@" > "$(dirname "$0")/call"\necho 101\n')
@@ -200,7 +201,7 @@ def test_clone(tmp_path, monkeypatch, capsys):
 
     def save_then_stop(self, epoch, validation_loss):
         save(self, epoch, validation_loss)
-        (old / "STOP").touch()
+        flag(old, STOP_FLAG).touch()
 
     monkeypatch.setattr(CheckpointManager, "save", save_then_stop)
     try:
@@ -208,7 +209,7 @@ def test_clone(tmp_path, monkeypatch, capsys):
     finally:
         setup_logging(None, console=False)
     monkeypatch.setattr(CheckpointManager, "save", save)
-    (old / "STOP").unlink()
+    flag(old, STOP_FLAG).unlink()
 
     new, weights = tmp_path / "new", tmp_path / "weights"
     assert main(["clone", str(old), str(new), "--full-state"]) == 0
@@ -268,6 +269,36 @@ def test_clone(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "stored epochs: 0, 1" in err and "model.frontend_filters: 16 -> 8" in err and not (tmp_path / "other").exists()
     assert f"fix: sage clone {old} <new directory> --full-state" in err
+
+
+def test_flags(tmp_path, monkeypatch, capsys):
+    use_machine(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "run.yaml").write_text(RUN)
+    flag(run, RUNNING_FLAG).parent.mkdir()
+    flag(run, RUNNING_FLAG).touch()  # a job trains the run
+    assert main(["train", str(run)]) == 1
+    assert "flags/running exists: a job trains this run" in capsys.readouterr().err
+    flag(run, RUNNING_FLAG).unlink()
+
+    def held(run_dir, end):
+        assert flag(run_dir, RUNNING_FLAG).exists()
+        end()
+
+    def fail():
+        raise ValueError("failed")
+
+    previous = signal.getsignal(signal.SIGTERM)
+    for end, raised in ((fail, ValueError), (lambda: os.kill(os.getpid(), signal.SIGTERM), SystemExit)):
+        monkeypatch.setattr("sage.factory.train_run.check_run", lambda run_dir: held(run_dir, end))
+        with pytest.raises(raised):
+            train_run(run)
+        assert not flag(run, RUNNING_FLAG).exists() and signal.getsignal(signal.SIGTERM) is previous
+
+    assert main(["stop", str(run)]) == 0 and flag(run, STOP_FLAG).exists()
+    capsys.readouterr()
+    assert main(["status", str(run)]) == 0 and "Flags: stop (since " in capsys.readouterr().out
 
 
 def test_recovered_fractions():
