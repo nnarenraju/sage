@@ -166,6 +166,10 @@ source/baseline/data/psds/
 # Third-party reference sources (LALSuite C, kept locally for the waveform ports)
 sage/data/waveform/lalsim_src
 
+# MLGWSC-1 benchmark scripts, kept locally until the benchmark is reworked
+sage/benchmark/benchmark_mlgwsc1.py
+sage/benchmark/evaluate_mlgwsc1.py
+
 scratch
 # Reference PDFs for sage/search (fetched locally, not redistributed)
 docs/references/*.pdf
