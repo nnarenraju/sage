@@ -17,7 +17,7 @@ def _data(scale, n=20000, seed=0):
 
 
 def test_calibrated_is_near_diagonal():
-    m = plot_pp_calibration(*_data(1.0), param_names=["tc", "mchirp"], save=True)
+    m = plot_pp_calibration(*_data(1.0), param_names=["delta_tc", "mchirp"], save=True)
     for v in m.values():
         assert v["ks"] < 0.02
         assert abs(v["cov1sigma"] - 0.68) < 0.03
@@ -25,14 +25,14 @@ def test_calibrated_is_near_diagonal():
 
 
 def test_overconfident_has_low_coverage_and_large_ks():
-    m = plot_pp_calibration(*_data(2.0), param_names=["tc", "mchirp"], save=True)
+    m = plot_pp_calibration(*_data(2.0), param_names=["delta_tc", "mchirp"], save=True)
     for v in m.values():
         assert v["ks"] > 0.1
         assert v["cov1sigma"] < 0.5      # sigma too small -> under-covers
 
 
 def test_underconfident_has_high_coverage():
-    m = plot_pp_calibration(*_data(0.5), param_names=["tc", "mchirp"], save=True)
+    m = plot_pp_calibration(*_data(0.5), param_names=["delta_tc", "mchirp"], save=True)
     for v in m.values():
         assert v["ks"] > 0.1
         assert v["cov1sigma"] > 0.9      # sigma too large -> over-covers

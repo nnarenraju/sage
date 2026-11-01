@@ -365,7 +365,7 @@ class DyadicPyramidBinning:
     mass_range : tuple of float
         Lowest and highest component mass of the prior (solar masses). The
         lowest sets the frequency ladder, the highest the post-merger time.
-    tc_range : tuple of float
+    delta_tc_range : tuple of float
         Earliest and latest merger time in the window (seconds); sets the
         full-rate region.
     window : Window
@@ -400,7 +400,7 @@ class DyadicPyramidBinning:
     def __init__(
         self,
         mass_range,
-        tc_range,
+        delta_tc_range,
         window: Window,
         low_frequency_cutoff_in_hz: float,
         lowest_sample_rate_in_hz: float,
@@ -423,7 +423,7 @@ class DyadicPyramidBinning:
         self.sample_rate = window.sample_rate_in_hz
         self.signal_length = window.sample_length_in_s
         self.lowest_allowed_fs = lowest_sample_rate_in_hz
-        self.tc_inject_lower, self.tc_inject_upper = tc_range
+        self.tc_inject_lower, self.tc_inject_upper = delta_tc_range
         self.safe_nyquist_gap = nyquist_margin_in_hz
         self.min_bin_duration = min_bin_length_in_s
         self.extra_pre_tc_leeway = pre_merger_leeway_in_s

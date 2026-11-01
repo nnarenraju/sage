@@ -98,7 +98,7 @@ def test_pv2():
                                            "sample_length_in_s": 12.0, "padding_length_in_s": 2.0, "dtype": "float32"})
     section = {"prior": "bbh_narrow", "low_frequency_cutoff_in_hz": F_LOW, "reference_frequency_in_hz": F_LOW,
                "waveform": {"name": "IMRPhenomPv2"}, "projection": {"name": "constant"},
-               "snr": {"name": "halfnorm", "scale": "4.0", "loc": "5.0"}, "targets": ["tc", "mchirp"]}
+               "snr": {"name": "halfnorm", "scale": "4.0", "loc": "5.0"}, "targets": ["delta_tc", "mchirp"]}
     model = build_signal(section, load_prior("bbh_narrow", Path(".")), window, detectors,
                          torch.ones(2, window.n_frequency_bins), len(PRECESSING), 1, 0, "cpu", dtype)
     hp, hc = model.get_hphc(theta_of(PRECESSING), reproduce_lal=True)

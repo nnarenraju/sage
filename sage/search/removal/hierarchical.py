@@ -41,7 +41,7 @@ def hierarchical_removal(
     removed : list of int
         Indices of the removed zero-lag triggers, in removal order.
     """
-    offset = background["tc_gps"] - background["gps"]
+    offset = background["tc"] - background["gps"]
     times = [background[f"{detector}_gps"] + offset for detector in detectors]
     keep = np.ones(len(background["stat"]), dtype=bool)
 
@@ -51,7 +51,7 @@ def hierarchical_removal(
         if foreground["stat"][index] <= loudest_background:
             break
 
-        centre = foreground["tc_gps"][index]
+        centre = foreground["tc"][index]
         for detector_times in times:
             keep &= np.abs(detector_times - centre) > window_s
         removed.append(int(index))

@@ -9,8 +9,8 @@ from sage.factory.validation import save_validation
 from sage.plotting.prediction_probability import plot_prediction_probability
 from sage.plotting.prediction_raw import plot_prediction_raw
 
-NAMES = ["distance", "inclination", "mass1", "mass2", "mchirp", "q", "tc"]
-TARGETS = ["tc", "mchirp"]
+NAMES = ["distance", "inclination", "mass1", "mass2", "mchirp", "q", "delta_tc"]
+TARGETS = ["delta_tc", "mchirp"]
 
 
 def write_pass(path, group, generator, iterations=50, batch_size=8, signals=4):
@@ -38,7 +38,7 @@ def test_plot(tmp_path, capsys):
     (run / "results").mkdir(parents=True)
     (run / "run.yaml").write_text("extends: hl\n")
     generator = torch.Generator().manual_seed(0)
-    losses = HDF5LossLogger(run / "results" / "losses.h5", 4, ["total", "classification", "tc", "mchirp"])
+    losses = HDF5LossLogger(run / "results" / "losses.h5", 4, ["total", "classification", "delta_tc", "mchirp"])
     for epoch, total in enumerate([0.5, 0.4, 0.35, 0.37]):
         for split in ("training", "validation"):
             losses.log(torch.tensor([[total, 0.3, 0.1, 0.05]] * (epoch + 1)), epoch, split)
@@ -50,7 +50,7 @@ def test_plot(tmp_path, capsys):
     plots = run / "results" / "plots"
     assert (plots / "loss_curves.png").exists() and (plots / "ROC" / "roc_curve_epoch_0002.png").exists()
     assert sorted(p.name for p in (plots / "DIAGONAL" / "epoch_0002").iterdir()) == [
-        "diagonal_mchirp_epoch_0002.png", "diagonal_tc_epoch_0002.png",
+        "diagonal_delta_tc_epoch_0002.png", "diagonal_mchirp_epoch_0002.png",
     ]
     assert main(["plot", str(run), "--group", "validate_best"]) == 0
     assert (plots / "ROC" / "roc_curve_validate_best.png").exists()

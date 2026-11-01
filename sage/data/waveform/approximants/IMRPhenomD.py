@@ -63,7 +63,7 @@ class IMRPhenomD(phenom.PhenomConstants):
     f_ref : torch.Tensor, shape ``(B, 1)``
         Reference frequency for the phase calculation.
     padding_length_in_s : float
-        Leading padding; tc is measured from its end.
+        Leading padding; delta_tc is measured from its end.
     **kwargs
         Forwarded to :class:`~sage.data.waveform.approximants.phenom.PhenomConstants`.
     """
@@ -107,7 +107,7 @@ class IMRPhenomD(phenom.PhenomConstants):
             Parameters in the :data:`waveform_utils.WAVEFORM_PARAMETERS`
             layout.
         reproduce_lal : bool
-            If ``True``, skip FD tapering and ``tc`` application and keep
+            If ``True``, skip FD tapering and ``delta_tc`` application and keep
             LAL's band (:meth:`lal_band`), to reproduce raw LALSuite output
             (default ``False``).
 
@@ -121,7 +121,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         ValueError
             If any transverse spin is non-zero.
         """
-        # [m1, m2, chi1, chi2, distance, tc, phic, inclination]
+        # [m1, m2, chi1, chi2, distance, delta_tc, phic, inclination]
         theta = waveform_utils.aligned_layout(
             theta, waveform_utils.ALIGNED_COLUMNS,
             waveform_utils.TRANSVERSE_SPIN_PARAMETERS + waveform_utils.TIDAL_PARAMETERS,
@@ -161,8 +161,8 @@ class IMRPhenomD(phenom.PhenomConstants):
             hp *= _taper
             hc *= _taper
 
-            # Apply phase shift equivalent to applying tc
-            hp, hc = self.apply_tc(hp, hc, theta[:, 5:6])
+            # Apply phase shift equivalent to applying delta_tc
+            hp, hc = self.apply_delta_tc(hp, hc, theta[:, 5:6])
 
             # Make hf consistent with the scale of other data
             # LAL works in continuous Fourier regime
@@ -177,17 +177,17 @@ class IMRPhenomD(phenom.PhenomConstants):
 
         return hp, hc
 
-    def apply_tc(self, hp, hc, tc):
+    def apply_delta_tc(self, hp, hc, delta_tc):
         """
-        Shift the waveform so it merges ``tc`` seconds into the analysis window.
+        Shift the waveform so it merges ``delta_tc`` seconds into the analysis window.
 
-        ``tc`` is measured from the end of the leading padding, the window
+        ``delta_tc`` is measured from the end of the leading padding, the window
         convention of training and search, so the merger lands
-        ``padding_length_in_s + tc`` into the padded segment.
+        ``padding_length_in_s + delta_tc`` into the padded segment.
         """
-        _tc = (tc + self.padding_length_in_s) - self.sample_length_in_s
-        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
-        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
+        shift = (delta_tc + self.padding_length_in_s) - self.sample_length_in_s
+        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * shift)
+        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * shift)
         return hp, hc
 
     def pad_missing_frequencies(self, hp, hc):

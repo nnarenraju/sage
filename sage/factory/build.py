@@ -31,7 +31,7 @@ from sage.config.machine import (
 )
 from sage.core.checks import (
     check_on_grid,
-    check_tc_window,
+    check_delta_tc_window,
     check_unique_detectors,
     check_whole_batches,
     check_whole_signals,
@@ -229,7 +229,7 @@ def build_signal(
     Raises
     ------
     ValueError
-        If a frequency is off the grid, the tc prior leaves the window, a
+        If a frequency is off the grid, the delta_tc prior leaves the window, a
         target is not a prior parameter, or a component setting is wrong.
     """
     f_low = signal["low_frequency_cutoff_in_hz"]
@@ -238,7 +238,7 @@ def build_signal(
     check_on_grid("signal.reference_frequency_in_hz", f_ref, window.padded_length_in_s)
 
     sampler = prior_sampler(prior, stream_seed(seed, "prior", epoch), device, dtype)
-    check_tc_window(*sampler.bounds["tc"], window.sample_length_in_s)
+    check_delta_tc_window(*sampler.bounds["delta_tc"], window.sample_length_in_s)
     for target in signal["targets"]:
         if target not in sampler.param_index:
             raise ValueError(
@@ -599,7 +599,7 @@ def build_preprocess(
     window : Window
         Window geometry.
     bounds : dict
-        Prior bounds from the signal sampler; ``mass1`` and ``tc`` set the
+        Prior bounds from the signal sampler; ``mass1`` and ``delta_tc`` set the
         multirate bins.
     low_frequency_cutoff_in_hz : float
         Signal low-frequency cutoff.
@@ -631,7 +631,7 @@ def build_preprocess(
             steps.append(MinMaxNormalise())
         else:
             binning = DyadicPyramidBinning(
-                bounds["mass1"], bounds["tc"], window, low_frequency_cutoff_in_hz, **settings
+                bounds["mass1"], bounds["delta_tc"], window, low_frequency_cutoff_in_hz, **settings
             )
             steps.append(MultirateSampler(binning.detailed_bins, window, device, dtype))
     return Preprocessor(steps, input_state)

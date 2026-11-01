@@ -101,8 +101,8 @@ class InjectionStrain(torch.utils.data.Dataset):
     """Noise windows of each injection with its signal added, by PyCBC.
 
     As ``pycbc.inject.CBCHDFInjectionSet.apply``: ``get_td_waveform``, the
-    ``projector`` at ``injection_time``, and LAL's ``SimAddInjection`` into
-    the window, which starts ``padding_s + tc`` before the merger.
+    ``projector`` at ``tc``, and LAL's ``SimAddInjection`` into the window,
+    which starts ``padding_s + delta_tc`` before the merger.
 
     Parameters
     ----------
@@ -165,12 +165,12 @@ class InjectionStrain(torch.utils.data.Dataset):
             **{name: values[name] for name in self.names}, **self.waveform
         )
         location = SimpleNamespace(
-            tc=values["injection_time"],
+            tc=values["tc"],
             ra=values["ra"],
             dec=values["dec"],
             polarization=values["polarization"],
         )
-        start = values["injection_time"] - self.padding_s - values["tc"]
+        start = values["tc"] - self.padding_s - values["delta_tc"]
 
         strain = self.noise[index].astype(np.float64)
         for row, detector in enumerate(self.noise.detectors):

@@ -39,7 +39,7 @@ def test_unique_detectors():
         checks.check_unique_detectors(["H1", "L1", "H1"])
 
 
-def test_tc_window():
-    checks.check_tc_window(0.0, 12.0, 12.0)
-    with pytest.raises(ValueError, match=r"tc prior \[11.0, 12.5\] s is outside"):
-        checks.check_tc_window(11.0, 12.5, 12.0)
+def test_delta_tc_window():
+    checks.check_delta_tc_window(0.0, 12.0, 12.0)
+    with pytest.raises(ValueError, match=r"delta_tc prior \[11.0, 12.5\] s is outside"):
+        checks.check_delta_tc_window(11.0, 12.5, 12.0)

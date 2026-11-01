@@ -1,7 +1,7 @@
 """Waveform parameters of injections, as in sgwc-1 injection_study.
 
 The population gives masses, spins and distance; the training prior gives
-sky position, orientation and tc. Masses are detector frame (SB-50).
+sky position, orientation and delta_tc. Masses are detector frame (SB-50).
 """
 
 from pathlib import Path
@@ -48,8 +48,8 @@ def injection_parameters(
     Returns
     -------
     dict of str to numpy.ndarray
-        Masses, spins, distance, sky position, orientation, ``tc`` and
-        ``injection_time``.
+        Masses, spins, distance, sky position, orientation, ``tc`` (geocentric
+        GPS merger time) and ``delta_tc``.
     """
     n = len(population["m1"])
     mass1 = population["m1"] * (1.0 + population["z"])
@@ -57,7 +57,7 @@ def injection_parameters(
     rng = np.random.default_rng(seed)
     phi_1 = rng.uniform(0.0, 2.0 * np.pi, n)
     phi_2 = rng.uniform(0.0, 2.0 * np.pi, n)
-    injection_time = rng.uniform(gps_start, gps_end, n)
+    tc = rng.uniform(gps_start, gps_end, n)
     sintilt_1 = np.sqrt(1 - population["costilt_1"] ** 2)
     sintilt_2 = np.sqrt(1 - population["costilt_2"] ** 2)
 
@@ -73,12 +73,12 @@ def injection_parameters(
         "spin2y": population["chi_2"] * sintilt_2 * np.sin(phi_2),
         "spin2z": population["chi_2"] * population["costilt_2"],
         "distance": distance.value,
-        "injection_time": injection_time,
+        "tc": tc,
     }
 
     prior = prior_sampler(load_prior_file(gwconfig), seed, device, dtype)
     draws = prior(n).cpu().numpy()
-    for name in ("ra", "dec", "inclination", "coa_phase", "polarization", "tc"):
+    for name in ("ra", "dec", "inclination", "coa_phase", "polarization", "delta_tc"):
         parameters[name] = draws[:, prior.param_index[name]].astype(np.float64)
     return parameters
 

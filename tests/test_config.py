@@ -32,7 +32,7 @@ signal:
     name: halfnorm
     scale: 4.0
     loc: 5.0
-  targets: [tc, mchirp]
+  targets: [delta_tc, mchirp]
 noise:
   training:
     name: real
@@ -121,7 +121,7 @@ def test_types(tmp_path):
         "dtype": "float32",
     }
     assert settings["signal"]["low_frequency_cutoff_in_hz"] == 20.0
-    assert settings["signal"]["targets"] == ["tc", "mchirp"]
+    assert settings["signal"]["targets"] == ["delta_tc", "mchirp"]
 
 
 def test_component_parameters(tmp_path):
@@ -263,8 +263,8 @@ def test_resume_changed(tmp_path):
 def test_resume_prior_changed(tmp_path):
     record(tmp_path, RUN)
     write(tmp_path / "checkpoints", "latest.pt", "")
-    changed = {**PRIOR, "priors": {**PRIOR["priors"], "tc": {**PRIOR["priors"]["tc"], "max": 11.3}}}
-    with pytest.raises(ValueError, match=r"prior.yaml differs .*priors.tc.max: 11.2 -> 11.3"):
+    changed = {**PRIOR, "priors": {**PRIOR["priors"], "delta_tc": {**PRIOR["priors"]["delta_tc"], "max": 11.3}}}
+    with pytest.raises(ValueError, match=r"prior.yaml differs .*priors.delta_tc.max: 11.2 -> 11.3"):
         record(tmp_path, RUN, changed)
 
 

@@ -34,13 +34,13 @@ Two non-astrophysical flavours (split 50/50, fixed):
                        [1, 1] (each detector toward its own truth); class 0.
 
 The thing that actually trips up a coincidence network is a non-astrophysical
-pair whose chirps sit in the *real* ``tc`` band — looking time-coincident while
+pair whose chirps sit in the *real* ``delta_tc`` band — looking time-coincident while
 being mass-inconsistent. So each detector's arrival time is re-drawn from a
-**mixture** that favours the real ``tc`` prior band and otherwise spreads across
+**mixture** that favours the real ``delta_tc`` prior band and otherwise spreads across
 the whole analysis window, and the waveform is re-timed by a frequency-domain
 phase shift ``exp(-2 pi i f dt)`` (same convention as
 :meth:`sage.data.waveform.project.GravitationalWaveProjection.forward`). All
-bounds are derived (real band from the ``tc`` prior, window from the data
+bounds are derived (real band from the ``delta_tc`` prior, window from the data
 config) — nothing is hardcoded.
 
 The per-detector **mask** (which detector carries a supervisable signal) is kept
@@ -68,8 +68,8 @@ class NonAstrophysicalMasker:
         phase uses ``f[k] = k * delta_f`` over the data's own bin count — this is
         exactly the grid the projection applies its own delay on. Take it from
         the signal sampler (``signal_sampler.df``).
-    tc_bounds : tuple(float, float)
-        The real ``tc`` prior band ``(lo, hi)`` (derived from the parameter
+    delta_tc_bounds : tuple(float, float)
+        The real ``delta_tc`` prior band ``(lo, hi)`` (derived from the parameter
         sampler). Re-drawn arrival times are weighted to favour this band.
     analysis_length_s : float
         Length of the analysis window in seconds (``data_cfg.sample_length_in_s``).
@@ -78,10 +78,10 @@ class NonAstrophysicalMasker:
         Fraction of the pool made ``signal+noise`` (the rest ``signal+signal'``).
         Fixed at ``0.5`` by design; exposed only for testing.
     w_in_band : float
-        Per-detector probability that a re-drawn ``tc`` lands in the real band
+        Per-detector probability that a re-drawn ``delta_tc`` lands in the real band
         rather than the full window. Higher -> more hard, time-coincident pairs.
     edge_margin_s : float
-        Keep-out margin (seconds) from the window edges for re-drawn ``tc``.
+        Keep-out margin (seconds) from the window edges for re-drawn ``delta_tc``.
     seed : int or None
         Optional RNG seed (a device generator is created lazily on first call).
     """
@@ -89,7 +89,7 @@ class NonAstrophysicalMasker:
     def __init__(
         self,
         delta_f,
-        tc_bounds,
+        delta_tc_bounds,
         analysis_length_s,
         p_signal_noise: float = 0.5,
         w_in_band: float = 0.5,
@@ -97,7 +97,7 @@ class NonAstrophysicalMasker:
         seed=None,
     ):
         self.delta_f = float(delta_f)
-        self.tc_lo, self.tc_hi = float(tc_bounds[0]), float(tc_bounds[1])
+        self.tc_lo, self.tc_hi = float(delta_tc_bounds[0]), float(delta_tc_bounds[1])
         self.full_lo = float(edge_margin_s)
         self.full_hi = float(analysis_length_s) - float(edge_margin_s)
         self.p_sn = float(p_signal_noise)
@@ -165,7 +165,7 @@ class NonAstrophysicalMasker:
             src_tc[:, d] = pool_tc[src, d]
             src_mc[:, d] = pool_mc[src, d]
 
-        # ── re-time each detector to a weighted-random tc (FD phase shift) ─────
+        # ── re-time each detector to a weighted-random delta_tc (FD phase shift) ─────
         new_tc = torch.stack(
             [self._sample_tc(N, device, src_tc.dtype, g) for _ in range(D)], dim=1
         )                                                    # (N, D)

@@ -98,7 +98,8 @@ def reference_frequencies(f_ref, batch_size, device):
     return torch.full((batch_size, 1), f_ref, device=device, dtype=torch.float64)
 
 
-# Column layout of every waveform parameter batch, in PyCBC names.
+# Column layout of every waveform parameter batch, in PyCBC names; delta_tc is the merger's offset (s) from
+# the start of the analysis window.
 WAVEFORM_PARAMETERS = (
     "mass1",
     "mass2",
@@ -109,7 +110,7 @@ WAVEFORM_PARAMETERS = (
     "spin2y",
     "spin2z",
     "distance",
-    "tc",
+    "delta_tc",
     "coa_phase",
     "inclination",
     "lambda1",
@@ -119,7 +120,7 @@ WAVEFORM_PARAMETERS = (
     "dec",
 )
 # Waveform parameters every model takes, and each family's.
-COMMON_PARAMETERS = ("mass1", "mass2", "distance", "tc", "coa_phase", "inclination", "polarization", "ra", "dec")
+COMMON_PARAMETERS = ("mass1", "mass2", "distance", "delta_tc", "coa_phase", "inclination", "polarization", "ra", "dec")
 TRANSVERSE_SPIN_PARAMETERS = ("spin1x", "spin1y", "spin2x", "spin2y")
 TIDAL_PARAMETERS = ("lambda1", "lambda2")
 ALIGNED_PARAMETERS = COMMON_PARAMETERS + ("spin1z", "spin2z")
@@ -139,7 +140,7 @@ ALIGNED_COLUMNS = [
         "spin1z",
         "spin2z",
         "distance",
-        "tc",
+        "delta_tc",
         "coa_phase",
         "inclination",
     )
@@ -252,7 +253,7 @@ def aligned_layout(theta: torch.Tensor, columns: list, extras: tuple) -> torch.T
 
 def precessing_layout(theta: torch.Tensor, extras: tuple) -> torch.Tensor:
     """
-    Internal layout of a precessing approximant (masses, spins, distance, tc,
+    Internal layout of a precessing approximant (masses, spins, distance, delta_tc,
     coa_phase, inclination), checked as LAL does.
 
     Parameters

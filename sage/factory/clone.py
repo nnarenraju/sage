@@ -305,7 +305,7 @@ def check_built(derived: dict, state: dict, scaler, full_state: bool) -> None:
     """
     if derived["multirate_bins"] != yaml.safe_load(state["record"]["derived"])["multirate_bins"]:
         raise StateMismatch("multirate bins differ from the clone's start checkpoint "
-                            "(set by preprocess.multirate, the window and the prior's tc bounds)", False)
+                            "(set by preprocess.multirate, the window and the prior's delta_tc bounds)", False)
     if full_state and (scaler is None) != (state["scaler"] is None):
         precision = load_run_record(state["record"]["run"])["train"]["precision"]
         raise StateMismatch(f"train.precision differs from the clone's start checkpoint ({precision}) in its use of a "

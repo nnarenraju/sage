@@ -29,7 +29,7 @@ class IMRPhenomXAS(PhenomConstants):
     f_ref : torch.Tensor, shape (B, 1)
         Reference frequency in Hz.
     padding_length_in_s : float
-        Leading padding; tc is measured from its end.
+        Leading padding; delta_tc is measured from its end.
     **kwargs
         Forwarded to PhenomConstants.
 
@@ -132,7 +132,7 @@ class IMRPhenomXAS(PhenomConstants):
         n_bins : int
             Bins of the output, from DC.
         padding_length_in_s : float
-            Window padding, for the training-path tc placement.
+            Window padding, for the training-path delta_tc placement.
         batch_size : int
             Signals per call.
         device : str or torch.device
@@ -513,7 +513,7 @@ class IMRPhenomXAS(PhenomConstants):
         theta : torch.Tensor, shape (B, 17)
             Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
         reproduce_lal : bool
-            If True, skip the FD taper, the tc shift and the df
+            If True, skip the FD taper, the delta_tc shift and the df
             normalisation.
 
         Returns
@@ -535,7 +535,7 @@ class IMRPhenomXAS(PhenomConstants):
         self.check_parameters(theta)
         theta = self.order_bodies(theta)
         dist_Mpc = theta[:, 4:5]
-        tc       = theta[:, 5:6]
+        delta_tc = theta[:, 5:6]
         phic     = theta[:, 6:7]   # Orbital phase at fRef (rad)
         iota     = theta[:, 7:8]   # inclination of source (rad)
 
@@ -621,7 +621,7 @@ class IMRPhenomXAS(PhenomConstants):
             hp = hp * _win
             hc = hc * _win
 
-            hp, hc = self.apply_tc(hp, hc, tc)
+            hp, hc = self.apply_delta_tc(hp, hc, delta_tc)
 
             hp = hp * self.df
             hc = hc * self.df
@@ -629,18 +629,18 @@ class IMRPhenomXAS(PhenomConstants):
         hp, hc = self.pad_missing_frequencies(hp, hc)
         return hp, hc
 
-    def apply_tc(self, hp, hc, tc):
+    def apply_delta_tc(self, hp, hc, delta_tc):
         """
-        Shift the waveform so it merges tc seconds into the window.
+        Shift the waveform so it merges delta_tc seconds into the window.
 
-        tc is measured from the end of the leading padding, so the
-        merger lands padding_length_in_s + tc into the padded segment.
+        delta_tc is measured from the end of the leading padding, so the
+        merger lands padding_length_in_s + delta_tc into the padded segment.
 
         Parameters
         ----------
         hp, hc : torch.Tensor, shape (B, F), complex
             Plus and cross polarisations.
-        tc : torch.Tensor, shape (B, 1)
+        delta_tc : torch.Tensor, shape (B, 1)
             Time of coalescence in s from the end of the padding.
 
         Returns
@@ -648,9 +648,9 @@ class IMRPhenomXAS(PhenomConstants):
         hp, hc : torch.Tensor, shape (B, F), complex
             Time-shifted polarisations.
         """
-        _tc = (tc + self.padding_length_in_s) - self.sample_length_in_s
-        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * _tc)
-        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * _tc)
+        shift = (delta_tc + self.padding_length_in_s) - self.sample_length_in_s
+        hp = torch.polar(torch.abs(hp), torch.angle(hp) - 2 * self.PI * self.f * shift)
+        hc = torch.polar(torch.abs(hc), torch.angle(hc) - 2 * self.PI * self.f * shift)
         return hp, hc
 
     def pad_missing_frequencies(self, hp, hc):

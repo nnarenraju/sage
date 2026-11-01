@@ -64,7 +64,7 @@ def signal(**overrides) -> dict:
         "waveform": {"name": "IMRPhenomPv2"},
         "projection": {"name": "constant"},
         "snr": {"name": "halfnorm", "scale": "4.0", "loc": "5.0"},
-        "targets": ["tc", "mchirp"],
+        "targets": ["delta_tc", "mchirp"],
     }
     return {**section, **overrides}
 
@@ -89,7 +89,7 @@ def test_targets_scaled_from_bounds():
     sampler = build(signal()).param_sampler
     assert sampler.scale_targets(sampler(10_000)).abs().max() <= 1.0 + 1e-5  # float32 rounding at the bounds
     ends = sampler.unscale_targets(torch.tensor([[-1.0, -1.0], [1.0, 1.0]])).T.tolist()
-    assert ends == [pytest.approx(sampler.bounds[target], rel=1e-6) for target in ("tc", "mchirp")]
+    assert ends == [pytest.approx(sampler.bounds[target], rel=1e-6) for target in ("delta_tc", "mchirp")]
 
 
 def test_signal_off_grid():
@@ -99,7 +99,7 @@ def test_signal_off_grid():
 
 def test_signal_unknown_target():
     with pytest.raises(ValueError, match="'mchrip' is not a prior parameter; did you mean 'mchirp'"):
-        build(signal(targets=["tc", "mchrip"]))
+        build(signal(targets=["delta_tc", "mchrip"]))
 
 
 def test_signal_unknown_waveform():

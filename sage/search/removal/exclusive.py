@@ -71,8 +71,8 @@ def exclusive_background(
     time_s : float
         Remaining background time in seconds.
     """
-    centres = np.sort(foreground["tc_gps"])
-    offset = background["tc_gps"] - background["gps"]
+    centres = np.sort(foreground["tc"])
+    offset = background["tc"] - background["gps"]
 
     keep = np.ones(len(background["stat"]), dtype=bool)
     for detector in detectors:

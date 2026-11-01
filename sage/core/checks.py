@@ -163,17 +163,17 @@ def check_unique_detectors(detectors: list) -> None:
         raise ValueError(f"detectors listed more than once: {', '.join(repeated)}")
 
 
-def check_tc_window(tc_min: float, tc_max: float, sample_length_in_s: float) -> None:
+def check_delta_tc_window(delta_tc_min: float, delta_tc_max: float, sample_length_in_s: float) -> None:
     """
-    Check that the tc prior lies inside the analysed window.
+    Check that the delta_tc prior lies inside the analysed window.
 
-    tc is measured from the end of the leading padding, so the analysed
+    delta_tc is measured from the end of the leading padding, so the analysed
     window is ``[0, sample_length_in_s]``.
 
     Parameters
     ----------
-    tc_min, tc_max : float
-        Bounds of the tc prior in seconds.
+    delta_tc_min, delta_tc_max : float
+        Bounds of the delta_tc prior in seconds.
     sample_length_in_s : float
         Length of the analysed window in seconds.
 
@@ -182,8 +182,8 @@ def check_tc_window(tc_min: float, tc_max: float, sample_length_in_s: float) -> 
     ValueError
         If either bound lies outside the analysed window.
     """
-    if tc_min < 0 or tc_max > sample_length_in_s:
+    if delta_tc_min < 0 or delta_tc_max > sample_length_in_s:
         raise ValueError(
-            f"tc prior [{tc_min}, {tc_max}] s is outside the analysed window "
+            f"delta_tc prior [{delta_tc_min}, {delta_tc_max}] s is outside the analysed window "
             f"[0, {sample_length_in_s}] s"
         )

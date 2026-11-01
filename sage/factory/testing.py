@@ -99,7 +99,7 @@ def query_testing(h5path, far=None, score_above=None, detector=None,
         Keep records whose max per-detector peak exceeds this.
     pe_below, pe_above : dict[str, float]
         Keep records whose physical PE mean for the named head is below / above
-        the value (head names are the run's ``signal.targets``, e.g. "tc","mchirp").
+        the value (head names are the run's ``signal.targets``, e.g. "delta_tc","mchirp").
 
     Returns
     -------

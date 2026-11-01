@@ -891,7 +891,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         theta : torch.Tensor, shape (B, 17)
             Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
         reproduce_lal : bool
-            If True, skip FD tapering, tc shift and df normalisation so
+            If True, skip FD tapering, delta_tc shift and df normalisation so
             the output compares directly with LAL's.
 
         Returns
@@ -910,7 +910,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         m1       = theta[:, 0:1]
         m2       = theta[:, 1:2]
         dist_Mpc = theta[:, 4:5]
-        tc_val   = theta[:, 5:6]
+        delta_tc = theta[:, 5:6]
         phic     = theta[:, 6:7]
         iota     = theta[:, 7:8]
         lambda1  = theta[:, 8:9]
@@ -1077,7 +1077,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
             )
             hp = hp * _win
             hc = hc * _win
-            hp, hc = self.apply_tc(hp, hc, tc_val)
+            hp, hc = self.apply_delta_tc(hp, hc, delta_tc)
             hp = hp * self.df
             hc = hc * self.df
 

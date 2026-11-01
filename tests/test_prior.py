@@ -12,7 +12,7 @@ from sage.data.waveform.sampler import prior_sampler
 def test_preset_numbers():
     prior = load_prior("bbh_narrow", Path("."))["priors"]
     assert prior["mass1"]["min"] == 7.0
-    assert isinstance(prior["tc"]["min"], float) and "injection_time" not in prior
+    assert isinstance(prior["delta_tc"]["min"], float) and "tc" not in prior
     assert prior["sky"] == {"name": "uniform_sky", "polar-angle": "dec", "azimuthal-angle": "ra"}
 
 
@@ -27,9 +27,9 @@ def test_file_extends_preset(tmp_path):
 
 def test_min_not_number(tmp_path):
     (tmp_path / "prior.yaml").write_text(
-        "extends: bbh_narrow\npriors:\n  tc:\n    min: early\n"
+        "extends: bbh_narrow\npriors:\n  delta_tc:\n    min: early\n"
     )
-    with pytest.raises(ValueError, match="prior 'tc': min must be a number, got 'early'"):
+    with pytest.raises(ValueError, match="prior 'delta_tc': min must be a number, got 'early'"):
         load_prior("prior.yaml", tmp_path)
 
 

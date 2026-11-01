@@ -66,8 +66,8 @@ def trigger_columns(
 ) -> Dict[str, np.ndarray]:
     """Point-estimate columns of a trigger file.
 
-    The merger time is made absolute: ``tc_gps = window_start + padding
-    + tc``, since tc is measured from the end of the leading padding.
+    The merger time is made absolute: ``tc = window_start + padding
+    + delta_tc``, since delta_tc is measured from the end of the leading padding.
 
     Parameters
     ----------
@@ -87,8 +87,8 @@ def trigger_columns(
     Returns
     -------
     dict of str to numpy.ndarray
-        ``<target>`` and ``<target>_sigma`` per target, with ``tc``
-        replaced by ``tc_gps``.
+        ``<target>`` and ``<target>_sigma`` per target, with ``delta_tc``
+        replaced by ``tc``.
     """
     means, widths = decode(estimates, offsets, scales, *width_bounds)
 
@@ -97,7 +97,7 @@ def trigger_columns(
         columns[name] = means[:, index]
         columns[f"{name}_sigma"] = widths[:, index]
 
-    columns["tc_gps"] = window_start_gps + (padding_s + columns.pop("tc"))
+    columns["tc"] = window_start_gps + (padding_s + columns.pop("delta_tc"))
     return columns
 
 
@@ -154,7 +154,7 @@ def merger_times(
     Parameters
     ----------
     columns : dict of str to numpy.ndarray
-        Trigger columns with ``gps``, ``tc_gps`` and ``<detector>_gps``.
+        Trigger columns with ``gps``, ``tc`` and ``<detector>_gps``.
     detectors : list of str
         Detectors of the triggers.
 
@@ -163,7 +163,7 @@ def merger_times(
     numpy.ndarray
         Merger times, shape ``(triggers, detectors)``.
     """
-    offset = columns["tc_gps"] - columns["gps"]
+    offset = columns["tc"] - columns["gps"]
     return np.stack([columns[f"{detector}_gps"] + offset for detector in detectors], 1)
 
 

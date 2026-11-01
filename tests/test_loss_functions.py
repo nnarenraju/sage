@@ -10,7 +10,7 @@ import torch
 
 from sage.architecture.custom_losses import BCE_PE_Huber, BCE_PE_MSE, BCE_PE_Sigma, width_to_sigma
 
-TARGETS = ["tc", "mchirp"]
+TARGETS = ["delta_tc", "mchirp"]
 
 
 def batch(widths=True, labels=None, seed=0):
@@ -31,7 +31,7 @@ def test_components(loss, widths):
     out = loss(*batch(widths))
     names = loss.component_names
     assert len(out) == loss.num_components == len(names)
-    assert names[:4] == ["total", "classification", "regression_tc", "regression_mchirp"]
+    assert names[:4] == ["total", "classification", "regression_delta_tc", "regression_mchirp"]
     regression = out[2] + out[3]
     coupling = loss.coupling_weight * out[4] if "coupling" in names else 0.0
     assert torch.isclose(out[0], out[1] + loss.regression_weight * regression + coupling)

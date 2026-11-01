@@ -42,7 +42,7 @@ INFORMATIVE_PARAMS = (
     "inclination",
     "spin1z",
     "spin2z",
-    "tc",
+    "delta_tc",
 )
 
 #: Isotropic or bookkeeping parameters: flat by construction.
@@ -51,7 +51,7 @@ NUISANCE_PARAMS = (
     "dec",
     "coa_phase",
     "polarization",
-    "injection_time",
+    "tc",
     "spin1_azimuthal",
     "spin2_azimuthal",
     "spin1_polar",

@@ -24,6 +24,8 @@ DEFAULTS = {
 }
 REQUIRED = ("mass1", "mass2")
 EXTRINSIC = ("tc", "ra", "dec", "polarization")
+# The layout's parameters with tc, the geocentric GPS merger time, for the in-window offset delta_tc.
+PARAMETERS = tuple(p for p in waveform_utils.WAVEFORM_PARAMETERS if p != "delta_tc") + ("tc",)
 PRESETS = "waveform_priors"
 
 
@@ -137,7 +139,7 @@ def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sa
     Parameters
     ----------
     parameters : dict or iterable of dict
-        PyCBC names (``waveform_utils.WAVEFORM_PARAMETERS``). ``mass1`` and ``mass2`` are
+        PyCBC names (:data:`PARAMETERS`). ``mass1`` and ``mass2`` are
         required; spins, ``distance`` (Mpc), ``inclination``, ``coa_phase`` and the lambdas
         take PyCBC's ``get_fd_waveform`` defaults. With detectors, ``tc`` (geocentric GPS
         time), ``ra``, ``dec`` and ``polarization`` are required.
@@ -178,11 +180,10 @@ def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sa
         raise ValueError("parameters: give at least one signal")
     if approximant not in APPROXIMANTS:
         raise ValueError(f"approximant {approximant!r}; {loader.suggestion(approximant, list(APPROXIMANTS))}")
-    names = waveform_utils.WAVEFORM_PARAMETERS
     for i, row in enumerate(rows):
-        unknown = sorted(set(row) - set(names))
+        unknown = sorted(set(row) - set(PARAMETERS))
         if unknown:
-            raise ValueError(f"signal {i}: unknown parameters {unknown}; known: {', '.join(names)}")
+            raise ValueError(f"signal {i}: unknown parameters {unknown}; known: {', '.join(PARAMETERS)}")
         missing = [p for p in REQUIRED + (EXTRINSIC if detectors else ()) if p not in row]
         if missing:
             raise ValueError(f"signal {i}: missing {', '.join(missing)}"
@@ -205,10 +206,12 @@ def generate_fd_waveform(parameters, *, approximant, delta_f, detectors=None, sa
             warnings.warn(f"signal {i}: Specified frequency interval of {delta_f:g} Hz is too large for a chirp "
                           f"of duration {duration:g} s")
 
+    names = waveform_utils.WAVEFORM_PARAMETERS
     theta = torch.zeros((len(rows), len(names)), dtype=torch.float64, device=device)
     for i, row in enumerate(rows):
         for name, value in row.items():
-            theta[i, names.index(name)] = value
+            if name in names:  # tc places the merger in project
+                theta[i, names.index(name)] = value
     model = APPROXIMANTS[approximant].from_band(delta_f, f_lower, f_max, f_ref, len(rows), device)
     hp, hc = model.get_hphc(theta, reproduce_lal=True)
     out = (hp, hc) if detectors is None else project(hp, hc, rows, list(detectors), delta_f, epoch)
@@ -261,7 +264,7 @@ def sample_fd_waveform(num_waveforms, prior, *, approximant, delta_f, detectors=
                             "cpu", torch.float64)
     draws = sampler(num_waveforms)
     columns = {name: draws[:, k] for name, k in sampler.param_index.items()}
-    names = [name for name in waveform_utils.WAVEFORM_PARAMETERS if name in columns]
+    names = [name for name in PARAMETERS if name in columns]
     rows = [{name: float(columns[name][i]) for name in names} for i in range(num_waveforms)]
     waveforms = generate_fd_waveform(rows, approximant=approximant, delta_f=delta_f, detectors=detectors,
                                      sample_rate=sample_rate, f_max=f_max, f_lower=f_lower, f_ref=f_ref,

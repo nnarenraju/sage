@@ -13,11 +13,11 @@ variable_params:
   - spin2_a
   - spin2_azimuthal
   - spin2_polar
-  - tc
+  - delta_tc
 
 priors:
 
-  tc:
+  delta_tc:
     name: uniform
     min: 11.0
     max: 11.2

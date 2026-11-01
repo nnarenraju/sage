@@ -33,7 +33,7 @@ signal:
   waveform: {name: IMRPhenomPv2}
   projection: {name: constant}
   snr: {name: halfnorm, scale: 4.0, loc: 5.0}
-  targets: [tc, mchirp]
+  targets: [delta_tc, mchirp]
 noise:
   training: &synthetic
     name: synthetic
@@ -341,7 +341,7 @@ def test_compare(tmp_path, monkeypatch, capsys):
     with h5py.File(tmp_path / "both" / "compare.h5", "r") as both, h5py.File(tmp_path / "alone" / "compare.h5", "r") as alone:
         assert both.attrs["complete"] and list(both.attrs["runs"]) == ["run", "twin"]
         assert both["foreground/run"].shape == (8, 5) and both["background/run"].shape == (8, 5)
-        assert list(both["foreground/run"].attrs["columns"]) == ["rank", "mu_tc", "mu_mchirp", "sigma_tc", "sigma_mchirp"]
+        assert list(both["foreground/run"].attrs["columns"]) == ["rank", "mu_delta_tc", "mu_mchirp", "sigma_delta_tc", "sigma_mchirp"]
         assert both["foreground/target_snr"].shape == (8, 1) and both["foreground/signal_params"].attrs["names"][0]
         for group in ("foreground", "background"):
             assert np.array_equal(both[group]["run"][:], both[group]["twin"][:])  # one network, the same windows

@@ -32,8 +32,8 @@ def greedy_triggers(
     dict of str to numpy.ndarray
         Columns of the kept triggers, in time order.
     """
-    by_time = np.argsort(columns["tc_gps"], kind="stable")
-    times = columns["tc_gps"][by_time]
+    by_time = np.argsort(columns["tc"], kind="stable")
+    times = columns["tc"][by_time]
     left = np.searchsorted(times, times - window_s)
     right = np.searchsorted(times, times + window_s)
 

@@ -37,7 +37,7 @@ Description   : GPU-native batched IMRPhenomXPHM precessing-spin
                 --------------------------
                 waveform_utils.WAVEFORM_PARAMETERS (PyCBC names): mass1,
                 mass2, spin1x, spin1y, spin1z, spin2x, spin2y, spin2z,
-                distance, tc, coa_phase, inclination, lambda1, lambda2,
+                distance, delta_tc, coa_phase, inclination, lambda1, lambda2,
                 polarization, ra, dec.
 
 Created on 2026-08-04
@@ -179,7 +179,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         self.source, self.target = waveform_utils.layout_columns(param_index, parameters, type(self).__name__)
         self.extras = waveform_utils.given_extras(param_index, parameters)
         self.dist_col = param_index["distance"]
-        self.tc_col = param_index["tc"]
+        self.delta_tc_col = param_index["delta_tc"]
 
         self.param_sampler.compile_target_scaling(targets, dtype)
 
@@ -241,11 +241,11 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         # in IMRPhenomPv2.forward.
         if self.append_per_det_targets:
             D = dt.shape[1]
-            per_det_tc = all_theta[:, self.tc_col].unsqueeze(1) + dt
+            per_det_delta_tc = all_theta[:, self.delta_tc_col].unsqueeze(1) + dt
             per_det_mc = normed_targets[:, self.mc_pe_idx : self.mc_pe_idx + 1].expand(
                 -1, D
             )
-            targets = torch.cat([targets, per_det_tc, per_det_mc], dim=1)
+            targets = torch.cat([targets, per_det_delta_tc, per_det_mc], dim=1)
 
         if return_theta:
             return hf, targets, all_theta
@@ -1928,7 +1928,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
 
         The co-precessing modes are generated with the aligned-spin
         8-column theta [m1, m2, chi1z, chi2z, dist, 0, 0, 0] (pWF->phi0
-        is 0 under convention 1; tc and inclination do not enter single
+        is 0 under convention 1; delta_tc and inclination do not enter single
         modes) and the precessing final spin threaded into every
         coefficient builder.
         """
@@ -1985,7 +1985,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
            hp' = cos(2 zeta) hp + sin(2 zeta) hc,
            hc' = cos(2 zeta) hc - sin(2 zeta) hp
            (XPHM.c:1591-1607);
-        7. tail as in IMRPhenomXAS.get_hphc: FD taper, tc shift, df
+        7. tail as in IMRPhenomXAS.get_hphc: FD taper, delta_tc shift, df
            normalisation (skipped when reproduce_lal), DC zero-padding.
 
         Parameters
@@ -2000,11 +2000,11 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         -------
         hp, hc : torch.Tensor, shape (B, n_pad + F), complex
         """
-        # [m1, m2, chi1x, chi1y, chi1z, chi2x, chi2y, chi2z, distance, tc,
+        # [m1, m2, chi1x, chi1y, chi1z, chi2x, chi2y, chi2z, distance, delta_tc,
         #  phic, inclination]
         theta = waveform_utils.precessing_layout(theta, self.extras)
         theta = self.check_masses_and_spins(theta)
-        tc = theta[:, 9:10]
+        delta_tc = theta[:, 9:10]
         theta_aligned = torch.cat(
             [theta[:, 0:2], theta[:, 4:5], theta[:, 7:8], theta[:, 8:9],
              torch.zeros_like(theta[:, 0:3])], dim=1)
@@ -2047,7 +2047,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
             )
             hp = hp * _win
             hc = hc * _win
-            hp, hc = self.apply_tc(hp, hc, tc)
+            hp, hc = self.apply_delta_tc(hp, hc, delta_tc)
             hp = hp * self.df
             hc = hc * self.df
 

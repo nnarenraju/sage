@@ -34,7 +34,7 @@ Description   : GPU-native batched IMRPhenomXHM aligned-spin frequency-domain
                 --------------------------
                 waveform_utils.WAVEFORM_PARAMETERS (PyCBC names): mass1,
                 mass2, spin1x, spin1y, spin1z, spin2x, spin2y, spin2z,
-                distance, tc, coa_phase, inclination, lambda1, lambda2,
+                distance, delta_tc, coa_phase, inclination, lambda1, lambda2,
                 polarization, ra, dec.
 
 Created on 2026-08-04
@@ -1895,7 +1895,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
         theta : torch.Tensor, shape (B, 17)
             Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
         reproduce_lal : bool
-            If True, skip FD tapering, tc shift and df normalisation so the
+            If True, skip FD tapering, delta_tc shift and df normalisation so the
             output can be compared directly with raw LALSim output (with
             PhenomXHMThresholdMband = 0) on the same frequency grid.
 
@@ -1913,7 +1913,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
             waveform_utils.TRANSVERSE_SPIN_PARAMETERS + waveform_utils.TIDAL_PARAMETERS,
         )
         iota = theta[:, 7:8]
-        tc = theta[:, 5:6]
+        delta_tc = theta[:, 5:6]
         derived = self.compute_derived_parameters(theta)
         M_s = derived[:, 2:3]
 
@@ -1946,7 +1946,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
             )
             hp = hp * _win
             hc = hc * _win
-            hp, hc = self.apply_tc(hp, hc, tc)
+            hp, hc = self.apply_delta_tc(hp, hc, delta_tc)
             hp = hp * self.df
             hc = hc * self.df
 

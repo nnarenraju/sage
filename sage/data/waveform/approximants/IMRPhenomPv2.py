@@ -67,7 +67,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
     augment : callable or None
         Augmentation applied to the projected strain (the SNR rescaler).
     window : Window
-        Window geometry; sets the frequency grid and tc placement.
+        Window geometry; sets the frequency grid and delta_tc placement.
     signal_batch_size : int
         Signals drawn per call.
     low_frequency_cutoff_in_hz : float
@@ -127,7 +127,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         self.augment = augment
 
         # When True, append per-detector targets AFTER the class column:
-        # [pe..., class, tc_det0.. (physical s), mc_det0.. (scaled)].
+        # [pe..., class, delta_tc_det0.. (physical s), mc_det0.. (scaled)].
         # Consumed by the multi-detector consistency heads. Off by default so
         # the standard [pe..., class] target (and everything that reads
         # targets[:, -1] / [:, :-1]) is unchanged.
@@ -139,10 +139,10 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         parameters = waveform_utils.PRECESSING_PARAMETERS
         self.source, self.target = waveform_utils.layout_columns(param_index, parameters, type(self).__name__)
         self.extras = waveform_utils.given_extras(param_index, parameters)
-        # Columns of distance and geocentric tc in the full all_theta tensor;
-        # tc builds per-detector arrival times (tc_det = tc + projection delay).
+        # Columns of distance and delta_tc in the full all_theta tensor; delta_tc
+        # builds per-detector arrival times (delta_tc_det = delta_tc + projection delay).
         self.dist_col = param_index["distance"]
-        self.tc_col = param_index["tc"]
+        self.delta_tc_col = param_index["delta_tc"]
 
         # Target handling
         self.param_sampler.compile_target_scaling(targets, dtype)
@@ -188,19 +188,19 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
 
         # Per-detector targets appended AFTER the class column, so the standard
         # [pe..., class] view (targets[:, : num_pe + 1]) is unchanged. Layout:
-        # [pe..., class, tc_det0..tc_det{D-1}, mc_det0..mc_det{D-1}].
-        #   - tc_det = geocentric tc + projection delay, physical within-window
+        # [pe..., class, delta_tc_det0..delta_tc_det{D-1}, mc_det0..mc_det{D-1}].
+        #   - delta_tc_det = delta_tc + projection delay, physical within-window
         #     seconds (amplitude rescaling above does not affect timing);
         #   - mc_det = the scaled mchirp, identical across detectors for a
         #     real coherent injection (broadcast). The masker overwrites these
         #     for non-astrophysical pairs (per-detector independent mchirp).
         if self.append_per_det_targets:
             D = dt.shape[1]
-            per_det_tc = all_theta[:, self.tc_col].unsqueeze(1) + dt   # (B, D)
+            per_det_delta_tc = all_theta[:, self.delta_tc_col].unsqueeze(1) + dt   # (B, D)
             per_det_mc = normed_targets[:, self.mc_pe_idx : self.mc_pe_idx + 1].expand(
                 -1, D
             )                                                          # (B, D)
-            targets = torch.cat([targets, per_det_tc, per_det_mc], dim=1)
+            targets = torch.cat([targets, per_det_delta_tc, per_det_mc], dim=1)
 
         if return_theta:
             return hf, targets, all_theta
@@ -231,7 +231,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             Cross polarisation (complex128).
         """
         # m1=0, m2=1, s1x=2, s1y=3, s1z=4, s2x=5, s2y=6,
-        # s2z=7, dist_mpc=8, tc=9, phiRef=10, incl=11
+        # s2z=7, dist_mpc=8, delta_tc=9, phiRef=10, incl=11
         theta = self.order_bodies(waveform_utils.precessing_layout(theta, self.extras))
 
         # Compute generic derived quantities from masses
@@ -345,8 +345,8 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
             final_hp *= _taper
             final_hc *= _taper
 
-            # Apply phase shift equivalent to applying tc
-            final_hp, final_hc = self.apply_tc(final_hp, final_hc, theta[:, 9:10])
+            # Apply phase shift equivalent to applying delta_tc
+            final_hp, final_hc = self.apply_delta_tc(final_hp, final_hc, theta[:, 9:10])
 
             # Make hf consistent with the scale of other data
             # LAL works in continuous Fourier regime
@@ -695,7 +695,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
         ----------
         theta : torch.Tensor, shape (B, 12+)
             Columns: mass1[0], mass2[1], spin1x[2], spin1y[3], spin1z[4],
-            spin2x[5], spin2y[6], spin2z[7], distance[8], tc[9],
+            spin2x[5], spin2y[6], spin2z[7], distance[8], delta_tc[9],
             coa_phase[10], inclination[11].
             mass1 >= mass2 (ordered by :meth:`order_bodies`),
             so spin1 belongs to the LARGER body and spin2 to the SMALLER body.

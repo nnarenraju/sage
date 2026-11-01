@@ -11,7 +11,7 @@ from sage.config import loader, machine
 RUN = """
 data: {detectors: [H1, L1], sample_rate_in_hz: 2048, sample_length_in_s: 12, padding_length_in_s: 2, dtype: float32}
 signal: {prior: bbh_narrow, low_frequency_cutoff_in_hz: 20, reference_frequency_in_hz: 20, waveform: {name: IMRPhenomPv2},
-         projection: {name: constant}, snr: {name: halfnorm, scale: 4.0, loc: 5.0}, targets: [tc, mchirp]}
+         projection: {name: constant}, snr: {name: halfnorm, scale: 4.0, loc: 5.0}, targets: [delta_tc, mchirp]}
 noise: {training: {name: real, runs: [o3b]}, validation: {name: real, runs: [o3a]}, fiducial: [o3a, o3b],
         prefetch_batches: 8, read_workers: 16}
 preprocess: [{name: whiten}]
