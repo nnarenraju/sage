@@ -17,12 +17,12 @@ from sage.architecture.network import (
 from sage.architecture.network.common import FrontendTap
 from sage.config.loader import component_arguments, convert, suggestion
 from sage.config.machine import (
+    asd_dir,
     asds_file,
     bad_time_file,
     dataset_file,
     fiducial_dir,
     fiducial_file,
-    observing_run_dir,
     recolour_bank_file,
     segment_asd_file,
     segments_file,
@@ -308,7 +308,7 @@ def noise_runs(source: dict, data_dir: Path, detectors: list) -> list:
     return [
         {
             "run": run,
-            "data_dir": observing_run_dir(data_dir, run, "asds"),
+            "data_dir": asd_dir(data_dir, run),
             "bins": [str(strain_file(data_dir, run, detector)) for detector in detectors],
             **selection,
         }
@@ -370,7 +370,7 @@ def build_recolour(
     """
     return RecolourPostprocess(
         runs=runs,
-        target_asd_dir=observing_run_dir(data_dir, recolour["target"], "asds"),
+        target_asd_dir=asd_dir(data_dir, recolour["target"]),
         probability=recolour["probability"],
         asd_jitter_gain=recolour["asd_jitter_gain"],
         seed=seed,
@@ -446,7 +446,7 @@ def data_files(settings: dict, data_dir: Path, fiducial: bool = True) -> list:
                     asds = segment_asd_file(run["data_dir"], detector)
                     files += [asds, segments_file(asds)]
             files.append(asds_file(data_dir, noise["recolour"]["target"]))
-            target = observing_run_dir(data_dir, noise["recolour"]["target"], "asds")
+            target = asd_dir(data_dir, noise["recolour"]["target"])
             for detector in detectors:
                 bank = recolour_bank_file(target, detector)
                 files += [bank, bank.with_suffix(".json")]

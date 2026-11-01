@@ -35,6 +35,7 @@ from pathlib import Path
 from pycbc import DYN_RANGE_FAC
 
 # LOCAL
+from sage.data.noise.data_quality import clean
 from sage.data.primer import NoBlackout
 from sage.dsp.inverse_spectrum_truncation import inverse_spectrum_truncation_single
 
@@ -505,13 +506,13 @@ class EstimateASD:
             with open(meta_path, "w") as f:
                 json.dump(meta, f, indent=2)
 
-    def estimate_segment_asds(self, *, noise_segments_file):
+    def estimate_segment_asds(self, *, noise_segments_file, bad):
         """
         Compute the Welch ASD for each noise segment in a bin file.
 
         Args:
             noise_segments_file: path to noise .bin file
-            output_dir: directory to write the ASD bin + metadata
+            bad: bad-time intervals; a segment overlapping one is never drawn and gets a NaN row
         """
         noise_segments_file = Path(noise_segments_file)
         output_dir = self.data_dir / "segment_psds"
@@ -539,66 +540,82 @@ class EstimateASD:
         asd_meta = []
         asd_cursor = 0
 
+        # Grid of every row, for the placeholders of segments in bad time
+        if self.interpolate_asd:
+            num_bins = self.training_sample_length // 2 + 1
+            grid_delta_f = self.sample_rate / self.training_sample_length
+        else:
+            num_bins = self.asd_method.seg_len // 2 + 1
+            grid_delta_f = 1.0 / (self.asd_method.seg_len * self.asd_method.delta_t)
+
         with open(asd_bin_path, "wb") as asd_fh:
-            for seg in tqdm(seg_meta, desc="Computing ASDs per segment"):
-                start = seg["sample_start_idx"]
-                nsamp = seg["nsamples"]
-
-                data = np.array(
-                    mm[start : start + nsamp],
-                    dtype=np.float32,
-                    copy=True,
-                )
-                data /= DYN_RANGE_FAC
-
-                ts = torch.from_numpy(data)
-
-                # Welch gives a PSD; square-root it so the bank on disk is
-                # an ASD, matching the fiducial and what recolour expects.
-                asd = self.asd_method(ts).cpu().numpy()
-                asd = np.sqrt(asd).astype(np.float32)
-                freqs = self.asd_method.freqs
-                delta_f = 1.0 / (self.asd_method.seg_len * self.asd_method.delta_t)
-
-                # Apply inverse spectrum truncation
-                if self.apply_ist:
-                    raise NotImplementedError("Inverse spectrum truncation removed")
-                    asd = torch.from_numpy(asd).to(torch.float64)
-                    asd = inverse_spectrum_truncation_single(
-                        psd=asd,
-                        max_filter_len=self.max_filter_len,
-                        low_frequency_cutoff=self.low_frequency_cutoff,
-                        delta_f=delta_f,
-                        trunc_method=self.trunc_method,
-                    )
-                    asd = asd.cpu().numpy()
-
-                # Interpolate if requested
-                if self.interpolate_asd:
-                    asd, delta_f, freqs = EstimateASD._interpolate(
-                        asd=asd,
-                        delta_f_asd=delta_f,
-                        sample_length=self.training_sample_length,
-                        sample_rate=self.sample_rate,
-                    )
+            for seg, good in zip(tqdm(seg_meta, desc="Computing ASDs per segment"), clean(seg_meta, bad)):
+                if not good:
+                    asd, delta_f = np.full(num_bins, np.nan, dtype=np.float32), grid_delta_f
                 else:
-                    # NumPy from here, as the interpolation returns
-                    freqs = freqs.numpy()
+                    start = seg["sample_start_idx"]
+                    nsamp = seg["nsamples"]
 
-                # Spline smooth the ASD before saving.
-                # Smoothing strength is domain dependent: 0.004 * len(freqs)
-                # would be right for a PSD, 0.001 for the ASD we have here.
-                if self.asd_smoothener is not None:
-                    asd = self.asd_smoothener.smooth(
-                        freqs, asd, smooth_factor=0.001 * len(freqs)
+                    data = np.array(
+                        mm[start : start + nsamp],
+                        dtype=np.float32,
+                        copy=True,
                     )
+                    data /= DYN_RANGE_FAC
 
-                # DO NOT do the following although its tempting
-                # Kill all values below low frequency cutoff
-                # asd[freqs < self.low_frequency_cutoff] = 1e30
-                # This introduces long lasting ringing effects in TD
-                # Instead we make a slow taper
-                asd = self.taper(freqs, asd)
+                    ts = torch.from_numpy(data)
+
+                    # Welch gives a PSD; square-root it so the bank on disk is
+                    # an ASD, matching the fiducial and what recolour expects.
+                    asd = self.asd_method(ts).cpu().numpy()
+                    asd = np.sqrt(asd).astype(np.float32)
+                    freqs = self.asd_method.freqs
+                    delta_f = 1.0 / (self.asd_method.seg_len * self.asd_method.delta_t)
+
+                    # Apply inverse spectrum truncation
+                    if self.apply_ist:
+                        raise NotImplementedError("Inverse spectrum truncation removed")
+                        asd = torch.from_numpy(asd).to(torch.float64)
+                        asd = inverse_spectrum_truncation_single(
+                            psd=asd,
+                            max_filter_len=self.max_filter_len,
+                            low_frequency_cutoff=self.low_frequency_cutoff,
+                            delta_f=delta_f,
+                            trunc_method=self.trunc_method,
+                        )
+                        asd = asd.cpu().numpy()
+
+                    # Interpolate if requested
+                    if self.interpolate_asd:
+                        asd, delta_f, freqs = EstimateASD._interpolate(
+                            asd=asd,
+                            delta_f_asd=delta_f,
+                            sample_length=self.training_sample_length,
+                            sample_rate=self.sample_rate,
+                        )
+                    else:
+                        # NumPy from here, as the interpolation returns
+                        freqs = freqs.numpy()
+
+                    # Spline smooth the ASD before saving.
+                    # Smoothing strength is domain dependent: 0.004 * len(freqs)
+                    # would be right for a PSD, 0.001 for the ASD we have here.
+                    if self.asd_smoothener is not None:
+                        asd = self.asd_smoothener.smooth(
+                            freqs, asd, smooth_factor=0.001 * len(freqs)
+                        )
+
+                    # DO NOT do the following although its tempting
+                    # Kill all values below low frequency cutoff
+                    # asd[freqs < self.low_frequency_cutoff] = 1e30
+                    # This introduces long lasting ringing effects in TD
+                    # Instead we make a slow taper
+                    asd = self.taper(freqs, asd)
+                    if not np.isfinite(asd).all():
+                        raise ValueError(
+                            f"segment {seg['segment_index']} of {noise_segments_file}: its ASD is not finite "
+                            f"outside bad time"
+                        )
 
                 nbytes = asd.nbytes
                 asd_fh.write(asd.tobytes())

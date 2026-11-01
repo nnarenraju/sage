@@ -64,7 +64,7 @@ def test_zero_runs(tmp_path, monkeypatch):
 
 
 def test_no_interpolation(tmp_path):
-    """EstimateASD on Welch's own grid (interpolate_asd=False): the per-segment ASDs and a bank."""
+    """EstimateASD on Welch's own grid (interpolate_asd=False): the per-segment ASDs, NaN in bad time, and a bank."""
     path = write_strain(tmp_path, [40960, 45056])
     asd_dir = tmp_path / "asds"
     estimator = EstimateASD(
@@ -73,12 +73,13 @@ def test_no_interpolation(tmp_path):
         store_asds_as_bin=True, low_frequency_cutoff=15.0, max_filter_len=4096, interpolate_asd=False,
         asd_smoothener=LogSplineSmoothing(smooth_factor=None, noise_low_frequency_cutoff=15.0),
     )
-    estimator.estimate_segment_asds(noise_segments_file=path)
+    estimator.estimate_segment_asds(noise_segments_file=path, bad=[(1e9 + 600.0, 1e9 + 601.0)])
+    rows = np.fromfile(machine.segment_asd_file(asd_dir, "H1"), dtype="<f4").reshape(2, -1)
+    assert rows.shape[1] == 8192 // 2 + 1 and np.isfinite(rows[0]).all() and np.isnan(rows[1]).all()
     sampler = MemmapSingleNoiseSampler(path, [], return_tensor=True)
     estimator.write_raw_asds(noise_sampler=partial(sampler.sample, rng=np.random.default_rng(0)), duration=32768)
-    for asds in (machine.segment_asd_file(asd_dir, "H1"), machine.recolour_bank_file(asd_dir, "H1")):
-        values = np.fromfile(asds, dtype="<f4").reshape(2, -1)
-        assert values.shape[1] == 8192 // 2 + 1 and np.isfinite(values).all()
+    bank = np.fromfile(machine.recolour_bank_file(asd_dir, "H1"), dtype="<f4").reshape(2, -1)
+    assert bank.shape[1] == 8192 // 2 + 1 and np.isfinite(bank).all()
 
 
 def test_one_worker(tmp_path, monkeypatch):
@@ -108,6 +109,14 @@ def test_adopt_strain(tmp_path, monkeypatch):
     assert yaml.safe_load(machine.dataset_file(tmp_path, "o3b").read_text())["sample_rate_in_hz"] == 2048.0
     record = yaml.safe_load(machine.asds_file(tmp_path, "o3b").read_text())
     assert record["detectors"]["H1"] == {"segment_asds": 2, "bank_seed": download.BANK_SEED}
+    rows = np.fromfile(machine.segment_asd_file(machine.asd_dir(tmp_path, "o3b"), "H1"), dtype="<f4").reshape(2, -1)
+    assert np.isnan(rows[0]).all() and np.isfinite(rows[1]).all()  # segment 0 touches the bad time
+    records = [machine.dataset_file(tmp_path, "o3b"), machine.asds_file(tmp_path, "o3b")]
+    for record in records:
+        record.chmod(0o444)
+    download_run(tmp_path, "o3b", ["H1"], 2, True, True)  # nothing new: no record rewritten
+    for record in records:
+        record.chmod(0o644)
     monkeypatch.setattr(download, "gwosc_run", str.upper)
     monkeypatch.setattr(download, "find_datasets", lambda detector, type: ["O3B"] if detector == "H1" else [])
     assert machine.fiducial_file(download.download_fiducial(tmp_path, ["o3b"], ["H1"]), "H1").exists()

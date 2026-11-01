@@ -34,6 +34,6 @@ def test_data_dir_absent(machine_file, tmp_path):
 
 def test_fiducial_dir():
     root = Path("/data")
-    assert machine.fiducial_dir(root, ["O3b"]) == root / "o3b" / "fiducial"
+    assert machine.fiducial_dir(root, ["O3b"]) == root / "asds" / "o3b" / "fiducial"
     pooled = machine.fiducial_dir(root, ["O3b", "o3a", "O3a"])
-    assert pooled == root / "fiducials" / "o3a+o3b"
+    assert pooled == root / "asds" / "o3a+o3b" / "fiducial"

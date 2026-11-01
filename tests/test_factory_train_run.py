@@ -80,7 +80,7 @@ ema: {enabled: true, calibration_batches: 2}
 
 def fake_data_dir(root):
     """A data directory holding a flat fiducial for H1 and L1 on the run's grid."""
-    fiducial = root / "o3a" / "fiducial"
+    fiducial = root / "asds" / "o3a" / "fiducial"
     fiducial.mkdir(parents=True)
     bins = 16 * 2048 // 2 + 1
     for detector in ("H1", "L1"):

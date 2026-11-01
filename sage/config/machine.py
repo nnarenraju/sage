@@ -59,7 +59,7 @@ def observing_run_dir(data_dir: Path, run: str, part: str) -> Path:
     run : str
         Observing run, e.g. ``"O3b"``.
     part : str
-        ``"training"``, ``"asds"`` or ``"search"``.
+        ``"training"`` or ``"search"``.
 
     Returns
     -------
@@ -92,6 +92,11 @@ def strain_file(data_dir: Path, run: str, detector: str) -> Path:
     return observing_run_dir(data_dir, run, "training") / f"data_{detector}_{label}.bin"
 
 
+def asd_dir(data_dir: Path, run: str) -> Path:
+    """ASDs built from one observing run's strain, ``<data_dir>/asds/<run>``."""
+    return Path(data_dir) / "asds" / run.lower()
+
+
 def fiducial_dir(data_dir: Path, runs: list) -> Path:
     """
     Directory of the fiducial ASDs for one observing run or a pool.
@@ -106,13 +111,10 @@ def fiducial_dir(data_dir: Path, runs: list) -> Path:
     Returns
     -------
     Path
-        ``<data_dir>/<run>/fiducial`` for one run, else
-        ``<data_dir>/fiducials/<run>+<run>...`` with the runs sorted.
+        ``<data_dir>/asds/<run>/fiducial`` for one run, ``<data_dir>/asds/<run>+<run>.../fiducial``
+        for a pool, the runs sorted.
     """
-    names = sorted({run.lower() for run in runs})
-    if len(names) == 1:
-        return Path(data_dir) / names[0] / "fiducial"
-    return Path(data_dir) / "fiducials" / "+".join(names)
+    return Path(data_dir) / "asds" / "+".join(sorted({run.lower() for run in runs})) / "fiducial"
 
 
 def segments_file(path: Path) -> Path:
@@ -145,8 +147,8 @@ def dataset_file(data_dir: Path, run: str) -> Path:
 
 
 def asds_file(data_dir: Path, run: str) -> Path:
-    """Record of an observing run's ASDs, ``<data_dir>/<run>/asds/asds.yaml``."""
-    return observing_run_dir(data_dir, run, "asds") / "asds.yaml"
+    """Record of an observing run's ASDs, ``<data_dir>/asds/<run>/asds.yaml``."""
+    return asd_dir(data_dir, run) / "asds.yaml"
 
 
 def segment_asd_file(asd_dir: Path, detector: str) -> Path:

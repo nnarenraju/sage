@@ -17,6 +17,7 @@ from pycbc import DYN_RANGE_FAC
 
 from sage.config.machine import (
     MissingData,
+    asd_dir,
     asds_file,
     bad_time_file,
     dataset_file,
@@ -259,8 +260,8 @@ def check_strain(data_dir: Path, run: str, detector: str) -> dict:
     }
 
 
-def estimator(detector: str, asd_dir: Path) -> EstimateASD:
-    """``EstimateASD`` with the dataset's ASD settings, writing under ``asd_dir``."""
+def estimator(detector: str, directory: Path) -> EstimateASD:
+    """``EstimateASD`` with the dataset's ASD settings, writing under ``directory``."""
     welch = TorchWelch(
         delta_t=1.0 / SAMPLE_RATE,
         seg_len=int(SAMPLE_RATE * ASDS["welch_segment_in_s"]),
@@ -270,8 +271,8 @@ def estimator(detector: str, asd_dir: Path) -> EstimateASD:
     return EstimateASD(
         detector=detector,
         sample_rate=SAMPLE_RATE,
-        data_dir=asd_dir,
-        fiducial_dir=asd_dir,
+        data_dir=directory,
+        fiducial_dir=directory,
         apply_inverse_spectrum_truncation=False,
         max_filter_len=int(round(SAMPLE_RATE * 2.0)),
         low_frequency_cutoff=ASDS["taper_cutoff_in_hz"],
@@ -299,17 +300,18 @@ def move_built(part: Path, pairs: list) -> None:
 
 
 def build_segment_asds(data_dir: Path, run: str, detector: str) -> None:
-    """Estimate the ASD of every strain piece into ``asds.part``, then move it into ``asds``."""
-    part = observing_run_dir(data_dir, run, "asds.part")
-    estimator(detector, part).estimate_segment_asds(noise_segments_file=strain_file(data_dir, run, detector))
+    """Estimate the ASD of every strain piece, NaN in bad time, into ``<run>.part``, then move it into the run's ASDs."""
+    part = asd_dir(data_dir, run).with_suffix(".part")
+    strain = strain_file(data_dir, run, detector)
+    estimator(detector, part).estimate_segment_asds(noise_segments_file=strain, bad=read_bad_time(strain))
     built = segment_asd_file(part, detector)
-    path = segment_asd_file(observing_run_dir(data_dir, run, "asds"), detector)
+    path = segment_asd_file(asd_dir(data_dir, run), detector)
     move_built(part, [(built, path), (segments_file(built), segments_file(path))])
 
 
 def build_bank(data_dir: Path, run: str, detector: str) -> None:
-    """Draw the recolour bank from the strain outside its bad time, seeded, into ``asds.part``, then move it into ``asds``."""
-    part = observing_run_dir(data_dir, run, "asds.part")
+    """Draw the recolour bank from the strain outside its bad time, seeded, into ``<run>.part``, then move it into the run's ASDs."""
+    part = asd_dir(data_dir, run).with_suffix(".part")
     strain = strain_file(data_dir, run, detector)
     sampler = MemmapSingleNoiseSampler(strain, read_bad_time(strain), return_tensor=True)
     estimator(detector, part).write_raw_asds(
@@ -317,7 +319,7 @@ def build_bank(data_dir: Path, run: str, detector: str) -> None:
         duration=int(SAMPLE_RATE * ASDS["length_in_s"]),
     )
     built = recolour_bank_file(part, detector)
-    path = recolour_bank_file(observing_run_dir(data_dir, run, "asds"), detector)
+    path = recolour_bank_file(asd_dir(data_dir, run), detector)
     move_built(part, [(built, path), (built.with_suffix(".json"), path.with_suffix(".json"))])
 
 
@@ -335,7 +337,7 @@ def check_segment_asds(data_dir: Path, run: str, detector: str) -> int:
     ValueError
         If a record or the file size does not match.
     """
-    path = segment_asd_file(observing_run_dir(data_dir, run, "asds"), detector)
+    path = segment_asd_file(asd_dir(data_dir, run), detector)
     pieces = json.loads(segments_file(strain_file(data_dir, run, detector)).read_text())
     records = json.loads(segments_file(path).read_text())
     if len(records) != len(pieces):
@@ -376,7 +378,7 @@ def check_bank(data_dir: Path, run: str, detector: str) -> None:
     ValueError
         If the sidecar or the file size does not match.
     """
-    path = recolour_bank_file(observing_run_dir(data_dir, run, "asds"), detector)
+    path = recolour_bank_file(asd_dir(data_dir, run), detector)
     record = json.loads(path.with_suffix(".json").read_text())
     bins = int(SAMPLE_RATE * ASDS["length_in_s"]) // 2 + 1
     expected = {
@@ -442,7 +444,7 @@ def build_fiducial(data_dir: Path, runs: list, detector: str) -> None:
     for run in pooled:
         check_bank(data_dir, run, detector)
     banks = [
-        np.memmap(recolour_bank_file(observing_run_dir(data_dir, run, "asds"), detector), dtype="<f4", mode="r",
+        np.memmap(recolour_bank_file(asd_dir(data_dir, run), detector), dtype="<f4", mode="r",
                   shape=(ASDS["bank_size"], record["num_freq_bins"]))
         for run in pooled
     ]
@@ -505,19 +507,21 @@ def write_record(path: Path, numbers: dict, detectors: dict) -> Path:
     """
     Write fixed numbers and each detector's summary to a record beside the data.
 
-    Detectors recorded earlier are kept.
+    Detectors recorded earlier are kept; a record nothing changes is not rewritten.
 
     Raises
     ------
     ValueError
         If an existing record holds other numbers.
     """
-    record = yaml.safe_load(path.read_text()) if path.exists() else {**numbers, "detectors": {}}
+    text = path.read_text() if path.exists() else None
+    record = yaml.safe_load(text) if text is not None else {**numbers, "detectors": {}}
     if {key: record.get(key) for key in numbers} != numbers:
         raise ValueError(f"{path} records numbers other than this Sage's: {record}")
     for detector, entry in detectors.items():
         record["detectors"].setdefault(detector, {}).update(entry)
-    path.write_text(yaml.safe_dump(record, sort_keys=False))
+    if text is None or record != yaml.safe_load(text):
+        path.write_text(yaml.safe_dump(record, sort_keys=False))
     return path
 
 
@@ -570,15 +574,14 @@ def download_run(data_dir: Path, run: str, detectors: list, workers: int, asds: 
     record = asds_file(data_dir, run)
     recorded = yaml.safe_load(record.read_text())["detectors"] if record.exists() else {}
     entries = {detector: {} for detector in detectors}
-    asd_dir = observing_run_dir(data_dir, run, "asds")
     for detector in detectors:
         if asds:
-            if not segment_asd_file(asd_dir, detector).exists():
+            if not segment_asd_file(asd_dir(data_dir, run), detector).exists():
                 build_segment_asds(data_dir, run, detector)
             entries[detector]["segment_asds"] = check_segment_asds(data_dir, run, detector)
         if bank:
             seed = recorded.get(detector, {}).get("bank_seed")
-            if not recolour_bank_file(asd_dir, detector).exists():
+            if not recolour_bank_file(asd_dir(data_dir, run), detector).exists():
                 build_bank(data_dir, run, detector)
                 seed = BANK_SEED
             check_bank(data_dir, run, detector)
