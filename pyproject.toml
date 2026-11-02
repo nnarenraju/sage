@@ -52,6 +52,8 @@ dependencies = [
   # sage.dsp.multirate_sampling) and by the search -- not optional.
   "lalsuite>=7.0",
   "pycbc>=2.2",
+  # Thomson's F-test for the fiducial's spectral lines (sage.data.asd.lines).
+  "multitaper>=1.2",
 ]
 
 # Every command is `sage <command>`; `sgw` and `sage-<command>` run the same code.

@@ -6,7 +6,9 @@ records written beside them.
 
 import json
 import math
+import multiprocessing
 import os
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
 
@@ -32,7 +34,8 @@ from sage.config.machine import (
     zero_runs_file,
 )
 from sage.core.hardcode import _DETECTORS
-from sage.data.asd.make_fiducial import K_DEPTH, PERCENTILE, pooled_fiducial
+from sage.data.asd.lines import line_detections
+from sage.data.asd.make_fiducial import pooled_fiducial
 from sage.data.asd.smoothing import LogSplineSmoothing
 from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.noise.data_quality import read_bad_time, write_bad_time, write_zero_runs
@@ -67,14 +70,17 @@ ASDS = {
     "bank_size": 250_000,
 }
 BANK_SEED = 0
-# Source: runs/build_fiducial.py.
+# Source: user rulings 2026-11-02; Thomson's F-test, sage.data.asd.lines.
 FIDUCIAL = {
     "psd_aggregation": "median",
-    "worst_case": f"p{PERCENTILE}",
-    "blackout_policy": "LocalLineNotch",
-    "local_line_notch": {
-        "k_depth": K_DEPTH, "window_hz": 8.0, "thresh": 2.0, "taper_bins": 1.5, "f_low": 15.0, "f_high": 1024.0,
-    },
+    "lines": "multitaper F-test, excised",
+    "line_nw": 4.0,
+    "line_tapers": 7,
+    "line_stretches_per_run": 100_000,
+    "line_level": "1/num_freq_bins",
+    "line_seed": BANK_SEED,
+    "line_chunk": 1_000,
+    "excision": "NW bins each side, Hann edge over the next NW bins",
 }
 RETRIES = 15
 RETRY_DELAY = 5.0
@@ -437,8 +443,37 @@ def fiducial_record(data_dir: Path, detector: str, pooled: list) -> dict:
     }
 
 
-def build_fiducial(data_dir: Path, runs: list, detector: str) -> None:
-    """Build one detector's fiducial from the pooled recolour banks into ``<fiducial>.part``, then move it."""
+def chunk_detections(strain: Path, stretches: int, seed, nw: float, tapers: int) -> np.ndarray:
+    """F-test detections in ``stretches`` seeded stretches of a strain file outside its bad time."""
+    sampler = MemmapSingleNoiseSampler(strain, read_bad_time(strain))
+    sample = partial(sampler.sample, rng=np.random.default_rng(seed))
+    npts = int(SAMPLE_RATE * ASDS["length_in_s"])
+    return line_detections(sample, npts, stretches, nw, tapers, SAMPLE_RATE)
+
+
+def strain_detections(strains: list, workers: int) -> np.ndarray:
+    """
+    F-test detections summed over each strain file's stretches.
+
+    The stretches go in chunks of ``line_chunk``, each seeded from
+    ``line_seed``, so the sum does not depend on ``workers``.
+    """
+    stretches, chunk = FIDUCIAL["line_stretches_per_run"], FIDUCIAL["line_chunk"]
+    sizes = [chunk] * (stretches // chunk) + ([stretches % chunk] if stretches % chunk else [])
+    seeds = np.random.SeedSequence(FIDUCIAL["line_seed"]).spawn(len(sizes))
+    tasks = [
+        (strain, size, seed, FIDUCIAL["line_nw"], FIDUCIAL["line_tapers"])
+        for strain in strains
+        for size, seed in zip(sizes, seeds)
+    ]
+    if workers == 1:
+        return sum(chunk_detections(*task) for task in tasks)
+    with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+        return sum(pool.map(chunk_detections, *zip(*tasks)))
+
+
+def build_fiducial(data_dir: Path, runs: list, detector: str, workers: int) -> None:
+    """Build one detector's fiducial from the pooled recolour banks and strain into ``<fiducial>.part``, then move it."""
     pooled = fiducial_runs(data_dir, runs, detector)
     record = fiducial_record(data_dir, detector, pooled)
     for run in pooled:
@@ -448,7 +483,9 @@ def build_fiducial(data_dir: Path, runs: list, detector: str) -> None:
                   shape=(ASDS["bank_size"], record["num_freq_bins"]))
         for run in pooled
     ]
-    asd, lines = pooled_fiducial(banks, record["delta_f"])
+    detections = strain_detections([strain_file(data_dir, run, detector) for run in pooled], workers)
+    stretches = FIDUCIAL["line_stretches_per_run"] * len(pooled)
+    asd, lines = pooled_fiducial(banks, detections, stretches, FIDUCIAL["line_nw"])
 
     directory = fiducial_dir(data_dir, runs)
     part = directory.with_name(f"{directory.name}.part")
@@ -458,7 +495,8 @@ def build_fiducial(data_dir: Path, runs: list, detector: str) -> None:
     freqs = np.arange(record["num_freq_bins"], dtype=np.float64) * record["delta_f"]
     band = (freqs >= 15.0) & (freqs <= 1024.0)
     built.with_suffix(".json").write_text(json.dumps(
-        {**record, "num_line_bins": int(len(lines)), "line_frac_inband": float(len(lines) / max(1, int(band.sum())))},
+        {**record, "num_line_bins": int(len(lines)), "num_excised_bins": int(np.isinf(asd).sum()),
+         "line_frac_inband": float(band[lines].sum() / max(1, int(band.sum())))},
         indent=2,
     ))
     path = fiducial_file(directory, detector)
@@ -472,7 +510,8 @@ def check_fiducial(data_dir: Path, runs: list, detector: str) -> None:
     Raises
     ------
     ValueError
-        If the sidecar or the size does not match, or a value is not finite.
+        If the sidecar or the size does not match, or a value is NaN or
+        -inf (+inf marks an excised bin).
     """
     path = fiducial_file(fiducial_dir(data_dir, runs), detector)
     expected = fiducial_record(data_dir, detector, fiducial_runs(data_dir, runs, detector))
@@ -483,13 +522,15 @@ def check_fiducial(data_dir: Path, runs: list, detector: str) -> None:
     asd = np.fromfile(path, dtype="<f4")
     if asd.size != expected["num_freq_bins"]:
         raise ValueError(f"{path}: {asd.size} values, not {expected['num_freq_bins']}")
-    if not np.isfinite(asd).all():
-        raise ValueError(f"{path}: {np.sum(~np.isfinite(asd))} values are not finite")
+    invalid = np.isnan(asd) | (asd == -np.inf)
+    if invalid.any():
+        raise ValueError(f"{path}: {int(invalid.sum())} values are NaN or -inf")
 
 
-def download_fiducial(data_dir: Path, runs: list, detectors: list) -> Path:
+def download_fiducial(data_dir: Path, runs: list, detectors: list, workers: int) -> Path:
     """
-    Build or adopt the fiducial of ``runs`` for each detector; the runs' recolour banks must be on disk.
+    Build or adopt the fiducial of ``runs`` for each detector; the runs' recolour banks and strain must be on disk.
+    Its line tests run in ``workers`` processes.
 
     Returns
     -------
@@ -498,7 +539,7 @@ def download_fiducial(data_dir: Path, runs: list, detectors: list) -> Path:
     """
     for detector in detectors:
         if not fiducial_file(fiducial_dir(data_dir, runs), detector).exists():
-            build_fiducial(data_dir, runs, detector)
+            build_fiducial(data_dir, runs, detector, workers)
         check_fiducial(data_dir, runs, detector)
     return fiducial_dir(data_dir, runs)
 

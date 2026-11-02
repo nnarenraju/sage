@@ -58,7 +58,7 @@ def download(arguments: list) -> None:
                                      "directory needs.")
     parser.add_argument("target", nargs="?", default=".", help="observing run (e.g. o3b) or run directory (default: here)")
     parser.add_argument("--detectors", nargs="+", help="with an observing run: these detectors only (default: all GWOSC lists)")
-    parser.add_argument("--workers", type=int, default=WORKERS, help=f"parallel downloads (default: {WORKERS})")
+    parser.add_argument("--workers", type=int, default=WORKERS, help=f"parallel downloads and fiducial line tests (default: {WORKERS})")
     options = parser.parse_args(arguments)
     try:
         data_dir = machine.read_data_dir()
@@ -101,5 +101,5 @@ def fetch(options: argparse.Namespace, data_dir: Path) -> None:
         if asds or bank:
             print(f"ASDs checked; recorded in {machine.asds_file(data_dir, run)}")
     if fiducial:
-        print(f"Fiducial ASDs checked: {download_fiducial(data_dir, *fiducial)}")
+        print(f"Fiducial ASDs checked: {download_fiducial(data_dir, *fiducial, options.workers)}")
     print(f"Next: {on('check', options.target) if target.is_dir() else 'sage check <run directory>'}")

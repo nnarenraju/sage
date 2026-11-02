@@ -15,7 +15,7 @@ from sage.cli import main
 from sage.config import machine
 from sage.data import download
 from sage.data.download import DATASET, download_run
-from sage.data.noise.data_quality import FLAGS, read_bad_time
+from sage.data.noise.data_quality import FLAGS, read_bad_time, write_zero_runs
 from sage.data.noise.real_noise import MemmapSingleNoiseSampler
 from sage.data.asd.smoothing import LogSplineSmoothing
 from sage.data.primer import DataReleaseDownloader, EstimateASD
@@ -104,6 +104,7 @@ def unreachable(*args, **kwargs):
 
 def test_adopt_strain(tmp_path, monkeypatch):
     monkeypatch.setitem(download.ASDS, "bank_size", 3)
+    monkeypatch.setitem(download.FIDUCIAL, "line_stretches_per_run", 2)
     path = write_strain(tmp_path, [40960, 45056])
     assert download_run(tmp_path, "o3b", ["H1"], 2, True, True)["H1"]["pieces"] == 2
     assert yaml.safe_load(machine.dataset_file(tmp_path, "o3b").read_text())["sample_rate_in_hz"] == 2048.0
@@ -119,18 +120,37 @@ def test_adopt_strain(tmp_path, monkeypatch):
         record.chmod(0o644)
     monkeypatch.setattr(download, "gwosc_run", str.upper)
     monkeypatch.setattr(download, "find_datasets", lambda detector, type: ["O3B"] if detector == "H1" else [])
-    assert machine.fiducial_file(download.download_fiducial(tmp_path, ["o3b"], ["H1"]), "H1").exists()
+    assert machine.fiducial_file(download.download_fiducial(tmp_path, ["o3b"], ["H1"], 1), "H1").exists()
     gwosc = yaml.safe_load(machine.dataset_file(tmp_path, "o3b").read_text())["gwosc"]
     assert gwosc == {"name": "O3B", "detectors": ["H1"]}
     monkeypatch.setattr(download, "gwosc_run", unreachable)
     monkeypatch.setattr(download, "find_datasets", unreachable)
-    download.download_fiducial(tmp_path, ["o3b"], ["H1"])  # checked from the record, offline
+    download.download_fiducial(tmp_path, ["o3b"], ["H1"], 1)  # checked from the record, offline
+    fiducial = machine.fiducial_file(machine.fiducial_dir(tmp_path, ["o3b"]), "H1")
+    asd = np.fromfile(fiducial, dtype="<f4")
+    asd[100] = np.inf  # an excised bin
+    asd.tofile(fiducial)
+    download.check_fiducial(tmp_path, ["o3b"], "H1")
+    asd[100] = np.nan
+    asd.tofile(fiducial)
+    with pytest.raises(ValueError, match="NaN"):
+        download.check_fiducial(tmp_path, ["o3b"], "H1")
     machine.bad_time_file(path).write_text(json.dumps({"flags": ["CBC_CAT2"], "intervals": []}))
     with pytest.raises(ValueError, match="flags"):
         download_run(tmp_path, "o3b", ["H1"], 2, False, False)
     path.write_bytes(path.read_bytes()[:-4])
     with pytest.raises(ValueError, match="bytes"):
         download_run(tmp_path, "o3b", ["H1"], 2, False, False)
+
+
+def test_line_workers(tmp_path, monkeypatch):
+    """The fiducial's line detections do not depend on the number of worker processes."""
+    monkeypatch.setitem(download.FIDUCIAL, "line_stretches_per_run", 4)
+    monkeypatch.setitem(download.FIDUCIAL, "line_chunk", 2)
+    strain = write_strain(tmp_path, [40960, 45056])
+    write_zero_runs(strain)
+    one, two = (download.strain_detections([strain], workers) for workers in (1, 2))
+    assert one.any() and np.array_equal(one, two)
 
 
 def test_unreachable(tmp_path, monkeypatch, capsys):

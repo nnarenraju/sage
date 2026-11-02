@@ -2,8 +2,9 @@
 Fiducial ASDs: built from pooled recolour banks, or resampled onto a different run's FFT grid.
 
 A fiducial pools the recolour banks of one or more observing runs: the exact
-per-bin median is the broadband floor, and ``LocalLineNotch`` raises narrow lines
-from the exact 99.9th percentile.
+per-bin median is the broadband floor, and spectral lines found by Thomson's
+F-test in stretches of each run's strain are excised with smooth edges
+(:mod:`sage.data.asd.lines`): infinite ASD, so zero whitening weight.
 
 Resampling (``regenerate_fiducials``) uses the interpolation ``EstimateASD`` uses
 at production (:meth:`EstimateASD._interpolate` -> ``np.interp``, linear,
@@ -23,39 +24,31 @@ from pathlib import Path
 
 import numpy as np
 
-from sage.data.asd.blackout import LocalLineNotch
+from sage.data.asd.lines import excision_weight, line_bins
 from sage.data.primer.get_asds import EstimateASD
 
-# Source: runs/build_fiducial.py.
-K_DEPTH = 4.0
-PERCENTILE = 99.9
 BLOCK = 2048
 ROW_CHUNK = 50_000
 
 
-def pooled_fiducial(banks: list, delta_f: float) -> tuple:
+def pooled_median(banks: list) -> np.ndarray:
     """
-    Fiducial ASD of one detector from pooled recolour banks, exactly over every row.
+    Exact per-bin median ASD over every row of pooled recolour banks.
 
     Parameters
     ----------
     banks : list of numpy.ndarray
         Recolour banks, each ``(rows, bins)`` float32, usually memory-mapped.
-    delta_f : float
-        Frequency spacing of the banks (Hz).
 
     Returns
     -------
     numpy.ndarray
-        Fiducial ASD, float32.
-    numpy.ndarray
-        Indices of the line bins.
+        Median ASD, float64.
     """
     # Bins one block at a time, rows read in sequential chunks: a strided column
     # read of a whole bank is far slower, and the pooled banks do not fit in memory.
     total, bins = sum(len(bank) for bank in banks), banks[0].shape[1]
     median = np.empty(bins, dtype=np.float64)
-    worst = np.empty(bins, dtype=np.float64)
     for first in range(0, bins, BLOCK):
         last = min(bins, first + BLOCK)
         pooled = np.empty((total, last - first), dtype=np.float32)
@@ -65,15 +58,50 @@ def pooled_fiducial(banks: list, delta_f: float) -> tuple:
                 end = min(len(bank), row + ROW_CHUNK)
                 pooled[offset + row:offset + end] = bank[row:end, first:last]
             offset += len(bank)
-        # q=50 (linear interpolation) == np.median for even row counts.
-        median[first:last], worst[first:last] = np.percentile(
-            pooled, [50.0, PERCENTILE], axis=0, overwrite_input=True
-        )
+        # q=50 (linear) equals np.median for an even row count; q as a
+        # list keeps the float32 rows' interpolation in float64.
+        median[first:last] = np.percentile(
+            pooled, [50.0], axis=0, overwrite_input=True
+        )[0]
         del pooled
+    return median
 
-    freqs = np.arange(bins, dtype=np.float64) * delta_f
-    fiducial, lines = LocalLineNotch(freqs, k_depth=K_DEPTH).apply(median, worst)
-    return np.asarray(fiducial, dtype=np.float32), lines
+
+def pooled_fiducial(
+    banks: list, detections: np.ndarray, stretches: int, nw: float
+) -> tuple:
+    """
+    Fiducial ASD of one detector: pooled median, lines excised.
+
+    The stretches are ``1 / delta_f`` long, as the banks' ASDs, so the
+    excised band and its edge are NW bins each.
+
+    Parameters
+    ----------
+    banks : list of numpy.ndarray
+        Recolour banks, each ``(rows, bins)`` float32, usually memory-mapped.
+    detections : numpy.ndarray of int
+        F-test detections per bin over the pooled runs' stretches
+        (:func:`sage.data.asd.lines.line_detections`).
+    stretches : int
+        Stretches the detections come from.
+    nw : float
+        Time-bandwidth product NW of the F-test.
+
+    Returns
+    -------
+    numpy.ndarray
+        Fiducial ASD, float32, infinite at excised bins.
+    numpy.ndarray
+        Indices of the line bins.
+    """
+    median = pooled_median(banks)
+    bins = len(median)
+    lines = line_bins(detections, stretches, 1 / bins)
+    weight = excision_weight(lines, bins, round(nw))
+    with np.errstate(divide="ignore"):
+        fiducial = median / weight
+    return fiducial.astype(np.float32), lines
 
 
 def interpolate_fiducial(asd, src_delta_f, target_sample_length, sample_rate):
