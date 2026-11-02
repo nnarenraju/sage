@@ -11,18 +11,19 @@ LEN_S = 12.0
 MARGIN = 0.1
 
 
-def _pool(seed=0):
+def _pool(seed=0, detectors=D):
     """A pool of coherent injections: complex FD strain, per-det tc, per-det mc.
 
     ``mc`` is broadcast across detectors (identical per row) — exactly what the
     signal sampler hands over for a coherent injection.
     """
     g = torch.Generator().manual_seed(seed)
-    re = torch.randn(N, D, F, generator=g)
-    im = torch.randn(N, D, F, generator=g)
+    re = torch.randn(N, detectors, F, generator=g)
+    im = torch.randn(N, detectors, F, generator=g)
     data = torch.complex(re, im)
-    tc = torch.rand(N, D, generator=g) * (TC_BOUNDS[1] - TC_BOUNDS[0]) + TC_BOUNDS[0]
-    mc = (torch.rand(N, 1, generator=g) * 2.0 - 1.0).expand(N, D).contiguous()
+    span = TC_BOUNDS[1] - TC_BOUNDS[0]
+    tc = torch.rand(N, detectors, generator=g) * span + TC_BOUNDS[0]
+    mc = (torch.rand(N, 1, generator=g) * 2.0 - 1.0).expand(N, detectors).contiguous()
     return data, tc, mc
 
 
@@ -118,3 +119,14 @@ def test_injector_draws_only_what_it_uses():
         x, targets = injector(x, targets, torch.tensor([0, 2, 4, 6]))
         used += x[targets[:, -1] == NON_ASTROPHYSICAL_CLASS, 0, 0].real.tolist()
     assert used and used == list(range(len(used))) and len(calls) == -(-len(used) // 4)
+
+
+def test_three_detectors():
+    """H1, L1, V1: signal+noise keeps one detector; signal+signal' one event each."""
+    data, tc, mc = _pool(7, detectors=3)
+    d, _, _, mask = _masker(signal_noise_share=1.0, seed=7)(data, tc, mc)
+    assert (mask.sum(1) == 1).all() and set(mask.argmax(1).tolist()) == {0, 1, 2}
+    assert ((d.abs().sum(-1) > 0) == mask.bool()).all()
+    d, _, na_mc, mask = _masker(signal_noise_share=0.0, seed=7)(data, tc, mc)
+    assert (mask == 1).all() and (d.abs().sum(-1) > 0).all()
+    assert all((na_mc[:, i] != na_mc[:, j]).all() for i, j in ((0, 1), (0, 2), (1, 2)))
