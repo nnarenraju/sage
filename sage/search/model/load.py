@@ -44,7 +44,7 @@ def load_network(path: Path, device: str = "cuda") -> Tuple[torch.nn.Module, dic
     settings = load_run_record(record["run"])
     model = build_model(
         settings["model"], len(settings["data"]["detectors"]), len(settings["signal"]["targets"]),
-        device, torch.float32,
+        "non_astrophysical" in settings["signal"], device, torch.float32,
     )
     model.load_state_dict(checkpoint["model"])
     return model.eval(), settings, record

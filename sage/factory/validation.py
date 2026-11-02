@@ -27,7 +27,7 @@ from sage.utils.atomic_io import append_h5
 logger = get_logger(__name__)
 
 
-def save_validation(name, output, target, params, param_names, signal_idx, savepath):
+def save_validation(name, output, target, params, param_names, signal_idx, auxiliary, savepath):
     """
     Append one validation pass's results to an HDF5 file.
 
@@ -50,6 +50,8 @@ def save_validation(name, output, target, params, param_names, signal_idx, savep
         Name of each ``params`` column, recorded as its ``names`` attribute.
     signal_idx : torch.Tensor, shape ``(num_iter, S)``
         Batch positions where signals were injected for each iteration.
+    auxiliary : torch.Tensor, shape ``(N, 1)`` or ``(N, 0)``
+        The non-astrophysical vs noise logit, saved as ``auxiliary`` when the run has the class.
     savepath : str
         Path to the HDF5 output file.
     """
@@ -69,6 +71,8 @@ def save_validation(name, output, target, params, param_names, signal_idx, savep
         grp.create_dataset("signal_params",  data=params.numpy(),  compression="gzip")
         grp["signal_params"].attrs["names"] = param_names
         grp.create_dataset("signal_idx",     data=signal_idx.numpy(), compression="gzip")
+        if auxiliary.shape[1]:
+            grp.create_dataset("auxiliary", data=auxiliary.numpy(), compression="gzip")
 
 
 class SageVanillaValidation(torch.nn.Module):
@@ -117,6 +121,8 @@ class SageVanillaValidation(torch.nn.Module):
         Estimated parameters (``signal.targets``).
     placement : torch.Generator
         Generator of the signal positions in a batch, on ``device``.
+    non_astrophysical : NonAstrophysicalInjector or None
+        Non-astrophysical pairs added to the noise windows; None for none.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -140,6 +146,7 @@ class SageVanillaValidation(torch.nn.Module):
         signal_batch_size: int,
         num_estimates: int,
         placement: torch.Generator,
+        non_astrophysical,
         device,
         dtype: torch.dtype,
         autocast_dtype,
@@ -163,6 +170,7 @@ class SageVanillaValidation(torch.nn.Module):
         self.signal_batch_size = signal_batch_size
         self.num_estimates     = num_estimates
         self.placement         = placement
+        self.non_astrophysical = non_astrophysical
 
         # ── Loss tracking ─────────────────────────────────────────────────
         self.loss_components = torch.zeros(
@@ -187,6 +195,7 @@ class SageVanillaValidation(torch.nn.Module):
             "signal_idx":     [],
             "network_output": [],
             "network_target": [],
+            "auxiliary":      [],
         }
 
         # See the note in training.forward: a tqdm bar on a non-TTY fills the
@@ -215,7 +224,7 @@ class SageVanillaValidation(torch.nn.Module):
                 # ── 2. Random signal injection ────────────────────────────
                 x, targets, idx = assemble_batch(
                     signal_data, signal_targets, noise_data, noise_targets,
-                    self.signal_batch_size, self.num_estimates, self.placement,
+                    self.signal_batch_size, self.num_estimates, self.placement, self.non_astrophysical,
                 )
                 diagnostics["signal_idx"].append(idx.cpu())
 
@@ -233,7 +242,8 @@ class SageVanillaValidation(torch.nn.Module):
                     loss = self.loss_function(out, targets)
 
                 # ── 5. Diagnostics ────────────────────────────────────────
-                network_output = torch.cat([*out], dim=1)
+                network_output = torch.cat([out[0], out[1]], dim=1)
+                diagnostics["auxiliary"].append(out[2].float().cpu())
 
                 ranking   = network_output[:, 0:1]
                 mu_scaled = network_output[:, 1 : 1 + self.num_estimates]
@@ -282,5 +292,6 @@ class SageVanillaValidation(torch.nn.Module):
         self.results_path.parent.mkdir(parents=True, exist_ok=True)
         save_validation(
             name or f"epoch_{nepoch:04d}", network_output, network_target,
-            signal_params, self.signal_sampler.param_sampler.param_names, signal_idx, self.results_path,
+            signal_params, self.signal_sampler.param_sampler.param_names, signal_idx,
+            torch.vstack(diagnostics["auxiliary"]), self.results_path,
         )

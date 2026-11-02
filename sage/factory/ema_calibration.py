@@ -16,7 +16,9 @@ from sage.core.pipeline import GWBatch
 from sage.factory.training import assemble_batch
 
 
-def calibration_inputs(signal_sampler, noise_sampler, processor, signal_batch_size, num_estimates, num_batches, placement):
+def calibration_inputs(
+    signal_sampler, noise_sampler, processor, signal_batch_size, num_estimates, num_batches, placement, non_astrophysical,
+):
     """
     Network inputs of training batches, assembled and preprocessed as in training.
 
@@ -34,6 +36,8 @@ def calibration_inputs(signal_sampler, noise_sampler, processor, signal_batch_si
         Batches to yield.
     placement : torch.Generator
         Generator of the signal positions in a batch.
+    non_astrophysical : NonAstrophysicalInjector or None
+        Non-astrophysical pairs added to the noise windows, as in training; None for none.
 
     Yields
     ------
@@ -45,6 +49,7 @@ def calibration_inputs(signal_sampler, noise_sampler, processor, signal_batch_si
         noise_data, noise_targets = noise_sampler()
         x, _, _ = assemble_batch(
             signal_data, signal_targets, noise_data, noise_targets, signal_batch_size, num_estimates, placement,
+            non_astrophysical,
         )
         yield processor(GWBatch(x, state=processor.input_state)).to_network_input()
 

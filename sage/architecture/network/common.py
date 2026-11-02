@@ -77,9 +77,9 @@ def resnet_backend(size: int, **kwargs) -> nn.Module:
     return RESNETS[size](pretrained=False, **kwargs)
 
 
-def make_heads(num_estimates: int, uncertainty: bool) -> tuple:
+def make_heads(num_estimates: int, uncertainty: bool, non_astrophysical: bool) -> tuple:
     """
-    Ranking-statistic head and one head per estimated parameter.
+    Ranking-statistic head, one head per estimated parameter, and the non-astrophysical head.
 
     Parameters
     ----------
@@ -87,23 +87,28 @@ def make_heads(num_estimates: int, uncertainty: bool) -> tuple:
         Estimated parameters.
     uncertainty : bool
         Whether each head also gives a raw width.
+    non_astrophysical : bool
+        Whether the run has the non-astrophysical class.
 
     Returns
     -------
     ranking : nn.Linear
-        Ranking-statistic head.
+        Ranking-statistic head: the signal vs noise logit.
     estimates : nn.ModuleList
         Estimate heads, 2 outputs each with uncertainty, else 1.
+    auxiliary : nn.Linear or None
+        The non-astrophysical vs noise logit; None without the class.
     """
     outputs = 2 if uncertainty else 1
     ranking = nn.Linear(FEATURES, 1)
     estimates = nn.ModuleList([nn.Linear(FEATURES, outputs) for _ in range(num_estimates)])
-    return ranking, estimates
+    auxiliary = nn.Linear(FEATURES, 1) if non_astrophysical else None
+    return ranking, estimates, auxiliary
 
 
-def initialise_heads(ranking: nn.Linear, estimates: nn.ModuleList) -> None:
-    """Small normal weights and zero biases on every head, ranking head first."""
-    for layer in (ranking, *estimates):
+def initialise_heads(ranking: nn.Linear, estimates: nn.ModuleList, auxiliary) -> None:
+    """Small normal weights and zero biases on every head, ranking head first, the non-astrophysical head last."""
+    for layer in (ranking, *estimates, *([] if auxiliary is None else [auxiliary])):
         nn.init.normal_(layer.weight, 0, 0.01)
         nn.init.zeros_(layer.bias)
 
@@ -119,7 +124,7 @@ def normalise(norm: nn.Module, x: torch.Tensor) -> torch.Tensor:
         return norm(x.float())
 
 
-def run_heads(features: torch.Tensor, ranking: nn.Linear, estimates: nn.ModuleList) -> tuple:
+def run_heads(features: torch.Tensor, ranking: nn.Linear, estimates: nn.ModuleList, auxiliary) -> tuple:
     """
     Heads in float32 with autocast off.
 
@@ -132,6 +137,7 @@ def run_heads(features: torch.Tensor, ranking: nn.Linear, estimates: nn.ModuleLi
     ranking_statistic : torch.Tensor, shape ``(B, 1)``
     point_estimates : torch.Tensor, shape ``(B, P)`` or ``(B, 2P)``
         Estimates; with uncertainty, all means then all raw widths.
+    non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``, or ``(B, 0)`` without the class
     """
     with torch.autocast(device_type=features.device.type, enabled=False):
         features = features.float()
@@ -139,7 +145,8 @@ def run_heads(features: torch.Tensor, ranking: nn.Linear, estimates: nn.ModuleLi
         raw = [layer(features) for layer in estimates]
         if raw[0].shape[1] == 2:
             raw = [r[:, :1] for r in raw] + [r[:, 1:] for r in raw]
-        return ranking_statistic, torch.cat(raw, dim=1)
+        logit = features.new_zeros(len(features), 0) if auxiliary is None else auxiliary(features)
+        return ranking_statistic, torch.cat(raw, dim=1), logit
 
 
 class FrontendTap:

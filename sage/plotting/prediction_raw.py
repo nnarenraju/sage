@@ -35,7 +35,7 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
     Plot raw ranking-statistic distributions and a FAR-efficiency sweep.
 
     Produces two panels: (1) overlapping histograms of the raw ranking
-    statistic for signal and noise events, and (2) a detection-efficiency-
+    statistic for signal, noise and non-astrophysical events, and (2) a detection-efficiency-
     vs-threshold curve that shows the signal fraction recovered as a function
     of the noise false-alarm rate.
 
@@ -46,7 +46,7 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
     ranking_stat : array-like, shape ``(N,)``
         Network ranking statistics for all validation events.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels (1 = signal, 0 = noise).
+        Class labels (0 = noise, 1 = signal, 2 = non-astrophysical).
     export_dir : str or None
         Output directory (saved under ``PRED_RAW/``).
     save : bool
@@ -90,6 +90,9 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
     # float64: an output varying only in its last float32 bits still splits into 100 finite bins
     ax[0].hist(np.asarray(raw_tp, dtype=np.float64), bins=100, histtype="step", label="Signals")
     ax[0].hist(np.asarray(raw_tn, dtype=np.float64), bins=100, histtype="step", label="Noise")
+    if np.any(labels == 2.0):
+        raw_na = np.asarray(ranking_stat[labels == 2.0], dtype=np.float64)
+        ax[0].hist(raw_na, bins=100, histtype="step", label="Non-astrophysical")
     ax[0].set_yscale("log")
     ax[0].set_xlabel("Ranking Statistic")
     ax[0].set_ylabel("Number of Occurrences")

@@ -35,6 +35,7 @@ from sage.factory.build import (
     build_data,
     build_loss,
     build_model,
+    build_non_astrophysical,
     build_noise,
     build_noise_stream,
     build_optimiser,
@@ -301,6 +302,10 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     signal = build_signal(
         settings["signal"], prior, window, detectors, asds, signal_batch_size, seed, start_epoch, device, dtype
     )
+    non_astrophysical = build_non_astrophysical(
+        settings["signal"], prior, window, detectors, asds, train["batch_size"] - signal_batch_size, len(targets),
+        seed, start_epoch, device, dtype,
+    )
     if scaling is not None:
         use_scaling(signal, targets, scaling)
     noise = build_noise(
@@ -311,7 +316,9 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
         settings["preprocess"], asds, window, signal.param_sampler.bounds,
         settings["signal"]["low_frequency_cutoff_in_hz"], ProcessingState(Grid.FD_UNIFORM), device, dtype,
     )
-    network = build_model(settings["model"], len(detectors), len(targets), device, dtype)
+    network = build_model(
+        settings["model"], len(detectors), len(targets), "non_astrophysical" in settings["signal"], device, dtype
+    )
     network = network.to(memory_format=torch.channels_last)
     model = compile_network(network, train)
     loss = build_loss(settings["loss"], targets)
@@ -321,6 +328,7 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     return SimpleNamespace(
         window=window, detectors=detectors, dtype=dtype, device=device, targets=targets, asds=asds,
         batches=batches, signal_batch_size=signal_batch_size, seed=seed, signal=signal, noise=noise,
+        non_astrophysical=non_astrophysical,
         processor=processor, network=network, model=model, loss=loss, optimiser=optimiser, schedule=schedule, step_every=step_every,
         autocast_dtype=autocast_dtype, scaler=scaler, placement=generator(seed, "placement", start_epoch, device),
     )
@@ -348,7 +356,7 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run) -
     Returns
     -------
     tuple
-        ``(signal, noise, placement)``.
+        ``(signal, noise, placement, non_astrophysical)``.
     """
     train, replay = settings["train"], settings["mining"]["replay"]
     seed, snr = {
@@ -363,7 +371,11 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run) -
         settings["noise"], role, data_dir, run.window, run.detectors, train["batch_size"], seed, 0,
         replay["start_jitter_in_s"], replay["focal_gamma"], run.device, run.dtype,
     )
-    return signal, noise, generator(seed, "placement", 0, run.device)
+    non_astrophysical = build_non_astrophysical(
+        {**settings["signal"], "snr": snr}, prior, run.window, run.detectors, run.asds,
+        train["batch_size"] - run.signal_batch_size, len(settings["signal"]["targets"]), seed, 0, run.device, run.dtype,
+    )
+    return signal, noise, generator(seed, "placement", 0, run.device), non_astrophysical
 
 
 def final_check_seconds(settings: dict, pass_seconds: float, epoch_seconds: float, batches: int) -> float:
@@ -387,7 +399,7 @@ def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> Sa
         run.signal, run.noise, run.processor, run.model, run.loss, run.optimiser, run.schedule, run.scaler,
         num_iterations=num_iterations, num_epochs=train["epochs"], batch_size=train["batch_size"],
         signal_batch_size=run.signal_batch_size, num_estimates=len(run.targets), placement=run.placement,
-        clip_norm=train["clip_norm"],
+        non_astrophysical=run.non_astrophysical, clip_norm=train["clip_norm"],
         device=run.device, dtype=run.dtype, autocast_dtype=run.autocast_dtype, scheduler_mode=run.step_every,
         callbacks=callbacks,
     )
@@ -472,12 +484,13 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         callbacks.append(averager)
     trainer = trainer_for(run, settings, run.batches, callbacks)
 
-    def validator(signal_sampler, noise_sampler, placement, samples, num_epochs):
+    def validator(signal_sampler, noise_sampler, placement, non_astrophysical, samples, num_epochs):
         return SageVanillaValidation(
             signal_sampler, noise_sampler, run.processor, run.model, run.loss,
             num_iterations=samples // train["batch_size"], num_epochs=num_epochs,
             batch_size=train["batch_size"], signal_batch_size=run.signal_batch_size,
-            num_estimates=len(run.targets), placement=placement, device=run.device, dtype=run.dtype,
+            num_estimates=len(run.targets), placement=placement, non_astrophysical=non_astrophysical,
+            device=run.device, dtype=run.dtype,
             autocast_dtype=run.autocast_dtype, results_path=run_dir / "results" / "validation.h5",
         )
 
@@ -508,8 +521,8 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         validation_loss = None
         if validates(epoch, validation, train["epochs"]):
             # The same windows every pass: the validation streams start afresh.
-            signal, noise, placement = fresh_streams("validation", settings, prior, data_dir, run)
-            validate = validator(signal, noise, placement, validation["samples"], train["epochs"])
+            signal, noise, placement, non_astrophysical = fresh_streams("validation", settings, prior, data_dir, run)
+            validate = validator(signal, noise, placement, non_astrophysical, validation["samples"], train["epochs"])
             passed = time.monotonic()
             try:
                 validate(nepoch=epoch)
@@ -633,9 +646,9 @@ def final_check(
     live_noise : torch.nn.Module
         The run's training noise sampler.
     fresh_samplers : callable
-        ``role -> (signal, noise, placement)`` (``fresh_streams``).
+        ``role -> (signal, noise, placement, non_astrophysical)`` (``fresh_streams``).
     validator : callable
-        ``(signal, noise, placement, samples, num_epochs) -> SageVanillaValidation``.
+        ``(signal, noise, placement, non_astrophysical, samples, num_epochs) -> SageVanillaValidation``.
     signal_batch_size : int
         Windows per batch that receive a signal.
     device : torch.device
@@ -648,10 +661,10 @@ def final_check(
     if ema["enabled"]:
         state = torch.load(checkpoints / "ema.pt", map_location=device, weights_only=False)
         network.load_state_dict(state["model"])
-        signal, noise, placement = fresh_samplers("training")
+        signal, noise, placement, non_astrophysical = fresh_samplers("training")
         inputs = calibration_inputs(
             signal, noise, processor, signal_batch_size, len(settings["signal"]["targets"]),
-            ema["calibration_batches"], placement,
+            ema["calibration_batches"], placement, non_astrophysical,
         )
         layers = recalibrate_batchnorm(network, inputs)
         noise.shutdown()
@@ -661,8 +674,8 @@ def final_check(
     for file, group in groups.items():
         state = torch.load(checkpoints / file, map_location=device, weights_only=False)
         network.load_state_dict(state["model"])
-        signal, noise, placement = fresh_samplers("validation")
-        validate = validator(signal, noise, placement, result["samples"], 1)
+        signal, noise, placement, non_astrophysical = fresh_samplers("validation")
+        validate = validator(signal, noise, placement, non_astrophysical, result["samples"], 1)
         validate(nepoch=0, name=group)
         noise.shutdown()
         losses = dict(zip(loss.component_names, validate.loss_components[0].tolist()))
@@ -736,7 +749,9 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     targets = list(settings["signal"]["targets"])
     fiducial = record_fiducial(run_dir, fiducial_dir(data_dir, settings["noise"]["fiducial"]), detectors)
     asds = read_fiducial_asds(fiducial, detectors, window, device)
-    network = build_model(settings["model"], len(detectors), len(targets), device, dtype)
+    network = build_model(
+        settings["model"], len(detectors), len(targets), "non_astrophysical" in settings["signal"], device, dtype
+    )
     network = network.to(memory_format=torch.channels_last)
     state = torch.load(path, map_location=device, weights_only=False)
     network.load_state_dict(state["model"])
@@ -746,7 +761,7 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     streams = SimpleNamespace(
         window=window, detectors=detectors, asds=asds, signal_batch_size=signal_batch_size, device=device, dtype=dtype,
     )
-    signal, noise, placement = fresh_streams("validation", settings, prior, data_dir, streams)
+    signal, noise, placement, non_astrophysical = fresh_streams("validation", settings, prior, data_dir, streams)
     processor = build_preprocess(
         settings["preprocess"], asds, window, signal.param_sampler.bounds,
         settings["signal"]["low_frequency_cutoff_in_hz"], ProcessingState(Grid.FD_UNIFORM), device, dtype,
@@ -755,7 +770,7 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     validate = SageVanillaValidation(
         signal, noise, processor, model, loss, num_iterations=samples // train["batch_size"], num_epochs=1,
         batch_size=train["batch_size"], signal_batch_size=signal_batch_size, num_estimates=len(targets),
-        placement=placement, device=device, dtype=dtype,
+        placement=placement, non_astrophysical=non_astrophysical, device=device, dtype=dtype,
         autocast_dtype=precision_setup(train)[0], results_path=run_dir / "results" / "validate.h5",
     )
     try:

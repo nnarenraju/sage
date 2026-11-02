@@ -41,7 +41,7 @@ def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
     ranking_stat : array-like, shape ``(N,)``
         Network ranking statistic (higher = more signal-like).
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels (1 = signal, 0 = noise).
+        Class labels (1 = signal, 0 = noise); other classes are left out.
     export_dir : str or None
         Directory to save the figure.  A ``ROC/`` subdirectory is created
         automatically.  Required when ``save=True``.
@@ -49,7 +49,8 @@ def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
         If ``True``, save to disk; otherwise display interactively.
     """
 
-    fpr, tpr, _ = metrics.roc_curve(labels, ranking_stat)
+    keep = (labels == 0.0) | (labels == 1.0)
+    fpr, tpr, _ = metrics.roc_curve(labels[keep], ranking_stat[keep])
     roc_auc = metrics.auc(fpr, tpr)
 
     plt.figure(figsize=(7, 6))

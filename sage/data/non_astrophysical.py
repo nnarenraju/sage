@@ -6,10 +6,8 @@ Non-astrophysical (decoherent) two-detector sample generation: hard background
 pairs that look time-coincident but are physically inconsistent, used to teach a
 detection network that coincidence alone is not detection.
 
-.. note::
-   This module is currently PARKED — it is not imported or wired into any
-   training callback on the live path. It is kept as a ready-to-use background
-   augmentation for a future run; see :class:`NonAstrophysicalMasker`.
+A run enables it with ``signal.non_astrophysical``; :class:`NonAstrophysicalInjector`
+then turns a share of each batch's noise windows into non-astrophysical windows.
 
 A real astrophysical signal is **coherent** across detectors: a shared source
 gives a shared chirp mass and arrival times within the light-travel time. The
@@ -18,26 +16,25 @@ two *astrophysical* training classes are therefore:
   - signal + signal  (coherent injection)   -> class 1, both detectors supervised
   - noise  + noise   (pure noise)            -> class 0, neither supervised
 
-To teach the network that coincidence alone is not detection, a small fraction
-of the batch is replaced by **non-astrophysical** pairs. Crucially these are
-*background* (class 0): they must eat into the **noise** budget, never the
-signal budget, or they would unbalance the classes. They are therefore built
-from a separate *pool* of extra injections (``extra_batch`` on the signal
-sampler) and dropped into noise slots, not carved out of the coherent signals.
+Non-astrophysical pairs are a third class (2): the network estimates the
+coherent-signal vs noise ratio with them as an auxiliary class (multinomial
+density-ratio estimation). They take a share of the **noise** windows, never
+of the signal budget, and are built from a separate *pool* of injections, one
+per non-astrophysical window.
 
-Two non-astrophysical flavours (split 50/50, fixed):
+Two non-astrophysical flavours (split by ``signal_noise_share``):
 
   - signal + noise   : one detector carries a real chirp, the other is left as
-                       pure noise. Mask = [1, 0] / [0, 1]; class 0.
+                       pure noise. Mask = [1, 0] / [0, 1].
   - signal + signal' : each detector carries a chirp from a *different* event
                        (independent masses, independent arrival time). Mask =
-                       [1, 1] (each detector toward its own truth); class 0.
+                       [1, 1].
 
 The thing that actually trips up a coincidence network is a non-astrophysical
 pair whose chirps sit in the *real* ``delta_tc`` band — looking time-coincident while
 being mass-inconsistent. So each detector's arrival time is re-drawn from a
-**mixture** that favours the real ``delta_tc`` prior band and otherwise spreads across
-the whole analysis window, and the waveform is re-timed by a frequency-domain
+**mixture**: inside the real ``delta_tc`` prior band with probability ``in_band_share``,
+else anywhere in the analysis window, and the waveform is re-timed by a frequency-domain
 phase shift ``exp(-2 pi i f dt)`` (same convention as
 :meth:`sage.data.waveform.project.GravitationalWaveProjection.forward`). All
 bounds are derived (real band from the ``delta_tc`` prior, window from the data
@@ -56,9 +53,13 @@ import math
 
 import torch
 
+NOISE_CLASS, SIGNAL_CLASS, NON_ASTROPHYSICAL_CLASS = 0, 1, 2
+# Keep-out margin from the window edges for re-drawn arrival times.
+EDGE_MARGIN_IN_S = 0.1
+
 
 class NonAstrophysicalMasker:
-    """Turn a pool of independent injections into non-astrophysical class-0 pairs.
+    """Turn a pool of independent injections into non-astrophysical pairs.
 
     Parameters
     ----------
@@ -73,47 +74,28 @@ class NonAstrophysicalMasker:
         sampler). Re-drawn arrival times are weighted to favour this band.
     analysis_length_s : float
         Length of the analysis window in seconds (``data_cfg.sample_length_in_s``).
-        The full re-timing span is ``[edge_margin_s, analysis_length_s - edge_margin_s]``.
-    p_signal_noise : float
-        Fraction of the pool made ``signal+noise`` (the rest ``signal+signal'``).
-        Fixed at ``0.5`` by design; exposed only for testing.
-    w_in_band : float
+        The full re-timing span is ``[EDGE_MARGIN_IN_S, analysis_length_s - EDGE_MARGIN_IN_S]``.
+    signal_noise_share : float
+        Share of the pool made ``signal+noise`` (the rest ``signal+signal'``).
+    in_band_share : float
         Per-detector probability that a re-drawn ``delta_tc`` lands in the real band
         rather than the full window. Higher -> more hard, time-coincident pairs.
-    edge_margin_s : float
-        Keep-out margin (seconds) from the window edges for re-drawn ``delta_tc``.
-    seed : int or None
-        Optional RNG seed (a device generator is created lazily on first call).
+    generator : torch.Generator
+        Generator of every draw, on the pool's device.
     """
 
-    def __init__(
-        self,
-        delta_f,
-        delta_tc_bounds,
-        analysis_length_s,
-        p_signal_noise: float = 0.5,
-        w_in_band: float = 0.5,
-        edge_margin_s: float = 0.1,
-        seed=None,
-    ):
+    def __init__(self, delta_f, delta_tc_bounds, analysis_length_s, signal_noise_share, in_band_share, generator):
         self.delta_f = float(delta_f)
         self.tc_lo, self.tc_hi = float(delta_tc_bounds[0]), float(delta_tc_bounds[1])
-        self.full_lo = float(edge_margin_s)
-        self.full_hi = float(analysis_length_s) - float(edge_margin_s)
-        self.p_sn = float(p_signal_noise)
-        self.w_in_band = float(w_in_band)
-        self._seed = seed
-        self._gen = None
-
-    def _generator(self, device):
-        if self._seed is not None and self._gen is None:
-            self._gen = torch.Generator(device=device)
-            self._gen.manual_seed(int(self._seed))
-        return self._gen
+        self.full_lo = EDGE_MARGIN_IN_S
+        self.full_hi = float(analysis_length_s) - EDGE_MARGIN_IN_S
+        self.signal_noise_share = float(signal_noise_share)
+        self.in_band_share = float(in_band_share)
+        self.generator = generator
 
     def _sample_tc(self, n, device, dtype, g):
-        """Mixture: ``w_in_band`` uniform in the real band, else uniform window."""
-        in_band = torch.rand(n, device=device, generator=g) < self.w_in_band
+        """Mixture: ``in_band_share`` uniform in the real band, else uniform window."""
+        in_band = torch.rand(n, device=device, generator=g) < self.in_band_share
         u = torch.rand(n, device=device, generator=g, dtype=dtype)
         band = self.tc_lo + (self.tc_hi - self.tc_lo) * u
         full = self.full_lo + (self.full_hi - self.full_lo) * u
@@ -135,7 +117,7 @@ class NonAstrophysicalMasker:
 
         Returns
         -------
-        na_data : ``(N, D, F)``   non-astrophysical per-detector strain (class 0)
+        na_data : ``(N, D, F)``   non-astrophysical per-detector strain
         na_tc   : ``(N, D)``      re-drawn per-detector arrival times
         na_mc   : ``(N, D)``      per-detector (independent) chirp mass
         na_mask : ``(N, D)``      1 where a detector carries a supervisable signal
@@ -146,7 +128,7 @@ class NonAstrophysicalMasker:
             empty_mask = torch.zeros(N, D, device=device, dtype=pool_tc.dtype)
             return pool_data, pool_tc.clone(), pool_mc.clone(), empty_mask
 
-        g = self._generator(device)
+        g = self.generator
         # Real-FFT grid the strain lives on: f[k] = k * delta_f, DC-first, the
         # data's own bin count (matches the projection's delay grid exactly).
         f = self.delta_f * torch.arange(F, device=device, dtype=torch.float32)
@@ -199,7 +181,7 @@ class NonAstrophysicalMasker:
         na_mask = torch.ones(N, D, device=device, dtype=pool_tc.dtype)
 
         # ── split: a fixed fraction become signal+noise (drop all but one det) ─
-        is_sn = torch.rand(N, device=device, generator=g) < self.p_sn
+        is_sn = torch.rand(N, device=device, generator=g) < self.signal_noise_share
         keep = torch.randint(0, D, (N,), device=device, generator=g)
         det_ids = torch.arange(D, device=device).view(1, D)
         keep_oh = det_ids == keep.view(N, 1)                 # (N, D) kept detector
@@ -210,3 +192,71 @@ class NonAstrophysicalMasker:
         na_mask = na_mask * det_keep.to(na_mask.dtype)
 
         return na_data, na_tc, na_mc, na_mask
+
+
+class NonAstrophysicalInjector:
+    """
+    Turn a share of a batch's noise windows into non-astrophysical windows (class 2), without targets.
+
+    Each noise window is chosen with probability ``noise_share`` and takes one pair; the pool draws a
+    new block only when the pairs left from earlier blocks run out, so every pair drawn is used.
+
+    Parameters
+    ----------
+    pool : torch.nn.Module
+        Signal sampler with per-detector targets; each call draws one block.
+    masker : NonAstrophysicalMasker
+        Makes each block's signals non-astrophysical.
+    noise_share : float
+        Probability that a noise window receives a non-astrophysical pair.
+    num_estimates : int
+        Estimated parameters; the pool's per-detector arrival times follow them and the class.
+    generator : torch.Generator
+        Generator of the windows chosen, on the batch's device.
+    """
+
+    def __init__(self, pool, masker, noise_share, num_estimates, generator):
+        self.pool = pool
+        self.masker = masker
+        self.noise_share = float(noise_share)
+        self.num_estimates = num_estimates
+        self.generator = generator
+        self.pairs = None  # drawn, not yet used
+
+    def take(self, count):
+        """The next ``count`` pairs, drawing blocks from the pool while too few are left."""
+        while (0 if self.pairs is None else len(self.pairs)) < count:
+            data, targets = self.pool()
+            first, detectors = self.num_estimates + 1, data.shape[1]
+            arrival = targets[:, first : first + detectors]
+            chirp_mass = targets[:, first + detectors : first + 2 * detectors]
+            block = self.masker(data, arrival, chirp_mass)[0]
+            self.pairs = block if self.pairs is None else torch.cat([self.pairs, block])
+        pairs, self.pairs = self.pairs[:count], self.pairs[count:]
+        return pairs
+
+    def __call__(self, x, targets, signal_idx):
+        """
+        Add a pair to each chosen noise window of ``x`` and label it class 2; both are changed in place.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, D, F)``
+            Batch, signals already injected.
+        targets : torch.Tensor, shape ``(B, P + 1)``
+            Its targets, the class last.
+        signal_idx : torch.Tensor
+            Positions of the signals.
+
+        Returns
+        -------
+        x, targets : torch.Tensor
+        """
+        noise = torch.ones(len(x), dtype=torch.bool, device=x.device)
+        noise[signal_idx] = False
+        noise = noise.nonzero().squeeze(1)
+        chosen = noise[torch.rand(len(noise), device=x.device, generator=self.generator) < self.noise_share]
+        if len(chosen):
+            x[chosen] += self.take(len(chosen)).to(x.dtype)
+            targets[chosen, -1] = NON_ASTROPHYSICAL_CLASS
+        return x, targets

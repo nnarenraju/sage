@@ -20,7 +20,7 @@ def batch(widths=True, labels=None, seed=0):
     if labels is None:
         labels = (torch.arange(8) % 2).float()          # alternating noise/signal
     targets = torch.cat([torch.randn(8, 2, generator=g), labels[:, None]], dim=1)
-    return (rank, estimates), targets
+    return (rank, estimates, torch.zeros(8, 0)), targets
 
 
 @pytest.mark.parametrize(
@@ -50,6 +50,18 @@ def test_confidence_weighting():
     assert (weighted[2:] < plain[2:]).all()            # each term scaled by p < 1
 
 
+def test_non_astrophysical_class():
+    """Multinomial cross-entropy over the logits (0, r, a); class-2 samples get no regression, like noise."""
+    (rank, estimates, _), targets = batch(labels=torch.tensor([0.0, 1.0, 2.0, 1.0, 0.0, 2.0, 1.0, 2.0]))
+    logit = torch.randn(8, 1, generator=torch.Generator().manual_seed(1))
+    out = BCE_PE_Sigma(TARGETS)((rank, estimates, logit), targets)
+    logits = torch.cat([torch.zeros(8, 1), rank, logit], dim=1)
+    assert torch.isclose(out[1], torch.nn.functional.cross_entropy(logits, targets[:, -1].long()))
+    as_noise = targets.clone()
+    as_noise[:, -1] = (targets[:, -1] == 1).float()
+    assert torch.equal(BCE_PE_Sigma(TARGETS)((rank, estimates, logit), as_noise)[2:], out[2:])
+
+
 def test_sigma_bounds():
     s = width_to_sigma(torch.tensor([-1e6, -20.0, 0.0, 20.0, 1e6]), 1e-3, 10.0)
     assert torch.isfinite(s).all()
@@ -64,4 +76,4 @@ def test_nan_proof_extreme_width(raw_width):
     estimates[:, :2] = 1e3                              # large means too
     estimates[:, 2:] = raw_width
     targets = torch.cat([torch.randn(6, 2), torch.ones(6, 1)], dim=1)
-    assert torch.isfinite(BCE_PE_Sigma(TARGETS)((rank, estimates), targets)).all()
+    assert torch.isfinite(BCE_PE_Sigma(TARGETS)((rank, estimates, torch.zeros(6, 0)), targets)).all()

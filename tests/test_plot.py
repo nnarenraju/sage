@@ -13,8 +13,8 @@ NAMES = ["distance", "inclination", "mass1", "mass2", "mchirp", "q", "delta_tc"]
 TARGETS = ["delta_tc", "mchirp"]
 
 
-def write_pass(path, group, generator, iterations=50, batch_size=8, signals=4):
-    """One validation pass whose ranking statistic separates signals from noise."""
+def write_pass(path, group, generator, iterations=50, batch_size=8, signals=4, non_astrophysical=False):
+    """One validation pass whose ranking statistic separates signals from noise; half the noise class 2 if asked."""
     params = torch.rand(iterations * signals, len(NAMES), generator=generator, dtype=torch.float64) + 1
     columns = [NAMES.index(target) for target in TARGETS]
     output = torch.randn(iterations * batch_size, 1 + 2 * len(TARGETS), generator=generator) - 2
@@ -30,7 +30,9 @@ def write_pass(path, group, generator, iterations=50, batch_size=8, signals=4):
         target[rows, :len(TARGETS)] = (batch[:, columns].float() - 1.5) / 0.3
         target[rows, -1] = 1
         positions.append(place)
-    save_validation(group, output, target, params.float(), NAMES, torch.stack(positions), path)
+    if non_astrophysical:
+        target[(target[:, -1] == 0).nonzero()[::2, 0], -1] = 2
+    save_validation(group, output, target, params.float(), NAMES, torch.stack(positions), torch.zeros(len(output), 0), path)
 
 
 def test_plot(tmp_path, capsys):
@@ -56,6 +58,19 @@ def test_plot(tmp_path, capsys):
     assert (plots / "ROC" / "roc_curve_validate_best.png").exists()
     assert main(["plot", str(run), "--group", "final_best"]) == 1
     assert "fix: sage plot" in capsys.readouterr().err
+
+
+def test_non_astrophysical(tmp_path):
+    """Class-2 windows in a pass: every plot draws, ROC and calibration on signal vs noise."""
+    run = tmp_path / "run"
+    (run / "results").mkdir(parents=True)
+    (run / "run.yaml").write_text("extends: hl\n")
+    losses = HDF5LossLogger(run / "results" / "losses.h5", 1, ["total", "classification", "delta_tc", "mchirp"])
+    for split in ("training", "validation"):
+        losses.log(torch.tensor([[0.5, 0.3, 0.1, 0.05]]), 0, split)
+    write_pass(run / "results" / "validation.h5", "epoch_0000", torch.Generator().manual_seed(0), non_astrophysical=True)
+    assert main(["plot", str(run)]) == 0
+    assert (run / "results" / "plots" / "ROC" / "roc_curve_epoch_0000.png").exists()
 
 
 def test_almost_constant_output(tmp_path):

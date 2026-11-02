@@ -22,6 +22,8 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
         Detector channels; from ``data.detectors``; must be 2.
     num_estimates : int
         Estimated parameters; from ``signal.targets``.
+    non_astrophysical : bool
+        Add the non-astrophysical head; from ``signal.non_astrophysical``.
     frontend_filters, frontend_kernel : int
         Base filter count and kernel size of the frontend.
     cross_attention_heads : int
@@ -48,6 +50,7 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
         self,
         num_detectors: int,
         num_estimates: int,
+        non_astrophysical: bool,
         frontend_filters: int = 32,
         frontend_kernel: int = 64,
         cross_attention_heads: int = 4,
@@ -86,10 +89,10 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
         )
         self.avg_pool_1d = nn.AdaptiveAvgPool1d(512)
         self.flatten = nn.Flatten(start_dim=1)
-        self.get_ranking_statistic, self.point_estimate_layers = make_heads(
-            num_estimates, self.uncertainty
+        self.get_ranking_statistic, self.point_estimate_layers, self.get_non_astrophysical_logit = make_heads(
+            num_estimates, self.uncertainty, non_astrophysical
         )
-        initialise_heads(self.get_ranking_statistic, self.point_estimate_layers)
+        initialise_heads(self.get_ranking_statistic, self.point_estimate_layers, self.get_non_astrophysical_logit)
         for detector in self.frontend:
             _initialize_frontend_weights(detector)
 
@@ -103,6 +106,7 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
         -------
         ranking_statistic : torch.Tensor, shape ``(B, 1)``
         point_estimates : torch.Tensor, shape ``(B, P)``
+        non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``, or ``(B, 0)`` without the class
         """
         x = normalise(self.norm, x)
         cnn_outputs = [detector(x[:, i : i + 1]) for i, detector in enumerate(self.frontend)]
@@ -119,4 +123,6 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
 
         features = self.backend(torch.cat([f1, f2, torch.abs(f1 - f2)], dim=1))
         features = self.flatten(self.avg_pool_1d(features))
-        return run_heads(features, self.get_ranking_statistic, self.point_estimate_layers)
+        return run_heads(
+            features, self.get_ranking_statistic, self.point_estimate_layers, self.get_non_astrophysical_logit
+        )

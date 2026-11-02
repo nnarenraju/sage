@@ -28,7 +28,10 @@ import torch
 
 
 # Every random stream of a run, by its spawn key (append only: a key's meaning never changes).
-STREAMS = {"prior": 0, "snr": 1, "gmst": 2, "noise": 3, "recolour": 4, "placement": 5, "mining": 6, "global": 7}
+STREAMS = {
+    "prior": 0, "snr": 1, "gmst": 2, "noise": 3, "recolour": 4, "placement": 5, "mining": 6, "global": 7,
+    "non_astrophysical_prior": 8, "non_astrophysical_snr": 9, "non_astrophysical_gmst": 10, "non_astrophysical": 11,
+}
 
 
 def stream_seed(seed: int, stream: str, epoch: int = 0) -> int:

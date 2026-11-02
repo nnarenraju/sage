@@ -41,6 +41,7 @@ from sage.core.graph import Preprocessor
 from sage.core.logger import get_logger
 from sage.core.pipeline import ProcessingState
 from sage.core.seed import generator, stream_seed
+from sage.data.non_astrophysical import NonAstrophysicalInjector, NonAstrophysicalMasker
 from sage.data.noise.data_quality import noise_bad_segments
 from sage.data.noise.real_noise import MemmapNoiseSampler
 from sage.data.noise.recolour import RecolourPostprocess
@@ -92,7 +93,7 @@ MODELS = {
     "MSCNN1Datt_2DResNetCBAM": MSCNN1Datt_2DResNetCBAM,
     "MSCNN1Datt_catt_2DResNetCBAM": MSCNN1Datt_catt_2DResNetCBAM,
 }
-MODEL_PROVIDED = {"num_detectors", "num_estimates"}
+MODEL_PROVIDED = {"num_detectors", "num_estimates", "non_astrophysical"}
 LOSSES = {"BCE_PE_Sigma": BCE_PE_Sigma, "BCE_PE_Huber": BCE_PE_Huber, "BCE_PE_MSE": BCE_PE_MSE}
 LOSS_PROVIDED = {"targets"}
 OPTIMISERS = {
@@ -185,6 +186,11 @@ def lookup(table: dict, component: dict, where: str) -> tuple:
     return table[name], {key: value for key, value in component.items() if key != "name"}
 
 
+# Random streams of the prior, SNR and GMST draws: the signal's, and the non-astrophysical pool's.
+SIGNAL_STREAMS = ("prior", "snr", "gmst")
+NON_ASTROPHYSICAL_STREAMS = ("non_astrophysical_prior", "non_astrophysical_snr", "non_astrophysical_gmst")
+
+
 def build_signal(
     signal: dict,
     prior: dict,
@@ -196,6 +202,9 @@ def build_signal(
     epoch: int,
     device,
     dtype: torch.dtype,
+    *,
+    streams: tuple = SIGNAL_STREAMS,
+    per_detector_targets: bool = False,
 ) -> torch.nn.Module:
     """
     Build the signal sampler: prior, waveform, projection and SNR.
@@ -220,6 +229,10 @@ def build_signal(
         Device of the batches.
     dtype : torch.dtype
         Dtype of the data tensors.
+    streams : tuple of str
+        Names of the prior, SNR and GMST streams.
+    per_detector_targets : bool
+        Append each detector's arrival time and chirp mass to the targets.
 
     Returns
     -------
@@ -237,7 +250,7 @@ def build_signal(
     check_on_grid("signal.low_frequency_cutoff_in_hz", f_low, window.padded_length_in_s)
     check_on_grid("signal.reference_frequency_in_hz", f_ref, window.padded_length_in_s)
 
-    sampler = prior_sampler(prior, stream_seed(seed, "prior", epoch), device, dtype)
+    sampler = prior_sampler(prior, stream_seed(seed, streams[0], epoch), device, dtype)
     check_delta_tc_window(*sampler.bounds["delta_tc"], window.sample_length_in_s)
     for target in signal["targets"]:
         if target not in sampler.param_index:
@@ -249,7 +262,7 @@ def build_signal(
     snr_cls, snr_parameters = lookup(SNR_DISTRIBUTIONS, signal["snr"], "signal.snr")
     distribution = snr_cls(
         **component_arguments(snr_cls, snr_parameters, SNR_PROVIDED, "signal.snr"),
-        seed=stream_seed(seed, "snr", epoch),
+        seed=stream_seed(seed, streams[1], epoch),
         device=device,
     )
     rescaler = OptimalSNRRescaler(distribution, asds, window, f_low, device)
@@ -265,7 +278,7 @@ def build_signal(
         window=window,
         device=device,
         dtype=dtype,
-        generator=generator(seed, "gmst", epoch, device),
+        generator=generator(seed, streams[2], epoch, device),
     )
 
     waveform_cls, waveform_parameters = lookup(WAVEFORMS, signal["waveform"], "signal.waveform")
@@ -281,8 +294,63 @@ def build_signal(
         targets=list(signal["targets"]),
         device=device,
         dtype=dtype,
-        append_per_det_targets=False,
+        append_per_det_targets=per_detector_targets,
     )
+
+
+def build_non_astrophysical(
+    signal: dict,
+    prior: dict,
+    window: Window,
+    detectors: list,
+    asds: torch.Tensor,
+    pool_size: int,
+    num_estimates: int,
+    seed: int,
+    epoch: int,
+    device,
+    dtype: torch.dtype,
+):
+    """
+    The non-astrophysical injector of ``signal.non_astrophysical``, or None without it.
+
+    Its pool is a second signal sampler on its own streams, drawn only for the windows chosen;
+    the masker's and the window choice's draws take the ``non_astrophysical`` stream.
+
+    Parameters
+    ----------
+    signal, prior, window, detectors, asds, seed, epoch, device, dtype
+        As for :func:`build_signal`.
+    pool_size : int
+        Signals per pool call: the noise windows per batch, so a batch calls the pool at most once.
+    num_estimates : int
+        Estimated parameters.
+
+    Returns
+    -------
+    NonAstrophysicalInjector or None
+
+    Raises
+    ------
+    ValueError
+        If a share is outside [0, 1], or as :func:`build_signal`.
+    """
+    if "non_astrophysical" not in signal:
+        return None
+    shares = signal["non_astrophysical"]
+    for name, share in shares.items():
+        if not 0.0 <= share <= 1.0:
+            raise ValueError(f"signal.non_astrophysical.{name} must be in [0, 1], got {share}")
+    pool = build_signal(
+        signal, prior, window, detectors, asds, pool_size, seed, epoch, device, dtype,
+        streams=NON_ASTROPHYSICAL_STREAMS, per_detector_targets=True,
+    )
+    draws = generator(seed, "non_astrophysical", epoch, device)
+    masker = NonAstrophysicalMasker(
+        window.delta_f_in_hz, pool.param_sampler.bounds["delta_tc"], window.sample_length_in_s,
+        shares["signal_noise_share"], shares["in_band_share"], draws,
+    )
+    return NonAstrophysicalInjector(pool, masker, shares["noise_share"], num_estimates, draws)
 
 
 def noise_runs(source: dict, data_dir: Path, detectors: list) -> list:
@@ -769,7 +837,7 @@ def check_heads(model: dict, loss: dict) -> None:
 
 
 def build_model(
-    model: dict, num_detectors: int, num_estimates: int, device, dtype: torch.dtype
+    model: dict, num_detectors: int, num_estimates: int, non_astrophysical: bool, device, dtype: torch.dtype
 ) -> torch.nn.Module:
     """
     Build the network the ``model`` section names.
@@ -782,6 +850,8 @@ def build_model(
         Detector channels, from ``data.detectors``.
     num_estimates : int
         Estimated parameters, from ``signal.targets``.
+    non_astrophysical : bool
+        Whether the run has the non-astrophysical class (``signal.non_astrophysical``).
     device : str or torch.device
         Device of the network.
     dtype : torch.dtype
@@ -795,7 +865,7 @@ def build_model(
     """
     settings = resolve_model(model)
     parameters = {key: value for key, value in settings.items() if key != "name"}
-    network = MODELS[settings["name"]](num_detectors, num_estimates, **parameters)
+    network = MODELS[settings["name"]](num_detectors, num_estimates, non_astrophysical, **parameters)
     return network.to(device=device, dtype=dtype)
 
 

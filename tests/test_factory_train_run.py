@@ -301,6 +301,27 @@ def test_flags(tmp_path, monkeypatch, capsys):
     assert main(["status", str(run)]) == 0 and "Flags: stop (since " in capsys.readouterr().out
 
 
+def test_non_astrophysical(tmp_path, monkeypatch):
+    """Half the noise windows non-astrophysical: training, validation, EMA calibration and the final check."""
+    use_machine(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    shares = "  non_astrophysical: {noise_share: 0.5, signal_noise_share: 0.8, in_band_share: 0.75}\n"
+    (run_dir / "run.yaml").write_text(RUN.replace("  targets: [delta_tc, mchirp]\n", "  targets: [delta_tc, mchirp]\n" + shares))
+    try:
+        train_run(run_dir)
+    finally:
+        setup_logging(None, console=False)
+    with h5py.File(run_dir / "results" / "validation.h5", "r") as file:
+        for group in ("epoch_0000", "final_best", "final_ema"):
+            labels, logit = file[group]["network_target"][:, -1], file[group]["auxiliary"][:]
+            assert set(labels.tolist()) <= {0.0, 1.0, 2.0} and logit.shape == (len(labels), 1)
+            assert np.isfinite(logit).all() and np.isfinite(file[group]["network_output"][:]).all()
+        assert sorted(set(file["final_best"]["network_target"][:, -1].tolist())) == [0.0, 1.0, 2.0]
+    with h5py.File(run_dir / "results" / "losses.h5", "r") as file:
+        assert np.isfinite(file["validation"]["loss"][0]).all()
+
+
 def test_recovered_fractions():
     background, foreground = np.arange(1000.0), np.array([998.5, 999.5, 990.0, 1.0])
     rows = recovered_fractions(background, foreground, (1e-3, 2e-3, 1e-4))

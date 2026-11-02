@@ -52,7 +52,7 @@ def plot_calibration_curve(
     ranking_stat : array-like, shape ``(N,)``
         Predicted ranking statistics.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels (1 = signal, 0 = noise).
+        Class labels (1 = signal, 0 = noise); other classes are left out.
     export_dir : str or None
         Output directory (saves under root as ``calibration_curve_{epoch}.png``).
     save : bool
@@ -64,6 +64,8 @@ def plot_calibration_curve(
     # --------------------------------------------
     # masks
     # --------------------------------------------
+    keep = (labels == 0.0) | (labels == 1.0)
+    ranking_stat, labels = ranking_stat[keep], labels[keep]
     signal_mask = labels == 1.0
     signal_stats = ranking_stat[signal_mask]
 

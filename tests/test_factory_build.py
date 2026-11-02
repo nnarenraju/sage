@@ -15,6 +15,7 @@ from sage.dsp.whiten import FiducialWhitening
 from sage.factory.build import (
     build_data,
     build_noise,
+    build_non_astrophysical,
     build_optimiser,
     build_preprocess,
     build_schedule,
@@ -100,6 +101,26 @@ def test_signal_off_grid():
 def test_signal_unknown_target():
     with pytest.raises(ValueError, match="'mchrip' is not a prior parameter; did you mean 'mchirp'"):
         build(signal(targets=["delta_tc", "mchrip"]))
+
+
+def test_non_astrophysical():
+    """A real pool on its own streams: half the noise windows of a batch become class 2, the signal draws unchanged."""
+    window, detectors, dtype = build_data(data(["H1", "L1"], "float32"))
+    asds, prior = torch.ones(2, window.n_frequency_bins), load_prior("bbh_narrow", Path("."))
+    shares = {"noise_share": 1.0, "signal_noise_share": 0.75, "in_band_share": 0.75}
+    injector = build_non_astrophysical(
+        signal(non_astrophysical=shares), prior, window, detectors, asds, 2, 2, 1, 0, "cpu", dtype
+    )
+    x = torch.zeros(4, 2, window.n_frequency_bins, dtype=torch.complex64)
+    targets = torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 0.0]] * 2)
+    x, targets = injector(x, targets, torch.tensor([0, 2]))
+    assert targets[:, -1].tolist() == [1, 2, 1, 2] and torch.isfinite(torch.view_as_real(x)).all()
+    assert (x[1::2].abs().sum(-1) > 0).any(dim=1).all() and (x[0::2] == 0).all()
+    fresh = build_non_astrophysical(signal(non_astrophysical=shares), prior, window, detectors, asds, 2, 2, 1, 0, "cpu", dtype)
+    assert not torch.equal(fresh.pool(return_theta=True)[2], build(signal())(return_theta=True)[2])  # own streams
+    with pytest.raises(ValueError, match="noise_share must be in"):
+        build_non_astrophysical(signal(non_astrophysical={**shares, "noise_share": 1.2}), prior, window, detectors,
+                                asds, 2, 2, 1, 0, "cpu", dtype)
 
 
 def test_signal_unknown_waveform():

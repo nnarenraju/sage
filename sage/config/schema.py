@@ -55,6 +55,14 @@ DATA = {
     "dtype": ("float32", "float64"),
 }
 
+# Shares of the non-astrophysical class: of the noise windows, of signal-in-one-detector pairs among them,
+# and of arrival times inside the delta_tc band.
+NON_ASTROPHYSICAL = {
+    "noise_share": float,
+    "signal_noise_share": float,
+    "in_band_share": float,
+}
+
 SIGNAL = {
     "prior": str,
     "low_frequency_cutoff_in_hz": float,
@@ -63,6 +71,7 @@ SIGNAL = {
     "projection": COMPONENT,
     "snr": COMPONENT,
     "targets": [str],
+    "non_astrophysical?": NON_ASTROPHYSICAL,
 }
 
 REAL_SOURCE = {"name": str, "runs": [str], "portion?": [float], "gps_range?": [float]}

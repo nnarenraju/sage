@@ -9,10 +9,10 @@ from sage.search.model.split import check_split
 SMALL = {"backend_resnet_size": "18", "frontend_filters": "16"}
 
 
-def network(name: str, **settings) -> torch.nn.Module:
+def network(name: str, non_astrophysical: bool = False, **settings) -> torch.nn.Module:
     """A small two-detector, two-estimate network in evaluation mode."""
     torch.manual_seed(0)
-    return build_model({"name": name, **SMALL, **settings}, 2, 2, "cpu", torch.float32).eval()
+    return build_model({"name": name, **SMALL, **settings}, 2, 2, non_astrophysical, "cpu", torch.float32).eval()
 
 
 def strain() -> torch.Tensor:
@@ -24,10 +24,11 @@ def test_contract(name):
     model = network(name)
     x = strain()
     with torch.no_grad():
-        ranking, estimates = model(x)
+        ranking, estimates, logit = model(x)
         model.return_frontend_embedding = True
         model(x)
-    assert ranking.shape == (2, 1)
+        with_class = network(name, non_astrophysical=True)(x)[2]
+    assert ranking.shape == (2, 1) and logit.shape == (2, 0) and with_class.shape == (2, 1)
     assert estimates.shape == (2, 4 if model.uncertainty else 2)
     per_detector = model.frontend_embedding.reshape(2, 2, -1)
     assert torch.allclose(per_detector.norm(dim=-1), torch.ones(2, 2))

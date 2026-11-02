@@ -118,7 +118,9 @@ def load_network(run_dir: Path, device, data_dir: Path) -> SimpleNamespace:
         settings["preprocess"], asds, window, bounds, settings["signal"]["low_frequency_cutoff_in_hz"],
         ProcessingState(Grid.FD_UNIFORM), device, dtype,
     )
-    network = build_model(settings["model"], len(detectors), len(targets), device, dtype)
+    network = build_model(
+        settings["model"], len(detectors), len(targets), "non_astrophysical" in settings["signal"], device, dtype
+    )
     network = network.to(memory_format=torch.channels_last)
     state = torch.load(run_dir / "checkpoints" / "best.pt", map_location=device, weights_only=False)
     network.load_state_dict(state["model"])
@@ -141,7 +143,7 @@ def scores(run: SimpleNamespace, x: torch.Tensor) -> np.ndarray:
     with (torch.autocast(device_type=x.device.type, dtype=run.autocast_dtype)
           if run.autocast_dtype is not None else nullcontext()):
         out = run.network(batch.to_network_input())
-    raw = torch.cat([*out], dim=1).float()
+    raw = torch.cat([out[0], out[1]], dim=1).float()  # rank and estimates; not the non-astrophysical logit
     count = len(run.targets)
     columns = [raw[:, :1], raw[:, 1:1 + count] * run.scale + run.offset]
     if raw.shape[1] >= 1 + 2 * count:  # mean-only models have no widths

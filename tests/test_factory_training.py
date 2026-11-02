@@ -20,7 +20,7 @@ class Recorder(nn.Module):
     def forward(self, x):
         self.autocast.append(torch.is_autocast_enabled("cpu"))
         h = x.flatten(1)
-        return self.rank(h), self.estimates(h)
+        return self.rank(h), self.estimates(h), h.new_zeros(len(h), 0)
 
 
 def test_autocast_follows_device():
@@ -34,7 +34,7 @@ def test_autocast_follows_device():
         signals, noise, Preprocessor([], ProcessingState(Grid.FD_UNIFORM)), model,
         BCE_PE_Sigma(["delta_tc", "mchirp"]), optimiser, torch.optim.lr_scheduler.StepLR(optimiser, 1),
         None, num_iterations=2, num_epochs=1, batch_size=4, signal_batch_size=2, num_estimates=2,
-        placement=torch.Generator().manual_seed(1), clip_norm=100.0, device="cpu", dtype=torch.float32, autocast_dtype=torch.bfloat16,
+        placement=torch.Generator().manual_seed(1), non_astrophysical=None, clip_norm=100.0, device="cpu", dtype=torch.float32, autocast_dtype=torch.bfloat16,
         scheduler_mode="batch", callbacks=[],
     )
     trainer(nepoch=0)

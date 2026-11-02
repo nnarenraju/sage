@@ -38,7 +38,8 @@ fiducial whitening buffer is scaled to match. Feeding an unnormalised transform 
 an output that looks reasonable and is wrong by a factor of N.
 
 The ranking statistic is column 0 of the returned tensor; the remaining columns are the
-raw point-estimate means followed by their raw sigmas.
+raw point-estimate means followed by their raw sigmas. A network with the non-astrophysical
+class also gives that class's logit; it is not part of this output.
 """
 
 from contextlib import nullcontext
@@ -68,7 +69,7 @@ def forward_batch(
     x : Tensor
         Complex ``(B, D, F)``, already ``rfft(..., norm="forward")`` of the padded window.
     model : Module
-        The trained network. Returns ``(ranking_statistic, point_estimates)``.
+        The trained network. Returns ``(ranking_statistic, point_estimates, non_astrophysical_logit)``.
     processor : Preprocessor
         Built by :func:`sage.factory.build.build_preprocess`.
     state : ProcessingState, optional
@@ -109,4 +110,4 @@ def forward_batch(
     )
     with context:
         out = model(batch.to_network_input())
-    return torch.cat([*out], dim=1).float()
+    return torch.cat([out[0], out[1]], dim=1).float()
