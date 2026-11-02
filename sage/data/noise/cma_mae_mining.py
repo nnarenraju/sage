@@ -56,15 +56,18 @@ class _StartTimeCodec:
     Each genotype component is a fraction in ``[0, 1]`` (the emitter is bounded,
     so we just clip -- no sigmoid/logit map).  The fraction indexes linearly into
     the detector's valid window-start positions, respecting segment boundaries.
+    Segments the noise sampler never draws (``segment_probs`` 0: bad time, too
+    short) have no valid start.
     """
 
-    def __init__(self, seg_index, seq_len):
+    def __init__(self, seg_index, seq_len, segment_probs):
         self.D = len(seg_index)
         self.seq_len = int(seq_len)
         (self.cum_valid, self.abs_starts, self.seg_ids, self.run_ids,
          self.valid_per_seg, self.N) = ([], [], [], [], [], [])
-        for seg_arr in seg_index:
+        for seg_arr, probs in zip(seg_index, segment_probs):
             valid = np.maximum(0, seg_arr["nsamples"].astype(np.int64) - self.seq_len)
+            valid[probs == 0] = 0
             cum = np.concatenate([[0], np.cumsum(valid)])
             self.cum_valid.append(cum)
             self.abs_starts.append(seg_arr["start"].astype(np.int64))
@@ -137,6 +140,9 @@ class CMAMAEMiner:
         Detector names; ``D = len(detectors)`` sets the search dimension.
     seg_index : list of structured np.ndarray
         Per-detector segment tables (fields ``idx/start/end/nsamples``).
+    segment_probs : list of np.ndarray
+        Per-detector sampling probability of each segment, from the noise
+        sampler; segments it never draws are never mined.
     seq_len : int
         Window length in samples.
     bank : HardMiningBank
@@ -161,6 +167,7 @@ class CMAMAEMiner:
         self,
         detectors,
         seg_index,
+        segment_probs,
         seq_len,
         bank,
         keep_threshold=None,
@@ -177,7 +184,7 @@ class CMAMAEMiner:
     ):
         self.detectors = list(detectors)
         self.D = len(self.detectors)
-        self.codec = _StartTimeCodec(seg_index, seq_len)
+        self.codec = _StartTimeCodec(seg_index, seq_len, segment_probs)
         self.seq_len = int(seq_len)
         self.bank = bank
         self.keep_threshold = (

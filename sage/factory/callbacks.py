@@ -167,7 +167,8 @@ class HardMiningCallback(Callback):
         self._reader = _MiningReader(ns, seed=self.mine_seed, postprocess=False)
         self._preprocess = make_miner_preprocessor(trainer.processor)
         self._miner = CMAMAEMiner(
-            detectors=detectors, seg_index=ns.seg_index, seq_len=ns.seq_len,
+            detectors=detectors, seg_index=ns.seg_index,
+            segment_probs=ns.segment_probs, seq_len=ns.seq_len,
             bank=self._bank, keep_threshold=self.keep_threshold,
             descriptor_dim=self.descriptor_dim, n_cells=self.n_cells,
             learning_rate=self.learning_rate, n_emitters=self.n_emitters,

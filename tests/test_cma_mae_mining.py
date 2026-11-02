@@ -42,6 +42,11 @@ def _seg_pooled():
     return np.concatenate([_seg(run=0), _seg(run=1)])
 
 
+def _probs(seg):
+    """Every segment drawn, in proportion to its length."""
+    return seg["nsamples"] / seg["nsamples"].sum()
+
+
 def _make_eval(seed=0):
     rng = np.random.default_rng(seed)
     bumps = np.array([0.2, 0.5, 0.8])
@@ -70,7 +75,8 @@ def _bank(tmp, runs=("O3b",)):
 
 def _miner(tmp, seg_index=None, **kw):
     defaults = dict(
-        detectors=["H1", "L1"], seg_index=seg_index or [_seg(), _seg()], seq_len=SEQ,
+        detectors=["H1", "L1"], seg_index=seg_index or [_seg(), _seg()],
+        segment_probs=[_probs(s) for s in seg_index or [_seg(), _seg()]], seq_len=SEQ,
         bank=_bank(tmp), keep_threshold=5.0, descriptor_dim=4, n_cells=16,
         learning_rate=0.1, threshold_min=0.0, n_emitters=2, emitter_batch_size=16,
         sigma0=0.2, n_warmup=128, seed=0,
@@ -81,7 +87,7 @@ def _miner(tmp, seg_index=None, **kw):
 
 # ── codec ──────────────────────────────────────────────────────────────────
 def test_codec_decode_encode_stable():
-    codec = _StartTimeCodec([_seg(), _seg()], SEQ)
+    codec = _StartTimeCodec([_seg(), _seg()], SEQ, [_probs(_seg())] * 2)
     g = np.random.default_rng(0).random((64, 2))
     s, sg, rn = codec.decode(g)
     # decode∘encode∘decode is a fixpoint (carries run too)
@@ -92,7 +98,9 @@ def test_codec_decode_encode_stable():
 def test_codec_roundtrips_run_for_pooled_runs():
     """A pooled two-run table: decode must report the correct run, and
     encode/decode must round-trip the (run, segment, start) identity."""
-    codec = _StartTimeCodec([_seg_pooled(), _seg_pooled()], SEQ)
+    codec = _StartTimeCodec(
+        [_seg_pooled(), _seg_pooled()], SEQ, [_probs(_seg_pooled())] * 2
+    )
     g = np.random.default_rng(1).random((256, 2))
     s, sg, rn = codec.decode(g)
     assert set(np.unique(rn).tolist()) == {0, 1}, "decode never reaches run 1"
@@ -101,7 +109,7 @@ def test_codec_roundtrips_run_for_pooled_runs():
 
 
 def test_decode_respects_segment_bounds():
-    codec = _StartTimeCodec([_seg()], SEQ)
+    codec = _StartTimeCodec([_seg()], SEQ, [_probs(_seg())])
     g = np.linspace(0, 1, 200)[:, None]
     s, sg, rn = codec.decode(g)
     # every window must fit fully inside its segment
@@ -109,6 +117,14 @@ def test_decode_respects_segment_bounds():
     for i in range(len(s)):
         base = seg["start"][sg[i, 0]]
         assert base <= s[i, 0] <= base + (NSAMP - SEQ)
+
+
+def test_decode_skips_undrawn_segments():
+    """A segment the noise sampler never draws (bad time) is never decoded."""
+    probs = np.array([0.0, 1.0])
+    codec = _StartTimeCodec([_seg()], SEQ, [probs])
+    s, sg, _ = codec.decode(np.linspace(0, 1, 500)[:, None])
+    assert set(sg[:, 0].tolist()) == {1} and (s[:, 0] >= NSAMP).all()
 
 
 # ── mining (file-backed bank) ──────────────────────────────────────────────
