@@ -1,14 +1,15 @@
+"""
+MLGWSC-1's evaluate.py (statistics unchanged) with additions: injection
+SNRs in the plots and found/missed comparisons with every team.
+"""
+
 # Packages
 import os
 import h5py
-import pickle
 import logging
-import argparse
 import itertools
 import numpy as np
 from pathlib import Path
-
-# LOCAL  (lazy-imported inside main() to avoid broken import chains)
 
 # Plotting
 from matplotlib import colors
@@ -23,6 +24,20 @@ plt.rcParams.update({"font.size": 18})
 from tqdm import tqdm
 
 from sage.core.constants import GM
+
+FAR_INDICES = [0, 3, 29, 99, 999]  # 1, 4, 30, 100 and 1000 false alarms per month
+MARGINS = (30, 30)  # no injections in a segment's first and last 30 s
+MONTH = 30.0 * 24.0 * 60.0 * 60.0
+COLORS = {  # sensitivity plots
+    "PyCBC": "orange", "TPI_FSU_Jena": "red", "Virgo-AUTh": "blueviolet",
+    "CNN-Coinc": "green", "MFCNN": "blue", "cWB": "brown",
+}
+
+
+def reachable_thresholds(noise_stats):
+    """Ranking statistics at the FAR thresholds the background reaches."""
+    reached = [index for index in FAR_INDICES if index < len(noise_stats)]
+    return noise_stats[::-1][reached]
 
 
 def find_injection_times(fgfiles, injfile, padding_start=0, padding_end=0):
@@ -326,7 +341,7 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
     ### Get the thresholds for different false alarm rates
     # TODO: Add PyCBC's results overlayed on top
     # For a month-long testing dataset these should give FAR per month, per week and per day
-    far_thresholds = noise_stats[::-1][[0, 3, 29, 99, 999]]
+    far_thresholds = reachable_thresholds(noise_stats)
     thresh_names = [
         "1-per-month",
         "1-per-week",
@@ -339,13 +354,17 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
         thresh_names[n]: found_injections[0][found_injections[1] > thresh]
         for n, thresh in enumerate(far_thresholds)
     }
-    badfar_idx = found_injections[0][
-        (found_injections[1] <= noise_stats[::-1][99])
-        & (found_injections[1] > noise_stats[::-1][999])
-    ].astype(int)
-    highsnr_badfar_idx = np.argwhere(
-        (injparams["snr"][badfar_idx] > 10.0) & (injparams["snr"][badfar_idx] < 100.0)
-    )
+    # The 1000/month > FAR > 100/month band needs a background reaching 1000/month
+    bad = len(far_thresholds) == len(FAR_INDICES)
+    if bad:
+        badfar_idx = found_injections[0][
+            (found_injections[1] <= noise_stats[::-1][99])
+            & (found_injections[1] > noise_stats[::-1][999])
+        ].astype(int)
+        highsnr_badfar_idx = np.argwhere(
+            (injparams["snr"][badfar_idx] > 10.0)
+            & (injparams["snr"][badfar_idx] < 100.0)
+        )
     highsnr_badfar_params = {}
 
     ## Plotting the comparison plots (injections and found histogram) for all params
@@ -356,27 +375,28 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
         param_dir = os.path.join(save_dir, "{}".format(param))
         if not os.path.exists(param_dir):
             os.makedirs(param_dir, exist_ok=False)
-        if not os.path.exists(bad_dir):
-            os.makedirs(bad_dir, exist_ok=False)
 
         all_param = injparams[param]
-        highsnr_badfar_params[param] = all_param[badfar_idx][highsnr_badfar_idx]
+        if bad:
+            if not os.path.exists(bad_dir):
+                os.makedirs(bad_dir, exist_ok=False)
+            highsnr_badfar_params[param] = all_param[badfar_idx][highsnr_badfar_idx]
 
-        # plot params of highsnr bad signals if present
-        plt.figure(figsize=(12.0, 12.0))
-        plt.title("SNR>10 and 1000/month>FAR>100/month {}".format(param))
-        plt.hist(
-            highsnr_badfar_params[param],
-            bins=100,
-            label="{}-bad".format(param),
-            alpha=0.8,
-        )
-        plt.grid(True, which="both")
-        plt.xlabel("{}".format(param))
-        plt.ylabel("Number of Occurences")
-        plt.legend()
-        plt.savefig(os.path.join(bad_dir, "{}-highsnr_bad.png".format(param)))
-        plt.close()
+            # plot params of highsnr bad signals if present
+            plt.figure(figsize=(12.0, 12.0))
+            plt.title("SNR>10 and 1000/month>FAR>100/month {}".format(param))
+            plt.hist(
+                highsnr_badfar_params[param],
+                bins=100,
+                label="{}-bad".format(param),
+                alpha=0.8,
+            )
+            plt.grid(True, which="both")
+            plt.xlabel("{}".format(param))
+            plt.ylabel("Number of Occurences")
+            plt.legend()
+            plt.savefig(os.path.join(bad_dir, "{}-highsnr_bad.png".format(param)))
+            plt.close()
 
         for key, value in far_found_idx.items():
             found_param = all_param[value.astype(int)]
@@ -393,6 +413,9 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
                 os.path.join(param_dir, "{}-compare_FAR_{}.png".format(param, key))
             )
             plt.close()
+
+    if not bad:
+        return
 
     # plotting param vs param for bad signals
     # Calculate signal duration
@@ -520,7 +543,7 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
     save_name = "raw_value"
 
     # Define FAR thresholds
-    far_thresholds = noise_stats[::-1][[0, 3, 29, 99, 999]]
+    far_thresholds = reachable_thresholds(noise_stats)
     thresh_names = [
         "1 per month",
         "1 per week",
@@ -559,34 +582,34 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
         plt.close()
 
 
-def read_data(args, idxs):
+def read_data(injection_file, run, teams, idxs):
     """
-    Load injection parameters and foreground/background events for both teams.
+    Load injection parameters and the run's and every team's events.
 
     Parameters
     ----------
-    args : argparse.Namespace
-        Parsed CLI arguments; must contain ``injection_file``, ``foreground_events``,
-        ``background_events``, ``team1``, ``team2``, and ``orchid_results``.
+    injection_file : str
+        MLGWSC-1 injection file.
+    run : dict
+        The run searched here: ``name``, ``fgpath`` and ``bgpath``
+        (lists of event files).
+    teams : list of dict
+        Every MLGWSC-1 team, as ``run``.
     idxs : numpy.ndarray of bool
         Boolean mask selecting which injections lie inside the analysed segments.
 
     Returns
     -------
-    team_1 : dict
-        Event arrays and metadata for the first team (Sage).
-    team_2 : dict
-        Event arrays and metadata for the second team (e.g. PyCBC).
     injparams : dict
         Injection parameters (masses, distance, tc, …) filtered by ``idxs``.
     use_chirp_distance : bool
         ``True`` if chirp-distance weighting should be used for sensitivity.
     """
     # Read injection parameters
-    logging.info(f"Reading injections from {args.injection_file}")
+    logging.info(f"Reading injections from {injection_file}")
 
     injparams = {}
-    with h5py.File(args.injection_file, "r") as fp:
+    with h5py.File(injection_file, "r") as fp:
         params = list(fp.keys())
         for param in params:
             data = fp[param][()]
@@ -594,36 +617,7 @@ def read_data(args, idxs):
 
         use_chirp_distance = "chirp_distance" in params
 
-    # print([len(injparams[foo]) for foo in injparams.keys()])
-
-    team_1 = {"name": args.team1}
-    team_2 = {"name": args.team2}
-    other_results = getattr(args, "orchid_results",
-                            "/local/scratch/igr/nnarenraju/orchid_data/results")
-    other_teams = os.listdir(other_results)
-
-    print(
-        "Dataset {} comparing {} against {}".format(
-            args.dataset, team_1["name"], team_2["name"]
-        )
-    )
-    team_1["fgpath"] = args.foreground_events
-    team_1["bgpath"] = args.background_events
-
-    if args.team2 == "PyCBC":
-        team_2["fgpath"] = [
-            os.path.join(
-                other_results, "{}/ds{}/fg.hdf".format(team_2["name"], args.dataset)
-            )
-        ]
-        team_2["bgpath"] = [
-            os.path.join(
-                other_results, "{}/ds{}/bg.hdf".format(team_2["name"], args.dataset)
-            )
-        ]
-
-    for nteam in [1, 2]:
-        team = locals()["team_{}".format(nteam)]
+    for team in [run, *teams]:
         # Read foreground events
         logging.info(f'Reading foreground events from {team["fgpath"]}')
         fg_events = []
@@ -644,7 +638,7 @@ def read_data(args, idxs):
                 )
         team["bgevents"] = np.concatenate(bg_events, axis=-1)
 
-    return team_1, team_2, injparams, use_chirp_distance
+    return injparams, use_chirp_distance
 
 
 def compare_plot_1(team_1, team_2, save_dir):
@@ -682,7 +676,8 @@ def compare_plot_1(team_1, team_2, save_dir):
     for n, thresh in enumerate(team_2["far_thresholds"]):
         team_2[thresh_names[n]] = team_2["found_idx"][team_2["found_stats"] > thresh]
 
-    for thresh_name in thresh_names:
+    shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
+    for thresh_name in thresh_names[:shared]:
         # Subplotting
         fig, ax = plt.subplots(nrows, ncols, figsize=(8.0 * ncols, 6.0 * nrows))
         # Histogram kwargs
@@ -693,8 +688,6 @@ def compare_plot_1(team_1, team_2, save_dir):
         for param, (i, j) in zip(params, pidxs):
             # ax[i][j].hist(team_1[param][team_1[thresh_name]], label=team_1['name'], color='blue', **kwargs)
             # ax[i][j].hist(team_2[param][team_2[thresh_name]], label=team_2['name'], color='red', **kwargs)
-            print(thresh_name)
-            print(team_2[param][team_2[thresh_name]])
             bins = np.histogram(
                 np.hstack(
                     (
@@ -787,7 +780,8 @@ def compare_plot_2(team_1, team_2, save_dir):
     for n, thresh in enumerate(team_2["far_thresholds"]):
         team_2[thresh_names[n]] = team_2["found_idx"][team_2["found_stats"] > thresh]
 
-    for thresh_name in thresh_names:
+    shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
+    for thresh_name in thresh_names[:shared]:
         # Subplotting
         fig, ax = plt.subplots(nrows, ncols, figsize=(8.0 * ncols, 5.0 * nrows))
         kwargs = {}
@@ -839,17 +833,10 @@ def compare_plot_2(team_1, team_2, save_dir):
             if len(found_both) != 0:
                 ax[i][j].scatter(found_both[:, 0], found_both[:, 1], **kwargs)
 
-            print(
-                "{} FAR: {} vs {}, sage_unique = {}, pycbc_unique = {}".format(
-                    thresh_name, param_1, param_2, len(unique_team1), len(unique_team2)
-                )
-            )
-
             ax[i][j].set_xlabel(param_1)
             ax[i][j].set_ylabel(param_2)
             ax[i][j].grid(True)
             num_fin += 1
-        print()
 
         for i, j in pidxs[num_fin:]:
             ax[i][j].set_visible(False)
@@ -913,7 +900,8 @@ def compare_plot_3(team_1, team_2, save_dir):
     for n, thresh in enumerate(team_2["far_thresholds"]):
         team_2[thresh_names[n]] = team_2["found_idx"][team_2["found_stats"] > thresh]
 
-    for thresh_name in thresh_names:
+    shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
+    for thresh_name in thresh_names[:shared]:
         # Subplotting
         fig, ax = plt.subplots(nrows, ncols, figsize=(5.0 * ncols, 3.0 * nrows))
 
@@ -1004,7 +992,8 @@ def compare_plot_4(team_1, team_2, save_dir):
     # (0, (3, 1, 1, 1, 1, 1)) is densely dashdotdotted in parameterised form
     # Refer: https://matplotlib.org/stable/gallery/lines_bars_and_markers/linestyles.html
     linestyles = ["solid", "dotted", "dashed", "dashdot", (0, (3, 1, 1, 1, 1, 1))]
-    for n, thresh_name in enumerate(thresh_names):
+    shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
+    for n, thresh_name in enumerate(thresh_names[:shared]):
         plt.figure(figsize=(12.0, 9.0))
         # Plotting the efficiency curve for each FAR threshold
         team1_data = team_1["snr"][team_1[thresh_name]]
@@ -1074,13 +1063,23 @@ def compare_groups(team_1, team_2, output_dir):
     compare_plot_4(team_1, team_2, os.path.join(save_dir, "efficiency_curves"))
 
 
-def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
+def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
     """
     Calculate the false-alarm rate and sensitivity of a search
-    algorithm.
+    algorithm, for the run searched here and for every team.
 
     Arguments
     ---------
+    run, teams : dict, list of dict
+        As ``read_data``, with ``fgevents`` and ``bgevents`` read; the
+        statistics returned are the run's.
+    chirp_distance : bool
+        Whether the injections are drawn in chirp distance.
+    output_dir : str
+        Directory of the plots.
+
+    Each team's event arrays (``fgevents``, ``bgevents``):
+
     fgevents : np.array
         A numpy array with three rows. The first row has to contain the
         times returned by the search algorithm where it believes to have
@@ -1115,16 +1114,6 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         `sensitive-distance`.
     """
 
-    # Get data from fg and bg events file
-    team_1, team_2, injparams, chirp_distance = read_data(args, idxs)
-    print("Team 1: {}".format(team_1))
-    print("Team 2: {}".format(team_2))
-    print("Injeciton params: {}".format(injparams))
-    print("Chirp distance = {}".format(chirp_distance))
-
-    # Add SNRs into the injparams (this will automatically include it wihtin most plots)
-    injparams["snr"] = snrs
-
     # Return data tmp var
     ret = {}
 
@@ -1140,8 +1129,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
     if duration is None:
         duration = injtimes.max() - injtimes.min()
 
-    for nteam in [1, 2]:
-        team = locals()["team_{}".format(nteam)]
+    for team in [run, *teams]:
 
         logging.info("Sorting foreground event times")
         sidxs = team["fgevents"][0].argsort()
@@ -1163,7 +1151,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         fpevents = fgevents.T[fpidxs].T
 
         ## Update the returns dictionary
-        if team["name"] == "Sage":
+        if team is run:
             ret["fg-events"] = fgevents
             ret["found-indices"] = np.arange(len(injtimes))[idxs]
             ret["missed-indices"] = np.setdiff1d(
@@ -1183,7 +1171,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         noise_stats_fg.sort()
         fgfar = len(noise_stats_fg) - np.arange(len(noise_stats_fg)) - 1
         fgfar = fgfar / duration
-        if team["name"] == "Sage":
+        if team is run:
             ret["fg-far"] = fgfar
 
         # Calculate background FAR
@@ -1192,7 +1180,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         noise_stats.sort()
         far = len(noise_stats) - np.arange(len(noise_stats)) - 1
         far = far / duration
-        if team["name"] == "Sage":
+        if team is run:
             ret["far"] = far
 
         # Find best true-positive for each injection
@@ -1217,7 +1205,6 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
 
         # Number of injections found within given testing data
         found_injections = np.array(found_injections).T
-        print("Number of found injections = {}".format(len(found_injections[0])))
 
         # Calculate sensitivity
         # CARE! THIS APPLIES ONLY WHEN THE DISTRIBUTION IS CHOSEN CORRECTLY
@@ -1230,7 +1217,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             mchirp_max = massc.max()
             # print('found_mchirp_total is the chirp mass of all found injections')
             # print('max = {}, min = {}, mean={}, median = {}'.format(max(found_mchirp_total), min(found_mchirp_total), np.mean(found_mchirp_total), np.median(found_mchirp_total)))
-            if team["name"] == "Sage":
+            if team is run:
                 # Histogram of found injections vs all injections in 1-month testing dataset
                 found_param_plots(noise_stats, output_dir, injparams, found_injections)
                 # Plotting all param vs param
@@ -1240,7 +1227,6 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         # print('Maximum distance given by injections = {}'.format(max_distance))
         vtot = (4.0 / 3.0) * np.pi * max_distance**3.0
         Ninj = len(dist)
-        print("Total number of injections = {}".format(Ninj))
 
         # Params to calculate the sensitive volume
         if chirp_distance:
@@ -1258,7 +1244,7 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
             fidxs = np.searchsorted(found_injections[1], noise_stats, side="right")
             # Plotting the network output
             network_output(found_injections, noise_stats, output_dir, team["name"])
-            if team["name"] == "Sage":
+            if team is run:
                 # Parameter learning
                 parameter_learning(injparams, noise_stats, found_injections, output_dir)
 
@@ -1286,22 +1272,12 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         vol = prefactor * mc_sum
         vol_err = prefactor * (Ninj * sample_variance) ** 0.5
         rad = (3 * vol / (4 * np.pi)) ** (1.0 / 3.0)
-        print(
-            "Radius or sensitive distance as calculated from the volume obtained ({})".format(
-                team["name"]
-            )
-        )
-        print("min rad = {}, max rad = {}".format(min(rad), max(rad)))
 
-        if team["name"] == "Sage":
+        if team is run:
             ret["sensitive-volume"] = vol
             ret["sensitive-distance"] = rad
             ret["sensitive-volume-error"] = vol_err
             ret["sensitive-fraction"] = nfound / Ninj
-
-        if team["name"] == "PyCBC":
-            ret["sensitive-distance-pycbc"] = rad
-            ret["far-pycbc"] = far
 
         # Update plotting params for each group
         team["found_idx"] = found_injections[0].astype(int)
@@ -1310,201 +1286,48 @@ def get_stats(args, idxs, duration=None, output_dir=None, snrs=None):
         team["params"] = list(injparams.keys())
         team.update(injparams)
         # The values given are indices and have to be 1 less than the number of FA per month req.
-        team["far_thresholds"] = noise_stats[::-1][[0, 3, 29, 99, 999]]
-        print(team["far_thresholds"])
+        team["far_thresholds"] = reachable_thresholds(noise_stats)
         team["sens_dist"] = rad
         team["sens_frac"] = nfound / Ninj
 
-    ## Save Data to analyse found injections and make plots comparing PyCBC and our pipeline
-    print(team_1)
-    print(team_2)
-    compare_groups(team_1, team_2, output_dir)
+    ## Save Data to analyse found injections and compare every team with our pipeline
+    for team in teams:
+        compare_groups(run, team, os.path.join(output_dir, team["name"]))
 
     return ret
 
 
-def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
+def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_dir):
     """
-    CLI entry point for the MLGWSC-1 testing-phase evaluator.
+    MLGWSC-1 evaluation of the run searched here, compared with every team.
 
-    Parses arguments, loads foreground/background events and injection parameters,
-    computes FAR and sensitive distance via :func:`get_stats`, writes results to
-    an HDF5 file, and saves sensitivity-vs-FAR plots comparing Sage against
-    MLGWSC-1 competition teams.
+    Writes the statistics to ``output_dir/eval.hdf`` and the figures
+    beside them; each team's comparison goes into ``output_dir/<team>``.
 
     Parameters
     ----------
-    raw_args : list of str, optional
-        Argument list for programmatic invocation; defaults to ``sys.argv``.
-    cfg_far_scaling_factor : float, optional
-        FAR scaling factor from config (overrides ``--far-scaling-factor`` CLI arg).
-    dataset : int, optional
-        Dataset index (overrides ``--dataset`` CLI arg).
+    dataset_dir : str
+        Dataset 4: ``injections.hdf``, ``foreground.hdf`` and ``snr.hdf``.
+    run_name : str
+        Label of the run.
+    fg_events, bg_events : str
+        The run's events on the foreground and background data.
+    results_dir : str
+        Every team's results, ``<team>/ds4/{fg,bg,eval}.hdf``.
+    output_dir : str
+        Directory of the statistics and figures.
     """
-    parser = argparse.ArgumentParser(description="Testing phase evaluator")
-
-    parser.add_argument(
-        "--injection-file",
-        type=str,
-        required=True,
-        help=(
-            "Path to the file containing information "
-            "on the injections. (The file returned by"
-            "`generate_data.py --output-injection-file`"
-        ),
-    )
-    parser.add_argument(
-        "--foreground-events",
-        type=str,
-        nargs="+",
-        required=True,
-        help=(
-            "Path to the file containing the events "
-            "returned by the search on the foreground "
-            "data set as returned by "
-            "`generate_data.py --output-foreground-file`."
-        ),
-    )
-    parser.add_argument(
-        "--foreground-files",
-        type=str,
-        nargs="+",
-        required=True,
-        help=(
-            "Path to the file containing the analyzed "
-            "foreground data output by"
-            "`generate_data.py --output-foreground-file`."
-        ),
-    )
-    parser.add_argument(
-        "--background-events",
-        type=str,
-        nargs="+",
-        required=True,
-        help=(
-            "Path to the file containing the events "
-            "returned by the search on the background"
-            "data set as returned by "
-            "`generate_data.py --output-background-file`."
-        ),
-    )
-    parser.add_argument(
-        "--far-scaling-factor",
-        help="Rescale FAR when making sensitivity plot",
-        type=float,
-        required=False,
-        default=-1.0,
-    )
-    parser.add_argument(
-        "--dataset", help="dataset type", type=int, required=False, default=-1
-    )
-    parser.add_argument(
-        "--output-file",
-        type=str,
-        required=True,
-        help=(
-            "Path at which to store the output HDF5 " "file. (Path must end in `.hdf`)"
-        ),
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        required=True,
-        help=(
-            "Path at which to store the output png "
-            "files. (Path must exist within export_dir)"
-        ),
-    )
-
-    # Teams
-    parser.add_argument(
-        "--team1",
-        type=str,
-        required=False,
-        default="Sage",
-        help=("Team 1 to be compared using evalution plots"),
-    )
-    parser.add_argument(
-        "--team2",
-        type=str,
-        required=False,
-        default="PyCBC",
-        help=("Team 2 to be compared using evalution plots"),
-    )
-
-    parser.add_argument(
-        "--orchid-results",
-        type=str,
-        default="/local/scratch/igr/nnarenraju/orchid_data/results",
-        help="Path to the directory containing MLGWSC-1 comparison team results.",
-    )
-    parser.add_argument("--verbose", action="store_true", help="Print update messages.")
-    parser.add_argument(
-        "--force", action="store_true", help="Overwrite existing files."
-    )
-
-    args = parser.parse_args(raw_args)
-    print(args)
-
-    # Sanity check arguments here
-    if os.path.splitext(args.output_file)[1] != ".hdf":
-        raise ValueError("The output file must have the extension `.hdf`.")
-
-    if os.path.isfile(args.output_file) and not args.force:
-        raise IOError(
-            f"The file {args.output_file} already exists. "
-            "Set the flag `force` to overwrite it."
-        )
-
-    if args.far_scaling_factor == -1 and cfg_far_scaling_factor == None:
-        raise ValueError(
-            "FAR scaling factor not provided. Use the --far-scaling-factor argument when running."
-        )
-    elif cfg_far_scaling_factor == None:
-        far_scaling_factor = args.far_scaling_factor
-    elif cfg_far_scaling_factor != None:
-        far_scaling_factor = cfg_far_scaling_factor
-
-    if args.dataset == -1 and dataset == None:
-        raise ValueError(
-            "Dataset type not provided. Use the --dataset argument when running."
-        )
-    elif dataset == None:
-        dataset = args.dataset
-    elif dataset != None:
-        dataset = dataset
-        args.dataset = dataset
-
-    # Caluclate the SNR for each injection in the testing dataset
-    dataset_dir = Path(args.injection_file).parent.absolute()
-    snrs_path = os.path.join(dataset_dir, "snr.hdf")
-    if os.path.exists(snrs_path):
-        with h5py.File(snrs_path, "r") as fp:
-            snrs = fp["snr"][()]
-    else:
-        # The on-the-fly fallback used to build a data config from
-        # sage.presets.data_configs and call sage.utils.get_testdata_snr.
-        # Both were written against the pre-refactor config schema (fields such
-        # as signal_low_freq_cutoff, ifo_combination, parent_dir) that no
-        # current config provides, so this path has been non-functional for
-        # some time; presets was removed in favour of rebuilding it from the
-        # run configs. Fail with something actionable instead of an ImportError.
-        raise FileNotFoundError(
-            f"Injection SNRs not found at {snrs_path}.\n"
-            "Pre-computing them is currently required: the on-the-fly fallback "
-            "depended on the old sage.presets config schema and no longer "
-            "works. Generate snr.hdf alongside the injection file (a dataset "
-            "'snr' of one network SNR per injection, ordered as in "
-            f"{args.injection_file}) and re-run."
-        )
+    injection_file = os.path.join(dataset_dir, "injections.hdf")
+    foreground_file = os.path.join(dataset_dir, "foreground.hdf")
+    with h5py.File(os.path.join(dataset_dir, "snr.hdf"), "r") as fp:
+        snrs = fp["snr"][()]
 
     # Find indices contained in foreground
-    print("\nRunning Testing Phase Evaluator")
-    print("Finding injections contained in data")
-    padding_start, padding_end = 30, 30
+    logging.info("Finding injections contained in data")
+    padding_start, padding_end = MARGINS
     dur, idxs = find_injection_times(
-        args.foreground_files,
-        args.injection_file,
+        [foreground_file],
+        injection_file,
         padding_start=padding_start,
         padding_end=padding_end,
     )
@@ -1516,113 +1339,58 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
         msg = msg.format(padding_start + padding_end + 24)
         raise RuntimeError(msg)
 
-    # Get stats from output file
-    snrs = np.array(snrs)
-    snrs = snrs[idxs]
-    print("Duration calculated by find_injection_times = {}".format(dur))
-    stats = get_stats(args, idxs, duration=dur, output_dir=args.output_dir, snrs=snrs)
+    # Get data from fg and bg events file
+    run = {"name": run_name, "fgpath": [fg_events], "bgpath": [bg_events]}
+    teams = [
+        {
+            "name": name,
+            "fgpath": [os.path.join(results_dir, name, "ds4", "fg.hdf")],
+            "bgpath": [os.path.join(results_dir, name, "ds4", "bg.hdf")],
+            "eval": os.path.join(results_dir, name, "ds4", "eval.hdf"),
+        }
+        for name in sorted(os.listdir(results_dir))
+    ]
+    injparams, chirp_distance = read_data(injection_file, run, teams, idxs)
+    # Add SNRs into the injparams (this will automatically include it within most plots)
+    injparams["snr"] = snrs[idxs]
+
+    stats = get_stats(run, teams, injparams, chirp_distance, dur, output_dir)
 
     # Store results
-    logging.info(f"Writing output to {args.output_file}")
-    mode = "w" if args.force else "x"
-    with h5py.File(args.output_file, mode) as fp:
+    output_file = os.path.join(output_dir, "eval.hdf")
+    logging.info(f"Writing output to {output_file}")
+    with h5py.File(output_file, "x") as fp:
         for key, val in stats.items():
             fp.create_dataset(key, data=np.array(val))
 
-    # Create the sensitivity vs FAR/month plot from the output evaluation obtained
-    assert dur == far_scaling_factor, "FAR scaling factor discrepancy! Check duration."
-    with h5py.File(args.output_file, "r") as fp:
-        far = fp["far"][()]
-        sens = fp["sensitive-distance"][()]
-        sidxs = far.argsort()
-        far = far[sidxs][1:] * far_scaling_factor
-        sens = sens[sidxs][1:]
+    # Create the sensitivity vs FAR/month plot from the output evaluation obtained;
+    # the FAR scaling factor is the duration of the data
+    far_scaling_factor = dur
+    far = stats["far"]
+    sidxs = far.argsort()
+    far = far[sidxs][1:] * far_scaling_factor
+    sens = stats["sensitive-distance"][sidxs][1:]
 
-        far_pycbc = fp["far-pycbc"][()]
-        sidxs_pycbc = far_pycbc.argsort()
-        far_pycbc_chk = far_pycbc[sidxs_pycbc] * far_scaling_factor
-        sens_pycbc_check = fp["sensitive-distance-pycbc"][()]
-        sens_pycbc_check = sens_pycbc_check[sidxs_pycbc]
-
-        print(len(far_pycbc), len(sens_pycbc_check))
-
-    # Month FAR factor
-    month = 30.0 * 24.0 * 60.0 * 60.0
+    curves = {}
+    for team in teams:
+        with h5py.File(team["eval"], "r") as fp:
+            curves[team["name"]] = (
+                np.array(fp["far"]),
+                np.array(fp["sensitive-distance"]),
+            )
 
     plt.figure(figsize=(18.0, 12.0))
-    plt.title("Sensitivity Measure for Dataset {}".format(dataset))
-    plt.plot(far * (month / dur), sens, color="m", linewidth=3.0, label="nnarenraju")
-
-    with h5py.File(
-        os.path.join(args.orchid_results, "PyCBC/ds{}/eval.hdf".format(dataset))
-    ) as fp:
-        sens_pycbc = np.array(fp["sensitive-distance"])
-        far_pycbc = np.array(fp["far"])
-    plt.plot(
-        far_pycbc * month,
-        sens_pycbc,
-        color="orange",
-        linewidth=2.5,
-        linestyle="dashed",
-        label="PyCBC",
-    )
-
-    with h5py.File(
-        os.path.join(args.orchid_results, "TPI_FSU_Jena/ds{}/eval.hdf".format(dataset))
-    ) as fp:
-        sens_fsu = np.array(fp["sensitive-distance"])
-        far_fsu = np.array(fp["far"])
-    plt.plot(
-        far_fsu * month,
-        sens_fsu,
-        color="red",
-        linewidth=2.5,
-        linestyle="dashed",
-        label="TPI FSU Jena",
-    )
-
-    with h5py.File(
-        os.path.join(args.orchid_results, "Virgo-AUTh/ds{}/eval.hdf".format(dataset))
-    ) as fp:
-        sens_virgo = np.array(fp["sensitive-distance"])
-        far_virgo = np.array(fp["far"])
-    plt.plot(
-        far_virgo * month,
-        sens_virgo,
-        color="blueviolet",
-        linewidth=2.5,
-        linestyle="dashed",
-        label="Virgo-AUTh",
-    )
-
-    with h5py.File(
-        os.path.join(args.orchid_results, "CNN-Coinc/ds{}/eval.hdf".format(dataset))
-    ) as fp:
-        sens_cnn = np.array(fp["sensitive-distance"])
-        far_cnn = np.array(fp["far"])
-    plt.plot(
-        far_cnn * month,
-        sens_cnn,
-        color="green",
-        linewidth=2.5,
-        linestyle="dashed",
-        label="CNN-Coinc",
-    )
-
-    with h5py.File(
-        os.path.join(args.orchid_results, "MFCNN/ds{}/eval.hdf".format(dataset))
-    ) as fp:
-        sens_mfcnn = np.array(fp["sensitive-distance"])
-        far_mfcnn = np.array(fp["far"])
-    plt.plot(
-        far_mfcnn * month,
-        sens_mfcnn,
-        color="blue",
-        linewidth=2.5,
-        linestyle="dashed",
-        label="MFCNN",
-    )
-
+    plt.title("Sensitivity Measure for Dataset 4")
+    plt.plot(far * (MONTH / dur), sens, color="m", linewidth=3.0, label=run_name)
+    for name, (far_team, sens_team) in curves.items():
+        plt.plot(
+            far_team * MONTH,
+            sens_team,
+            color=COLORS[name],
+            linewidth=2.5,
+            linestyle="dashed",
+            label=name,
+        )
     plt.grid(True, which="both")
     plt.xlim(1000, 1)
     plt.ylim(0, 3500)
@@ -1630,37 +1398,27 @@ def main(raw_args=None, cfg_far_scaling_factor=None, dataset=None):
     plt.xlabel("False Alarm Rate (FAR) per month")
     plt.ylabel("Sensitive Distance [MPc]")
     plt.legend()
-    plt.savefig(os.path.join(args.output_dir, "sensitivity_all_teams.png"))
+    plt.savefig(os.path.join(output_dir, "sensitivity_all_teams.png"))
     plt.close()
 
-    plt.figure(figsize=(18.0, 12.0))
-    plt.title("Sensitivity Measure for Dataset {}".format(dataset))
-    plt.plot(far * (month / dur), sens, color="m", linewidth=3.0, label="nnarenraju")
-
-    with h5py.File(
-        os.path.join(args.orchid_results, "{}/ds{}/eval.hdf".format(args.team2, dataset))
-    ) as fp:
-        sens_team2 = np.array(fp["sensitive-distance"])
-        far_team2 = np.array(fp["far"])
+    for name, (far_team, sens_team) in curves.items():
+        plt.figure(figsize=(18.0, 12.0))
+        plt.title("Sensitivity Measure for Dataset 4")
+        plt.plot(far * (MONTH / dur), sens, color="m", linewidth=3.0, label=run_name)
         plt.plot(
-            far_team2 * month,
-            sens_team2,
-            color="orange",
+            far_team * MONTH,
+            sens_team,
+            color=COLORS[name],
             linewidth=2.5,
             linestyle="dashed",
-            label="{}".format(args.team2),
+            label=name,
         )
-
-    plt.grid(True, which="both")
-    plt.xlim(1000, 1)
-    plt.ylim(1500, 2100)
-    plt.xscale("log")
-    plt.xlabel("False Alarm Rate (FAR) per month")
-    plt.ylabel("Sensitive Distance [MPc]")
-    plt.legend()
-    plt.savefig(os.path.join(args.output_dir, "sensitivity_compare_teams.png"))
-    plt.close()
-
-
-if __name__ == "__main__":
-    main()
+        plt.grid(True, which="both")
+        plt.xlim(1000, 1)
+        plt.ylim(1500, 2100)
+        plt.xscale("log")
+        plt.xlabel("False Alarm Rate (FAR) per month")
+        plt.ylabel("Sensitive Distance [MPc]")
+        plt.legend()
+        plt.savefig(os.path.join(output_dir, name, "sensitivity_compare.png"))
+        plt.close()

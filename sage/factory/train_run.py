@@ -694,6 +694,41 @@ def final_check(
     )
 
 
+def chosen_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: bool) -> tuple:
+    """
+    The stored checkpoint a command reads, and its name.
+
+    Parameters
+    ----------
+    run_dir : Path
+        A started run directory.
+    from_epoch : int or None
+        Stored epoch (``epoch_NNNN.pt`` or ``latest.pt``); None takes ``best.pt``.
+    ema_calibrated : bool
+        Take ``ema_calibrated.pt`` (written by the final check) instead.
+
+    Returns
+    -------
+    tuple
+        Path and name (``best``, ``ema_calibrated`` or ``epoch_NNNN``).
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``ema_calibrated.pt`` is asked for and not written.
+    EpochUnavailable
+        If ``from_epoch`` is not stored.
+    """
+    if ema_calibrated:
+        path = run_dir / "checkpoints" / "ema_calibrated.pt"
+        if not path.exists():
+            raise FileNotFoundError(f"{run_dir}: no ema_calibrated.pt; the final check writes it when EMA is enabled")
+        return path, "ema_calibrated"
+    if from_epoch is None:
+        return run_dir / "checkpoints" / "best.pt", "best"
+    return start_checkpoint(run_dir, from_epoch)[1], f"epoch_{from_epoch:04d}"
+
+
 def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: bool) -> dict:
     """
     Validate one stored checkpoint on ``validation.final_samples`` windows of the run's validation set.
@@ -735,14 +770,8 @@ def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: b
     check_device(train)
     data_dir = read_data_dir()
     check_data(run_dir, settings, data_dir)
-    if ema_calibrated:
-        path, group = run_dir / "checkpoints" / "ema_calibrated.pt", "validate_ema_calibrated"
-        if not path.exists():
-            raise FileNotFoundError(f"{run_dir}: no ema_calibrated.pt; the final check writes it when EMA is enabled")
-    elif from_epoch is None:
-        path, group = run_dir / "checkpoints" / "best.pt", "validate_best"
-    else:
-        path, group = start_checkpoint(run_dir, from_epoch)[1], f"validate_epoch_{from_epoch:04d}"
+    path, name = chosen_checkpoint(run_dir, from_epoch, ema_calibrated)
+    group = f"validate_{name}"
 
     window, detectors, dtype = build_data(settings["data"])
     device = torch.device(train["device"])

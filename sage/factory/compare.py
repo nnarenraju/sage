@@ -76,14 +76,16 @@ class Appender:
         self.buf = []
 
 
-def load_network(run_dir: Path, device, data_dir: Path) -> SimpleNamespace:
+def load_network(run_dir: Path, checkpoint: Path, device, data_dir: Path) -> SimpleNamespace:
     """
-    A run's ``best.pt`` with its own preprocessing, target scaling and precision.
+    A run's checkpoint with its own preprocessing, target scaling and precision.
 
     Parameters
     ----------
     run_dir : Path
         A started run directory.
+    checkpoint : Path
+        One of its stored checkpoints (``chosen_checkpoint``).
     device : torch.device
         Device every network runs on.
     data_dir : Path
@@ -92,9 +94,10 @@ def load_network(run_dir: Path, device, data_dir: Path) -> SimpleNamespace:
     Returns
     -------
     SimpleNamespace
-        ``path``, ``name``, ``epoch``, ``window``, ``detectors``, ``asds``,
-        ``processor``, ``network``, ``loss``, ``targets``, ``offset``,
-        ``scale``, ``autocast_dtype`` and ``columns`` (output column names).
+        ``path``, ``name``, ``epoch``, ``window``, ``detectors``, ``dtype``,
+        ``bounds`` (prior bounds), ``asds``, ``processor``, ``network``,
+        ``loss``, ``targets``, ``offset``, ``scale``, ``autocast_dtype`` and
+        ``columns`` (output column names).
 
     Raises
     ------
@@ -122,13 +125,14 @@ def load_network(run_dir: Path, device, data_dir: Path) -> SimpleNamespace:
         settings["model"], len(detectors), len(targets), "non_astrophysical" in settings["signal"], device, dtype
     )
     network = network.to(memory_format=torch.channels_last)
-    state = torch.load(run_dir / "checkpoints" / "best.pt", map_location=device, weights_only=False)
+    state = torch.load(checkpoint, map_location=device, weights_only=False)
     network.load_state_dict(state["model"])
     network.eval()
     scaling = yaml.safe_load((run_dir / "resolved" / "derived.yaml").read_text())["target_scaling"]
     loss = build_loss(settings["loss"], targets)
     return SimpleNamespace(
         path=run_dir, name=run_dir.resolve().name, epoch=int(state["epoch"]), window=window, detectors=detectors,
+        dtype=dtype, bounds=bounds,
         asds=asds, processor=processor, network=network, loss=loss, targets=targets,
         offset=torch.tensor([scaling[target]["offset"] for target in targets], device=device),
         scale=torch.tensor([scaling[target]["scale"] for target in targets], device=device),
@@ -200,7 +204,7 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
     reference, prior = check_run(run_dirs[0])
     check_data(run_dirs[0], reference, data_dir)
     device = torch.device(reference["train"]["device"])
-    runs = [load_network(run_dir, device, data_dir) for run_dir in run_dirs]
+    runs = [load_network(run_dir, run_dir / "checkpoints" / "best.pt", device, data_dir) for run_dir in run_dirs]
     first = runs[0]
     for run in runs[1:]:
         found = differences(

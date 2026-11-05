@@ -52,6 +52,46 @@ def validate(arguments: list) -> None:
     print(f"Next: {on('plot', options.directory)}")
 
 
+@command("benchmark", "Benchmark one stored checkpoint on MLGWSC-1 dataset 4 against every team")
+def benchmark(arguments: list) -> None:
+    """Search MLGWSC-1 dataset 4 with one stored checkpoint and evaluate it as MLGWSC-1 does, against every team."""
+    from sage.benchmark.mlgwsc1.mlgwsc1 import benchmark as mlgwsc1
+    from sage.cli.data import WORKERS
+    from sage.config.run_dir import training_started
+    from sage.core.logger import setup_logging
+    from sage.factory.clone import EpochUnavailable, stored_checkpoints
+
+    summary = "Benchmark one stored checkpoint on MLGWSC-1 dataset 4 against every team"
+    options = parse(
+        "benchmark", summary, arguments,
+        (["--mlgwsc1"], {"action": "store_true", "help": "the MLGWSC-1 dataset 4 benchmark (Schaefer et al. 2023)"}),
+        (["--from-epoch"], {"type": int, "help": "a stored epoch instead of best.pt"}),
+        (["--ema-calibrated"], {"action": "store_true", "help": "ema_calibrated.pt instead of best.pt"}),
+        (["--workers"], {"type": int, "default": WORKERS, "help": f"processes for the injection SNRs (default: {WORKERS})"}),
+    )
+    directory = Path(options.directory)
+    again = f"{on('benchmark', options.directory)} --mlgwsc1"
+    if not options.mlgwsc1:
+        raise CommandError("name the benchmark to run; the one there is: --mlgwsc1", again)
+    if options.from_epoch is not None and options.ema_calibrated:
+        raise CommandError("--from-epoch and --ema-calibrated each name a checkpoint; give one", f"{again} --ema-calibrated")
+    settings = checked_settings("benchmark", options.directory)
+    if not training_started(directory):
+        raise CommandError(f"{directory}: no checkpoint to benchmark yet", on("train", options.directory))
+    device_available(settings, f"put `{again}` in a job script on a node that has it, then: sbatch <your job script>")
+    setup_logging(None)
+    try:
+        output = mlgwsc1(directory, options.from_epoch, options.ema_calibrated, options.workers)
+    except SettingsChanged as error:
+        raise CommandError(str(error), f"edit {directory / 'run.yaml'} back as above, then: {again}") from None
+    except EpochUnavailable as error:
+        raise CommandError(str(error), f"{again} --from-epoch {max(stored_checkpoints(directory))}") from None
+    except FileExistsError as error:
+        raise CommandError(str(error), f"{again} --from-epoch <another stored epoch>") from None
+    print(f"Benchmarked on MLGWSC-1 dataset 4: events and evaluation in {output}")
+    print(f"Next: {on('status', options.directory)}")
+
+
 @command("plot", "Draw the run's validation figures into results/plots", journey=6)
 def plot(arguments: list) -> None:
     """Draw the figure suite for the best validated epoch, or another validation group."""

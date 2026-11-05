@@ -60,6 +60,7 @@ dependencies = [
 [project.scripts]
 sage = "sage.cli:main"
 sgw = "sage.cli:main"
+sage-benchmark = "sage.cli:main"
 sage-chain = "sage.cli:main"
 sage-check = "sage.cli:main"
 sage-clone = "sage.cli:main"
