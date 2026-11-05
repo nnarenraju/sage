@@ -32,7 +32,7 @@ MARGINS = (30, 30)  # no injections in a segment's first and last 30 s
 MONTH = 30.0 * 24.0 * 60.0 * 60.0
 COLORS = {  # sensitivity plots
     "PyCBC": "orange", "TPI_FSU_Jena": "red", "Virgo-AUTh": "blueviolet",
-    "CNN-Coinc": "green", "MFCNN": "blue", "cWB": "brown",
+    "CNN-Coinc": "green", "MFCNN": "blue",
 }
 
 
@@ -1343,15 +1343,24 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
 
     # Get data from fg and bg events file
     run = {"name": run_name, "fgpath": [fg_events], "bgpath": [bg_events]}
-    teams = [
-        {
-            "name": name,
-            "fgpath": [os.path.join(results_dir, name, "ds4", "fg.hdf")],
-            "bgpath": [os.path.join(results_dir, name, "ds4", "bg.hdf")],
-            "eval": os.path.join(results_dir, name, "ds4", "eval.hdf"),
+    # Teams that published foreground and background events and their evaluation
+    teams = []
+    for name in sorted(os.listdir(results_dir)):
+        files = {
+            kind: os.path.join(results_dir, name, "ds4", f"{kind}.hdf")
+            for kind in ("fg", "bg", "eval")
         }
-        for name in sorted(os.listdir(results_dir))
-    ]
+        if not all(os.path.isfile(path) for path in files.values()):
+            logger.info(f"Leaving out {name}: not all of fg, bg, eval.hdf in ds4")
+            continue
+        teams.append(
+            {
+                "name": name,
+                "fgpath": [files["fg"]],
+                "bgpath": [files["bg"]],
+                "eval": files["eval"],
+            }
+        )
     injparams, chirp_distance = read_data(injection_file, run, teams, idxs)
     # Add SNRs into the injparams (this will automatically include it within most plots)
     injparams["snr"] = snrs[idxs]
