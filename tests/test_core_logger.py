@@ -85,6 +85,16 @@ class TestSetupLogging:
         # Turning the console down must not lose detail from the file.
         assert "quiet detail" in path.read_text()
 
+    def test_other_libraries_log_warnings_only(self, tmp_path):
+        path = setup_logging(tmp_path / "run")
+        other = logging.getLogger("numba.core.ssa")
+        other.debug("compiler detail")
+        other.info("library chatter")
+        other.warning("library warning")
+        text = path.read_text()
+        assert "compiler detail" not in text and "library chatter" not in text
+        assert "library warning" in text
+
     def test_repeated_calls_do_not_duplicate_output(self, tmp_path):
         path = setup_logging(tmp_path / "run")
         setup_logging(tmp_path / "run")

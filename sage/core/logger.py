@@ -103,8 +103,9 @@ def setup_logging(export_dir=None, level=None, console: bool = True, filename: s
         only -- appropriate for notebooks and one-off scripts.
     level : int or str or None
         Console verbosity. Defaults to ``$SAGE_LOG_LEVEL`` if set, else
-        ``INFO``. The *file* always records DEBUG regardless, so turning the
-        console down never loses detail you might need afterwards.
+        ``INFO``. The *file* always records Sage's DEBUG regardless, so turning
+        the console down never loses detail you might need afterwards. Other
+        libraries log warnings and errors only.
     console : bool
         Attach a stdout handler. Disable for jobs where stdout is captured
         separately.
@@ -124,8 +125,11 @@ def setup_logging(export_dir=None, level=None, console: bool = True, filename: s
     console_level = _resolve_level(level)
 
     root = logging.getLogger()
-    # Root must pass DEBUG through; the handlers decide what is actually shown.
-    root.setLevel(logging.DEBUG)
+    # Other libraries log warnings and errors only (numba's compiler alone
+    # writes thousands of DEBUG lines); Sage's own loggers pass everything,
+    # and the handlers decide what is shown.
+    root.setLevel(logging.WARNING)
+    logging.getLogger("sage").setLevel(logging.DEBUG)
 
     # Drop handlers we installed previously (leave anyone else's alone).
     for h in [h for h in root.handlers if getattr(h, _SAGE_HANDLER, False)]:
