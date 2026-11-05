@@ -24,12 +24,15 @@ Documentation: NULL
 """
 
 # IN-BUILT
-import logging
 import numpy as np
 from numpy.random import RandomState
 
 # PyCBC handling
 from pycbc.types import TimeSeries
+
+from sage.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 # This constant need to be constant to be able to recover identical results.
 BLOCK_SAMPLES = 1638400
@@ -102,12 +105,12 @@ class NoiseGenerator(object):
         keys = {}
         
         if self.dataset == 1:
-            logging.debug('Called with dataset 1')
+            logger.debug('Called with dataset 1')
             for det in self.detectors:
                 keys[det] = 'aLIGOZeroDetHighPower'
                 
         elif self.dataset in [2, 3, 4]:
-            logging.debug('Called with dataset {}'.format(self.dataset))
+            logger.debug('Called with dataset {}'.format(self.dataset))
             for det in self.detectors:
                 key = self.rs.randint(0, len(self.asd_options[det]))
                 keys[det] = self.asd_options[det][key]

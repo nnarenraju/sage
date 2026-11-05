@@ -6,7 +6,6 @@ SNRs in the plots and found/missed comparisons with every team.
 # Packages
 import os
 import h5py
-import logging
 import itertools
 import numpy as np
 from pathlib import Path
@@ -24,6 +23,9 @@ plt.rcParams.update({"font.size": 18})
 from tqdm import tqdm
 
 from sage.core.constants import GM
+from sage.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 FAR_INDICES = [0, 3, 29, 99, 999]  # 1, 4, 30, 100 and 1000 false alarms per month
 MARGINS = (30, 30)  # no injections in a segment's first and last 30 s
@@ -606,7 +608,7 @@ def read_data(injection_file, run, teams, idxs):
         ``True`` if chirp-distance weighting should be used for sensitivity.
     """
     # Read injection parameters
-    logging.info(f"Reading injections from {injection_file}")
+    logger.info(f"Reading injections from {injection_file}")
 
     injparams = {}
     with h5py.File(injection_file, "r") as fp:
@@ -619,7 +621,7 @@ def read_data(injection_file, run, teams, idxs):
 
     for team in [run, *teams]:
         # Read foreground events
-        logging.info(f'Reading foreground events from {team["fgpath"]}')
+        logger.info(f'Reading foreground events from {team["fgpath"]}')
         fg_events = []
         for fpath in team["fgpath"]:
             with h5py.File(fpath, "r") as fp:
@@ -629,7 +631,7 @@ def read_data(injection_file, run, teams, idxs):
         team["fgevents"] = np.concatenate(fg_events, axis=-1)
 
         # Read background events
-        logging.info(f'Reading background events from {team["bgpath"]}')
+        logger.info(f'Reading background events from {team["bgpath"]}')
         bg_events = []
         for fpath in team["bgpath"]:
             with h5py.File(fpath, "r") as fp:
@@ -1131,17 +1133,17 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
 
     for team in [run, *teams]:
 
-        logging.info("Sorting foreground event times")
+        logger.info("Sorting foreground event times")
         sidxs = team["fgevents"][0].argsort()
         fgevents = team["fgevents"].T[sidxs].T
 
-        logging.info("Finding injection times closest to event times")
+        logger.info("Finding injection times closest to event times")
         idxs = find_closest_index(injtimes, fgevents[0])
         diff = np.abs(injtimes[idxs] - fgevents[0])
 
         # If the difference between the injection time and trigger is within tc variance
         # The trigger is identified as an event (there may be duplicate triggers)
-        logging.info("Finding true- and false-positives")
+        logger.info("Finding true- and false-positives")
         tpbidxs = diff <= fgevents[2]
         tpidxs = np.arange(len(fgevents[0]))[tpbidxs]
         fpbidxs = diff > fgevents[2]
@@ -1166,7 +1168,7 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
             ret["false-positives"] = fpevents
 
         # Calculate foreground FAR
-        logging.info("Calculating foreground FAR")
+        logger.info("Calculating foreground FAR")
         noise_stats_fg = fpevents[1].copy()
         noise_stats_fg.sort()
         fgfar = len(noise_stats_fg) - np.arange(len(noise_stats_fg)) - 1
@@ -1175,7 +1177,7 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
             ret["fg-far"] = fgfar
 
         # Calculate background FAR
-        logging.info("Calculating background FAR")
+        logger.info("Calculating background FAR")
         noise_stats = team["bgevents"][1].copy()
         noise_stats.sort()
         far = len(noise_stats) - np.arange(len(noise_stats)) - 1
@@ -1208,7 +1210,7 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
 
         # Calculate sensitivity
         # CARE! THIS APPLIES ONLY WHEN THE DISTRIBUTION IS CHOSEN CORRECTLY
-        logging.info("Calculating sensitivity")
+        logger.info("Calculating sensitivity")
         sidxs = found_injections[1].argsort()  # Sort found injections
         found_injections = found_injections.T[sidxs].T
 
@@ -1323,7 +1325,7 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
         snrs = fp["snr"][()]
 
     # Find indices contained in foreground
-    logging.info("Finding injections contained in data")
+    logger.info("Finding injections contained in data")
     padding_start, padding_end = MARGINS
     dur, idxs = find_injection_times(
         [foreground_file],
@@ -1358,7 +1360,7 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
 
     # Store results
     output_file = os.path.join(output_dir, "eval.hdf")
-    logging.info(f"Writing output to {output_file}")
+    logger.info(f"Writing output to {output_file}")
     with h5py.File(output_file, "x") as fp:
         for key, val in stats.items():
             fp.create_dataset(key, data=np.array(val))
