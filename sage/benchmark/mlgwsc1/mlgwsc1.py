@@ -13,7 +13,7 @@ import h5py
 import numpy as np
 import torch
 
-from sage.benchmark.mlgwsc1 import release
+from sage.benchmark.mlgwsc1 import glitches, release
 from sage.benchmark.mlgwsc1.evaluator import evaluate
 from sage.config.machine import read_data_dir
 from sage.core.logger import get_logger
@@ -91,7 +91,7 @@ class Slicer(torch.utils.data.Dataset):
 
 
 def peak_offset(run: SimpleNamespace) -> float:
-    """Seconds from a window's start to the middle of the delta_tc prior."""
+    """Seconds from a window's start to the delta_tc prior's middle."""
     low, high = run.bounds["delta_tc"]
     return run.window.padding_length_in_s + (low + high) / 2
 
@@ -145,7 +145,7 @@ def triggers(run: SimpleNamespace, path: Path, device: torch.device) -> np.ndarr
 
 def clusters(found: np.ndarray) -> tuple:
     """
-    The loudest trigger of each run of triggers at most CLUSTER_IN_S apart.
+    Loudest trigger of each run of triggers at most CLUSTER_IN_S apart.
 
     Parameters
     ----------
@@ -199,10 +199,11 @@ def benchmark(
     """
     Benchmark one stored checkpoint of a run on MLGWSC-1 dataset 4.
 
-    MLGWSC-1's code, every team's results, dataset 4 and its injection
-    SNRs are made once in ``<data_dir>/mlgwsc1``. The events and the
-    evaluation go into ``<run>/results/mlgwsc1/<checkpoint>``, built in
-    a ``.part`` folder; finished event files are kept if a job stops.
+    MLGWSC-1's code, every team's results, dataset 4, its injection
+    SNRs and the Gravity Spy glitches are made once in
+    ``<data_dir>/mlgwsc1``. The events and the evaluation go into
+    ``<run>/results/mlgwsc1/<checkpoint>``, built in a ``.part`` folder;
+    finished event files are kept if a job stops.
 
     Parameters
     ----------
@@ -255,5 +256,11 @@ def benchmark(
     evaluation.mkdir()
     evaluate(str(dataset), f"{run.name} ({name})", str(part / "fg_events.hdf"),
              str(part / "bg_events.hdf"), str(results), str(evaluation))
+    counts = glitches.training_glitch_counts(
+        settings["noise"]["training"], data_dir, run.window.padded_length_in_samples,
+        directory,
+    )
+    glitches.plot_glitches(part / "bg_events.hdf", results / "PyCBC" / "ds4" / "bg.hdf",
+                           dataset, code, counts, directory, evaluation)
     part.rename(output)
     return output

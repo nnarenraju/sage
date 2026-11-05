@@ -1,8 +1,8 @@
 """
-MLGWSC-1's own code, every team's dataset-4 results and dataset 4 itself,
+MLGWSC-1's own code, every team's dataset-4 results and dataset 4,
 made once in ``<data_dir>/mlgwsc1`` and read by every benchmark.
 
-Each piece is built in a ``.part`` folder and moved into place when done.
+Each piece is built in a ``.part`` folder, then moved into place.
 """
 
 import hashlib
@@ -28,6 +28,13 @@ CODE_DIR = "gwastro-ml-mock-data-challenge-1-6d5e62f"  # the code archive's fold
 # Dataset 4 challenge set: arXiv:2209.11146, sec. II.2; one month.
 SEED, START_OFFSET, DURATION = 2514409456, 0, 2592000
 MARGINS = (30, 30)  # evaluate.py: no injections in a segment's first and last 30 s
+GRAVITYSPY = "https://zenodo.org/api/records/5649212/files"  # Gravity Spy v1.0.0
+GRAVITYSPY_MD5 = {
+    "H1_O3a.csv": "29aea278b622cd97496971f7c07f7d6a",
+    "L1_O3a.csv": "3d3d0409817499c84fb2e0a2b211b5a5",
+    "H1_O3b.csv": "590290fe3c7ddf8cd9fa85c3a09cd5e4",
+    "L1_O3b.csv": "90d0bc16448bca72818ed9abf267979c",
+}
 
 
 def fetch(url: str, path: Path, md5: str) -> None:
@@ -61,7 +68,7 @@ def fetch(url: str, path: Path, md5: str) -> None:
 
 
 def fetch_code(directory: Path) -> Path:
-    """MLGWSC-1's code (generate_data.py, evaluate.py, PSDs); its folder."""
+    """MLGWSC-1's code (generate_data.py, evaluate.py, PSDs)."""
     code = directory / CODE_DIR
     if code.exists():
         return code
@@ -93,9 +100,32 @@ def fetch_results(directory: Path) -> Path:
     return results
 
 
+def fetch_gravityspy(directory: Path, name: str) -> Path:
+    """
+    One Gravity Spy glitch file, ``gravityspy/<name>``; its path.
+
+    Parameters
+    ----------
+    directory : Path
+        The MLGWSC-1 folder of the data directory.
+    name : str
+        A key of ``GRAVITYSPY_MD5``, e.g. ``H1_O3a.csv``.
+
+    Returns
+    -------
+    Path
+    """
+    folder = directory / "gravityspy"
+    folder.mkdir(exist_ok=True)
+    path = folder / name
+    if not path.exists():
+        fetch(f"{GRAVITYSPY}/{name}/content", path, GRAVITYSPY_MD5[name])
+    return path
+
+
 def make_dataset(directory: Path, code: Path) -> Path:
     """
-    Dataset 4's challenge set by MLGWSC-1's ``generate_data.py``; its folder.
+    Dataset 4's challenge set, by MLGWSC-1's ``generate_data.py``.
 
     The script runs from its own folder, where it keeps the real noise
     it downloads.
