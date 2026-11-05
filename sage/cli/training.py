@@ -4,9 +4,11 @@ import argparse
 import collections
 import datetime
 import json
+import math
 import os
 import re
 import time
+import zoneinfo
 from pathlib import Path
 
 import h5py
@@ -19,6 +21,23 @@ from sage.utils.schedulers import schedulers
 
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 CHECK_ONLY = "SAGE_CHECK_ONLY"  # 1 in a job: sage train runs the checks and one training step, then exits
+TIMEZONES = {  # sage status --timezone: name -> IANA time zone
+    "utc": "UTC",
+    "uk": "Europe/London",
+    "europe-central": "Europe/Berlin",
+    "europe-eastern": "Europe/Athens",
+    "us-eastern": "America/New_York",
+    "us-central": "America/Chicago",
+    "us-mountain": "America/Denver",
+    "us-pacific": "America/Los_Angeles",
+    "india": "Asia/Kolkata",
+    "china": "Asia/Shanghai",
+    "japan": "Asia/Tokyo",
+    "australia-eastern": "Australia/Sydney",
+    "australia-western": "Australia/Perth",
+}
+EPOCH_START = re.compile(r"^(\S+ \S+) \| .* \| Epoch \d+ \| training:")
+JOB_START = re.compile(r" \| Run .* from epoch \d+, seed ")
 
 
 def on(name: str, directory: str) -> str:
@@ -214,18 +233,94 @@ def stop(arguments: list) -> None:
     print(f"Next: {on('status', options.directory)}")
 
 
-def flag_lines(directory: str) -> list:
-    """The run's flags with when each was set, and how to train on after ``sage stop``."""
+def flag_lines(directory: str, zone: zoneinfo.ZoneInfo) -> list:
+    """The run's flags with when each was set (in ``zone``), and how to train on after ``sage stop``."""
     from sage.factory.train_run import FLAGS_DIR, STOP_FLAG, flag
 
     lines = []
     flags = sorted((Path(directory) / FLAGS_DIR).glob("*"))
     if flags:
-        set_at = lambda path: datetime.datetime.fromtimestamp(path.stat().st_mtime).astimezone()
+        set_at = lambda path: datetime.datetime.fromtimestamp(path.stat().st_mtime, zone)
         lines.append("Flags: " + ", ".join(f"{path.name} (since {set_at(path):%Y-%m-%d %H:%M:%S %Z})" for path in flags))
     if flag(directory, STOP_FLAG).exists():
         lines.append(f"Stopped by sage stop; to train on: rm {flag(directory, STOP_FLAG)} && {on('train', directory)}")
     return lines
+
+
+def epoch_seconds(log: Path, window: int) -> float | None:
+    """
+    Mean time per epoch over the last ``window`` epochs in ``run.log``.
+
+    An epoch that spans two jobs is left out, so waits between jobs do
+    not count.
+
+    Parameters
+    ----------
+    log : Path
+        The run's ``logs/run.log``.
+    window : int
+        Epochs to average over.
+
+    Returns
+    -------
+    float or None
+        Seconds per epoch; None before an epoch has finished.
+    """
+    durations, previous = [], None
+    with open(log) as file:
+        for line in file:
+            if JOB_START.search(line):
+                previous = None
+            elif match := EPOCH_START.match(line):
+                started = datetime.datetime.fromisoformat(match[1])
+                if previous is not None:
+                    durations.append((started - previous).total_seconds())
+                previous = started
+
+    recent = durations[-window:]
+    return sum(recent) / len(recent) if recent else None
+
+
+def finish_time(directory: Path, settings: dict, done: int) -> datetime.datetime | None:
+    """
+    When a running run finishes: its epochs left, then the final check.
+
+    Epochs take their mean over one validation and mining cycle
+    (``epoch_seconds``), from the later of the last epoch's end and the
+    job's start.
+
+    Parameters
+    ----------
+    directory : Path
+        Run directory with ``flags/running``.
+    settings : dict
+        The run's resolved settings.
+    done : int
+        Epochs trained.
+
+    Returns
+    -------
+    datetime.datetime or None
+        Finish time in UTC; None before the first epoch has finished.
+    """
+    # Deferred: train_run imports torch.
+    from sage.factory.train_run import FINAL_CHECK_ESTIMATE, RUNNING_FLAG, flag
+
+    cycle = [settings["validation"]["every_n_epochs"]]
+    if settings["mining"]["enabled"]:
+        cycle.append(settings["mining"]["every_n_epochs"])
+    mean = epoch_seconds(directory / "logs" / "run.log", math.lcm(*cycle))
+    estimate = directory / "results" / FINAL_CHECK_ESTIMATE
+    if mean is None or not estimate.exists():
+        return None
+
+    started = max(
+        (directory / "checkpoints" / "progress.json").stat().st_mtime,
+        flag(directory, RUNNING_FLAG).stat().st_mtime,
+    )
+    seconds = (settings["train"]["epochs"] - done) * mean
+    seconds += json.loads(estimate.read_text())["seconds"]
+    return datetime.datetime.fromtimestamp(started + seconds, datetime.timezone.utc)
 
 
 @command("status", "Show how far the run has trained and its latest losses")
@@ -233,10 +328,14 @@ def status(arguments: list) -> None:
     """Print the epochs trained, the latest and lowest losses, the final check and when the log was last written."""
     from sage.config.loader import load_run_record
     from sage.factory.build import validates
-    from sage.factory.train_run import FINAL_CHECK_ESTIMATE
+    from sage.factory.train_run import FINAL_CHECK_ESTIMATE, RUNNING_FLAG, flag
     from sage.utils.checkpoint import next_epoch
 
-    options = parse("status", "Show how far the run has trained and its latest losses", arguments)
+    options = parse(
+        "status", "Show how far the run has trained and its latest losses", arguments,
+        (["--timezone"], {"choices": list(TIMEZONES), "default": "utc", "help": "time zone of the times shown (default: utc)"}),
+    )
+    zone = zoneinfo.ZoneInfo(TIMEZONES[options.timezone])
     directory = Path(options.directory)
     done = next_epoch(directory)
     clone_file = directory / "resolved" / "clone.yaml"
@@ -248,7 +347,7 @@ def status(arguments: list) -> None:
     if done == 0:
         if not (directory / "run.yaml").exists():
             raise CommandError(f"no run.yaml in {directory}", "sage init <directory> --preset <name>")
-        print("\n".join([f"{directory}: training has not started", *cloned, *flag_lines(options.directory)]))
+        print("\n".join([f"{directory}: training has not started", *cloned, *flag_lines(options.directory, zone)]))
         print(f"Next: {on('train', options.directory)}")
         return
 
@@ -281,12 +380,17 @@ def status(arguments: list) -> None:
                      f"(estimated at epoch {estimate['epoch']}), so leave a job for it")
     elif done == epochs:
         lines.append("Final check: not finished")
+    if flag(directory, RUNNING_FLAG).exists() and not final.exists():
+        finish = finish_time(directory, settings, done)
+        lines.append("Finish: estimated once an epoch has finished" if finish is None else
+                     f"Finishes about {finish.astimezone(zone):%Y-%m-%d %H:%M %Z}, final check included; "
+                     "waits between jobs not counted")
     log = directory / "logs" / "run.log"
     if log.exists():
-        written = datetime.datetime.fromtimestamp(log.stat().st_mtime).astimezone()
+        written = datetime.datetime.fromtimestamp(log.stat().st_mtime, zone)
         age = datetime.timedelta(seconds=int(time.time() - log.stat().st_mtime))
         lines.append(f"Log last written {written:%Y-%m-%d %H:%M:%S %Z}, {age} ago")
-    lines += flag_lines(options.directory)
+    lines += flag_lines(options.directory, zone)
     print("\n".join(lines))
     print(f"Next: {on('plot' if final.exists() else 'log', options.directory)}")
 

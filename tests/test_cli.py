@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sage.cli import main
 from sage.cli.registry import COMMANDS
+from sage.cli.training import epoch_seconds
 from sage.config import loader, machine
 
 RUN = """
@@ -78,6 +79,17 @@ def test_run_presets(capsys, tmp_path):
     for name in loader.preset_names("runs"):
         assert main(["init", str(tmp_path / name), "--preset", name]) == 0
         assert main(["show", str(tmp_path / name)]) == 0, capsys.readouterr().err
+
+
+def test_epoch_seconds(tmp_path):
+    log = tmp_path / "run.log"
+    lines = [("00:00", "Run /r from epoch 0, seed 1"), ("00:01", "Epoch 0 | training: 2"),
+             ("00:11", "Epoch 1 | training: 2"), ("00:31", "Epoch 2 | training: 2"),
+             ("09:00", "Run /r from epoch 2, seed 1"), ("09:01", "Epoch 2 | training: 2"),
+             ("09:41", "Epoch 3 | training: 2")]
+    log.write_text("".join(f"2026-11-04 {at}:00 | INFO    | sage.x:1 | {text}\n" for at, text in lines))
+    assert epoch_seconds(log, 3) == (10 + 20 + 40) * 60 / 3  # the 8.5 h between jobs left out
+    assert epoch_seconds(log, 1) == 40 * 60
 
 
 def test_executables():
