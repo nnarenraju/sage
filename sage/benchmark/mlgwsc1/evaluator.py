@@ -8,7 +8,6 @@ import os
 import h5py
 import itertools
 import numpy as np
-from pathlib import Path
 
 # Plotting
 from matplotlib import colors
@@ -1304,7 +1303,8 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
     MLGWSC-1 evaluation of the run searched here, compared with every team.
 
     Writes the statistics to ``output_dir/eval.hdf`` and the figures
-    beside them; each team's comparison goes into ``output_dir/<team>``.
+    beside them; each team's comparison goes into ``output_dir/<team>``
+    and the paper's figures into ``output_dir/PAPER``.
 
     Parameters
     ----------
@@ -1433,3 +1433,8 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
         plt.legend()
         plt.savefig(os.path.join(output_dir, name, "sensitivity_compare.png"))
         plt.close()
+
+    # Imported here: paper_plots imports this module
+    from sage.benchmark.mlgwsc1.paper_plots import plot_paper
+
+    plot_paper(run, teams, stats, dur, output_dir)
