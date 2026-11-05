@@ -52,7 +52,7 @@ class TestGetLoggerIsInert:
         rather than being satisfied from this process's module cache.
         """
         code = (
-            "import sage.core.config, sage.dsp.utils, sage.dsp.filters, "
+            "import sage.dsp.utils, sage.dsp.filters, "
             "sage.core.errors, sage.core.decorators, "
             "sage.factory.training, sage.factory.validation; "
             "import logging; "
