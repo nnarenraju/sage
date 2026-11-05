@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sage.cli.registry import CommandError, command
 from sage.utils.schedulers import schedulers
-from sage.utils.slurm.chain import chain
+from sage.utils.slurm.chain import JOB_LOGS, chain
 
 
 @command("chain", "Submit your job script several times, each job after the previous one ends")
@@ -22,6 +22,11 @@ def chain_jobs(arguments: list) -> None:
     script = Path(options.script)
     if not script.is_file():
         raise CommandError(f"no job script {script}", f"sage chain <your job script> --jobs {options.jobs}")
+    run_dir = script.resolve().parent  # job output goes to its logs/jobs
+    if not (run_dir / "run.yaml").exists():
+        raise CommandError(f"{script}: a job script lives in the run directory it trains, and {run_dir} has no "
+                           "run.yaml", f"mv {script} <run directory>/, then: sage chain <run directory>/{script.name} "
+                           f"--jobs {options.jobs}")
     if options.jobs < 1:
         raise CommandError(f"--jobs {options.jobs}: a chain needs at least one job", f"sage chain {script} --jobs 1")
     found = schedulers()
@@ -32,10 +37,11 @@ def chain_jobs(arguments: list) -> None:
             "sage train",
         )
     try:
-        ids = chain(script, options.jobs, options.after)
+        ids = chain(script, run_dir, options.jobs, options.after)
     except RuntimeError as error:
         raise CommandError(str(error), f"sage chain {script} --jobs {options.jobs}") from None
     for position, job in enumerate(ids, 1):
         waits = f", after {ids[position - 2]}" if position > 1 else (f", after {options.after}" if options.after else "")
         print(f"Submitted job {job} ({position}/{len(ids)}{waits})")
+    print(f"Job output: {run_dir / JOB_LOGS}")
     print("Next: squeue --me")

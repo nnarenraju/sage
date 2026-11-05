@@ -148,7 +148,7 @@ def submit_check(directory: str, script: str) -> None:
         raise CommandError("no scheduler to submit to (no sbatch on PATH)" if not found
                            else f"submitting on {', '.join(found)} is not available yet", on("check", directory))
     try:
-        job = chain(script, 1, environment={CHECK_ONLY: "1"})[0]
+        job = chain(script, directory, 1, environment={CHECK_ONLY: "1"})[0]
     except RuntimeError as error:
         raise CommandError(str(error), f"{on('check', directory)} --in-job {script}") from None
     output = job_output(job)

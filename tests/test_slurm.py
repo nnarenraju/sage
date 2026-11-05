@@ -34,11 +34,16 @@ def test_chain(tmp_path, monkeypatch):
                       'echo "$((100 + $(wc -l < "$(dirname "$0")/calls")));cluster"\n')
     sbatch.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    assert chain("job.sh", 3, after="7") == ["101", "102", "103"]
+    run = tmp_path / "run"
+    out = run.resolve() / "logs" / "jobs" / "%x-%j.out"
+    logs = f"--output={out} --error={out}"
+    assert chain("job.sh", run, 3, after="7") == ["101", "102", "103"]
+    assert (run / "logs" / "jobs").is_dir()
     assert (bin_dir / "calls").read_text().splitlines() == [
-        "--parsable --dependency=afterany:7 job.sh",
-        "--parsable --dependency=afterany:101 job.sh",
-        "--parsable --dependency=afterany:102 job.sh",
+        f"--parsable {logs} --dependency=afterany:7 job.sh",
+        f"--parsable {logs} --dependency=afterany:101 job.sh",
+        f"--parsable {logs} --dependency=afterany:102 job.sh",
     ]
-    assert chain("job.sh", 1, environment={"SAGE_CHECK_ONLY": "1"}) == ["104"]
-    assert (bin_dir / "calls").read_text().splitlines()[-1] == "--parsable --export=ALL,SAGE_CHECK_ONLY=1 job.sh"
+    assert chain("job.sh", run, 1, environment={"SAGE_CHECK_ONLY": "1"}) == ["104"]
+    last = (bin_dir / "calls").read_text().splitlines()[-1]
+    assert last == f"--parsable {logs} --export=ALL,SAGE_CHECK_ONLY=1 job.sh"

@@ -117,7 +117,10 @@ def test_train_run(tmp_path, monkeypatch, capsys):
     try:
         assert main(["check", str(run_dir)]) == 0 and list(files()) == [run_dir / "run.yaml"]  # writes nothing
         assert main(["check", str(run_dir), "--in-job", str(tmp_path / "job.sh")]) == 0
-        assert (bin_dir / "call").read_text().split() == ["--parsable", "--export=ALL,SAGE_CHECK_ONLY=1", str(tmp_path / "job.sh")]
+        out = run_dir.resolve() / "logs" / "jobs" / "%x-%j.out"  # the job's output, in the run
+        assert (bin_dir / "call").read_text().split() == [
+            "--parsable", f"--output={out}", f"--error={out}", "--export=ALL,SAGE_CHECK_ONLY=1", str(tmp_path / "job.sh")
+        ]
         monkeypatch.setenv("SAGE_CHECK_ONLY", "1")  # the job's sage train only checks
         assert main(["train", str(run_dir)]) == 0 and list(files()) == [run_dir / "run.yaml"]
         monkeypatch.setenv("SAGE_CHECK_ONLY", "yes")
