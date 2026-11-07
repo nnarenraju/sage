@@ -18,7 +18,8 @@ from sage.data.download import DATASET, download_run
 from sage.data.noise.data_quality import FLAGS, read_bad_time, write_zero_runs
 from sage.data.noise.real_noise import MemmapSingleNoiseSampler
 from sage.data.asd.smoothing import LogSplineSmoothing
-from sage.data.primer import DataReleaseDownloader, EstimateASD
+from sage.data.asd.get_asds import EstimateASD
+from sage.data.primer import DataReleaseDownloader
 from sage.dsp.welch import TorchWelch
 
 

@@ -45,4 +45,3 @@ from sage.data.asd.blackout import (
     SqrtSoftRatioBlackout,
 )
 
-from sage.data.primer.get_asds import EstimateASD

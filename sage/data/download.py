@@ -35,11 +35,11 @@ from sage.config.machine import (
 )
 from sage.core.hardcode import _DETECTORS
 from sage.data.asd.lines import line_detections
-from sage.data.asd.make_fiducial import pooled_fiducial
+from sage.data.asd.get_asds import EstimateASD
 from sage.data.asd.smoothing import LogSplineSmoothing
 from sage.data.noise import MemmapSingleNoiseSampler
 from sage.data.noise.data_quality import read_bad_time, write_bad_time, write_zero_runs
-from sage.data.primer import DataReleaseDownloader, EstimateASD, NoBlackout, TimelineQuery
+from sage.data.primer import DataReleaseDownloader, NoBlackout, TimelineQuery
 from sage.data.primer.retry import retry_detector
 from sage.dsp.welch import TorchWelch
 
@@ -485,7 +485,7 @@ def build_fiducial(data_dir: Path, runs: list, detector: str, workers: int) -> N
     ]
     detections = strain_detections([strain_file(data_dir, run, detector) for run in pooled], workers)
     stretches = FIDUCIAL["line_stretches_per_run"] * len(pooled)
-    asd, lines = pooled_fiducial(banks, detections, stretches, FIDUCIAL["line_nw"])
+    asd, lines = EstimateASD.pooled_fiducial(banks, detections, stretches, FIDUCIAL["line_nw"])
 
     directory = fiducial_dir(data_dir, runs)
     part = directory.with_name(f"{directory.name}.part")
