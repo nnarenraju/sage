@@ -29,6 +29,7 @@ logger = get_logger(__name__)
 FAR_INDICES = [0, 3, 29, 99, 999]  # 1, 4, 30, 100 and 1000 false alarms per month
 MARGINS = (30, 30)  # no injections in a segment's first and last 30 s
 MONTH = 30.0 * 24.0 * 60.0 * 60.0
+FOUND_FILE = "found.hdf"  # the run's and PyCBC's found injections
 COLORS = {  # sensitivity plots
     "PyCBC": "orange", "TPI_FSU_Jena": "red", "Virgo-AUTh": "blueviolet",
     "CNN-Coinc": "green", "MFCNN": "blue",
@@ -1298,13 +1299,41 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
     return ret
 
 
+def write_found(path: str, run: dict, teams: list, duration: float) -> None:
+    """
+    The run's and PyCBC's found injections, for figures across runs.
+
+    Parameters
+    ----------
+    path : str
+        New HDF5 file: attribute ``duration``, the injections'
+        ``mchirp``, and per group ``run`` and ``PyCBC`` the
+        ``found_idx``, ``found_stats`` and ``far_thresholds`` of
+        ``get_stats``.
+    run : dict
+        The run, as filled by ``get_stats``.
+    teams : list of dict
+        Every MLGWSC-1 team, as ``run``; one is PyCBC.
+    duration : float
+        Duration of the foreground data in s.
+    """
+    pycbc = {team["name"]: team for team in teams}["PyCBC"]
+    with h5py.File(path, "x") as fp:
+        fp.attrs["duration"] = duration
+        fp.create_dataset("mchirp", data=run["mchirp"])
+        for name, team in (("run", run), ("PyCBC", pycbc)):
+            for key in ("found_idx", "found_stats", "far_thresholds"):
+                fp.create_dataset(f"{name}/{key}", data=team[key])
+
+
 def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_dir):
     """
     MLGWSC-1 evaluation of the run searched here, compared with every team.
 
-    Writes the statistics to ``output_dir/eval.hdf`` and the figures
-    beside them; each team's comparison goes into ``output_dir/<team>``
-    and the paper's figures into ``output_dir/PAPER``.
+    Writes the statistics to ``output_dir/eval.hdf``, the found
+    injections to ``output_dir/found.hdf`` and the figures beside them;
+    each team's comparison goes into ``output_dir/<team>`` and the
+    paper's figures into ``output_dir/PAPER``.
 
     Parameters
     ----------
@@ -1438,3 +1467,4 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
     from sage.benchmark.mlgwsc1.paper_plots import plot_paper
 
     plot_paper(run, teams, stats, dur, output_dir)
+    write_found(os.path.join(output_dir, FOUND_FILE), run, teams, dur)
