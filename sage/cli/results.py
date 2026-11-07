@@ -134,7 +134,7 @@ def compare(arguments: list) -> None:
     parser = argparse.ArgumentParser(prog="sage compare", description="Score several runs' best.pt on identical "
                                      "validation windows.")
     parser.add_argument("runs", nargs="+", help="run directories; the first one's validation settings define the windows")
-    parser.add_argument("--output", required=True, help=f"new directory for {OUTPUT_FILE} and {REPORT_FILE}")
+    parser.add_argument("--output", required=True, help=f"new directory for {OUTPUT_FILE}, {REPORT_FILE} and the figures")
     parser.add_argument("--noise-windows", type=int, default=10_000_000, help="noise-only windows (default: 10000000)")
     parser.add_argument("--signal-windows", type=int, default=1_000_000, help="windows with a signal (default: 1000000)")
     parser.add_argument("--seed", type=int, default=170817, help="seed of the windows (default: 170817)")
@@ -168,5 +168,5 @@ def compare(arguments: list) -> None:
     except WindowMismatch as error:
         raise CommandError(str(error), f"sage compare <runs that share detectors and window> --output {options.output}") from None
     print(text)
-    print(f"Wrote {output / OUTPUT_FILE} and {output / REPORT_FILE}")
+    print(f"Wrote {OUTPUT_FILE}, {REPORT_FILE} and the figures in {output}")
     print("Next: sage help")

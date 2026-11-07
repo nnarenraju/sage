@@ -157,7 +157,7 @@ def scores(run: SimpleNamespace, x: torch.Tensor) -> np.ndarray:
 
 def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_windows: int, seed: int) -> str:
     """
-    Score every run's ``best.pt`` on the same windows; write ``compare.h5`` and the report.
+    Score every run's ``best.pt`` on the same windows; write ``compare.h5``, the report and the figures.
 
     The windows are the first run's validation noise, prior and SNR
     distribution, their streams seeded from ``seed`` (``stream_seed``), so they
@@ -169,7 +169,8 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
         Started run directories with distinct names; all share the first
         one's detectors and window geometry.
     output_dir : Path
-        New directory for ``compare.h5`` and ``report.txt``; it must not exist.
+        New directory for ``compare.h5``, ``report.txt`` and the figures
+        (``plot_comparison``); it must not exist.
     noise_windows, signal_windows : int
         Noise-only windows and windows carrying a signal (whole batches: at
         least these many).
@@ -299,6 +300,11 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
         noise.shutdown()
     text = report(path)
     (path.parent / REPORT_FILE).write_text(text + "\n")
+
+    # Imported here: the plotting libraries load only for a comparison
+    from sage.plotting.comparison import plot_comparison
+
+    plot_comparison(path, run_dirs, data_dir)
     return text
 
 
