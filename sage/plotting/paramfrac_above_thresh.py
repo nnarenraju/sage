@@ -132,13 +132,8 @@ def plot_paramfrac_detected_above_thresh(
 
             bin_stats = signal_stats[idxs]
 
-            frac_detected = []
-
-            for thresh in sorted_noise_stats:
-                frac = np.sum(bin_stats > thresh) / len(bin_stats)
-                frac_detected.append([thresh, frac])
-
-            frac_detected = np.array(frac_detected)
+            above = len(bin_stats) - np.searchsorted(np.sort(bin_stats), sorted_noise_stats, side="right")
+            frac_detected = np.column_stack([sorted_noise_stats, above / len(bin_stats)])
 
             # shade parameter bin
             ax[0].fill_between(
