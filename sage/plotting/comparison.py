@@ -38,7 +38,6 @@ SENSITIVITY_COLORS = ["#6A4A3C", "#65156E", "#025196", "#F6A482"]  # cell 74
 ABLATION_COLORS = [  # cell 149
     "#742881", "#1B7939", "#855e46", "#E30B5C", "#DA957B", "m"
 ]
-VOUT_LIMITS = [[-6, 4], [10, 15]]  # cells 109 and 110: noise and signal
 
 
 def read_compare(path: Path) -> dict:
@@ -300,7 +299,7 @@ def compare_vout(
 def plot_output_distributions(data: dict, path: Path) -> None:
     """
     ``compare_vout`` of the first run against every other run, one row
-    each (cells 108 to 110).
+    each (cells 108 to 110), x limits spanning both runs' data.
 
     Parameters
     ----------
@@ -326,12 +325,17 @@ def plot_output_distributions(data: dict, path: Path) -> None:
         for row, name in enumerate(names[1:]):
             # Make nested gridspecs
             gs = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=outer[row])
+            pair = [outputs[names[0]], outputs[name]]
+            limits = [
+                [float(min(a.min() for a, _ in pair)), float(max(a.max() for a, _ in pair))],
+                [float(min(b.min() for _, b in pair)), float(max(b.max() for _, b in pair))],
+            ]
             compare_vout(
                 fig,
                 gs,
-                [outputs[names[0]], outputs[name]],
+                pair,
                 labels=[names[0], name],
-                limits=VOUT_LIMITS,
+                limits=limits,
                 plot_xlabel=row == rows - 1,
             )
 
