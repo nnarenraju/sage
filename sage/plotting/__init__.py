@@ -50,7 +50,7 @@ from .pp_calibration import plot_pp_calibration
 from .paramfrac_above_thresh import plot_paramfrac_detected_above_thresh
 from .perturbation_sensitivity import plot_perturbation_sensitivity
 from .prediction_probability import plot_prediction_probability
-from .prediction_raw import plot_prediction_raw
+from .prediction_raw import plot_prediction_raw, plot_prediction_raw_comparison
 from .roc_curve import plot_roc_curve
 from .snr_confidence import plot_confidence_vs_snr
 
@@ -80,6 +80,7 @@ __all__ = [
     "plot_perturbation_sensitivity",
     "plot_prediction_probability",
     "plot_prediction_raw",
+    "plot_prediction_raw_comparison",
     "plot_roc_curve",
     "plot_confidence_vs_snr",
     # was implemented and tested but never exported

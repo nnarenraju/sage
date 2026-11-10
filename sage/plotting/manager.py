@@ -54,6 +54,7 @@ from sage.plotting import (
     plot_perturbation_sensitivity,
     plot_prediction_probability,
     plot_prediction_raw,
+    plot_prediction_raw_comparison,
     plot_roc_curve,
     plot_separation_over_epochs,
     plot_uncertainty_vs_gradient,
@@ -387,6 +388,17 @@ class ValidationPlotManager:
             best_epoch=best_epoch,
             component_names=self.loss_components,
         )
+
+        # best.pt against ema_calibrated.pt on the final check's windows
+        finals = {"final_best": "best.pt", "final_ema": "ema_calibrated.pt"}
+        if all(group in self.validation_data for group in finals):
+            plot_prediction_raw_comparison(
+                {name: (self.validation_data[group]["ranking_stat"], self.validation_data[group]["labels"])
+                 for group, name in finals.items()},
+                name="final_best_vs_final_ema",
+                export_dir=self.export_dir,
+                save=save,
+            )
 
         # -------------------------------------------------------
         # Per-epoch plots
