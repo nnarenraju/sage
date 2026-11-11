@@ -59,6 +59,124 @@ def safe_sqrt(x):
     )
 
 
+class _StrongZeroSqrt(torch.autograd.Function):
+    """``sqrt`` whose backward is 0 where the incoming gradient is 0."""
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        result = torch.sqrt(x)
+        ctx.save_for_backward(result)
+        return result
+
+    @staticmethod
+    def backward(ctx, grad: torch.Tensor) -> torch.Tensor:
+        (result,) = ctx.saved_tensors
+        return torch.where(grad == 0, torch.zeros_like(grad), grad / (2.0 * result))
+
+
+def strong_zero_sqrt(x: torch.Tensor) -> torch.Tensor:
+    """
+    ``sqrt(x)`` with a zero gradient where the incoming gradient is 0.
+
+    Forward values are those of :func:`torch.sqrt`.  At ``x = 0`` an
+    unused result passes 0 rather than 0 * inf = NaN; a used result
+    still passes the infinite derivative.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Non-negative operand.
+
+    Returns
+    -------
+    torch.Tensor
+        ``sqrt(x)``.
+    """
+    return _StrongZeroSqrt.apply(x)
+
+
+def detach_where(mask: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """
+    ``x`` with the entries under ``mask`` detached from the graph.
+
+    Forward values are unchanged.  Applied to the inputs of a branch
+    that is evaluated everywhere but used only off ``mask``, it keeps
+    that branch from passing gradient (or 0 * inf = NaN) under ``mask``.
+
+    Parameters
+    ----------
+    mask : torch.Tensor
+        Boolean mask, broadcastable against ``x``.
+    x : torch.Tensor
+        Input tensor.
+
+    Returns
+    -------
+    torch.Tensor
+        ``x`` broadcast against ``mask``, or ``x`` itself when it does
+        not require grad.
+    """
+    if not x.requires_grad:
+        return x
+    return torch.where(mask, x.detach(), x)
+
+
+# glibc 2.34 sysdeps/ieee754/dbl-64/s_cbrt.c
+_CBRT2 = 1.2599210498948731648
+_SQR_CBRT2 = 1.5874010519681994748
+_CBRT_FACTOR = (1.0 / _SQR_CBRT2, 1.0 / _CBRT2, 1.0, _CBRT2, _SQR_CBRT2)
+_CBRT_POLY = (
+    -1.83469277483613086,
+    2.44693122563534430,
+    -2.11499494167371287,
+    1.50819193781584896,
+    0.354895765043919860,
+)
+
+
+class _Cbrt(torch.autograd.Function):
+    """glibc ``cbrt`` with the backward of ``x ** (1/3)``."""
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(x)
+        xm, xe = torch.frexp(torch.abs(x))
+        u = 0.784932344976639262 - 0.145263899385486377 * xm
+        for coefficient in _CBRT_POLY:
+            u = coefficient + u * xm
+        t2 = u * u * u
+        factor = torch.tensor(_CBRT_FACTOR, dtype=x.dtype, device=x.device)
+        factor = factor[2 + torch.fmod(xe, 3).long()]
+        ym = u * (t2 + 2.0 * xm) / (2.0 * t2 + xm) * factor
+        exponent = torch.div(xe, 3, rounding_mode="trunc")
+        y = torch.ldexp(torch.where(x > 0.0, ym, -ym), exponent)
+        return torch.where((x == 0.0) | ~torch.isfinite(x), x + x, y)
+
+    @staticmethod
+    def backward(ctx, grad: torch.Tensor) -> torch.Tensor:
+        (x,) = ctx.saved_tensors
+        return grad * ((1.0 / 3.0) * x.pow(1.0 / 3.0 - 1.0))
+
+
+def cbrt(x: torch.Tensor) -> torch.Tensor:
+    """
+    Cube root, bit-identical to the glibc 2.34 ``cbrt`` that LAL calls.
+
+    Uses only float64 frexp, ldexp and arithmetic.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Float64 operand.
+
+    Returns
+    -------
+    torch.Tensor
+        ``cbrt(x)``.
+    """
+    return _Cbrt.apply(x)
+
+
 class Normalise:
     """
     Min-max normalisation to the unit interval ``[0, 1]``.

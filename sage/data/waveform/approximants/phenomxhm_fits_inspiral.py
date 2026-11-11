@@ -3,37 +3,9 @@
 
 """
 Filename      : phenomxhm_fits_inspiral.py
-Description   : Batched parameter-space fits for the IMRPhenomXHM inspiral
-                region: amplitude collocation points, phase lambda fits and
-                the analytic PN phase correction.
-
-                Mirrors lalsimulation-v6.1.0
-                LALSimIMRPhenomXHM_inspiral.c (vendored in
-                sage/data/waveform/lalsim_src/):
-                  IMRPhenomXHM_Insp_Amp_{21,33,32,44}_iv{1,2,3}
-                                                  c:48-537, amplitude
-                                                  collocation-point fits,
-                                                  version 122022 branch only
-                                                  (the v6.1.0 release default)
-                  IMRPhenomXHM_Insp_Phase_{21,33,32,44}_lambda
-                                                  c:956-1046, phase fits,
-                                                  version 122019 branch only
-                                                  (the v6.1.0 release default)
-                  IMRPhenomXHM_Insp_Phase_LambdaPN
-                                                  c:1051-1081, analytic
-                                                  linear-in-f PN phase term,
-                                                  all four mode cases
-
-                Every function takes a single dict pWF whose keys are the
-                IMRPhenomXWaveformStruct member names used by the C body
-                (eta, delta, chiPNHat, dchi_half, STotR, dchi, chi1L, chi2L),
-                each a (B, 1) float64 torch tensor, and returns a (B, 1)
-                tensor.  IMRPhenomXHM_Insp_Phase_LambdaPN takes (eta, modeTag)
-                with eta a (B, 1) tensor and modeTag a Python int.
-
-                All numeric literals are transcribed verbatim from the C
-                source; local variable names and evaluation order mirror the
-                C bodies.
+Description   : IMRPhenomXHM inspiral amplitude fits (version 122022),
+                phase fits (version 122019) and linear-in-f PN phase
+                term, ported from LALSimIMRPhenomXHM_inspiral.c.
 
 Created on 2026-08-04
 
@@ -44,11 +16,6 @@ __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
 __status__      = inProgress
-
-References
-----------
-IMRPhenomXHM  : García-Quirós et al. (2020), arXiv:2001.10914
-Fits data     : supplementary material of https://dcc.ligo.org/P2000011-v2
 """
 
 import math
@@ -61,17 +28,16 @@ import torch
 # Fits of the collocation points in the inspiral across parameter space.
 # 3 for each mode: iv1, iv2, iv3
 # [iv1,iv2,iv3]=[0.5*f^Ins_lm,0.75*f^Ins_lm,f^Ins_lm]
-# For more details about the reconstruction procedure, see Sec. IV.A
-#
-# These parameter-space fits are documented in the supplementary material
-# of https://dcc.ligo.org/P2000011-v2.
 #
 # Spin parameter S = chi_PN = chi_eff - 38/113 * eta * (chi1 + chi2)
 # chi_eff = (m1*chi1 + m2*chi2)/(m1 + m2)
 
 
 def IMRPhenomXHM_Insp_Amp_21_iv1(pWF):
-    """IMRPhenomXHM_Insp_Amp_21_iv1, LALSimIMRPhenomXHM_inspiral.c:48-86, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_21_iv1
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -90,7 +56,10 @@ def IMRPhenomXHM_Insp_Amp_21_iv1(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_21_iv2(pWF):
-    """IMRPhenomXHM_Insp_Amp_21_iv2, LALSimIMRPhenomXHM_inspiral.c:88-126, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_21_iv2
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -110,7 +79,10 @@ def IMRPhenomXHM_Insp_Amp_21_iv2(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_21_iv3(pWF):
-    """IMRPhenomXHM_Insp_Amp_21_iv3, LALSimIMRPhenomXHM_inspiral.c:128-163, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_21_iv3
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -129,7 +101,10 @@ def IMRPhenomXHM_Insp_Amp_21_iv3(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_33_iv1(pWF):
-    """IMRPhenomXHM_Insp_Amp_33_iv1, LALSimIMRPhenomXHM_inspiral.c:165-200, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_33_iv1
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -148,7 +123,10 @@ def IMRPhenomXHM_Insp_Amp_33_iv1(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_33_iv2(pWF):
-    """IMRPhenomXHM_Insp_Amp_33_iv2, LALSimIMRPhenomXHM_inspiral.c:202-241, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_33_iv2
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -167,7 +145,10 @@ def IMRPhenomXHM_Insp_Amp_33_iv2(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_33_iv3(pWF):
-    """IMRPhenomXHM_Insp_Amp_33_iv3, LALSimIMRPhenomXHM_inspiral.c:243-285, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_33_iv3
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -189,7 +170,10 @@ def IMRPhenomXHM_Insp_Amp_33_iv3(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_32_iv1(pWF):
-    """IMRPhenomXHM_Insp_Amp_32_iv1, LALSimIMRPhenomXHM_inspiral.c:287-329, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_32_iv1
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -209,7 +193,10 @@ def IMRPhenomXHM_Insp_Amp_32_iv1(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_32_iv2(pWF):
-    """IMRPhenomXHM_Insp_Amp_32_iv2, LALSimIMRPhenomXHM_inspiral.c:331-371, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_32_iv2
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -229,7 +216,10 @@ def IMRPhenomXHM_Insp_Amp_32_iv2(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_32_iv3(pWF):
-    """IMRPhenomXHM_Insp_Amp_32_iv3, LALSimIMRPhenomXHM_inspiral.c:373-412, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_32_iv3
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -249,7 +239,10 @@ def IMRPhenomXHM_Insp_Amp_32_iv3(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_44_iv1(pWF):
-    """IMRPhenomXHM_Insp_Amp_44_iv1, LALSimIMRPhenomXHM_inspiral.c:414-453, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_44_iv1
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -270,7 +263,10 @@ def IMRPhenomXHM_Insp_Amp_44_iv1(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_44_iv2(pWF):
-    """IMRPhenomXHM_Insp_Amp_44_iv2, LALSimIMRPhenomXHM_inspiral.c:455-495, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_44_iv2
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -292,7 +288,10 @@ def IMRPhenomXHM_Insp_Amp_44_iv2(pWF):
 
 
 def IMRPhenomXHM_Insp_Amp_44_iv3(pWF):
-    """IMRPhenomXHM_Insp_Amp_44_iv3, LALSimIMRPhenomXHM_inspiral.c:497-537, case 122022."""
+    """
+    Source: IMRPhenomXHM_Insp_Amp_44_iv3
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -318,12 +317,14 @@ def IMRPhenomXHM_Insp_Amp_44_iv3(pWF):
 # Spin parameter S = (m1^2*chi1 + m2^2*chi2)/(m1^2 + m2^2)
 #
 # Below we give paramater-space fits for the weighted difference between
-# each mode's phase and the 22-phase: phi_lm-m/2 phi_22(2/m f),
-# see Eqs. (4.10-4.12)
+# each mode's phase and the 22-phase: phi_lm-m/2 phi_22(2/m f)
 
 
 def IMRPhenomXHM_Insp_Phase_21_lambda(pWF):
-    """IMRPhenomXHM_Insp_Phase_21_lambda, LALSimIMRPhenomXHM_inspiral.c:956-977, case 122019."""
+    """
+    Source: IMRPhenomXHM_Insp_Phase_21_lambda
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -339,7 +340,10 @@ def IMRPhenomXHM_Insp_Phase_21_lambda(pWF):
 
 
 def IMRPhenomXHM_Insp_Phase_33_lambda(pWF):
-    """IMRPhenomXHM_Insp_Phase_33_lambda, LALSimIMRPhenomXHM_inspiral.c:979-998, case 122019."""
+    """
+    Source: IMRPhenomXHM_Insp_Phase_33_lambda
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     delta = torch.sqrt(1.-4.*eta)
@@ -353,7 +357,10 @@ def IMRPhenomXHM_Insp_Phase_33_lambda(pWF):
 
 
 def IMRPhenomXHM_Insp_Phase_32_lambda(pWF):
-    """IMRPhenomXHM_Insp_Phase_32_lambda, LALSimIMRPhenomXHM_inspiral.c:1000-1022, case 122019."""
+    """
+    Source: IMRPhenomXHM_Insp_Phase_32_lambda
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -370,7 +377,10 @@ def IMRPhenomXHM_Insp_Phase_32_lambda(pWF):
 
 
 def IMRPhenomXHM_Insp_Phase_44_lambda(pWF):
-    """IMRPhenomXHM_Insp_Phase_44_lambda, LALSimIMRPhenomXHM_inspiral.c:1025-1046, case 122019."""
+    """
+    Source: IMRPhenomXHM_Insp_Phase_44_lambda
+    (LALSimIMRPhenomXHM_inspiral.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -385,23 +395,34 @@ def IMRPhenomXHM_Insp_Phase_44_lambda(pWF):
     return total
 
 
-# Returns linear-in-f term coming from the complex part of each mode's
-# amplitude that will be added to the orbital phase, this is an expansion
-# of Eq. (4.9) truncated at linear order
 def IMRPhenomXHM_Insp_Phase_LambdaPN(eta, modeTag):
-    """IMRPhenomXHM_Insp_Phase_LambdaPN, LALSimIMRPhenomXHM_inspiral.c:1051-1081, all mode cases (21, 33, 32, 44)."""
-    PI = math.pi  # powers_of_lalpiHM.itself (LAL_PI)
+    """
+    Linear-in-f term that will be added to the orbital phase.
+
+    The term comes from the complex part of each mode's amplitude.
+
+    Source: IMRPhenomXHM_Insp_Phase_LambdaPN
+    (LALSimIMRPhenomXHM_inspiral.c).
+
+    Parameters
+    ----------
+    eta : torch.Tensor, shape (B, 1)
+        Symmetric mass ratio.
+    modeTag : int
+        Mode 21, 33, 32 or 44; any other mode gives zero.
+
+    Returns
+    -------
+    torch.Tensor, shape (B, 1)
+    """
+    PI = math.pi
     if modeTag == 21:
-        # 2 f \[Pi] (-(1/2) - Log[16]/2)
         output = (2.*PI*(-0.5-2.*math.log(2))) * torch.ones_like(eta)
     elif modeTag == 33:
-        # 2/3 f \[Pi] (-(21/5) + 6 Log[3/2])
         output = 2./3.*PI*(-21./5.+6.*math.log(1.5)) * torch.ones_like(eta)
     elif modeTag == 32:
-        # -((2376 f \[Pi] (-5 + 22 \[Eta]))/(-3960 + 11880 \[Eta]))
         output = -((2376.*PI*(-5.+22.*eta))/(-3960.+11880*eta))
     elif modeTag == 44:
-        # (45045 f \[powers_of_lalpiHM.itself] (336 - 1193 \[Eta] +320 (-1 + 3 \[Eta]) Log[2]))/(2 (-1801800 + 5405400 \[Eta]))
         output = 45045.*PI*(336.-1193.*eta+320.*(-1.+3.*eta)*math.log(2))/(2.*(-1801800. + 5405400.*eta))
     else:
         output = torch.zeros_like(eta)

@@ -3,37 +3,8 @@
 
 """
 Filename      : phenomxhm_fits_ringdown_phase.py
-Description   : Batched PyTorch port of the IMRPhenomXHM ringdown-phase
-                parameter-space fits.
-
-                Mirrors sage/data/waveform/lalsim_src/
-                LALSimIMRPhenomXHM_ringdown.c (lalsimulation-v6.1.0),
-                lines 1068-1351, porting the case 122019 branch of every
-                function -- the v6.1.0 default ringdown phase version
-                (LALSimIMRPhenomXHM_internals.c:146).
-
-                  IMRPhenomXHM_RD_Phase_22_alpha2 / _alphaL
-                      Ringdown phase coefficients for the mode-mixing-off
-                      modes (2,1), (3,3), (4,4).  The per-mode rescaling
-                      (wlm/fRING^2 on alpha2, 1/eta on alphaL) is applied
-                      at the call site (LALSimIMRPhenomXHM_internals.c:
-                      2143 and 2147), not inside the fits.
-                  IMRPhenomXHM_RD_Phase_32_p1 .. _p4
-                      Spheroidal (3,2) ringdown-phase collocation values.
-                      The 122019 path uses nCollocPtsRDPhase = 4
-                      (internals.c:282, 355) and hence RingdownPhaseFits
-                      [0..3] only (internals.c:571-574, 2493-2506);
-                      IMRPhenomXHM_RD_Phase_32_p5 (c:1354-1377) has no
-                      122019 branch (122022-only) and is not ported.
-                  IMRPhenomXHM_RD_Phase_32_SpheroidalTimeShift /
-                  IMRPhenomXHM_RD_Phase_32_SpheroidalPhaseShift
-                      Time and phase shift of the spheroidal (3,2)
-                      ringdown ansatz relative to the 22 phase.
-
-                Each function takes a single dict pWF of (B,1) float64
-                torch tensors keyed by the IMRPhenomXWaveformStruct
-                member names used by the C body (eta, STotR, dchi,
-                chi1L, chi2L) and returns a (B,1) float64 tensor.
+Description   : IMRPhenomXHM ringdown phase fits (version 122019),
+                ported from LALSimIMRPhenomXHM_ringdown.c.
 
 Created on 2026-08-04
 
@@ -44,27 +15,19 @@ __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
 __status__      = inProgress
-
-References
-----------
-IMRPhenomXHM  : García-Quirós et al. (2020), arXiv:2001.10914
-Mode mixing   : Berti & Klein (2014), arXiv:1408.1860
 """
 
 import torch
 
 # Fits over parameter space for the ringdown phase quantities.
-
 # The spin parameter S = (m1^2*chi1 + m2^2*chi2)/(m1^2 + m2^2)
-
-# ---------------------------------------------------------------------------
-# Coefficients of the mode-mixing-off ringdown ansatz -- used for (21),(33),(44)
-# via the call-site rescalings in LALSimIMRPhenomXHM_internals.c:2143,2147.
-# ---------------------------------------------------------------------------
 
 
 def IMRPhenomXHM_RD_Phase_22_alpha2(pWF):
-    """IMRPhenomXHM_RD_Phase_22_alpha2, LALSimIMRPhenomXHM_ringdown.c:1068-1087, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_22_alpha2
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     delta = torch.sqrt(1 - 4 * eta)
@@ -79,7 +42,10 @@ def IMRPhenomXHM_RD_Phase_22_alpha2(pWF):
 
 
 def IMRPhenomXHM_RD_Phase_22_alphaL(pWF):
-    """IMRPhenomXHM_RD_Phase_22_alphaL, LALSimIMRPhenomXHM_ringdown.c:1089-1109, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_22_alphaL
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     delta = torch.sqrt(1. - 4.*eta)
@@ -94,13 +60,14 @@ def IMRPhenomXHM_RD_Phase_22_alphaL(pWF):
     return total
 
 
-# ---------------------------------------------------------------------------
 # 32 specific fits
-# ---------------------------------------------------------------------------
 
 
 def IMRPhenomXHM_RD_Phase_32_SpheroidalTimeShift(pWF):
-    """IMRPhenomXHM_RD_Phase_32_SpheroidalTimeShift, LALSimIMRPhenomXHM_ringdown.c:1112-1149, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_32_SpheroidalTimeShift
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -118,7 +85,10 @@ def IMRPhenomXHM_RD_Phase_32_SpheroidalTimeShift(pWF):
 
 
 def IMRPhenomXHM_RD_Phase_32_SpheroidalPhaseShift(pWF):
-    """IMRPhenomXHM_RD_Phase_32_SpheroidalPhaseShift, LALSimIMRPhenomXHM_ringdown.c:1151-1194, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_32_SpheroidalPhaseShift
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -139,7 +109,10 @@ def IMRPhenomXHM_RD_Phase_32_SpheroidalPhaseShift(pWF):
 
 # collocation points
 def IMRPhenomXHM_RD_Phase_32_p1(pWF):
-    """IMRPhenomXHM_RD_Phase_32_p1, LALSimIMRPhenomXHM_ringdown.c:1197-1236, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_32_p1
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -159,7 +132,10 @@ def IMRPhenomXHM_RD_Phase_32_p1(pWF):
 
 # collocation points
 def IMRPhenomXHM_RD_Phase_32_p2(pWF):
-    """IMRPhenomXHM_RD_Phase_32_p2, LALSimIMRPhenomXHM_ringdown.c:1238-1273, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_32_p2
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -176,7 +152,10 @@ def IMRPhenomXHM_RD_Phase_32_p2(pWF):
 
 # collocation points
 def IMRPhenomXHM_RD_Phase_32_p3(pWF):
-    """IMRPhenomXHM_RD_Phase_32_p3, LALSimIMRPhenomXHM_ringdown.c:1275-1312, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_32_p3
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -193,7 +172,10 @@ def IMRPhenomXHM_RD_Phase_32_p3(pWF):
 
 # collocation points
 def IMRPhenomXHM_RD_Phase_32_p4(pWF):
-    """IMRPhenomXHM_RD_Phase_32_p4, LALSimIMRPhenomXHM_ringdown.c:1314-1351, case 122019."""
+    """
+    Source: IMRPhenomXHM_RD_Phase_32_p4
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2

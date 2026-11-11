@@ -3,27 +3,9 @@
 
 """
 Filename      : phenomxhm_fits_intermediate_amp.py
-Description   : Batched PyTorch port of the IMRPhenomXHM intermediate-region
-                amplitude collocation-point parameter-space fits.
-
-                Mirrors LALSimIMRPhenomXHM_intermediate.c from
-                lalsimulation-v6.1.0 (vendored in
-                sage/data/waveform/lalsim_src/):
-                  c:49-349   IMRPhenomXHM_Inter_Amp_{21,33,32,44}_{int1,int2}
-                  c:514-711  IMRPhenomXHM_Inter_Amp_{21,33,32,44}_{int3,int4}
-                             (extra collocation points of release 122022)
-                Only the `case 122022` branch of each switch is ported — the
-                amplitude release executed by the v6.1.0 default path.  The
-                EMR extra-collocation-point fits
-                IMRPhenomXHM_Inter_Amp_lm_int0/dint0 (c:351-511) exist only
-                for the earlier release (case 122018, used by the 122019
-                amplitude-version path) and are never reached by the 122022
-                amplitude path, so they are NOT ported.
-
-                Each function takes a single dict pWF whose keys are the
-                IMRPhenomXWaveformStruct member names consumed by the C body
-                (eta, delta, STotR, chiPNHat, dchi_half), all (B,1) float64
-                torch tensors, and returns a (B,1) float64 tensor.
+Description   : IMRPhenomXHM intermediate amplitude fits at the
+                collocation points (version 122022), ported from
+                LALSimIMRPhenomXHM_intermediate.c.
 
 Created on 2026-08-04
 
@@ -34,35 +16,20 @@ __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
 __status__      = inProgress
-
-References
-----------
-IMRPhenomXHM  : García-Quirós et al. (2020), arXiv:2001.10914
-Fits          : supplementary material of https://dcc.ligo.org/P2000011-v2
 """
 
 import torch
 
 # Fits of the intermediate collocation points over parameter space.
-
-# These parameter-space fits are documented in the supplementary material of
-# https://dcc.ligo.org/P2000011-v2.  There are 2 Mathematica notebooks (one for
-# amplitude and one for phase) that read the fits data and automatically
-# generate the C-code below.  For more information read
-# https://git.ligo.org/waveforms/reviews/imrphenomx/blob/master/documentation/ParspaceFits/README
-# and the documentation in the notebooks.
-
-# IMRPhenomXHM_Inter_Amp_lm_intX returns the value of the amplitude at the
-# collocation point intX.
-# for a definition of the frequencies corresponding to int0/1/2, see Sec V.A.
-
-# The dominant spin parameter is S = (m1^2*chi1 + m2^2*chi2)/(m1^2 + m2^2)
-
-# Start of Amp Parameter Space Fits
+# IMRPhenomXHM_Inter_Amp_lm_intX returns the value of the amplitude at
+# the collocation point intX
 
 
 def IMRPhenomXHM_Inter_Amp_21_int1(pWF):
-    """IMRPhenomXHM_Inter_Amp_21_int1, LALSimIMRPhenomXHM_intermediate.c:49-84, case 122022 (c:64-80)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_21_int1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -81,7 +48,10 @@ def IMRPhenomXHM_Inter_Amp_21_int1(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_21_int2(pWF):
-    """IMRPhenomXHM_Inter_Amp_21_int2, LALSimIMRPhenomXHM_intermediate.c:86-118, case 122022 (c:99-114)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_21_int2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -99,7 +69,10 @@ def IMRPhenomXHM_Inter_Amp_21_int2(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_33_int1(pWF):
-    """IMRPhenomXHM_Inter_Amp_33_int1, LALSimIMRPhenomXHM_intermediate.c:120-156, case 122022 (c:137-152)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_33_int1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -117,7 +90,10 @@ def IMRPhenomXHM_Inter_Amp_33_int1(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_33_int2(pWF):
-    """IMRPhenomXHM_Inter_Amp_33_int2, LALSimIMRPhenomXHM_intermediate.c:158-192, case 122022 (c:173-188)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_33_int2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -135,7 +111,10 @@ def IMRPhenomXHM_Inter_Amp_33_int2(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_32_int1(pWF):
-    """IMRPhenomXHM_Inter_Amp_32_int1, LALSimIMRPhenomXHM_intermediate.c:194-232, case 122022 (c:212-228)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_32_int1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     sqroot = torch.sqrt(eta)
@@ -154,7 +133,10 @@ def IMRPhenomXHM_Inter_Amp_32_int1(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_32_int2(pWF):
-    """IMRPhenomXHM_Inter_Amp_32_int2, LALSimIMRPhenomXHM_intermediate.c:234-271, case 122022 (c:251-266)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_32_int2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -173,7 +155,10 @@ def IMRPhenomXHM_Inter_Amp_32_int2(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_44_int1(pWF):
-    """IMRPhenomXHM_Inter_Amp_44_int1, LALSimIMRPhenomXHM_intermediate.c:273-308, case 122022 (c:289-303)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_44_int1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -191,7 +176,10 @@ def IMRPhenomXHM_Inter_Amp_44_int1(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_44_int2(pWF):
-    """IMRPhenomXHM_Inter_Amp_44_int2, LALSimIMRPhenomXHM_intermediate.c:310-346, case 122022 (c:326-341)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_44_int2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -209,11 +197,11 @@ def IMRPhenomXHM_Inter_Amp_44_int2(pWF):
     return total
 
 
-# Extra collocation points of the 122022 amplitude release.
-
-
 def IMRPhenomXHM_Inter_Amp_21_int3(pWF):
-    """IMRPhenomXHM_Inter_Amp_21_int3, LALSimIMRPhenomXHM_intermediate.c:514-536, case 122022 (c:517-531)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_21_int3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -231,7 +219,10 @@ def IMRPhenomXHM_Inter_Amp_21_int3(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_21_int4(pWF):
-    """IMRPhenomXHM_Inter_Amp_21_int4, LALSimIMRPhenomXHM_intermediate.c:538-560, case 122022 (c:541-555)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_21_int4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -249,7 +240,10 @@ def IMRPhenomXHM_Inter_Amp_21_int4(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_33_int3(pWF):
-    """IMRPhenomXHM_Inter_Amp_33_int3, LALSimIMRPhenomXHM_intermediate.c:562-584, case 122022 (c:565-579)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_33_int3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -267,7 +261,10 @@ def IMRPhenomXHM_Inter_Amp_33_int3(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_33_int4(pWF):
-    """IMRPhenomXHM_Inter_Amp_33_int4, LALSimIMRPhenomXHM_intermediate.c:586-609, case 122022 (c:589-604)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_33_int4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -286,7 +283,10 @@ def IMRPhenomXHM_Inter_Amp_33_int4(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_44_int3(pWF):
-    """IMRPhenomXHM_Inter_Amp_44_int3, LALSimIMRPhenomXHM_intermediate.c:611-633, case 122022 (c:614-628)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_44_int3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -304,7 +304,10 @@ def IMRPhenomXHM_Inter_Amp_44_int3(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_44_int4(pWF):
-    """IMRPhenomXHM_Inter_Amp_44_int4, LALSimIMRPhenomXHM_intermediate.c:635-658, case 122022 (c:638-653)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_44_int4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -323,7 +326,10 @@ def IMRPhenomXHM_Inter_Amp_44_int4(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_32_int3(pWF):
-    """IMRPhenomXHM_Inter_Amp_32_int3, LALSimIMRPhenomXHM_intermediate.c:660-684, case 122022 (c:663-679)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_32_int3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -343,7 +349,10 @@ def IMRPhenomXHM_Inter_Amp_32_int3(pWF):
 
 
 def IMRPhenomXHM_Inter_Amp_32_int4(pWF):
-    """IMRPhenomXHM_Inter_Amp_32_int4, LALSimIMRPhenomXHM_intermediate.c:686-707, case 122022 (c:689-702)."""
+    """
+    Source: IMRPhenomXHM_Inter_Amp_32_int4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -357,6 +366,3 @@ def IMRPhenomXHM_Inter_Amp_32_int4(pWF):
     chidiff2 = chidiff1 * chidiff1
     total = eta1*(chidiff2*(-8.572797326909152*eta1 + 92.95723645687826*eta2 - 236.2438921965621*eta3) + chidiff1*delta*(6.674358856924571*eta1 - 171.4826985994883*eta2 + 645.2760206304703*eta3)) + eta1*(3.921660532875504 - 16.57299637423352*eta1 + 25.254017911686333*eta2 - 143.41033155133266*eta3 + 692.926425981414*eta4) + chidiff1*delta*eta1*(-3.582040878719185*eta1 + 57.75888914133383*eta2 - 144.21651114700492*eta3)*S1 + eta1*S1*(1.242750265695504*(-0.522172424518215 + 25.168480118950065*eta1 - 303.5223688400309*eta2 + 1858.1518762309654*eta3 - 3797.3561904195085*eta4) + 0.2927045241764365*(0.5056957789079993 - 15.488754837330958*eta1 + 471.64047356915603*eta2 - 3131.5783196211587*eta3 + 6097.887891566872*eta4)*S1)
     return total
-
-
-# End of Amp Parameter Space Fits

@@ -3,7 +3,8 @@
 
 """
 Filename        : helper.py
-Description     : Short description of the file
+Description     : Device-resident constants of the IMRPhenom ports,
+                  with the QNM tables of LALSimIMRPhenomD.h.
 
 Created on 2026-01-23 03:24:33
 
@@ -23,16 +24,8 @@ Documentation: NULL
 
 """
 
-# There are too many constants in the Phenom files which need to be tensors
-# Creating tensors during a hot-path iteration kills the torch graph
-# Here, we store lots of these constants and allow for device setting
-# Putting Phenom into a massive class is not torch.compile friendly (can't use self)
-# Dataclass with frozen=True is fine too
-
-# Packages
 import torch
 
-# LOCAL
 from sage.core import constants
 from sage.core.interpolation import torch_natural_cubic_coeffs
 
@@ -41,32 +34,27 @@ from .phenom_data import _QNMData_a, _QNMData_fdamp, _QNMData_fRD, PhenomD_coeff
 
 class PhenomConstants:
     """
-    Device-resident pre-allocated constants for IMRPhenom waveform generation.
+    Device-resident constants of the IMRPhenom waveform models.
 
-    Stores all scalar constants, fractions, QNM interpolation tables, and
-    PhenomD coefficient tables as ``torch.Tensor`` objects on the target
-    device.  This avoids creating tensors inside the hot-path iteration loop,
-    which would break ``torch.compile`` graph capture.
-
-    QNM (quasi-normal mode) ringdown and damping frequency tables carry the
-    second derivatives of their natural cubic splines, so a lookup is the
-    ``gsl_interp_cspline`` evaluation LAL performs in ``fring``/``fdamp``.
+    The QNM ringdown and damping tables carry the second derivatives of
+    their natural cubic splines, for the gsl_interp_cspline evaluation
+    of fring and fdamp.
 
     Parameters
     ----------
     device : str or torch.device
-        Target device for all tensors (default ``"cuda"``).
+        Device of all tensors.
     batch_size : int or None
-        Batch size used to pre-allocate ``ONES`` and ``ZEROS`` tensors.
+        Batch size of the ONES, ZEROS and PHI6LOG tensors.
     dtype : torch.dtype or None
-        Floating-point precision for all tensors.
+        Floating-point dtype of all tensors.
     **kwargs
-        Ignored; accepted for forward-compatibility.
+        Ignored.
     """
 
     def __init__(self, device="cuda", batch_size=None, dtype=None, **kwargs):
 
-        # Constants from sage.core
+        # Physical and mathematical constants
         for name in constants.CONST_METADATA:
             value = getattr(constants, name)
             setattr(
@@ -114,11 +102,11 @@ class PhenomConstants:
         self.TWO_J = torch.tensor(2j, dtype=torch.complex64, device=device)
         self.TWOPI = 2.0 * self.PI
 
-        ## Physical constants for Pv2
+        # Dimensionless frequency (Mf) at which define the end of the
+        # waveform (f_CUT)
         self.fM_CUT = torch.tensor(0.2, device=device, dtype=dtype)
 
-        # QNM tables and their natural-spline second derivatives, solved in
-        # float64 from the float64 tables (LALSimIMRPhenomD_internals.c).
+        # QNM tables and their natural cubic spline second derivatives
         self.QNMData_a = _QNMData_a.to(device=device, dtype=dtype)
         self.QNMData_fRD = _QNMData_fRD.to(device=device, dtype=dtype)
         self.QNMData_fdamp = _QNMData_fdamp.to(device=device, dtype=dtype)
@@ -129,7 +117,7 @@ class PhenomConstants:
             _QNMData_a, _QNMData_fdamp
         ).to(device=device, dtype=dtype)
 
-        # Ones/zeroes of batch size (B, 1)
+        # Ones and zeros of shape (B, 1)
         self.ONES = torch.ones(
             (batch_size, 1),
             device=device,
@@ -142,10 +130,10 @@ class PhenomConstants:
             dtype=dtype,
         )
 
-        # PhenomD Coefficients Table
+        # PhenomD coefficient table
         self.PhenomD_coeff_table = PhenomD_coeff_table.to(device=device, dtype=dtype)
 
-        # Specific PhenomD constants
+        # 3PN log coefficient of the TaylorF2 phasing
         self.PHI6LOG = torch.full(
             (batch_size, 1),
             -684.8 / 2.1,

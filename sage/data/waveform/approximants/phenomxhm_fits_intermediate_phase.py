@@ -3,29 +3,9 @@
 
 """
 Filename      : phenomxhm_fits_intermediate_phase.py
-Description   : Batched PyTorch port of the IMRPhenomXHM intermediate-region
-                phase parameter-space fits.
-
-                Mirrors the "Phase Parameter Space Fits" section of
-                lalsimulation-v6.1.0 LALSimIMRPhenomXHM_intermediate.c
-                (vendored at sage/data/waveform/lalsim_src/
-                LALSimIMRPhenomXHM_intermediate.c, lines 2642-3252):
-                IMRPhenomXHM_Inter_Phase_{21,33,32,44}_p{1..6}, i.e. all 24
-                fits of the phase derivative dphi/df at the intermediate
-                collocation frequencies for the (2,1), (3,3), (3,2) and
-                (4,4) modes.
-
-                Only the InterPhaseFlag == 122019 branch is ported — the
-                v6.1.0 default (release 122022 changed only amplitudes;
-                LALSimIMRPhenomXHM.c:2389).  Every numeric literal is
-                transcribed verbatim from the C source and the C body
-                structure (local variable names, evaluation order) is
-                preserved.
-
-                Each function takes a dict pWF of IMRPhenomXWaveformStruct
-                members as (B,1) float64 torch tensors and returns a (B,1)
-                tensor.  Keys consumed: "eta", "STotR", "chi1L", "chi2L",
-                "dchi" (= chi1L - chi2L).
+Description   : IMRPhenomXHM intermediate phase-derivative fits at the
+                collocation points (version 122019), ported from
+                LALSimIMRPhenomXHM_intermediate.c.
 
 Created on 2026-08-04
 
@@ -36,24 +16,18 @@ __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
 __status__      = inProgress
-
-References
-----------
-IMRPhenomXHM  : García-Quirós et al. (2020), arXiv:2001.10914
-IMRPhenomXAS  : García-Quirós et al. (2020), arXiv:2001.10914
 """
 
 import torch
 
 # Fits of phase derivatives at collocation points for each mode
 
-# ---------------------------------------------------------------------------
-# Collocation point 1
-# ---------------------------------------------------------------------------
-
 
 def IMRPhenomXHM_Inter_Phase_21_p1(pWF):
-    """IMRPhenomXHM_Inter_Phase_21_p1, LALSimIMRPhenomXHM_intermediate.c:2642-2666, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_21_p1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -64,14 +38,17 @@ def IMRPhenomXHM_Inter_Phase_21_p1(pWF):
     S2 = S**2
     S3 = S**3
     S4 = S**4
-    noSpin = 4045.84 + 7.63226/eta - 1956.93*eta - 23428.1*eta2 + 369153.*eta3 - 2.28832e6*eta4 + 6.82533e6*eta5 - 7.86254e6*eta6
+    noSpin = 4045.84 + torch.div(7.63226, eta) - 1956.93*eta - 23428.1*eta2 + 369153.*eta3 - 2.28832e6*eta4 + 6.82533e6*eta5 - 7.86254e6*eta6
     eqSpin = - 347.273*S + 83.5428*S2 - 355.67*S3 + (4.44457*S + 16.5548*S2 + 13.6971*S3)/eta + eta*( - 79.761*S - 355.299*S2 + 1114.51*S3 - 1077.75*S4) + 92.6654*S4 + eta2*(- 619.837*S - 722.787*S2 + 2392.73*S3 + 2689.18*S4)
     uneqSpin = ( 918.976*pWF["chi1L"]*torch.sqrt(1.-4.*eta) - 918.976*pWF["chi2L"]*torch.sqrt(1.-4.*eta))*eta + ( 91.7679*pWF["chi1L"]*torch.sqrt(1.-4.*eta) - 91.7679*pWF["chi2L"]*torch.sqrt(1.-4.*eta))*eta2
     return noSpin + eqSpin + uneqSpin
 
 
 def IMRPhenomXHM_Inter_Phase_33_p1(pWF):
-    """IMRPhenomXHM_Inter_Phase_33_p1, LALSimIMRPhenomXHM_intermediate.c:2668-2690, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_33_p1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -80,14 +57,17 @@ def IMRPhenomXHM_Inter_Phase_33_p1(pWF):
     eta5 = eta**5
     eta6 = eta**6
     S2 = S**2
-    noSpin = 4360.19 + 4.27128/eta - 8727.4*eta + 18485.9*eta2 + 371303.00000000006*eta3 - 3.22792e6*eta4 + 1.01799e7*eta5 - 1.15659e7*eta6
+    noSpin = 4360.19 + torch.div(4.27128, eta) - 8727.4*eta + 18485.9*eta2 + 371303.00000000006*eta3 - 3.22792e6*eta4 + 1.01799e7*eta5 - 1.15659e7*eta6
     eqSpin = ((11.6635 - 251.579*eta - 3255.6400000000003*eta2 + 19614.6*eta3 - 34860.2*eta4)*S + (14.8017 + 204.025*eta - 5421.92*eta2 + 36587.3*eta3 - 74299.5*eta4)*S2)/(eta)
     uneqSpin = eta*(223.65100000000004*pWF["chi1L"]*torch.sqrt(1.-4.*eta)*(3.9201300240106223 + 1.*eta) - 223.65100000000004*pWF["chi2L"]*torch.sqrt(1.-4.*eta)*(3.9201300240106223 + 1.*eta))
     return noSpin + eqSpin + uneqSpin
 
 
 def IMRPhenomXHM_Inter_Phase_32_p1(pWF):
-    """IMRPhenomXHM_Inter_Phase_32_p1, LALSimIMRPhenomXHM_intermediate.c:2692-2716, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_32_p1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -98,14 +78,17 @@ def IMRPhenomXHM_Inter_Phase_32_p1(pWF):
     S2 = S**2
     S3 = S**3
     S4 = S**4
-    noSpin = 4414.11 + 4.21564/eta - 10687.8*eta + 58234.6*eta2 - 64068.40000000001*eta3 - 704442.*eta4 + 2.86393e6*eta5 - 3.26362e6*eta6
+    noSpin = 4414.11 + torch.div(4.21564, eta) - 10687.8*eta + 58234.6*eta2 - 64068.40000000001*eta3 - 704442.*eta4 + 2.86393e6*eta5 - 3.26362e6*eta6
     eqSpin = ((6.39833 - 610.267*eta + 2095.72*eta2 - 3970.89*eta3)*S + (22.956700000000005 - 99.1551*eta + 331.593*eta2 - 794.79*eta3)*S2 + (10.4333 + 43.8812*eta - 541.261*eta2 + 294.289*eta3)*S3 + eta*(106.047 - 1569.0299999999997*eta + 4810.61*eta2)*S4)/(eta)
     uneqSpin = 132.244*torch.sqrt(1.-4.*eta)*eta*(pWF["chi1L"]*(6.227738120444028 - 1.*eta) + pWF["chi2L"]*(-6.227738120444028 + 1.*eta))
     return noSpin + eqSpin + uneqSpin
 
 
 def IMRPhenomXHM_Inter_Phase_44_p1(pWF):
-    """IMRPhenomXHM_Inter_Phase_44_p1, LALSimIMRPhenomXHM_intermediate.c:2718-2741, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_44_p1
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -115,19 +98,17 @@ def IMRPhenomXHM_Inter_Phase_44_p1(pWF):
     eta6 = eta**6
     S2 = S**2
     S3 = S**3
-    noSpin = 4349.66 + 4.34125/eta - 8202.33*eta + 5534.1*eta2 + 536500.*eta3 - 4.33197e6*eta4 + 1.37792e7*eta5 - 1.60802e7*eta6
+    noSpin = 4349.66 + torch.div(4.34125, eta) - 8202.33*eta + 5534.1*eta2 + 536500.*eta3 - 4.33197e6*eta4 + 1.37792e7*eta5 - 1.60802e7*eta6
     eqSpin = ((12.0704 - 528.098*eta + 1822.9100000000003*eta2 - 9349.73*eta3 + 17900.9*eta4)*S + (10.4092 + 253.334*eta - 5452.04*eta2 + 35416.6*eta3 - 71523.*eta4)*S2 + eta*(492.60300000000007 - 9508.5*eta + 57303.4*eta2 - 109418.*eta3)*S3)/(eta)
     uneqSpin = -262.143*torch.sqrt(1.-4.*eta)*eta*(pWF["chi1L"]*(-3.0782778864970646 - 1.*eta) + pWF["chi2L"]*(3.0782778864970646 + 1.*eta))
     return noSpin + eqSpin + uneqSpin
 
 
-# ---------------------------------------------------------------------------
-# Collocation point 2
-# ---------------------------------------------------------------------------
-
-
 def IMRPhenomXHM_Inter_Phase_21_p2(pWF):
-    """IMRPhenomXHM_Inter_Phase_21_p2, LALSimIMRPhenomXHM_intermediate.c:2744-2768, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_21_p2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -138,14 +119,17 @@ def IMRPhenomXHM_Inter_Phase_21_p2(pWF):
     S2 = S**2
     S3 = S**3
     S4 = S3*S
-    noSpin = 3509.09 + 0.91868/eta + 194.72*eta - 27556.2*eta2 + 369153.*eta3 - 2.28832e6*eta4 + 6.82533e6*eta5 - 7.86254e6*eta6
+    noSpin = 3509.09 + torch.div(0.91868, eta) + 194.72*eta - 27556.2*eta2 + 369153.*eta3 - 2.28832e6*eta4 + 6.82533e6*eta5 - 7.86254e6*eta6
     eqSpin = ((0.7083999999999999 - 60.1611*eta + 131.815*eta2 - 619.837*eta3)*S + (6.104720000000001 - 59.2068*eta + 278.588*eta2 - 722.787*eta3)*S2 + (5.7791 + 117.913*eta - 1180.4*eta2 + 2392.73*eta3)*S3 + eta*(92.6654 - 1077.75*eta + 2689.18*eta2)*S4)/(eta)
     uneqSpin = -91.7679*torch.sqrt(1.-4.*eta)*eta*(pWF["chi1L"]*(-1.6012352903357276 - 1.*eta) + pWF["chi2L"]*(1.6012352903357276 + 1.*eta))
     return noSpin + eqSpin + uneqSpin
 
 
 def IMRPhenomXHM_Inter_Phase_33_p2(pWF):
-    """IMRPhenomXHM_Inter_Phase_33_p2, LALSimIMRPhenomXHM_intermediate.c:2770-2792, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_33_p2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -154,14 +138,17 @@ def IMRPhenomXHM_Inter_Phase_33_p2(pWF):
     eta5 = eta**5
     eta6 = eta**6
     S2 = S**2
-    noSpin = 3797.06 + 0.786684/eta - 2397.09*eta - 25514.*eta2 + 518314.99999999994*eta3 - 3.41708e6*eta4 + 1.01799e7*eta5 - 1.15659e7*eta6
+    noSpin = 3797.06 + torch.div(0.786684, eta) - 2397.09*eta - 25514.*eta2 + 518314.99999999994*eta3 - 3.41708e6*eta4 + 1.01799e7*eta5 - 1.15659e7*eta6
     eqSpin = ((6.7812399999999995 + 39.4668*eta - 3520.37*eta2 + 19614.6*eta3 - 34860.2*eta4)*S + (4.80384 + 293.215*eta - 5914.61*eta2 + 36587.3*eta3 - 74299.5*eta4)*S2)/(eta)
     uneqSpin = -223.65100000000004*torch.sqrt(1.-4.*eta)*eta*(pWF["chi1L"]*(-1.3095134830606614 - 1.*eta) + pWF["chi2L"]*(1.3095134830606614 + 1.*eta))
     return noSpin + eqSpin + uneqSpin
 
 
 def IMRPhenomXHM_Inter_Phase_32_p2(pWF):
-    """IMRPhenomXHM_Inter_Phase_32_p2, LALSimIMRPhenomXHM_intermediate.c:2794-2818, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_32_p2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -172,14 +159,17 @@ def IMRPhenomXHM_Inter_Phase_32_p2(pWF):
     S2 = S**2
     S3 = S**3
     S4 = S**4
-    noSpin = 3980.7 + 0.956703/eta - 6202.38*eta + 29218.1*eta2 + 24484.2*eta3 - 807629.*eta4 + 2.86393e6*eta5 - 3.26362e6*eta6
+    noSpin = 3980.7 + torch.div(0.956703, eta) - 6202.38*eta + 29218.1*eta2 + 24484.2*eta3 - 807629.*eta4 + 2.86393e6*eta5 - 3.26362e6*eta6
     eqSpin = ((1.92692 - 226.825*eta + 75.246*eta2 + 1291.56*eta3)*S + (15.328700000000001 - 99.1551*eta + 608.328*eta2 - 2402.94*eta3)*S2 + (10.4333 + 43.8812*eta - 541.261*eta2 + 294.289*eta3)*S3 + eta*(106.047 - 1569.0299999999997*eta + 4810.61*eta2)*S4)/(eta)
     uneqSpin = 132.244*torch.sqrt(1.-4.*eta)*eta*(pWF["chi1L"]*(2.5769789177580837 - 1.*eta) + pWF["chi2L"]*(-2.5769789177580837 + 1.*eta))
     return noSpin + eqSpin + uneqSpin
 
 
 def IMRPhenomXHM_Inter_Phase_44_p2(pWF):
-    """IMRPhenomXHM_Inter_Phase_44_p2, LALSimIMRPhenomXHM_intermediate.c:2820-2843, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_44_p2
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -189,19 +179,17 @@ def IMRPhenomXHM_Inter_Phase_44_p2(pWF):
     eta6 = eta**6
     S2 = S**2
     S3 = S**3
-    noSpin = 3804.19 + 0.66144/eta - 2421.77*eta - 33475.8*eta2 + 665951.*eta3 - 4.50145e6*eta4 + 1.37792e7*eta5 - 1.60802e7*eta6
+    noSpin = 3804.19 + torch.div(0.66144, eta) - 2421.77*eta - 33475.8*eta2 + 665951.*eta3 - 4.50145e6*eta4 + 1.37792e7*eta5 - 1.60802e7*eta6
     eqSpin = ((5.83038 - 172.047*eta + 926.576*eta2 - 7676.87*eta3 + 17900.9*eta4)*S + (6.17601 + 253.334*eta - 5672.02*eta2 + 35722.1*eta3 - 71523.*eta4)*S2 + eta*(492.60300000000007 - 9508.5*eta + 57303.4*eta2 - 109418.*eta3)*S3)/(eta)
     uneqSpin = -262.143*torch.sqrt(1.-4.*eta)*eta*(pWF["chi1L"]*(-1.0543062374352932 - 1.*eta) + pWF["chi2L"]*(1.0543062374352932 + 1.*eta))
     return noSpin + eqSpin + uneqSpin
 
 
-# ---------------------------------------------------------------------------
-# Collocation point 3
-# ---------------------------------------------------------------------------
-
-
 def IMRPhenomXHM_Inter_Phase_21_p3(pWF):
-    """IMRPhenomXHM_Inter_Phase_21_p3, LALSimIMRPhenomXHM_intermediate.c:2846-2871, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_21_p3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     delta = torch.sqrt(1.-4.*eta)
@@ -220,7 +208,10 @@ def IMRPhenomXHM_Inter_Phase_21_p3(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_33_p3(pWF):
-    """IMRPhenomXHM_Inter_Phase_33_p3, LALSimIMRPhenomXHM_intermediate.c:2873-2895, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_33_p3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -236,7 +227,10 @@ def IMRPhenomXHM_Inter_Phase_33_p3(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_32_p3(pWF):
-    """IMRPhenomXHM_Inter_Phase_32_p3, LALSimIMRPhenomXHM_intermediate.c:2897-2921, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_32_p3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -254,7 +248,10 @@ def IMRPhenomXHM_Inter_Phase_32_p3(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_44_p3(pWF):
-    """IMRPhenomXHM_Inter_Phase_44_p3, LALSimIMRPhenomXHM_intermediate.c:2923-2946, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_44_p3
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -270,13 +267,11 @@ def IMRPhenomXHM_Inter_Phase_44_p3(pWF):
     return noSpin + eqSpin + uneqSpin
 
 
-# ---------------------------------------------------------------------------
-# Collocation point 4
-# ---------------------------------------------------------------------------
-
-
 def IMRPhenomXHM_Inter_Phase_21_p4(pWF):
-    """IMRPhenomXHM_Inter_Phase_21_p4, LALSimIMRPhenomXHM_intermediate.c:2949-2973, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_21_p4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -294,7 +289,10 @@ def IMRPhenomXHM_Inter_Phase_21_p4(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_33_p4(pWF):
-    """IMRPhenomXHM_Inter_Phase_33_p4, LALSimIMRPhenomXHM_intermediate.c:2975-2998, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_33_p4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -311,7 +309,10 @@ def IMRPhenomXHM_Inter_Phase_33_p4(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_32_p4(pWF):
-    """IMRPhenomXHM_Inter_Phase_32_p4, LALSimIMRPhenomXHM_intermediate.c:3000-3024, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_32_p4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -329,7 +330,10 @@ def IMRPhenomXHM_Inter_Phase_32_p4(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_44_p4(pWF):
-    """IMRPhenomXHM_Inter_Phase_44_p4, LALSimIMRPhenomXHM_intermediate.c:3026-3049, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_44_p4
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -345,13 +349,11 @@ def IMRPhenomXHM_Inter_Phase_44_p4(pWF):
     return noSpin + eqSpin + uneqSpin
 
 
-# ---------------------------------------------------------------------------
-# Collocation point 5
-# ---------------------------------------------------------------------------
-
-
 def IMRPhenomXHM_Inter_Phase_21_p5(pWF):
-    """IMRPhenomXHM_Inter_Phase_21_p5, LALSimIMRPhenomXHM_intermediate.c:3052-3073, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_21_p5
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -366,7 +368,10 @@ def IMRPhenomXHM_Inter_Phase_21_p5(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_33_p5(pWF):
-    """IMRPhenomXHM_Inter_Phase_33_p5, LALSimIMRPhenomXHM_intermediate.c:3075-3098, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_33_p5
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -383,7 +388,10 @@ def IMRPhenomXHM_Inter_Phase_33_p5(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_32_p5(pWF):
-    """IMRPhenomXHM_Inter_Phase_32_p5, LALSimIMRPhenomXHM_intermediate.c:3100-3125, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_32_p5
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -402,7 +410,10 @@ def IMRPhenomXHM_Inter_Phase_32_p5(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_44_p5(pWF):
-    """IMRPhenomXHM_Inter_Phase_44_p5, LALSimIMRPhenomXHM_intermediate.c:3127-3151, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_44_p5
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -419,13 +430,11 @@ def IMRPhenomXHM_Inter_Phase_44_p5(pWF):
     return noSpin + eqSpin + uneqSpin
 
 
-# ---------------------------------------------------------------------------
-# Collocation point 6
-# ---------------------------------------------------------------------------
-
-
 def IMRPhenomXHM_Inter_Phase_21_p6(pWF):
-    """IMRPhenomXHM_Inter_Phase_21_p6, LALSimIMRPhenomXHM_intermediate.c:3154-3175, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_21_p6
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -440,7 +449,10 @@ def IMRPhenomXHM_Inter_Phase_21_p6(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_33_p6(pWF):
-    """IMRPhenomXHM_Inter_Phase_33_p6, LALSimIMRPhenomXHM_intermediate.c:3177-3200, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_33_p6
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -457,7 +469,10 @@ def IMRPhenomXHM_Inter_Phase_33_p6(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_32_p6(pWF):
-    """IMRPhenomXHM_Inter_Phase_32_p6, LALSimIMRPhenomXHM_intermediate.c:3202-3227, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_32_p6
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -476,7 +491,10 @@ def IMRPhenomXHM_Inter_Phase_32_p6(pWF):
 
 
 def IMRPhenomXHM_Inter_Phase_44_p6(pWF):
-    """IMRPhenomXHM_Inter_Phase_44_p6, LALSimIMRPhenomXHM_intermediate.c:3229-3252, case 122019."""
+    """
+    Source: IMRPhenomXHM_Inter_Phase_44_p6
+    (LALSimIMRPhenomXHM_intermediate.c).
+    """
     eta = pWF["eta"]
     S = pWF["STotR"]
     eta2 = eta**2
@@ -490,5 +508,3 @@ def IMRPhenomXHM_Inter_Phase_44_p6(pWF):
     eqSpin = (-9.96292 - 118.526*eta + 2255.76*eta2 - 6758.52*eta3)*S + (-14.4869 + 370.039*eta - 3605.8*eta2 + 9129.45*eta3)*S2 + (17.0209 + 70.1931*eta - 3070.08*eta2 + 9582.58*eta3)*S3
     uneqSpin = 23.0759*pWF["dchi"]*torch.sqrt(1.-4.*eta)*eta2
     return noSpin + eqSpin + uneqSpin
-
-# End of Phase Parameter Space Fits

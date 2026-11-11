@@ -3,39 +3,8 @@
 
 """
 Filename      : phenomxhm_fits_ringdown_amp.py
-Description   : Batched PyTorch port of the IMRPhenomXHM ringdown amplitude
-                parameter-space fits.
-
-                Mirrors LALSimIMRPhenomXHM_ringdown.c (lalsimulation-v6.1.0,
-                vendored in sage/data/waveform/lalsim_src/), amplitude fits
-                section c:43-722 ("Start of Amp Parameter Space Fits" to
-                "End of Amp Parameter Space Fits").  Only the case-122022
-                branches are ported: the v6.1.0 default release (122022,
-                LALSimIMRPhenomXHM_internals.c:296-345) sets
-                IMRPhenomXHMRingdownAmpFitsVersion = 122022 and
-                IMRPhenomXHMRingdownAmpVersion = 2 (21, 33, 44 modes) or
-                1 (32 mode), so IMRPhenomXHM_RD_Amp_Coefficients
-                (ringdown.c:727-816, called from internals.c:1231) reaches
-                exactly:
-
-                  32 mode (RingdownAmpVersion 1, RingdownAmpFits[6..8]):
-                    IMRPhenomXHM_RD_Amp_32_{alambda, lambda, sigma}
-                  21/33/44 modes (RingdownAmpVersion 2,
-                                  RingdownAmpFits[12+3*modeInt ..]):
-                    IMRPhenomXHM_RD_Amp_{21,33,44}_rdcp{1,2,3}
-                  32 mode auxiliary region (MixingOn, RingdownAmpFits[24,25],
-                                            ringdown.c:818-892):
-                    IMRPhenomXHM_RD_Amp_32_rdaux{1,2}
-
-                Each function takes a dict pWF of IMRPhenomXWaveformStruct
-                members as (B, 1) float64 tensors and returns a (B, 1)
-                tensor.  Keys consumed: eta, delta, STotR, chiPNHat,
-                dchi_half.
-
-                The spin parameter S = (m1^2*chi1 + m2^2*chi2)/(m1^2 + m2^2)
-
-                alambda, lambda and sigma are the coefficients of the
-                ringdown ansatz, see Eq. (6.2)
+Description   : IMRPhenomXHM ringdown amplitude fits (version 122022),
+                ported from LALSimIMRPhenomXHM_ringdown.c.
 
 Created on 2026-08-04
 
@@ -46,11 +15,6 @@ __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
 __status__      = inProgress
-
-References
-----------
-IMRPhenomXHM  : Garcia-Quiros et al. (2020), arXiv:2001.10914
-Parameter-space fits : supplementary material of https://dcc.ligo.org/P2000011-v2
 """
 
 import torch
@@ -60,7 +24,10 @@ import torch
 
 
 def IMRPhenomXHM_RD_Amp_32_alambda(pWF):
-    """IMRPhenomXHM_RD_Amp_32_alambda, LALSimIMRPhenomXHM_ringdown.c:154-193, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_32_alambda
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -80,7 +47,10 @@ def IMRPhenomXHM_RD_Amp_32_alambda(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_32_lambda(pWF):
-    """IMRPhenomXHM_RD_Amp_32_lambda, LALSimIMRPhenomXHM_ringdown.c:195-229, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_32_lambda
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -98,7 +68,10 @@ def IMRPhenomXHM_RD_Amp_32_lambda(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_32_sigma(pWF):
-    """IMRPhenomXHM_RD_Amp_32_sigma, LALSimIMRPhenomXHM_ringdown.c:324-353, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_32_sigma
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -116,7 +89,10 @@ def IMRPhenomXHM_RD_Amp_32_sigma(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_21_rdcp1(pWF):
-    """IMRPhenomXHM_RD_Amp_21_rdcp1, LALSimIMRPhenomXHM_ringdown.c:371-394, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_21_rdcp1
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -135,7 +111,10 @@ def IMRPhenomXHM_RD_Amp_21_rdcp1(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_21_rdcp2(pWF):
-    """IMRPhenomXHM_RD_Amp_21_rdcp2, LALSimIMRPhenomXHM_ringdown.c:396-418, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_21_rdcp2
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -153,7 +132,10 @@ def IMRPhenomXHM_RD_Amp_21_rdcp2(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_21_rdcp3(pWF):
-    """IMRPhenomXHM_RD_Amp_21_rdcp3, LALSimIMRPhenomXHM_ringdown.c:420-442, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_21_rdcp3
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -171,7 +153,10 @@ def IMRPhenomXHM_RD_Amp_21_rdcp3(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_33_rdcp1(pWF):
-    """IMRPhenomXHM_RD_Amp_33_rdcp1, LALSimIMRPhenomXHM_ringdown.c:444-467, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_33_rdcp1
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -190,7 +175,10 @@ def IMRPhenomXHM_RD_Amp_33_rdcp1(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_33_rdcp2(pWF):
-    """IMRPhenomXHM_RD_Amp_33_rdcp2, LALSimIMRPhenomXHM_ringdown.c:469-492, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_33_rdcp2
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -209,7 +197,10 @@ def IMRPhenomXHM_RD_Amp_33_rdcp2(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_33_rdcp3(pWF):
-    """IMRPhenomXHM_RD_Amp_33_rdcp3, LALSimIMRPhenomXHM_ringdown.c:494-517, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_33_rdcp3
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -228,7 +219,10 @@ def IMRPhenomXHM_RD_Amp_33_rdcp3(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_44_rdcp1(pWF):
-    """IMRPhenomXHM_RD_Amp_44_rdcp1, LALSimIMRPhenomXHM_ringdown.c:519-543, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_44_rdcp1
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -248,7 +242,10 @@ def IMRPhenomXHM_RD_Amp_44_rdcp1(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_44_rdcp2(pWF):
-    """IMRPhenomXHM_RD_Amp_44_rdcp2, LALSimIMRPhenomXHM_ringdown.c:545-568, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_44_rdcp2
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -267,7 +264,10 @@ def IMRPhenomXHM_RD_Amp_44_rdcp2(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_44_rdcp3(pWF):
-    """IMRPhenomXHM_RD_Amp_44_rdcp3, LALSimIMRPhenomXHM_ringdown.c:570-592, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_44_rdcp3
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -285,7 +285,10 @@ def IMRPhenomXHM_RD_Amp_44_rdcp3(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_32_rdaux1(pWF):
-    """IMRPhenomXHM_RD_Amp_32_rdaux1, LALSimIMRPhenomXHM_ringdown.c:594-617, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_32_rdaux1
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["STotR"]
@@ -304,7 +307,10 @@ def IMRPhenomXHM_RD_Amp_32_rdaux1(pWF):
 
 
 def IMRPhenomXHM_RD_Amp_32_rdaux2(pWF):
-    """IMRPhenomXHM_RD_Amp_32_rdaux2, LALSimIMRPhenomXHM_ringdown.c:619-643, case 122022."""
+    """
+    Source: IMRPhenomXHM_RD_Amp_32_rdaux2
+    (LALSimIMRPhenomXHM_ringdown.c).
+    """
     eta = pWF["eta"]
     delta = pWF["delta"]
     S = pWF["chiPNHat"]
@@ -321,5 +327,3 @@ def IMRPhenomXHM_RD_Amp_32_rdaux2(pWF):
     chidiff2 = chidiff1 * chidiff1
     total = chidiff2*(-18.550171209458394*eta2 + 188.99161055445936*eta3 - 440.26516625611*eta4) + chidiff1*delta*(13.132625215315063*eta2 - 340.5204040505528*eta3 + 1327.1224176812448*eta4) + S1*(-0.16707403272774676*(6.678916447469937*eta1 + 1331.480396625797*eta2 - 41908.45179140144*eta3 + 520786.0225074669*eta4 - 3.1894624909922685e6*eta5 + 9.51553823212259e6*eta6 - 1.1006903622406831e7*eta7) + 0.015205286051218441*(108.10032279461095*eta1 - 16084.215590200103*eta2 + 462957.5593513407*eta3 - 5.635028227588545e6*eta4 + 3.379925277713386e7*eta5 - 9.865815275452062e7*eta6 + 1.1201307979786257e8*eta7)*S1) + (3.902154247490771*eta1 - 55.77521071924907*eta2 + 294.9496843041973*eta3 - 693.6803787318279*eta4 + 636.0141528226893*eta5)*(1 - 8.56699762573719*eta1 + 19.119341007236955*eta2)**(-1)
     return total
-
-# End of Amp Parameter Space Fits

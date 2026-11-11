@@ -26,7 +26,8 @@ COMMON = dict(distance=400.0, inclination=0.5, coa_phase=0.3)
 ALIGNED = [dict(mass1=30.0, mass2=20.0, spin1z=0.3, spin2z=-0.2),
            dict(mass1=50.0, mass2=7.0, spin1z=0.9, spin2z=0.8),
            dict(mass1=10.0, mass2=10.0),
-           dict(mass1=7.0, mass2=7.0, spin1z=-0.95, spin2z=-0.5)]
+           dict(mass1=7.0, mass2=7.0, spin1z=-0.95, spin2z=-0.5),
+           dict(mass1=12.0, mass2=40.0, spin1z=0.6, spin2z=-0.3)]
 PRECESSING = [dict(mass1=30.0, mass2=20.0, spin1x=0.5, spin1y=0.3, spin1z=0.4, spin2x=-0.2, spin2y=0.1, spin2z=-0.3),
               dict(mass1=50.0, mass2=7.0, spin1x=0.7, spin1y=-0.4, spin1z=0.2, spin2x=0.1, spin2y=0.5, spin2z=0.6),
               dict(mass1=12.0, mass2=9.0, spin1x=0.05, spin1z=0.1),
@@ -56,7 +57,7 @@ def lal_hphc(s, approximant, delta_f):
         ls.SimInspiralWaveformParamsInsertTidalLambda2(p, s["lambda2"])
     spins = [s.get(f"spin{body}{axis}", 0.0) for body in (1, 2) for axis in "xyz"]
     hp, hc = ls.SimInspiralChooseFDWaveform(
-        s["mass1"] * lal.MSUN_SI, s["mass2"] * lal.MSUN_SI, *spins, s["distance"] * 1e6 * lal.PC_SI,
+        s["mass1"] * lal.MSUN_SI, s["mass2"] * lal.MSUN_SI, *spins, s["distance"] * lal.PC_SI * 1e6,
         s["inclination"], s["coa_phase"], 0, 0, 0, delta_f, F_LOW, RATE / 2, F_LOW, p, getattr(ls, approximant))
     return hp.data.data, hc.data.data
 
@@ -90,6 +91,19 @@ def test_xphm():
     model = IMRPhenomXPHM.from_grid(*grid(len(PRECESSING)), padding_length_in_s=2.0)
     hp, hc = model.get_hphc(theta_of(PRECESSING), reproduce_lal=True)
     check(hp, hc, PRECESSING, "IMRPhenomXPHM", 1 / T, 1e-5)
+
+
+def test_xphm_gradients():
+    """Finite gradients: non-spinning companion, coplanar spins."""
+    body1 = dict(mass1=30.0, mass2=20.0, spin1x=0.1, spin1z=0.3)
+    signals = [body1, dict(body1, spin2x=0.1, spin2z=-0.2)]
+    f = waveform_utils.get_freqs(F_LOW, 64.0, 1.0, 2, "cpu", torch.float64)
+    f_ref = waveform_utils.reference_frequencies(F_LOW, 2, "cpu")
+    model = IMRPhenomXPHM.from_grid(f, f_ref, padding_length_in_s=2.0)
+    theta = theta_of(signals).requires_grad_(True)
+    hp, hc = model.get_hphc(theta, reproduce_lal=True)
+    (grad,) = torch.autograd.grad((hp.abs() ** 2 + hc.abs() ** 2).sum(), theta)
+    assert torch.isfinite(grad[:, :12]).all()
 
 
 def test_pv2():
