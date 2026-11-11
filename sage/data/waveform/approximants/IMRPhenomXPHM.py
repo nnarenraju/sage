@@ -1100,8 +1100,13 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         # Precession averaged spin couplings, at the initial values
         omqsq = (1.0 - q) * (1.0 - q) + 1e-16
         omq2 = (1.0 - q * q) + 1e-16
-        S1L_pav = (c_1 * (1.0 + q) - q * eta * Seff) / (eta * omq2)
-        S2L_pav = -q * (c_1 * (1.0 + q) - eta * Seff) / (eta * omq2)
+        # Zero gradient where q is 1: S1L_pav + S2L_pav is 0 there
+        q_one = q == 1.0
+        c_1_g, Seff_g, eta_g, q_g, omq2_g = (
+            detach_where(q_one, t) for t in (c_1, Seff, eta, q, omq2)
+        )
+        S1L_pav = (c_1_g * (1.0 + q_g) - q_g * eta_g * Seff_g) / (eta_g * omq2_g)
+        S2L_pav = -q_g * (c_1_g * (1.0 + q_g) - eta_g * Seff_g) / (eta_g * omq2_g)
         S1S2_pav = 0.5 * prec["SAv2"] - 0.5 * (prec["S1_norm_2"] + prec["S2_norm_2"])
         RmSq_v02 = prec["Spl2mSmi2"] * prec["Spl2mSmi2"] * v_0_2
         S1Lsq_pav = S1L_pav * S1L_pav + RmSq_v02 / (32.0 * eta2 * omqsq)
@@ -1152,7 +1157,11 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
 
         delta = prec["delta_qq"]
         delta2 = delta * delta
-        prec["psi1"] = 3.0 * (2.0 * eta2 * Seff - c_1) / (eta * delta2)
+        # Zero gradient where q is 1: psi1 and psi2 are infinite and unused
+        eta2_g, Seff_g, delta2_g = (
+            detach_where(q_one, t) for t in (eta2, Seff, delta2)
+        )
+        prec["psi1"] = 3.0 * (2.0 * eta2_g * Seff_g - c_1_g) / (eta_g * delta2_g)
 
         c_1_over_nu = prec["c1_over_eta"]
         c_1_over_nu_2 = c_1_over_nu * c_1_over_nu
@@ -1176,14 +1185,14 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
 
         # psi2 as in LALSimInspiralFDPrecAngles.c
         u1 = 3. * g2 / g0
-        u2 = 0.75 * one_p_q_sq / one_m_q_4
+        u2 = 0.75 * detach_where(q_one, one_p_q_sq) / detach_where(q_one, one_m_q_4)
         u3 = -20. * c_1_over_nu_2 * q_2 * one_p_q_sq
         u4 = 2. * one_m_q2_2 * (q * (2. + q) * prec["S1_norm_2"]
                                 + (1. + 2. * q) * prec["S2_norm_2"] - 2. * q * prec["SAv2"])
         u5 = 2. * q_2 * (7. + 6. * q + 7. * q_2) * 2. * c_1_over_nu * Seff
         u6 = 2. * q_2 * (3. + 4. * q + 3. * q_2) * Seff_2
         u7 = q * Delta
-        prec["psi2"] = u1 + u2 * (u3 + u4 + u5 - u6 + u7)
+        prec["psi2"] = u1 + u2 * detach_where(q_one, u3 + u4 + u5 - u6 + u7)
 
         Rm = Spl2 - Smi2
         Rm_2 = Rm * Rm
