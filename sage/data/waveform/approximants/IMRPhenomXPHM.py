@@ -607,19 +607,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
 
         return prec
 
-    # Source: IMRPhenomXGetAndSetPrecessionVariables
-    # (LALSimIMRPhenomX_precession.c).
-    def _chi_p(self, theta, derived):
-        """
-        Effective precessing spin parameter chi_p.
-
-        Raises
-        ------
-        NotImplementedError
-            Always.
-        """
-        raise NotImplementedError("port pending: LALSimIMRPhenomX_precession.c:331-346")
-
     # Source: IMRPhenomX_SetPrecessingRemnantParams
     # (LALSimIMRPhenomX_precession.c).
     def _set_precessing_remnant_params(self, prec, derived):
@@ -680,31 +667,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         # Update ringdown and damping frequency
         prec["fRING"], prec["fDAMP"] = self.get_fRD_fdamp(afinal, Mfinal)
         return prec
-
-    # Source: IMRPhenomXGetAndSetPrecessionVariables
-    # (LALSimIMRPhenomX_precession.c).
-    def _compute_frame_angles(self, theta, derived, prec):
-        """
-        Source frame to J frame conventions, convention 1.
-
-        Raises
-        ------
-        NotImplementedError
-            Always.
-        """
-        raise NotImplementedError("port pending: LALSimIMRPhenomX_precession.c:578-1012")
-
-    # Source: Get_alphaepsilon_atfref (LALSimIMRPhenomX_precession.c).
-    def _get_alphaepsilon_atfref(self, derived, prec, mprime):
-        """
-        Get alpha and epsilon offsets depending on mprime.
-
-        Raises
-        ------
-        NotImplementedError
-            Always.
-        """
-        raise NotImplementedError("port pending: LALSimIMRPhenomX_precession.c:1348-1389")
 
     # ------------------------------------------------------------------
     # Orbital angular momentum
@@ -959,7 +921,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
             n_elem = torch.where(newly, torch.full_like(n_elem, k + 1), n_elem)
             done = done | newly
         mu_st = torch.stack(mu, dim=0)
-        nu_st = torch.stack(nu, dim=0)
         mu_n = torch.gather(mu_st, 0, n_elem.unsqueeze(0)).squeeze(0)
 
         sin_umu = torch.sin(u * mu_n)
@@ -1029,7 +990,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         """
         eta = prec["eta"]
         eta2 = prec["eta2"]
-        eta3 = prec["eta3"]
         m1 = prec["m1_wf"]
         m2 = prec["m2_wf"]
         PI = math.pi
@@ -1146,7 +1106,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         RmSq_v02 = prec["Spl2mSmi2"] * prec["Spl2mSmi2"] * v_0_2
         S1Lsq_pav = S1L_pav * S1L_pav + RmSq_v02 / (32.0 * eta2 * omqsq)
         S2Lsq_pav = S2L_pav * S2L_pav + q * q * RmSq_v02 / (32.0 * eta2 * omqsq)
-        S1LS2L_pav = S1L_pav * S2L_pav - q * RmSq_v02 / (32.0 * eta2 * omqsq)
         prec["S1L_pav"] = S1L_pav
         prec["S2L_pav"] = S2L_pav
 
@@ -1157,14 +1116,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
                  + (m2 / m1) * ((809. / 84) - (281. / 8.) * eta)) * S1L_pav \
             + (((31319. / 1008.) - (1159. / 24.) * eta)
                + (m1 / m2) * ((809. / 84) - (281. / 8.) * eta)) * S2L_pav
-        beta6 = PI * (((75. / 2.) + (151. / 6.) * (m2 / m1)) * S1L_pav
-                      + ((75. / 2.) + (151. / 6.) * (m1 / m2)) * S2L_pav)
-        beta7 = (((130325. / 756) - (796069. / 2016) * eta + (100019. / 864.) * eta2)
-                 + (m2 / m1) * ((1195759. / 18144) - (257023. / 1008.) * eta
-                                + (2903 / 32.) * eta2) * S1L_pav
-                 + ((130325. / 756) - (796069. / 2016) * eta + (100019. / 864.) * eta2)
-                 + (m1 / m2) * ((1195759. / 18144) - (257023. / 1008.) * eta
-                                + (2903 / 32.) * eta2) * S2L_pav)
         sigma4 = (1.0 / mu) * ((247. / 48.) * S1S2_pav - (721. / 48.) * S1L_pav * S2L_pav) \
             + (1.0 / (m1 * m1)) * ((233. / 96.) * prec["S1_norm_2"] - (719. / 96.) * S1Lsq_pav) \
             + (1.0 / (m2 * m2)) * ((233. / 96.) * prec["S2_norm_2"] - (719. / 96.) * S2Lsq_pav)
@@ -1201,7 +1152,6 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
 
         delta = prec["delta_qq"]
         delta2 = delta * delta
-        delta4 = delta2 * delta2
         prec["psi1"] = 3.0 * (2.0 * eta2 * Seff - c_1) / (eta * delta2)
 
         c_1_over_nu = prec["c1_over_eta"]

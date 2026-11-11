@@ -37,7 +37,6 @@ terms cover those derived portions only.
 import torch
 
 from sage.core.interpolation import torch_natural_cubic_interp
-from sage.core.torch import nudge_backward_
 from sage.data.waveform.approximants import phenom
 from sage.data.waveform import taper, waveform_utils
 
@@ -326,48 +325,6 @@ class IMRPhenomD(phenom.PhenomConstants):
         )
 
         return A, Psi, fcut_true
-
-    # Source: DPhiMRD (LALSimIMRPhenomD_internals.c).
-    @staticmethod
-    def DPhiMRD(f, coeffs, eta, fx_Ms, Rholm: float = 1.0, Taulm: float = 1.0):
-        """
-        First frequency derivative of PhiMRDAnsatzInt.
-
-        Parameters
-        ----------
-        f : torch.Tensor, shape (B, 1)
-            Geometric frequency.
-        coeffs : torch.Tensor, shape (B, 19)
-            Phenom coefficients.
-        eta : torch.Tensor, shape (B, 1)
-            Symmetric mass ratio.
-        fx_Ms : torch.Tensor, shape (B, 8)
-            Geometric fRef, f1, f2, f3, f4, fRD, fdamp and fmid.
-        Rholm, Taulm : float
-            fRD22/fRDlm and fDMlm/fDM22; 1 for PhenomD.
-
-        Returns
-        -------
-        torch.Tensor, same shape as f
-        """
-        f2 = f**2
-
-        term1 = coeffs[:, 14:15]
-        term2 = coeffs[:, 15:16] / f2
-        term3 = coeffs[:, 16:17] / torch.pow(f, 0.25)
-
-        denom = (
-            fx_Ms[:, 6:7]
-            * Taulm
-            * (
-                1
-                + (f - coeffs[:, 18:19] * fx_Ms[:, 5:6]) ** 2
-                / ((fx_Ms[:, 6:7] * Taulm * Rholm) ** 2)
-            )
-        )
-        term4 = coeffs[:, 17:18] / denom
-
-        return (term1 + term2 + term3 + term4) * (1.0 / eta)
 
     # Source: ComputeIMRPhenDPhaseConnectionCoefficients and fmaxCalc
     # (LALSimIMRPhenomD_internals.c).
