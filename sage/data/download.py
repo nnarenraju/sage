@@ -17,6 +17,7 @@ import yaml
 from gwosc.datasets import find_datasets
 from pycbc import DYN_RANGE_FAC
 
+from sage.config.loader import yaml_text
 from sage.config.machine import (
     MissingData,
     asd_dir,
@@ -129,7 +130,7 @@ def gwosc_record(data_dir: Path, run: str) -> dict:
     record = yaml.safe_load(path.read_text()) if path.exists() else {**DATASET, "detectors": {}}
     record["gwosc"] = {"name": name, "detectors": detectors}
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(record, sort_keys=False))
+    path.write_text(yaml_text(record))
     return record["gwosc"]
 
 
@@ -562,7 +563,7 @@ def write_record(path: Path, numbers: dict, detectors: dict) -> Path:
     for detector, entry in detectors.items():
         record["detectors"].setdefault(detector, {}).update(entry)
     if text is None or record != yaml.safe_load(text):
-        path.write_text(yaml.safe_dump(record, sort_keys=False))
+        path.write_text(yaml_text(record))
     return path
 
 

@@ -131,6 +131,14 @@ def test_component_parameters(tmp_path):
         load_run(write(tmp_path, "run.yaml", RUN.replace("name: constant", "kind: constant")))
 
 
+def test_plain_name(tmp_path):
+    """A plain name stands for a component with that name and no options."""
+    text = RUN.replace("projection:\n    name: constant", "projection: constant").replace("- name: whiten", "- whiten")
+    settings = load_run(write(tmp_path, "run.yaml", text))
+    assert settings["signal"]["projection"] == {"name": "constant"}
+    assert settings["preprocess"][0] == {"name": "whiten"}
+
+
 def test_noise_section(tmp_path):
     noise = load_run(write(tmp_path, "run.yaml", RUN))["noise"]
     assert noise["training"] == {"name": "real", "runs": ["o3b"]}

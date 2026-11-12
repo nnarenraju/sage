@@ -6,9 +6,7 @@ observing run's data and every fiducial live at fixed places below it.
 
 from pathlib import Path
 
-import yaml
-
-from sage.config.loader import check, read_yaml
+from sage.config.loader import check, read_yaml, yaml_text
 
 MACHINE_FILE = Path.home() / ".config" / "sage" / "machine.yaml"
 SCHEMA = {"data_dir": str}
@@ -45,7 +43,7 @@ def read_data_dir() -> Path:
 def write_data_dir(data_dir: Path) -> None:
     """Write ``data_dir`` to the machine file, creating the file's directory."""
     MACHINE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MACHINE_FILE.write_text(yaml.safe_dump({"data_dir": str(data_dir)}))
+    MACHINE_FILE.write_text(yaml_text({"data_dir": str(data_dir)}))
 
 
 def observing_run_dir(data_dir: Path, run: str, part: str) -> Path:

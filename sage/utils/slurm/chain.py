@@ -6,9 +6,7 @@ from pathlib import Path
 JOB_LOGS = Path("logs") / "jobs"  # in the run directory: <job name>-<job id>.out per job
 
 
-def chain(
-    script, run_dir: Path, jobs: int, after: str | None = None, environment: dict | None = None
-) -> list:
+def chain(script, run_dir: Path, jobs: int, after: str | None = None) -> list:
     """
     Submit ``script`` ``jobs`` times, each depending (``afterany``) on the previous job.
 
@@ -25,8 +23,6 @@ def chain(
         Jobs to submit.
     after : str or None
         Job the first one waits for.
-    environment : dict or None
-        Variables exported to the jobs on top of the submitting environment.
 
     Returns
     -------
@@ -43,11 +39,10 @@ def chain(
     path = logs.resolve() / "%x-%j.out"
     output = [f"--output={path}", f"--error={path}"]  # stdout and stderr in one file
     ids, previous = [], after
-    export = [] if environment is None else ["--export=" + ",".join(["ALL", *(f"{k}={v}" for k, v in environment.items())])]
     for _ in range(jobs):
         dependency = [] if previous is None else [f"--dependency=afterany:{previous}"]
         done = subprocess.run(
-            ["sbatch", "--parsable", *output, *export, *dependency, str(script)], capture_output=True, text=True
+            ["sbatch", "--parsable", *output, *dependency, str(script)], capture_output=True, text=True
         )
         if done.returncode != 0:
             raise RuntimeError(f"sbatch: {done.stderr.strip()} (already submitted: {ids or 'none'})")

@@ -21,12 +21,14 @@ from sage.config.machine import MissingData, dataset_file, fiducial_dir, read_da
 from sage.config.prior import load_prior
 from sage.config.run_dir import (
     check_derived,
+    check_prepared,
     check_record,
     record_derived,
     record_fiducial,
     record_versions,
     training_started,
 )
+from sage.core.checks import exact
 from sage.core.logger import HDF5LossLogger, get_logger, setup_logging
 from sage.core.pipeline import Grid, ProcessingState
 from sage.data.asd import read_fiducial_asds
@@ -69,6 +71,7 @@ logger = get_logger(__name__)
 FLAGS_DIR = "flags"  # empty files named for what is happening in the run directory
 STOP_FLAG = "stop"  # written by `sage stop`; training stops before its next epoch
 RUNNING_FLAG = "running"  # present while a job trains the run
+CHECKED_FLAG = "checked"  # written by a passed `sage check`; removed by `sage prepare`
 FINAL_CHECK_ESTIMATE = "final_check_estimate.json"  # in results/; written at every validation pass
 
 
@@ -224,18 +227,21 @@ def check_run(run_dir: Path) -> tuple:
     return settings, load_prior(settings["signal"]["prior"], run_dir)
 
 
-def check_data(run_dir: Path, settings: dict, data_dir: Path) -> None:
+def check_data(run_dir: Path, settings: dict, data_dir: Path, fiducial: bool = False) -> None:
     """
     Raise if a file the run reads is missing, or its strain is at another sample rate.
 
     Parameters
     ----------
     run_dir : Path
-        Run directory; a started run reads its own fiducial copy.
+        Run directory.
     settings : dict
         From ``check_run``.
     data_dir : Path
         The machine's data directory.
+    fiducial : bool
+        Include the fiducial ASDs, which ``sage prepare`` copies; training
+        reads the copy.
 
     Raises
     ------
@@ -244,7 +250,7 @@ def check_data(run_dir: Path, settings: dict, data_dir: Path) -> None:
     ValueError
         If an observing run's strain is at another sample rate than the run.
     """
-    files = data_files(settings, data_dir, fiducial=not training_started(run_dir))
+    files = data_files(settings, data_dir, fiducial=fiducial)
     missing = [path for path in files if not path.exists()]
     if missing:
         raise MissingData(f"{len(missing)} of the {len(files)} data files this run reads are missing:\n"
@@ -256,8 +262,71 @@ def check_data(run_dir: Path, settings: dict, data_dir: Path) -> None:
             raise ValueError(f"{run} strain is at {recorded} Hz; data.sample_rate_in_hz is {sample_rate}")
 
 
+def prepare_run(run_dir: Path) -> dict:
+    """
+    Check the run and write its record under ``resolved/``.
+
+    Writes the resolved settings, the prior, a copy of the fiducial ASDs
+    and the derived values, built on the CPU as training builds them, and
+    removes ``flags/checked``.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory holding ``run.yaml``.
+
+    Returns
+    -------
+    dict
+        The resolved settings.
+
+    Raises
+    ------
+    ValueError
+        On invalid settings, or if training has started.
+    MissingData
+        If a file the run reads is missing from the data directory.
+    StateMismatch
+        If a clone's settings or multirate bins differ from its start checkpoint.
+    """
+    run_dir = Path(run_dir)
+    settings, prior = check_run(run_dir)
+    if training_started(run_dir):
+        raise ValueError(f"{run_dir}: training has started, so its record in resolved/ is fixed")
+    data_dir = read_data_dir()
+    check_data(run_dir, settings, data_dir, fiducial=True)
+    resolved = resolve_settings(settings)
+    start, full_state = clone_start(run_dir) or (None, False)
+    if start is not None:
+        check_start(resolved, start, full_state)
+
+    prepare_run_dir(run_dir, resolved, prior, resolve_settings)
+    flag(run_dir, CHECKED_FLAG).unlink(missing_ok=True)
+    detectors = settings["data"]["detectors"]
+    fiducial = record_fiducial(run_dir, fiducial_dir(data_dir, settings["noise"]["fiducial"]), detectors)
+    window, detectors, dtype = build_data(settings["data"])
+    asds = read_fiducial_asds(fiducial, detectors, window, "cpu")
+    train = settings["train"]
+    signal = build_signal(
+        settings["signal"], prior, window, detectors, asds,
+        round(train["batch_size"] * train["signal_fraction"]), train["seed"], 0, "cpu", dtype,
+    )
+    scaling = recorded_scaling(run_dir, start)
+    if scaling is not None:
+        use_scaling(signal, list(settings["signal"]["targets"]), scaling)
+    processor = build_preprocess(
+        settings["preprocess"], asds, window, signal.param_sampler.bounds,
+        settings["signal"]["low_frequency_cutoff_in_hz"], ProcessingState(Grid.FD_UNIFORM), "cpu", dtype,
+    )
+    derived = derived_values(settings, window, processor, signal)
+    if start is not None:
+        check_built(derived, start, None, False)
+    record_derived(run_dir, derived)
+    return resolved
+
+
 def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiducial: Path, start_epoch: int,
-              scaling: dict | None):
+              scaling: dict | None, small: bool = False):
     """
     Build every component of a run; write nothing.
 
@@ -276,6 +345,8 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     scaling : dict or None
         Target scaling to train against (``recorded_scaling``); None keeps
         the training sampler's estimate.
+    small : bool
+        Built for ``sage check``: a small recolour bank.
 
     Returns
     -------
@@ -310,7 +381,7 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
         use_scaling(signal, targets, scaling)
     noise = build_noise(
         settings["noise"], data_dir, window, detectors, train["batch_size"], seed, start_epoch,
-        mining["replay"]["start_jitter_in_s"], mining["replay"]["focal_gamma"], device, dtype,
+        mining["replay"]["start_jitter_in_s"], mining["replay"]["focal_gamma"], device, dtype, small,
     )
     processor = build_preprocess(
         settings["preprocess"], asds, window, signal.param_sampler.bounds,
@@ -334,7 +405,7 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     )
 
 
-def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run) -> tuple:
+def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run, small: bool = False) -> tuple:
     """
     The training or validation signal, noise and placement streams, rebuilt from their seed at epoch 0.
 
@@ -352,6 +423,8 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run) -
         The machine's data directory.
     run : SimpleNamespace
         Window, detectors, ASDs, signal batch size, device and dtype (``build_run``, or the same fields).
+    small : bool
+        Built for ``sage check``: a small recolour bank.
 
     Returns
     -------
@@ -369,7 +442,7 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run) -
     )
     noise = build_noise_stream(
         settings["noise"], role, data_dir, run.window, run.detectors, train["batch_size"], seed, 0,
-        replay["start_jitter_in_s"], replay["focal_gamma"], run.device, run.dtype,
+        replay["start_jitter_in_s"], replay["focal_gamma"], run.device, run.dtype, small,
     )
     non_astrophysical = build_non_astrophysical(
         {**settings["signal"], "snr": snr}, prior, run.window, run.detectors, run.asds,
@@ -445,7 +518,7 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     check_data(run_dir, settings, data_dir)
     start, full_state = clone_start(run_dir) or (None, False)
     changes = None if start is None else check_start(resolve_settings(settings), start, full_state)
-    prepare_run_dir(run_dir, resolve_settings(settings), prior, resolve_settings)
+    check_prepared(run_dir, resolve_settings(settings), prior, resolve_settings)
     if next_epoch(run_dir) == train["epochs"] and (run_dir / "results" / "final_check.json").exists():
         return
 
@@ -455,14 +528,12 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         logger.info("Starting from the cloned epoch %d (%s); settings changed: %s", start["epoch"],
                     "full state" if full_state else "weights only", "; ".join(changes) or "none")
     record_versions(run_dir, start_epoch, train["device"])
-    fiducial = record_fiducial(
-        run_dir, fiducial_dir(data_dir, settings["noise"]["fiducial"]), settings["data"]["detectors"]
-    )
+    fiducial = run_dir / "resolved" / "fiducial"
     run = build_run(run_dir, settings, prior, data_dir, fiducial, start_epoch, recorded_scaling(run_dir, start))
     derived = derived_values(settings, run.window, run.processor, run.signal)
     if start is not None:
         check_built(derived, start, run.scaler, full_state)
-    record_derived(run_dir, derived)
+    check_derived(run_dir, derived)
     if start is not None:
         # The EMA built below starts from these weights; full state then restores the rest as a resume.
         run.network.load_state_dict(start["model"])
@@ -549,9 +620,52 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         )
 
 
-def check_training(run_dir: Path, cpu: bool = False) -> float:
+# What sage check does, in order
+CHECK_STEPS = (
+    "settings, prior and the record from sage prepare",
+    "data files",
+    "build the samplers, preprocessing and network",
+    "derived values against resolved/derived.yaml",
+    "one training step",
+    "build the validation streams",
+)
+
+# Read workers and prefetched batches of a check
+CHECK_READ_WORKERS, CHECK_PREFETCH_BATCHES = 2, 1
+
+
+def check_settings(settings: dict, cpu: bool) -> dict:
     """
-    Run every start-up check of ``train_run``, then one real training step; write nothing.
+    The settings of a check: the smallest batch with whole signals, few
+    read workers; on the CPU when ``cpu``. Compilation is as ``train.compile``.
+
+    Parameters
+    ----------
+    settings : dict
+        From ``check_run``.
+    cpu : bool
+        Check on the CPU instead of ``train.device``.
+
+    Returns
+    -------
+    dict
+        A copy with ``train`` and ``noise`` changed.
+    """
+    batch_size = exact(settings["train"]["signal_fraction"]).denominator
+    train = {**settings["train"], "batch_size": batch_size}
+    if cpu:
+        train["device"] = "cpu"
+    noise = {
+        **settings["noise"],
+        "read_workers": min(settings["noise"]["read_workers"], CHECK_READ_WORKERS),
+        "prefetch_batches": min(settings["noise"]["prefetch_batches"], CHECK_PREFETCH_BATCHES),
+    }
+    return {**settings, "train": train, "noise": noise}
+
+
+def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
+    """
+    Run every start-up check of ``train_run`` and one real training step; write only ``flags/checked``.
 
     A started run is checked as its next segment would be (record, derived
     values) and the step starts from its latest checkpoint. The step
@@ -562,7 +676,10 @@ def check_training(run_dir: Path, cpu: bool = False) -> float:
     run_dir : Path
         Run directory holding ``run.yaml``.
     cpu : bool
-        Take the step on the CPU and uncompiled, instead of ``train.device``.
+        Check on the CPU instead of ``train.device``. Either way the check
+        is small (``check_settings``, a small recolour bank).
+    progress : callable or None
+        Called with the index into ``CHECK_STEPS`` as each step starts.
 
     Returns
     -------
@@ -573,27 +690,30 @@ def check_training(run_dir: Path, cpu: bool = False) -> float:
     ------
     As ``train_run``.
     """
+    report = progress or (lambda index: None)
     run_dir = Path(run_dir)
+    report(0)
     settings, prior = check_run(run_dir)
     started = training_started(run_dir)
-    if started:
-        check_record(run_dir, resolve_settings(settings), prior, resolve_settings)
+    check_prepared(run_dir, resolve_settings(settings), prior, resolve_settings)
     start, full_state = clone_start(run_dir) or (None, False)
     if start is not None:
         check_start(resolve_settings(settings), start, full_state)
-    if cpu:
-        settings = {**settings, "train": {**settings["train"], "device": "cpu", "compile": False}}
+    settings = check_settings(settings, cpu)
     check_device(settings["train"])
+    report(1)
     data_dir = read_data_dir()
     check_data(run_dir, settings, data_dir)
-    source = fiducial_dir(data_dir, settings["noise"]["fiducial"])
-    fiducial = record_fiducial(run_dir, source, settings["data"]["detectors"]) if started else source
+    fiducial = run_dir / "resolved" / "fiducial"
     start_epoch = start["epoch"] + 1 if full_state else next_epoch(run_dir)
-    run = build_run(run_dir, settings, prior, data_dir, fiducial, start_epoch, recorded_scaling(run_dir, start))
+    report(2)
+    run = build_run(
+        run_dir, settings, prior, data_dir, fiducial, start_epoch, recorded_scaling(run_dir, start), small=True
+    )
     try:
+        report(3)
         derived = derived_values(settings, run.window, run.processor, run.signal)
-        if started:
-            check_derived(run_dir, derived)
+        check_derived(run_dir, derived)
         if start is not None:
             check_built(derived, start, run.scaler, full_state)
             run.network.load_state_dict(start["model"])
@@ -607,12 +727,16 @@ def check_training(run_dir: Path, cpu: bool = False) -> float:
             ).load_latest(run.device)
         elif full_state:
             restore(start, run.network, run.optimiser, run.schedule, run.scaler, ema_model)
+        report(4)
         trainer = trainer_for(run, settings, 1, callbacks)
         epoch = min(start_epoch, settings["train"]["epochs"] - 1)  # a finished run steps at its last epoch
         trainer(nepoch=epoch)
-        fresh_streams("validation", settings, prior, data_dir, run)[1].shutdown()  # what every validation pass builds
+        report(5)
+        fresh_streams("validation", settings, prior, data_dir, run, small=True)[1].shutdown()  # every pass builds it
     finally:
         run.noise.shutdown()
+    flag(run_dir, CHECKED_FLAG).parent.mkdir(exist_ok=True)
+    flag(run_dir, CHECKED_FLAG).touch()
     return float(trainer.loss_components[epoch][0])
 
 

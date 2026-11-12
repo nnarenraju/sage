@@ -27,6 +27,44 @@ class _StringLoader(yaml.SafeLoader):
 _StringLoader.yaml_implicit_resolvers = {}
 
 
+class _Dumper(yaml.SafeDumper):
+    """Block mappings, list items indented under their key."""
+
+    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
+        """Indent block sequences, which PyYAML leaves flush by default."""
+        return super().increase_indent(flow, False)
+
+
+def _represent_list(dumper: yaml.SafeDumper, values: list) -> yaml.Node:
+    """A list, inline when every item is a scalar."""
+    inline = all(not isinstance(item, (dict, list)) for item in values)
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", values, flow_style=inline)
+
+
+_Dumper.add_representer(list, _represent_list)
+
+
+def yaml_text(values: dict) -> str:
+    """
+    A mapping as YAML text: indented mappings, lists of scalars inline,
+    a blank line between top-level keys.
+
+    Parameters
+    ----------
+    values : dict
+        Mapping to write; key order is kept.
+
+    Returns
+    -------
+    str
+    """
+    text = yaml.dump(values, Dumper=_Dumper, sort_keys=False, default_flow_style=False)
+    return "".join(
+        "\n" + line if index and line[:1] not in (" ", "-", "\n") else line
+        for index, line in enumerate(text.splitlines(keepends=True))
+    )
+
+
 def read_yaml(path: Path) -> dict:
     """
     Read a YAML file whose top level is a mapping.
@@ -320,7 +358,8 @@ def check(values: Any, schema: dict, where: str) -> dict:
         ``(type, value)`` is optional with that default, and a group whose
         settings all have defaults may be left out; a ``"..."`` key
         keeps any further keys unconverted; a schema whose only key is
-        ``name``, mapping names to schemas, picks one by name.
+        ``name``, mapping names to schemas, picks one by name. Where the
+        schema has a ``name``, a plain name stands for ``{name: <name>}``.
     where : str
         Dotted location, for error messages; empty for the whole file.
 
@@ -335,6 +374,8 @@ def check(values: Any, schema: dict, where: str) -> dict:
         On a non-mapping, an unknown name or setting, or a missing setting.
     """
     label = where or "run file"
+    if "name" in schema and isinstance(values, str):
+        values = {"name": values}
     if not isinstance(values, dict):
         raise ValueError(f"{label}: expected a mapping, got {values!r}")
 

@@ -44,6 +44,3 @@ def test_chain(tmp_path, monkeypatch):
         f"--parsable {logs} --dependency=afterany:101 job.sh",
         f"--parsable {logs} --dependency=afterany:102 job.sh",
     ]
-    assert chain("job.sh", run, 1, environment={"SAGE_CHECK_ONLY": "1"}) == ["104"]
-    last = (bin_dir / "calls").read_text().splitlines()[-1]
-    assert last == f"--parsable {logs} --export=ALL,SAGE_CHECK_ONLY=1 job.sh"

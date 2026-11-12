@@ -37,12 +37,17 @@ from sage.core.geometry import Window
 from sage.core.interpolation import torch_linear_interp
 
 
-def load_segment_asds(data_dir, detectors):
+# Recolour bank rows a ``sage check`` build reads per detector
+CHECK_BANK_ROWS = 128
+
+
+def load_segment_asds(data_dir, detectors, mapped=False):
     """
     Read a release's per-segment ASD banks from ``<data_dir>/segment_psds``.
 
     Returns one ``(N_seg, F)`` float32 array per detector, in sidecar order, and
-    ``F``. Every detector must share one frequency grid.
+    ``F``. Every detector must share one frequency grid. ``mapped`` memory-maps
+    the files instead of reading them into RAM.
     """
     banks = []
     n_freq = None
@@ -70,6 +75,9 @@ def load_segment_asds(data_dir, detectors):
                 f"{expected} ({n_seg} x {det_n_freq} float32) — non-uniform psd_len?"
             )
 
+        if mapped:
+            banks.append(np.memmap(bin_path, dtype=np.float32, mode="r", shape=(n_seg, det_n_freq)))
+            continue
         # Read straight into a pre-allocated buffer (no intermediate copy).
         bank = np.empty((n_seg, det_n_freq), dtype=np.float32)
         with open(bin_path, "rb") as fh:
@@ -162,8 +170,11 @@ class RecolourPostprocess(torch.nn.Module):
         detectors: list,
         window: Window,
         device,
+        small: bool = False,
     ):
         super().__init__()
+        # Built for sage check: CHECK_BANK_ROWS recolour rows, segment ASDs memory-mapped
+        self.small = small
 
         # The training sampler's runs, in its order, so the per-run segment
         # banks line up with the run ids the sampler emits.
@@ -254,7 +265,7 @@ class RecolourPostprocess(torch.nn.Module):
 
         for run in self._runs:
             # Segment ASDs are from THIS run's training noise.
-            det_banks, n_freq = load_segment_asds(run["data_dir"], self.detectors)
+            det_banks, n_freq = load_segment_asds(run["data_dir"], self.detectors, self.small)
             # Pooled runs are gathered into one buffer allocated at the first
             # run's grid (see _gather_segment), so a run whose segment ASDs
             # live on a different frequency grid would silently broadcast-fail.
@@ -304,6 +315,9 @@ class RecolourPostprocess(torch.nn.Module):
                     f"{expected} ({n_asd} x {n_freq} float32)"
                 )
 
+            if self.small:
+                n_asd = min(n_asd, CHECK_BANK_ROWS)
+                expected = n_asd * n_freq * 4
             bank = np.empty((n_asd, n_freq), dtype=np.float32)
             with open(bin_path, "rb") as fh:
                 nread = fh.readinto(memoryview(bank).cast("B"))
@@ -404,7 +418,7 @@ class RecolourPostprocess(torch.nn.Module):
         run without recolouring. ``segment_ids`` index that run's segment sidecar.
         """
         if getattr(self, "_target_segment_banks", None) is None:
-            banks, n_freq = load_segment_asds(self.target_asd_dir, self.detectors)
+            banks, n_freq = load_segment_asds(self.target_asd_dir, self.detectors, self.small)
             self._target_segment_banks = banks
             self._target_seg_src_freqs = self._bank_src_freqs(n_freq)
         asd = self._gather(

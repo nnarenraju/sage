@@ -1,4 +1,4 @@
-"""``sage init``, ``sage copy-prior``, ``sage show`` and ``sage list``: making and reading a run directory."""
+"""``sage init``, ``sage copy-prior`` and ``sage list``: making and reading a run directory."""
 
 import argparse
 import inspect
@@ -7,11 +7,10 @@ from pathlib import Path
 
 import yaml
 
-from sage.cli.journey import next_command
 from sage.cli.registry import CommandError, closest, command
 from sage.config import machine
 from sage.config import loader
-from sage.config.loader import load_run, suggestion
+from sage.config.loader import suggestion
 
 
 def parameters(cls, provided: set, overrides: dict | None = None) -> str:
@@ -115,13 +114,14 @@ def init_run(arguments: list) -> None:
                            f"sage init {directory} --preset {match}" if match else "sage list presets")
     run_file = directory / "run.yaml"
     if run_file.exists():
-        raise CommandError(f"{run_file} exists", f"sage show {directory}")
+        raise CommandError(f"{run_file} exists", f"sage prepare {directory}")
 
     directory.mkdir(parents=True, exist_ok=True)
-    run_file.write_text(f"# Settings not listed here come from the preset; `sage show` prints them all.\n"
+    run_file.write_text(f"# Settings not listed here come from the preset; sage prepare writes them all to "
+                        f"resolved/run.yaml.\n"
                         f"extends: {options.preset}\n")
     print(f"Made {directory} (run.yaml extends {options.preset})")
-    print(f"Next: cd {directory} && sage show")
+    print(f"Next: cd {directory} && sage prepare")
 
 
 @command("copy-prior", "Copy a prior preset into the run directory to edit it")
@@ -143,31 +143,7 @@ def copy_prior(arguments: list) -> None:
     shutil.copyfile(loader.PRESETS / "priors" / f"{options.preset}.yaml", target)
     print(f"Wrote {target}, a copy of the {options.preset} prior preset. To use it, set in run.yaml:")
     print("  signal:\n    prior: prior.yaml")
-    print("Next: sage show")
-
-
-@command("show", "Print the run's settings with every default filled in")
-def show_run(arguments: list) -> None:
-    """Print ``run.yaml`` resolved: the preset merged and every default filled in; the prior is checked too."""
-    from sage.config.prior import load_prior
-    from sage.factory.build import resolve_settings
-
-    parser = argparse.ArgumentParser(prog="sage show", description="Print the run's settings with every default filled in.")
-    parser.add_argument("directory", nargs="?", default=".", help="run directory (default: here)")
-    options = parser.parse_args(arguments)
-
-    directory = Path(options.directory)
-    run_file = directory / "run.yaml"
-    if not run_file.exists():
-        raise CommandError(f"no run.yaml in {directory}", "sage init <directory> --preset <name>")
-    try:
-        settings = resolve_settings(load_run(run_file))
-        prior = load_prior(settings["signal"]["prior"], directory)
-    except (ValueError, FileNotFoundError, yaml.YAMLError) as error:
-        raise CommandError(str(error), f"edit {run_file} as above, then: sage show") from None
-    print(yaml.safe_dump(settings, sort_keys=False).rstrip())
-    print(f"# prior {settings['signal']['prior']}: {len(prior['priors'])} distributions")
-    print(f"Next: {next_command(directory)}")
+    print("Next: sage prepare")
 
 
 @command("clone", "Start a new run directory from a stored checkpoint of another run")

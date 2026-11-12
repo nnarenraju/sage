@@ -13,6 +13,8 @@ def next_command(directory: Path = Path(".")) -> str:
         return "sage machine-setup"
     if not (Path(directory) / "run.yaml").exists():
         return "sage init <directory> --preset <name>"
+    if not (Path(directory) / "resolved" / "derived.yaml").exists():
+        return "sage prepare"
     if not (Path(directory) / "results" / "final_check.json").exists():
         return "sage train"
     return "sage plot"

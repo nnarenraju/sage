@@ -16,11 +16,9 @@ import yaml
 
 from sage.cli.registry import CommandError, command
 from sage.config import machine
-from sage.config.run_dir import SettingsChanged, StateMismatch
-from sage.utils.schedulers import schedulers
+from sage.config.run_dir import NotPrepared, SettingsChanged, StateMismatch, training_started
 
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-CHECK_ONLY = "SAGE_CHECK_ONLY"  # 1 in a job: sage train runs the checks and one training step, then exits
 TIMEZONES = {  # sage status --timezone: name -> IANA time zone
     "utc": "UTC",
     "uk": "Europe/London",
@@ -85,8 +83,8 @@ def checked_settings(name: str, directory: str) -> dict:
     return settings
 
 
-def device_available(settings: dict, fix: str = "sage chain <your job script> --jobs 1") -> None:
-    """Refuse a device or precision this machine lacks; the fix is by default a job on one that has it."""
+def device_available(settings: dict, fix: str = "run it on a machine that has it, e.g. from your job script") -> None:
+    """Refuse a device or precision this machine lacks."""
     from sage.factory.build import check_device
 
     try:
@@ -103,78 +101,84 @@ def explained(name: str, directory: str, function, *args):
         return function(*args)
     except AlreadyRunning as error:
         raise CommandError(str(error), on("status", directory)) from None
+    except NotPrepared as error:
+        raise CommandError(str(error), on("prepare", directory)) from None
     except SettingsChanged as error:
         raise CommandError(str(error), f"sage clone {directory} <new directory> --full-state") from None
     except StateMismatch as error:
         raise CommandError(str(error), f"edit {Path(directory) / 'run.yaml'} back as above, then: {on(name, directory)}") from None
 
 
-def checked_step(name: str, directory: str, in_job: bool) -> None:
+def checked_step(name: str, directory: str) -> None:
     """
-    Run every start-up check, then one real training step, and print the loss; write nothing.
+    Run every start-up check and one real training step, and print the loss; write only ``flags/checked``.
 
-    Outside a job a missing GPU moves the step to the CPU; in a job it is an error.
+    The check is small; without a visible GPU it runs on the CPU.
     """
     import torch
 
     from sage.core.logger import setup_logging
-    from sage.factory.train_run import check_training
+    from sage.factory.build import compile_arguments
+    from sage.factory.train_run import CHECK_STEPS, check_settings, check_training
 
     settings = checked_settings(name, directory)
-    cpu = not in_job and torch.device(settings["train"]["device"]).type == "cuda" and not torch.cuda.is_available()
-    if cpu:
-        print("No GPU is visible here: the training step runs on the CPU, uncompiled")
-    elif in_job:
-        device_available(settings, "request it in your job script, then: sage check --in-job <your job script>")
-    else:
+    cpu = torch.device(settings["train"]["device"]).type == "cuda" and not torch.cuda.is_available()
+    if not cpu:
         device_available(settings)
+    small = check_settings(settings, cpu)
+    where = "the CPU (no GPU is visible)" if cpu else small["train"]["device"]
+    arguments = compile_arguments(small["train"]["compile"])
+    compiled = "uncompiled" if arguments is None else f"compiled ({arguments['mode']}, minutes on the first step)"
+    print(f"Checking on {where}, {compiled}, with a batch of {small['train']['batch_size']} and "
+          f"{small['noise']['read_workers']} read workers")
+    print("Steps:\n" + "\n".join(f"  {index}. {step}" for index, step in enumerate(CHECK_STEPS, 1)), flush=True)
+    started = []
+
+    def progress(index: int) -> None:
+        """Print the time the previous step took, then the step starting."""
+        if started:
+            print(f"   done in {time.monotonic() - started[-1]:.1f} s", flush=True)
+        print(f"[{index + 1}/{len(CHECK_STEPS)}] {CHECK_STEPS[index]}", flush=True)
+        started.append(time.monotonic())
+
     setup_logging(None)
-    loss = explained(name, directory, check_training, Path(directory), cpu)
+    loss = explained(name, directory, check_training, Path(directory), cpu, progress)
+    print(f"   done in {time.monotonic() - started[-1]:.1f} s")
     device = "the CPU" if cpu else settings["train"]["device"]
-    print(f"All checks passed; one training step on {device}: loss {loss:.5f}")
+    print(f"All checks passed; one training step on {device}: loss {loss:.5f}. Wrote flags/checked")
 
 
-def submit_check(directory: str, script: str) -> None:
-    """Run the checks that need no GPU here, then submit ``script`` once with ``SAGE_CHECK_ONLY=1``."""
-    from sage.utils.slurm.chain import chain
-    from sage.utils.slurm.query import job_output
+@command("prepare", "Check the run and write every setting it uses to resolved/", journey=4)
+def prepare(arguments: list) -> None:
+    """Write ``resolved/``: settings with every default, prior, fiducial copy and derived values; rerun after edits."""
+    from sage.factory.train_run import prepare_run
 
-    script = Path(script)
-    if not script.is_file():
-        raise CommandError(f"no job script {script}", f"{on('check', directory)} --in-job <your job script>")
-    checked_settings("check", directory)
-    found = schedulers()
-    if found != ["slurm"]:
-        raise CommandError("no scheduler to submit to (no sbatch on PATH)" if not found
-                           else f"submitting on {', '.join(found)} is not available yet", on("check", directory))
+    options = parse("prepare", "Check the run and write every setting it uses to resolved/", arguments)
+    directory = Path(options.directory)
+    checked_settings("prepare", options.directory)
+    if training_started(directory):
+        raise CommandError(f"{directory}: training has started, so its record in resolved/ is fixed",
+                           f"sage clone {options.directory} <new directory> --full-state")
     try:
-        job = chain(script, directory, 1, environment={CHECK_ONLY: "1"})[0]
-    except RuntimeError as error:
-        raise CommandError(str(error), f"{on('check', directory)} --in-job {script}") from None
-    output = job_output(job)
-    print(f"Submitted check job {job}: {script} runs with {CHECK_ONLY}=1, so its sage train runs every check and one "
-          "training step, writes nothing and exits")
-    if output:
-        print(f"Its output: {output}")
-    print(f"Next, once it has passed: sage chain {script} --jobs <number of jobs>")
+        prepare_run(directory)
+    except machine.MissingData as error:
+        raise CommandError(str(error), on("download", options.directory)) from None
+    except StateMismatch as error:
+        raise CommandError(str(error), f"edit {directory / 'run.yaml'} back as above, then: "
+                           f"{on('prepare', options.directory)}") from None
+    print(f"Wrote {directory / 'resolved'}: run.yaml, prior.yaml, derived.yaml and fiducial/")
+    print(f"Next: {on('check', options.directory)}")
 
 
-@command("check", "Run every start-up check, then one real training step; writes nothing", journey=4)
+@command("check", "Run every start-up check and one real training step; marks the run checked", journey=5)
 def check(arguments: list) -> None:
-    """Check the run as ``sage train`` would start it and take one training step, here or in a job."""
-    options = parse(
-        "check", "Run every start-up check, then one real training step; writes nothing", arguments,
-        (["--in-job"], {"metavar": "SCRIPT", "help": "submit your job script once in check-only mode, so the "
-                        "checks and the step run on a compute node"}),
-    )
-    if options.in_job is not None:
-        submit_check(options.directory, options.in_job)
-        return
-    checked_step("check", options.directory, in_job=False)
+    """Check the run as ``sage train`` would start it and take one training step: on a GPU if one is visible."""
+    options = parse("check", "Run every start-up check and one real training step; marks the run checked", arguments)
+    checked_step("check", options.directory)
     print(f"Next: {on('train', options.directory)}")
 
 
-@command("train", "Train the run, resuming from its latest checkpoint", journey=5)
+@command("train", "Train the run, resuming from its latest checkpoint", journey=6)
 def train(arguments: list) -> None:
     """Train the run to its last epoch, then run the final check; ``--stop-after`` ends a job segment early."""
     from sage.factory.train_run import STOP_FLAG, flag, train_run
@@ -184,15 +188,6 @@ def train(arguments: list) -> None:
         "train", "Train the run, resuming from its latest checkpoint", arguments,
         (["--stop-after"], {"help": "save and exit before an epoch that would not end in time, e.g. 47h"}),
     )
-    check_only = os.environ.get(CHECK_ONLY)
-    if check_only is not None:
-        if check_only != "1":
-            raise CommandError(f"{CHECK_ONLY}={check_only}: only 1 is accepted (check only)",
-                               f"unset {CHECK_ONLY} && {on('train', options.directory)}")
-        print(f"{CHECK_ONLY}=1: checks and one training step only; nothing is trained or written", flush=True)
-        checked_step("train", options.directory, in_job=True)
-        print("Next: sage chain <your job script> --jobs <number of jobs>")
-        return
     try:
         stop_after = None if options.stop_after is None else seconds(options.stop_after)
     except ValueError as error:

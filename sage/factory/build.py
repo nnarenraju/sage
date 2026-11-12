@@ -409,7 +409,7 @@ def selected_records(run: dict, detectors: list) -> dict:
 
 def build_recolour(
     recolour: dict, runs: list, data_dir: Path, window: Window, detectors: list,
-    seed: int, device,
+    seed: int, device, small: bool = False,
 ) -> RecolourPostprocess:
     """
     Build the recolour step for noise drawn from ``runs``.
@@ -430,6 +430,8 @@ def build_recolour(
         Seed of the recolour draws.
     device : str or torch.device
         Device of the output.
+    small : bool
+        Built for ``sage check`` (see ``RecolourPostprocess``).
 
     Returns
     -------
@@ -445,6 +447,7 @@ def build_recolour(
         detectors=detectors,
         window=window,
         device=device,
+        small=small,
     )
 
 
@@ -538,6 +541,7 @@ def build_noise_stream(
     hard_focal_gamma: float,
     device,
     dtype: torch.dtype,
+    small: bool = False,
 ):
     """
     Build the training or validation noise sampler alone.
@@ -564,6 +568,8 @@ def build_noise_stream(
         Device of the batches.
     dtype : torch.dtype
         Dtype of the noise targets.
+    small : bool
+        Built for ``sage check``: a small recolour bank.
 
     Returns
     -------
@@ -581,7 +587,7 @@ def build_noise_stream(
     postprocess = None
     if recolour:
         postprocess = build_recolour(
-            noise["recolour"], runs, data_dir, window, detectors, stream_seed(seed, "recolour", epoch), device,
+            noise["recolour"], runs, data_dir, window, detectors, stream_seed(seed, "recolour", epoch), device, small,
         )
     return MemmapNoiseSampler(
         runs, detectors, window, batch_size, noise_bad_segments([path for run in runs for path in run["bins"]]),
@@ -602,6 +608,7 @@ def build_noise(
     hard_focal_gamma: float,
     device,
     dtype: torch.dtype,
+    small: bool = False,
 ):
     """
     Check the training and validation noise sources, then build the training noise sampler.
@@ -610,7 +617,7 @@ def build_noise(
 
     Parameters
     ----------
-    noise, data_dir, window, detectors, batch_size, hard_start_jitter_s, hard_focal_gamma, device, dtype
+    noise, data_dir, window, detectors, batch_size, hard_start_jitter_s, hard_focal_gamma, device, dtype, small
         As ``build_noise_stream``.
     seed, epoch : int
         Seed of the training streams and the epoch the segment starts at.
@@ -641,7 +648,7 @@ def build_noise(
                     )
     return build_noise_stream(
         noise, "training", data_dir, window, detectors, batch_size, seed, epoch,
-        hard_start_jitter_s, hard_focal_gamma, device, dtype,
+        hard_start_jitter_s, hard_focal_gamma, device, dtype, small,
     )
 
 

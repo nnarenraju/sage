@@ -92,7 +92,7 @@ def benchmark(arguments: list) -> None:
     print(f"Next: {on('status', options.directory)}")
 
 
-@command("plot", "Draw the run's validation figures into results/plots", journey=6)
+@command("plot", "Draw the run's validation figures into results/plots", journey=7)
 def plot(arguments: list) -> None:
     """Draw the figure suite for the best validated epoch, or another validation group."""
     import matplotlib

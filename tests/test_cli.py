@@ -8,6 +8,8 @@ from sage.cli import main
 from sage.cli.registry import COMMANDS
 from sage.cli.training import epoch_seconds
 from sage.config import loader, machine
+from sage.config.prior import load_prior
+from sage.factory.build import resolve_settings
 
 RUN = """
 data: {detectors: [H1, L1], sample_rate_in_hz: 2048, sample_length_in_s: 12, padding_length_in_s: 2, dtype: float32}
@@ -66,19 +68,19 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     assert main(["copy-prior", "bbh_narrow", str(run_dir)]) == 0
     assert (run_dir / "prior.yaml").read_bytes() == (presets / "priors" / "bbh_narrow.yaml").read_bytes()
     capsys.readouterr()
-    assert main(["show", str(run_dir)]) == 0
-    out = capsys.readouterr().out
-    assert "warmup_steps: 20000" in out and "# prior bbh_narrow: " in out  # defaults filled in
+    assert main(["prepare", str(run_dir)]) == 1  # the data directory is empty
+    assert capsys.readouterr().err.endswith(f"fix: sage download {run_dir}\n")
     assert main(["stop", str(run_dir)]) == 0 and main(["train", str(run_dir)]) == 1
     assert capsys.readouterr().err.endswith(f"fix: rm {run_dir / 'flags' / 'stop'} && sage train {run_dir}\n")
     assert main(["check", str(run_dir)]) == 1  # the data directory is empty
     assert capsys.readouterr().err.endswith(f"fix: sage download {run_dir}\n")
 
 
-def test_run_presets(capsys, tmp_path):
+def test_run_presets(tmp_path):
     for name in loader.preset_names("runs"):
         assert main(["init", str(tmp_path / name), "--preset", name]) == 0
-        assert main(["show", str(tmp_path / name)]) == 0, capsys.readouterr().err
+        settings = resolve_settings(loader.load_run(tmp_path / name / "run.yaml"))
+        load_prior(settings["signal"]["prior"], tmp_path / name)
 
 
 def test_epoch_seconds(tmp_path):
