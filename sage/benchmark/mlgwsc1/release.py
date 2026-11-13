@@ -25,7 +25,7 @@ ZENODO = "https://zenodo.org/api/records/7107410/files"  # MLGWSC-1 release v1.4
 CODE = ("gwastro/ml-mock-data-challenge-1-v1.4.zip", "ffd96432b8f7202b69616e6770723b77")
 RESULTS = ("results.zip", "d27379a1d8136e9dee1ff9ab310221d3")
 CODE_DIR = "gwastro-ml-mock-data-challenge-1-6d5e62f"  # the code archive's folder
-# Dataset 4 challenge set: arXiv:2209.11146, sec. II.2; one month.
+# Dataset 4 challenge set; one month.
 SEED, START_OFFSET, DURATION = 2514409456, 0, 2592000
 MARGINS = (30, 30)  # evaluate.py: no injections in a segment's first and last 30 s
 GRAVITYSPY = "https://zenodo.org/api/records/5649212/files"  # Gravity Spy v1.0.0
@@ -68,7 +68,24 @@ def fetch(url: str, path: Path, md5: str) -> None:
 
 
 def fetch_code(directory: Path) -> Path:
-    """MLGWSC-1's code (generate_data.py, evaluate.py, PSDs)."""
+    """
+    MLGWSC-1's code (``generate_data.py``, ``evaluate.py``, PSDs).
+
+    Parameters
+    ----------
+    directory : Path
+        The MLGWSC-1 folder of the data directory.
+
+    Returns
+    -------
+    Path
+        The code's folder.
+
+    Raises
+    ------
+    ValueError
+        If the download does not match its published MD5.
+    """
     code = directory / CODE_DIR
     if code.exists():
         return code
@@ -84,7 +101,24 @@ def fetch_code(directory: Path) -> Path:
 
 
 def fetch_results(directory: Path) -> Path:
-    """Every team's dataset-4 results, ``<team>/ds4``; their folder."""
+    """
+    Every team's dataset-4 results, ``<team>/ds4``.
+
+    Parameters
+    ----------
+    directory : Path
+        The MLGWSC-1 folder of the data directory.
+
+    Returns
+    -------
+    Path
+        The results folder.
+
+    Raises
+    ------
+    ValueError
+        If the download does not match its published MD5.
+    """
     results = directory / "results"
     if results.exists():
         return results
@@ -102,7 +136,7 @@ def fetch_results(directory: Path) -> Path:
 
 def fetch_gravityspy(directory: Path, name: str) -> Path:
     """
-    One Gravity Spy glitch file, ``gravityspy/<name>``; its path.
+    One Gravity Spy glitch file, ``gravityspy/<name>``.
 
     Parameters
     ----------
@@ -114,6 +148,12 @@ def fetch_gravityspy(directory: Path, name: str) -> Path:
     Returns
     -------
     Path
+        The file.
+
+    Raises
+    ------
+    ValueError
+        If the download does not match its published MD5.
     """
     folder = directory / "gravityspy"
     folder.mkdir(exist_ok=True)
@@ -129,6 +169,23 @@ def make_dataset(directory: Path, code: Path) -> Path:
 
     The script runs from its own folder, where it keeps the real noise
     it downloads.
+
+    Parameters
+    ----------
+    directory : Path
+        The MLGWSC-1 folder of the data directory.
+    code : Path
+        MLGWSC-1's code (:func:`fetch_code`).
+
+    Returns
+    -------
+    Path
+        The ``ds4`` folder: injection, foreground and background files.
+
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If ``generate_data.py`` fails.
     """
     dataset = directory / "ds4"
     if dataset.exists():
@@ -157,6 +214,20 @@ def make_snrs(dataset: Path, code: Path, workers: int) -> Path:
 
     Only injections the evaluation counts (``find_injection_times`` with
     its 30 s margins) are measured; the others are NaN.
+
+    Parameters
+    ----------
+    dataset : Path
+        The ``ds4`` folder (:func:`make_dataset`).
+    code : Path
+        MLGWSC-1's code, for its PSDs.
+    workers : int
+        Worker processes.
+
+    Returns
+    -------
+    Path
+        ``snr.hdf``.
     """
     path = dataset / "snr.hdf"
     if path.exists():

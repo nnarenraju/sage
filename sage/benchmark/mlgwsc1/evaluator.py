@@ -3,22 +3,18 @@ MLGWSC-1's evaluate.py (statistics unchanged) with additions: injection
 SNRs in the plots and found/missed comparisons with every team.
 """
 
-# Packages
 import os
 import h5py
 import itertools
 import numpy as np
 
-# Plotting
 from matplotlib import colors
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 import matplotlib.pyplot as plt
 
-# Font and plot parameters
 plt.rcParams.update({"font.size": 18})
 
-# Prettification
 from tqdm import tqdm
 
 from sage.core.constants import GM
@@ -37,7 +33,20 @@ COLORS = {  # sensitivity plots
 
 
 def reachable_thresholds(noise_stats):
-    """Ranking statistics at the FAR thresholds the background reaches."""
+    """
+    Ranking statistics at the FAR thresholds the background reaches.
+
+    Parameters
+    ----------
+    noise_stats : numpy.ndarray
+        Background ranking statistics, sorted ascending.
+
+    Returns
+    -------
+    numpy.ndarray
+        The statistic at each ``FAR_INDICES`` entry below
+        ``len(noise_stats)``, counted from the loudest.
+    """
     reached = [index for index in FAR_INDICES if index < len(noise_stats)]
     return noise_stats[::-1][reached]
 
@@ -46,29 +55,28 @@ def find_injection_times(fgfiles, injfile, padding_start=0, padding_end=0):
     """
     Determine injections which are contained in the file.
 
-    Arguments
-    ---------
+    Parameters
+    ----------
     fgfiles : list of str
         Paths to the files containing the foreground data (noise +
         injections).
     injfile : str
         Path to the file containing information on the injections in the
         foreground files.
-    padding_start : {float, 0}
+    padding_start : float
         The amount of time (in seconds) at the start of each segment
         where no injections are present.
-    padding_end : {float, 0}
+    padding_end : float
         The amount of time (in seconds) at the end of each segment
         where no injections are present.
 
     Returns
     -------
-    duration:
-        A float representing the total duration (in seconds) of all
-        foreground files.
-    bool-indices:
-        A 1D array containing bools that specify which injections are
-        contained in the provided foreground files.
+    duration : float
+        The total duration (in seconds) of all foreground files.
+    numpy.ndarray of bool
+        Which injections are contained in the provided foreground
+        files.
     """
     duration = 0
     times = []
@@ -101,21 +109,25 @@ def find_closest_index(array, value, assume_sorted=False):
     Find the index of the closest element in the array for the given
     value(s).
 
-    Arguments
-    ---------
-    array : np.array
+    Parameters
+    ----------
+    array : numpy.ndarray
         1D numpy array.
-    value : number or np.array
+    value : number or numpy.ndarray
         The value(s) of which the closest array element should be found.
-    assume_sorted : {bool, False}
+    assume_sorted : bool
         Assume that the array is sorted. May improve evaluation speed.
 
     Returns
     -------
-    indices:
-        Array of indices. The length is determined by the length of
-        value. Each index specifies the element in array that is closest
-        to the value at the same position.
+    numpy.ndarray of int
+        Index, into ``array`` sorted ascending, of the element closest
+        to each value.
+
+    Raises
+    ------
+    ValueError
+        If ``array`` is empty.
     """
     if len(array) == 0:
         raise ValueError("Cannot find closest index for empty input array.")
@@ -133,27 +145,41 @@ def find_closest_index(array, value, assume_sorted=False):
 
 
 def mchirp(mass1, mass2):
-    """Return chirp mass (M☉) from component masses mass1 and mass2."""
+    """
+    Chirp mass from the component masses.
+
+    Parameters
+    ----------
+    mass1, mass2 : float or numpy.ndarray
+        Component masses.
+
+    Returns
+    -------
+    float or numpy.ndarray
+        Chirp mass, in the units of the masses.
+    """
     return (mass1 * mass2) ** (3.0 / 5.0) / (mass1 + mass2) ** (1.0 / 5.0)
 
 
 def figure(title="", size_x=16.0, size_y=14.0):
     """
-    Create a single-panel matplotlib figure with serif font and a centred title.
+    Single-panel figure with a centred title; sets a serif font.
 
     Parameters
     ----------
-    title : str, optional
+    title : str
         Figure super-title.
-    size_x : float, optional
-        Figure width in inches (default 16.0).
-    size_y : float, optional
-        Figure height in inches (default 14.0).
+    size_x : float
+        Figure width in inches.
+    size_y : float
+        Figure height in inches.
 
     Returns
     -------
     axs : matplotlib.axes.Axes
+        The panel.
     fig : matplotlib.figure.Figure
+        The figure.
     """
     plt.rc("font", family="serif")
     plt.rc("xtick", labelsize="medium")
@@ -178,8 +204,34 @@ def _plot(
     scatter=False,
     save_file="",
 ):
+    """
+    Histogram, scatter or line of ``y`` against ``x`` on ``ax``.
 
-    # Plotting type
+    A legend is always drawn.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axis to draw on.
+    x, y : array-like or None
+        Data; a histogram uses ``y`` only.
+    xlabel, ylabel : str
+        Axis labels.
+    ls : str
+        Line style of a line.
+    label : str
+        Legend label of a histogram or line.
+    c : str or None
+        Colour of a line.
+    yscale, xscale : str
+        Axis scales.
+    histogram : bool
+        Draw a 100-bin histogram of ``y``.
+    scatter : bool
+        Draw a scatter of ``y`` against ``x``.
+    save_file : str
+        Save the current figure there and close it; empty keeps it.
+    """
     if histogram:
         ax.hist(y, bins=100, label=label, alpha=0.8)
     elif scatter:
@@ -187,7 +239,6 @@ def _plot(
     else:
         ax.plot(x, y, ls=ls, c=c, linewidth=3.0, label=label)
 
-    # Plotting params
     ax.set_xscale(xscale)
     ax.set_yscale(yscale)
     ax.grid(True, which="both")
@@ -202,13 +253,25 @@ def _plot(
 
 
 def param_vs_param(output_dir, injparams, found_injections):
-    """Plotting param vs param plots similar to MLGWSC-1 paper"""
+    """
+    Scatter plots of pairs of parameters of the found injections.
 
+    Saved under ``output_dir/PARAM_VS_PARAM``; the signal duration is
+    the leading-order chirp time ``tau_0`` from 20 Hz.
+
+    Parameters
+    ----------
+    output_dir : str
+        Directory of the evaluation.
+    injparams : dict
+        Injection parameters by name.
+    found_injections : numpy.ndarray, shape (2, N_found)
+        Row 0: injection indices; row 1: ranking statistics.
+    """
     vs_dir = os.path.join(output_dir, "PARAM_VS_PARAM")
     if not os.path.exists(vs_dir):
         os.makedirs(vs_dir, exist_ok=False)
 
-    # Plotting params
     plot_mchirp = injparams["mchirp"][found_injections[0].astype(int)]
     plot_distance = injparams["distance"][found_injections[0].astype(int)]
     plot_q = injparams["q"][found_injections[0].astype(int)]
@@ -222,7 +285,6 @@ def param_vs_param(output_dir, injparams, found_injections):
         * (plot_mchirp * GM) ** (-5.0 / 3.0)
     )
 
-    ## Other related plots
     ax, _ = figure("mchirp vs distance", 12.0, 12.0)
     spath = os.path.join(vs_dir, "mchirp_vs_distance.png")
     _plot(
@@ -323,26 +385,31 @@ def param_vs_param(output_dir, injparams, found_injections):
 
 def found_param_plots(noise_stats, output_dir, injparams, found_injections):
     """
-    Generate parameter histograms and scatter plots for found injections at each FAR threshold.
+    Histograms of every injection parameter, all injections against
+    those found at each reached FAR threshold.
 
-    Saves per-parameter injection histograms under ``output_dir/FOUND_INJECTIONS/``
-    and param-vs-param scatter plots for high-SNR bad-FAR events under
-    ``output_dir/HIGH_SNR_BAD/``.
+    Saved under ``output_dir/FOUND_INJECTIONS/<param>``. When the
+    background reaches 1000 per month, the injections found between
+    100 and 1000 per month with 10 < SNR < 100 go to ``HIGH_SNR_BAD``.
 
     Parameters
     ----------
     noise_stats : numpy.ndarray, shape (N_bg,)
-        Sorted background network scores used to derive FAR thresholds.
+        Background ranking statistics, sorted ascending.
     output_dir : str
-        Root output directory.
+        Directory of the evaluation.
     injparams : dict
-        Injection parameter arrays (masses, distance, snr, …).
+        Injection parameters by name.
     found_injections : numpy.ndarray, shape (2, N_found)
-        Row 0: injection indices; row 1: network scores for found injections.
+        Row 0: injection indices; row 1: ranking statistics.
+
+    Raises
+    ------
+    FileExistsError
+        If ``HIGH_SNR_BAD/COMPARE`` exists.
     """
-    ### Get the thresholds for different false alarm rates
-    # TODO: Add PyCBC's results overlayed on top
-    # For a month-long testing dataset these should give FAR per month, per week and per day
+    # Thresholds for different false alarm rates; for one month of
+    # data: 1 per month, week and day, 100 and 1000 per month
     far_thresholds = reachable_thresholds(noise_stats)
     thresh_names = [
         "1-per-month",
@@ -356,7 +423,7 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
         thresh_names[n]: found_injections[0][found_injections[1] > thresh]
         for n, thresh in enumerate(far_thresholds)
     }
-    # The 1000/month > FAR > 100/month band needs a background reaching 1000/month
+    # The 100 to 1000 per month band needs a background reaching 1000
     bad = len(far_thresholds) == len(FAR_INDICES)
     if bad:
         badfar_idx = found_injections[0][
@@ -369,8 +436,7 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
         )
     highsnr_badfar_params = {}
 
-    ## Plotting the comparison plots (injections and found histogram) for all params
-    # cmap = cm.get_cmap('RdYlBu_r', 10)
+    # Injected and found histograms of every parameter
     save_dir = os.path.join(output_dir, "FOUND_INJECTIONS")
     bad_dir = os.path.join(output_dir, "HIGH_SNR_BAD")
     for param in injparams.keys():
@@ -431,7 +497,6 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
     team.update(highsnr_badfar_params)
     team["duration"] = duration(team["mchirp"])
 
-    ## VS Plots
     compare_bad_dir = os.path.join(bad_dir, "COMPARE")
     os.makedirs(compare_bad_dir, exist_ok=False)
     params = [
@@ -449,18 +514,15 @@ def found_param_plots(noise_stats, output_dir, injparams, found_injections):
     nsubplots = len(plots)
     nrows = nsubplots // ncols + int(nsubplots % ncols or False)
 
-    # Subplotting
     fig, ax = plt.subplots(nrows, ncols, figsize=(9.0 * ncols, 6.0 * nrows))
     kwargs = {}
 
     pidxs = list(itertools.product(range(nrows), range(ncols)))
     num_fin = 0
     for (param_1, param_2), (i, j) in zip(plots, pidxs):
-        # Team 1
         x = team[param_1]
         y = team[param_2]
 
-        # Scatter plotting
         kwargs.update({"color": "blue", "s": 100.0, "alpha": 0.7})
         ax[i][j].scatter(x, y, **kwargs)
         ax[i][j].set_xlabel(param_1)
@@ -481,20 +543,21 @@ def network_output(
     found_injections, noise_stats, output_dir, team_name, lower_threshold=0.0
 ):
     """
-    Plot overlaid histograms of network scores for found injections and noise triggers.
+    Log-count histograms of the ranking statistics of the found
+    injections and of the background.
 
     Parameters
     ----------
     found_injections : numpy.ndarray, shape (2, N_found)
-        Row 0: injection indices; row 1: network scores for found injections.
+        Row 0: injection indices; row 1: ranking statistics.
     noise_stats : numpy.ndarray, shape (N_bg,)
-        Network scores from background (noise-only) triggers.
+        Background ranking statistics.
     output_dir : str
-        Directory where the PNG is saved.
+        Saves ``network_output_{team_name}.png`` in it.
     team_name : str
-        Used to construct the output filename.
-    lower_threshold : float, optional
-        Minimum score for display; scores below are excluded (default 0.0).
+        Team the statistics belong to.
+    lower_threshold : float
+        Only statistics above it are drawn.
     """
     # Plotting the noise and signals stats for found samples
     plt.figure(figsize=(12.0, 12.0))
@@ -511,27 +574,26 @@ def network_output(
 
 def parameter_learning(injparams, noise_stats, found_injections, output_dir):
     """
-    Plot network output score versus each source parameter for found injections.
+    Ranking statistic of the found injections against each parameter,
+    with the reached FAR thresholds as lines.
 
-    Scatter plots of (parameter value, network score) are saved under
-    ``output_dir/LEARNING/``, with FAR threshold lines overlaid.
+    Saved under ``output_dir/LEARNING``; the parameters include the
+    chirp time ``signal_duration`` from 20 Hz.
 
     Parameters
     ----------
     injparams : dict
-        Injection parameter arrays keyed by parameter name.
+        Injection parameters by name.
     noise_stats : numpy.ndarray, shape (N_bg,)
-        Sorted background network scores used to derive FAR thresholds.
+        Background ranking statistics, sorted ascending.
     found_injections : numpy.ndarray, shape (2, N_found)
-        Row 0: injection indices; row 1: network scores.
+        Row 0: injection indices; row 1: ranking statistics.
     output_dir : str
-        Root directory for output plots.
+        Directory of the evaluation.
     """
-    ## Parameter learning
     learning_dir = os.path.join(output_dir, "LEARNING")
     if not os.path.exists(learning_dir):
         os.makedirs(learning_dir, exist_ok=False)
-    # Making the parameter learning plots
     source_params = {
         key: injparams[key][found_injections[0].astype(int)] for key in injparams.keys()
     }
@@ -554,9 +616,7 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
         "1000 per month",
     ]
     for key in source_params.keys():
-        # Sort the source_params for the particular key alongside the predicted outputs
         assert len(source_params[key]) == len(predicted_outputs)
-        # Plotting the above data for the given parameter
         ax, fig = figure(title="Learning {}".format(key))
         _plot(
             ax,
@@ -575,7 +635,6 @@ def parameter_learning(injparams, noise_stats, found_injections, output_dir):
         ax.set_xlim(min_x, max_x)
         for fthresh, nthresh in zip(far_thresholds, thresh_names):
             ax.plot([min_x, max_x], [fthresh, fthresh], label=nthresh, linewidth=2.0)
-        # Saving the plot in export_dir
         save_path = os.path.join(
             learning_dir, "learning_{}_{}.png".format(save_name, key)
         )
@@ -588,6 +647,9 @@ def read_data(injection_file, run, teams, idxs):
     """
     Load injection parameters and the run's and every team's events.
 
+    The events go into each team's dict as ``fgevents`` and
+    ``bgevents``: rows of time, ranking statistic and ``var``.
+
     Parameters
     ----------
     injection_file : str
@@ -598,14 +660,14 @@ def read_data(injection_file, run, teams, idxs):
     teams : list of dict
         Every MLGWSC-1 team, as ``run``.
     idxs : numpy.ndarray of bool
-        Boolean mask selecting which injections lie inside the analysed segments.
+        Injections inside the analysed segments.
 
     Returns
     -------
     injparams : dict
-        Injection parameters (masses, distance, tc, …) filtered by ``idxs``.
+        Every injection parameter, restricted to ``idxs``.
     use_chirp_distance : bool
-        ``True`` if chirp-distance weighting should be used for sensitivity.
+        Whether the injection file has ``chirp_distance``.
     """
     # Read injection parameters
     logger.info(f"Reading injections from {injection_file}")
@@ -645,21 +707,24 @@ def read_data(injection_file, run, teams, idxs):
 
 def compare_plot_1(team_1, team_2, save_dir):
     """
-    Plot overlaid injection-parameter histograms for both pipelines at each FAR threshold.
-
-    Saves one multi-panel PNG per FAR threshold under ``save_dir``.
+    Histograms of each parameter of the injections each team finds, per
+    FAR threshold both teams reach.
 
     Parameters
     ----------
-    team_1 : dict
-        Must contain ``params`` (list of parameter names), ``found_idx``,
-        ``found_stats``, ``far_thresholds``, and per-parameter arrays.
-    team_2 : dict
-        Same structure as ``team_1`` for the comparison pipeline.
+    team_1, team_2 : dict
+        Teams as filled by :func:`get_stats`: ``name``, ``params``,
+        ``found_idx``, ``found_stats``, ``far_thresholds`` and the
+        injection parameters.
     save_dir : str
-        Directory where plots are saved (created if absent).
+        Directory of the plots; must not exist.
+
+    Raises
+    ------
+    FileExistsError
+        If ``save_dir`` exists.
     """
-    # Plot 1 (Histogram of all injections with found injections of both pipelines)
+    # Plot 1: histograms of the injections each team finds
     os.makedirs(save_dir, exist_ok=False)
     params = team_1["params"]
     ncols = 3
@@ -680,16 +745,12 @@ def compare_plot_1(team_1, team_2, save_dir):
 
     shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
     for thresh_name in thresh_names[:shared]:
-        # Subplotting
         fig, ax = plt.subplots(nrows, ncols, figsize=(8.0 * ncols, 6.0 * nrows))
-        # Histogram kwargs
         kwargs = dict(histtype="stepfilled", alpha=0.5)
 
         pidxs = list(itertools.product(range(nrows), range(ncols)))
         num_fin = 0
         for param, (i, j) in zip(params, pidxs):
-            # ax[i][j].hist(team_1[param][team_1[thresh_name]], label=team_1['name'], color='blue', **kwargs)
-            # ax[i][j].hist(team_2[param][team_2[thresh_name]], label=team_2['name'], color='red', **kwargs)
             bins = np.histogram(
                 np.hstack(
                     (
@@ -735,22 +796,27 @@ def compare_plot_1(team_1, team_2, save_dir):
 
 def compare_plot_2(team_1, team_2, save_dir):
     """
-    Scatter param-vs-param plots colour-coded by unique and shared detections.
+    Scatter plots of pairs of parameters of the found injections, per
+    FAR threshold both teams reach.
 
-    Blue = unique to team_1, red = unique to team_2, grey = found by both.
-    One multi-panel PNG is saved per FAR threshold.
+    Blue: found by ``team_1`` only; red: by ``team_2`` only; grey: by
+    both. A team's found points must be unique (asserted).
 
     Parameters
     ----------
-    team_1 : dict
-        Pipeline dict with ``found_idx``, ``found_stats``, ``far_thresholds``,
-        and per-parameter arrays (including ``mchirp`` for duration calculation).
-    team_2 : dict
-        Same structure as ``team_1``.
+    team_1, team_2 : dict
+        Teams as filled by :func:`get_stats`: ``name``, ``params``,
+        ``found_idx``, ``found_stats``, ``far_thresholds`` and the
+        injection parameters.
     save_dir : str
-        Output directory (created if absent).
+        Directory of the plots; must not exist.
+
+    Raises
+    ------
+    FileExistsError
+        If ``save_dir`` exists.
     """
-    # Plot 2 (Scatter plot of param vs param (unique finds from both teams are coloured))
+    # Plot 2: pairs of parameters, coloured by which team finds them
     # Calculate signal duration
     lf = 20.0  # Hz
     duration = (
@@ -761,7 +827,6 @@ def compare_plot_2(team_1, team_2, save_dir):
     team_1["duration"] = duration(team_1["mchirp"])
     team_2["duration"] = duration(team_2["mchirp"])
 
-    ## VS Plots
     os.makedirs(save_dir, exist_ok=False)
     params = ["duration", "mchirp", "distance", "q", "chirp_distance", "snr"]
     ncols = 3
@@ -784,7 +849,6 @@ def compare_plot_2(team_1, team_2, save_dir):
 
     shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
     for thresh_name in thresh_names[:shared]:
-        # Subplotting
         fig, ax = plt.subplots(nrows, ncols, figsize=(8.0 * ncols, 5.0 * nrows))
         kwargs = {}
 
@@ -795,20 +859,18 @@ def compare_plot_2(team_1, team_2, save_dir):
             x = team_1[param_1][team_1[thresh_name]]
             y = team_1[param_2][team_1[thresh_name]]
             team1_set = set(zip(x, y))
-            # Sanity check: What if two values are the same?
+            # The set operations need unique points
             assert len(list(team1_set)) == len(x)
             # Team 2
             x = team_2[param_1][team_2[thresh_name]]
             y = team_2[param_2][team_2[thresh_name]]
-            # print("team2 {} = {} vs {}".format(team_2['name'], param_1, param_2), len(x), len(y))
-            team2_set = set(zip(x, y))  # TODO: What if two values are the same?
+            team2_set = set(zip(x, y))
             assert len(list(team2_set)) == len(x)
             # Plots: A-B, B-A, A&B
             unique_team1 = np.array(list(team1_set - team2_set))
             unique_team2 = np.array(list(team2_set - team1_set))
             found_both = np.array(list(team1_set.intersection(team2_set)))
 
-            # Scatter plotting
             kwargs.update(
                 {
                     "color": "blue",
@@ -858,22 +920,27 @@ def compare_plot_2(team_1, team_2, save_dir):
 
 def compare_plot_3(team_1, team_2, save_dir):
     """
-    Colour-strip plots showing the per-bin ratio of unique detections (team_1 / team_2).
+    Colour strips of the ratio of injections found by ``team_1`` only to
+    those found by ``team_2`` only, in bins of each parameter.
 
-    Uses a diverging colormap centred at ratio=1 so bins where team_1 outperforms
-    team_2 appear red and vice-versa blue.
+    One figure per FAR threshold both teams reach; the colour map is
+    centred on a ratio of 1, red where ``team_1`` finds more.
 
     Parameters
     ----------
-    team_1 : dict
-        Pipeline dict with ``params``, ``found_idx``, ``found_stats``,
-        ``far_thresholds``, and per-parameter arrays.
-    team_2 : dict
-        Same structure as ``team_1``.
+    team_1, team_2 : dict
+        Teams as filled by :func:`get_stats`: ``name``, ``params``,
+        ``found_idx``, ``found_stats``, ``far_thresholds`` and the
+        injection parameters.
     save_dir : str
-        Output directory (created if absent).
+        Directory of the plots; must not exist.
+
+    Raises
+    ------
+    FileExistsError
+        If ``save_dir`` exists.
     """
-    # Plot 3 (Colour strip plot quantifying np.log10(Nnn/Nmf) found in each bin)
+    # Plot 3: ratio of the unique finds in each bin
     os.makedirs(save_dir, exist_ok=False)
     params = team_1["params"] + ["duration"]
     ncols = 3
@@ -904,7 +971,6 @@ def compare_plot_3(team_1, team_2, save_dir):
 
     shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
     for thresh_name in thresh_names[:shared]:
-        # Subplotting
         fig, ax = plt.subplots(nrows, ncols, figsize=(5.0 * ncols, 3.0 * nrows))
 
         pidxs = list(itertools.product(range(nrows), range(ncols)))
@@ -912,17 +978,16 @@ def compare_plot_3(team_1, team_2, save_dir):
         for param, (i, j) in zip(params, pidxs):
             team1_set = set(team_1[param][team_1[thresh_name]])
             team2_set = set(team_2[param][team_2[thresh_name]])
-            # TODO: What if two values are the same?
+            # Equal values merge into one set element
             unique_team1 = np.array(list(team1_set - team2_set))
             unique_team2 = np.array(list(team2_set - team1_set))
-            # Binning the two arrays before caluclating the ratio
+            # Bin both teams before taking the ratio
             bins = np.linspace(
                 min(team_1[param]), max(team_1[param]), 40, dtype=int, endpoint=True
             )
             team1_counts, _ = np.histogram(unique_team1, bins=bins)
             team2_counts, _ = np.histogram(unique_team2, bins=bins)
-            # Calculate the ratio using the counts obtained
-            # Sanity check
+            # 1e-3 added to every count to avoid division by zero
             team1_counts = team1_counts.astype(np.float32)
             team2_counts = team2_counts.astype(np.float32)
             team1_counts += 1e-3
@@ -961,19 +1026,22 @@ def compare_plot_3(team_1, team_2, save_dir):
 
 def compare_plot_4(team_1, team_2, save_dir):
     """
-    Plot SNR-binned efficiency curves (True Alarm Probability vs optimal SNR).
-
-    One PNG per FAR threshold, overlaying both pipelines.
+    Fraction of injections found against optimal SNR, both teams, per
+    FAR threshold both teams reach.
 
     Parameters
     ----------
-    team_1 : dict
-        Pipeline dict with ``snr``, ``found_idx``, ``found_stats``,
-        and ``far_thresholds``.
-    team_2 : dict
-        Same structure as ``team_1``.
+    team_1, team_2 : dict
+        Teams as filled by :func:`get_stats`: ``name``, ``params``,
+        ``found_idx``, ``found_stats``, ``far_thresholds`` and the
+        injection parameters.
     save_dir : str
-        Output directory (created if absent).
+        Directory of the plots; must not exist.
+
+    Raises
+    ------
+    FileExistsError
+        If ``save_dir`` exists.
     """
     # Plot 4 (Efficiency curves made for each of the two groups)
     os.makedirs(save_dir, exist_ok=False)
@@ -991,8 +1059,8 @@ def compare_plot_4(team_1, team_2, save_dir):
     for n, thresh in enumerate(team_2["far_thresholds"]):
         team_2[thresh_names[n]] = team_2["found_idx"][team_2["found_stats"] > thresh]
 
-    # (0, (3, 1, 1, 1, 1, 1)) is densely dashdotdotted in parameterised form
-    # Refer: https://matplotlib.org/stable/gallery/lines_bars_and_markers/linestyles.html
+    # (0, (3, 1, 1, 1, 1, 1)) is densely dashdotdotted in parameterised
+    # form (matplotlib gallery: lines_bars_and_markers/linestyles)
     linestyles = ["solid", "dotted", "dashed", "dashdot", (0, (3, 1, 1, 1, 1, 1))]
     shared = min(len(team_1["far_thresholds"]), len(team_2["far_thresholds"]))
     for n, thresh_name in enumerate(thresh_names[:shared]):
@@ -1000,14 +1068,13 @@ def compare_plot_4(team_1, team_2, save_dir):
         # Plotting the efficiency curve for each FAR threshold
         team1_data = team_1["snr"][team_1[thresh_name]]
         team2_data = team_2["snr"][team_2[thresh_name]]
-        # Binning the two arrays before caluclating the TAP (True Alarm Probability)
+        # Bin both teams before taking the true alarm probability
         bins = np.linspace(
             min(team_1["snr"]), max(team_1["snr"]), 20, dtype=int, endpoint=True
         )
         all_counts, _ = np.histogram(team_1["snr"], bins=bins)
         team1_counts, _ = np.histogram(team1_data, bins=bins)
         team2_counts, _ = np.histogram(team2_data, bins=bins)
-        # Plotting
         xbins = (bins[1:] + bins[:-1]) / 2.0
         kwargs = dict(
             marker="o", markersize=12, fillstyle="none", linestyle=linestyles[n]
@@ -1046,14 +1113,23 @@ def compare_plot_4(team_1, team_2, save_dir):
 
 def compare_groups(team_1, team_2, output_dir):
     """
-    Comparing the found injections by different (any 2) groups
-    In this module we make 3 plots for comparison:
-        1. Histogram of all injections with found injections of both pipelines
-        2. Scatter plot of param vs param (unique finds from both teams are coloured)
-        3. Colour strip plot quantifying np.log10(Nnn/Nmf) found in each bin
-        4. Efficiency curves made for each of the two groups
+    Compare the injections found by two teams.
 
-    Each of these plots for all params are made for different FAR thresholds
+    Histograms, parameter pairs, ratio strips and efficiency curves
+    (:func:`compare_plot_1` to :func:`compare_plot_4`) under
+    ``output_dir/FOUND_AND_MISSED``.
+
+    Parameters
+    ----------
+    team_1, team_2 : dict
+        Teams as filled by :func:`get_stats`.
+    output_dir : str
+        Directory of the comparison.
+
+    Raises
+    ------
+    FileExistsError
+        If ``FOUND_AND_MISSED`` or one of its plot folders exists.
     """
 
     save_dir = os.path.join(output_dir, "FOUND_AND_MISSED")
@@ -1070,57 +1146,37 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
     Calculate the false-alarm rate and sensitivity of a search
     algorithm, for the run searched here and for every team.
 
-    Arguments
-    ---------
-    run, teams : dict, list of dict
-        As ``read_data``, with ``fgevents`` and ``bgevents`` read; the
-        statistics returned are the run's.
+    Each team gets ``found_idx``, ``found_stats``, ``far_thresholds``,
+    ``params`` and the injection parameters; the run is then compared
+    with every team (:func:`compare_groups`).
+
+    Parameters
+    ----------
+    run : dict
+        The run, as :func:`read_data` fills it. ``fgevents`` and
+        ``bgevents`` hold rows of event time, ranking statistic and the
+        maximum distance to an injection for a true positive.
+    teams : list of dict
+        Every MLGWSC-1 team, as ``run``.
+    injparams : dict
+        Injection parameters, at least ``tc`` and ``distance``, and
+        ``mass1`` and ``mass2`` when ``chirp_distance``.
     chirp_distance : bool
         Whether the injections are drawn in chirp distance.
+    duration : float or None
+        The duration of the analyzed background. If None the injections
+        are used to infer the duration.
     output_dir : str
         Directory of the plots.
 
-    Each team's event arrays (``fgevents``, ``bgevents``):
-
-    fgevents : np.array
-        A numpy array with three rows. The first row has to contain the
-        times returned by the search algorithm where it believes to have
-        found a true signal. The second row contains a ranking statistic
-        like quantity for each time. The third row contains the maxmimum
-        distance to an injection for the given event to be counted as
-        true positive. The values have to be determined on the
-        foreground data, i.e. noise plus additive signals.
-    bgevents : np.array
-        A numpy array with three rows. The first row has to contain the
-        times returned by the search algorithm where it believes to have
-        found a true signal. The second row contains a ranking statistic
-        like quantity for each time. The third row contains the maxmimum
-        distance to an injection for the given event to be counted as
-        true positive. The values have to be determined on the
-        background data, i.e. pure noise.
-    injparams : dict
-        A dictionary containing at least two entries with keys `tc` and
-        `distance`. Both entries have to be numpy arrays of the same
-        length. The entry `tc` contains the times at which injections
-        were made in the foreground. The entry `distance` contains the
-        according luminosity distances of these injections.
-    duration : {None or float, None}
-        The duration of the analyzed background. If None the injections
-        are used to infer the duration.
-
     Returns
     -------
-    dict:
-        Returns a dictionary, where each key-value pair specifies some
-        statistic. The most important are the keys `far` and
-        `sensitive-distance`.
+    dict
+        The run's statistics; the most important are the keys ``far``
+        and ``sensitive-distance``.
     """
-
-    # Return data tmp var
     ret = {}
 
-    ## COMMON ##
-    # Get injection params
     injtimes = injparams["tc"]
     dist = injparams["distance"]
 
@@ -1141,8 +1197,8 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
         idxs = find_closest_index(injtimes, fgevents[0])
         diff = np.abs(injtimes[idxs] - fgevents[0])
 
-        # If the difference between the injection time and trigger is within tc variance
-        # The trigger is identified as an event (there may be duplicate triggers)
+        # A trigger within its var of the closest injection is a true
+        # positive (there may be duplicate triggers)
         logger.info("Finding true- and false-positives")
         tpbidxs = diff <= fgevents[2]
         tpidxs = np.arange(len(fgevents[0]))[tpbidxs]
@@ -1152,7 +1208,7 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
         tpevents = fgevents.T[tpidxs].T
         fpevents = fgevents.T[fpidxs].T
 
-        ## Update the returns dictionary
+        # The run's statistics
         if team is run:
             ret["fg-events"] = fgevents
             ret["found-indices"] = np.arange(len(injtimes))[idxs]
@@ -1199,7 +1255,8 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
             R = np.searchsorted(sorted_idxs, i, side="right")
             # All indices that point to the same injection
             iidxs[tmpsidxs[L:R]] = True
-            # Indices of the true-positives that belong to the same injection
+            # Indices of the true-positives that belong to the same
+            # injection
             eidxs = np.logical_and(iidxs[tmpsidxs[L:R]], tpbidxs[tmpsidxs[L:R]])
             if eidxs.any():
                 found_injections.append([i, np.max(fgevents[1][tmpsidxs[L:R]][eidxs])])
@@ -1209,7 +1266,8 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
         found_injections = np.array(found_injections).T
 
         # Calculate sensitivity
-        # CARE! THIS APPLIES ONLY WHEN THE DISTRIBUTION IS CHOSEN CORRECTLY
+        # CARE! THIS APPLIES ONLY WHEN THE DISTRIBUTION IS CHOSEN
+        # CORRECTLY
         logger.info("Calculating sensitivity")
         sidxs = found_injections[1].argsort()  # Sort found injections
         found_injections = found_injections.T[sidxs].T
@@ -1217,16 +1275,13 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
         if chirp_distance:
             found_mchirp_total = massc[found_injections[0].astype(int)]
             mchirp_max = massc.max()
-            # print('found_mchirp_total is the chirp mass of all found injections')
-            # print('max = {}, min = {}, mean={}, median = {}'.format(max(found_mchirp_total), min(found_mchirp_total), np.mean(found_mchirp_total), np.median(found_mchirp_total)))
             if team is run:
-                # Histogram of found injections vs all injections in 1-month testing dataset
+                # Found against all injections
                 found_param_plots(noise_stats, output_dir, injparams, found_injections)
                 # Plotting all param vs param
                 param_vs_param(output_dir, injparams, found_injections)
 
         max_distance = dist.max()
-        # print('Maximum distance given by injections = {}'.format(max_distance))
         vtot = (4.0 / 3.0) * np.pi * max_distance**3.0
         Ninj = len(dist)
 
@@ -1284,15 +1339,15 @@ def get_stats(run, teams, injparams, chirp_distance, duration, output_dir):
         # Update plotting params for each group
         team["found_idx"] = found_injections[0].astype(int)
         team["found_stats"] = found_injections[1]
-        # Add all found injparams to to plotting dict
+        # Every injection parameter, for the plots
         team["params"] = list(injparams.keys())
         team.update(injparams)
-        # The values given are indices and have to be 1 less than the number of FA per month req.
+        # FAR_INDICES: false alarms per month minus 1
         team["far_thresholds"] = reachable_thresholds(noise_stats)
         team["sens_dist"] = rad
         team["sens_frac"] = nfound / Ninj
 
-    ## Save Data to analyse found injections and compare every team with our pipeline
+    # Compare the run with every team
     for team in teams:
         compare_groups(run, team, os.path.join(output_dir, team["name"]))
 
@@ -1328,7 +1383,7 @@ def write_found(path: str, run: dict, teams: list, duration: float) -> None:
 
 def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_dir):
     """
-    MLGWSC-1 evaluation of the run searched here, compared with every team.
+    MLGWSC-1 evaluation of the run searched here, against every team.
 
     Writes the statistics to ``output_dir/eval.hdf``, the found
     injections to ``output_dir/found.hdf`` and the figures beside them;
@@ -1338,7 +1393,7 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
     Parameters
     ----------
     dataset_dir : str
-        Dataset 4: ``injections.hdf``, ``foreground.hdf`` and ``snr.hdf``.
+        Dataset 4: ``injections.hdf``, ``foreground.hdf``, ``snr.hdf``.
     run_name : str
         Label of the run.
     fg_events, bg_events : str
@@ -1347,6 +1402,11 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
         Every team's results, ``<team>/ds4/{fg,bg,eval}.hdf``.
     output_dir : str
         Directory of the statistics and figures.
+
+    Raises
+    ------
+    RuntimeError
+        If the foreground data holds no injection.
     """
     injection_file = os.path.join(dataset_dir, "injections.hdf")
     foreground_file = os.path.join(dataset_dir, "foreground.hdf")
@@ -1372,7 +1432,7 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
 
     # Get data from fg and bg events file
     run = {"name": run_name, "fgpath": [fg_events], "bgpath": [bg_events]}
-    # Teams that published foreground and background events and their evaluation
+    # Teams that published fg, bg and eval files
     teams = []
     for name in sorted(os.listdir(results_dir)):
         files = {
@@ -1391,7 +1451,7 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
             }
         )
     injparams, chirp_distance = read_data(injection_file, run, teams, idxs)
-    # Add SNRs into the injparams (this will automatically include it within most plots)
+    # SNRs in injparams, and so in most plots
     injparams["snr"] = snrs[idxs]
 
     stats = get_stats(run, teams, injparams, chirp_distance, dur, output_dir)
@@ -1403,8 +1463,7 @@ def evaluate(dataset_dir, run_name, fg_events, bg_events, results_dir, output_di
         for key, val in stats.items():
             fp.create_dataset(key, data=np.array(val))
 
-    # Create the sensitivity vs FAR/month plot from the output evaluation obtained;
-    # the FAR scaling factor is the duration of the data
+    # Sensitivity against FAR per month; FAR is scaled by the duration
     far_scaling_factor = dur
     far = stats["far"]
     sidxs = far.argsort()

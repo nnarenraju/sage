@@ -91,7 +91,19 @@ class Slicer(torch.utils.data.Dataset):
 
 
 def peak_offset(run: SimpleNamespace) -> float:
-    """Seconds from a window's start to the delta_tc prior's middle."""
+    """
+    Seconds from a window's start to the middle of the delta_tc prior.
+
+    Parameters
+    ----------
+    run : SimpleNamespace
+        A loaded run (``compare.load_network``).
+
+    Returns
+    -------
+    float
+        Padding length plus the middle of the ``delta_tc`` bounds.
+    """
     low, high = run.bounds["delta_tc"]
     return run.window.padding_length_in_s + (low + high) / 2
 
@@ -145,7 +157,8 @@ def triggers(run: SimpleNamespace, path: Path, device: torch.device) -> np.ndarr
 
 def clusters(found: np.ndarray) -> tuple:
     """
-    Loudest trigger of each run of triggers at most CLUSTER_IN_S apart.
+    Loudest trigger of each run of triggers at most ``CLUSTER_IN_S``
+    apart.
 
     Parameters
     ----------
@@ -182,6 +195,11 @@ def search(run: SimpleNamespace, path: Path, output: Path, device: torch.device)
     -------
     int
         Number of events.
+
+    Raises
+    ------
+    ValueError
+        If no window exceeds the trigger threshold.
     """
     time, stat, var = clusters(triggers(run, path, device))
     part = output.with_name(output.name + ".part")

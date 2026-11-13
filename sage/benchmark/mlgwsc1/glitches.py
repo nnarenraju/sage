@@ -143,6 +143,7 @@ def test_segments(background: Path) -> list[tuple[float, float]]:
     Returns
     -------
     list of tuple of float
+        ``(start, end)`` in GPS seconds.
     """
     with h5py.File(background, "r") as fp:
         return [
@@ -195,8 +196,8 @@ def relevant_glitches(
     """
     The loudest background trigger on each glitch, above a threshold.
 
-    A glitch's triggers are those from its start to its end; glitches of
-    the class No_Glitch are left out.
+    A glitch's triggers are those from its start to its end; glitches
+    without one, or of the class No_Glitch, are left out.
 
     Parameters
     ----------

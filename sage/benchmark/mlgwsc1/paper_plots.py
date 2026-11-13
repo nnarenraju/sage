@@ -77,6 +77,7 @@ def found_difference(found_by: list) -> int:
     Returns
     -------
     int
+        Count of 1s minus count of 0s.
     """
     found_by = np.array(found_by)
     num_pycbc = len(found_by[found_by == 0])
@@ -128,6 +129,7 @@ def hexbin_limits(found_sage: dict, found_pycbc: dict) -> tuple[int, int]:
     Returns
     -------
     tuple of int
+        Smallest and largest difference over the cells.
     """
     x_data, y_data, found_by = hexbin_data(found_sage, found_pycbc, "mchirp", "q")
     fig, ax = plt.subplots()
@@ -157,6 +159,7 @@ def blue_red_colormap(limits: tuple[int, int]) -> ListedColormap:
     Returns
     -------
     matplotlib.colors.ListedColormap
+        One colour per integer from the lower to the upper limit.
     """
     lower, upper = limits
     colors_blue = plt.cm.Blues(np.linspace(0.5, 1.0, abs(lower)))
@@ -170,6 +173,8 @@ def found_counts(found_sage: dict, found_pycbc: dict) -> tuple[int, int, int]:
     """
     Injections found by both pipelines, only by Sage and only by PyCBC.
 
+    Injections are told apart by their chirp mass.
+
     Parameters
     ----------
     found_sage, found_pycbc : dict
@@ -178,6 +183,7 @@ def found_counts(found_sage: dict, found_pycbc: dict) -> tuple[int, int, int]:
     Returns
     -------
     tuple of int
+        Found by both, only by Sage, only by PyCBC.
     """
     sage_set = set(found_sage["mchirp"])
     pycbc_set = set(found_pycbc["mchirp"])
@@ -623,6 +629,7 @@ def by_far(stats: dict, key: str) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
+        The statistic, without its first entry after sorting by FAR.
     """
     return stats[key][stats["far"].argsort()][1:]
 
@@ -639,6 +646,7 @@ def read_sensitivity(path: str) -> tuple[np.ndarray, np.ndarray]:
     Returns
     -------
     tuple of numpy.ndarray
+        FAR and sensitive distance.
     """
     with h5py.File(path, "r") as fp:
         return np.array(fp["far"]), np.array(fp["sensitive-distance"])
@@ -750,6 +758,7 @@ def loudest_near(events: np.ndarray, injection_times: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
+        One statistic per injection time.
     """
     order = events[0].argsort()
     times, ranking_stats = events[0][order], events[1][order]
@@ -851,6 +860,8 @@ def plot_paper(
     ------
     ValueError
         If no team is named PyCBC.
+    FileExistsError
+        If ``output_dir/PAPER`` exists.
     """
     names = [team["name"] for team in teams]
     if "PyCBC" not in names:
