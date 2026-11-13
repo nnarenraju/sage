@@ -1,4 +1,4 @@
-"""Multi-scale 1D CNN frontend (no attention) per detector + 2D ResNet-CBAM backend."""
+"""Multi-scale 1D CNN frontend per detector, 2D ResNet-CBAM backend."""
 
 import torch
 from torch import nn
@@ -11,7 +11,8 @@ class MSCNN1D_2DResNetCBAM(FrontendTap, nn.Module):
     """
     Plain multi-scale frontend per detector, 2D ResNet-CBAM backend.
 
-    Outputs the ranking statistic and one estimate per parameter (no uncertainty).
+    Outputs the ranking statistic, one estimate per parameter (no
+    uncertainty) and the non-astrophysical logit.
 
     Parameters
     ----------
@@ -20,19 +21,22 @@ class MSCNN1D_2DResNetCBAM(FrontendTap, nn.Module):
     num_estimates : int
         Estimated parameters; from ``signal.targets``.
     non_astrophysical : bool
-        Add the non-astrophysical head; from ``signal.non_astrophysical``.
+        Add the non-astrophysical head; from
+        ``signal.non_astrophysical``.
     frontend_filters, frontend_kernel : int
         Base filter count and kernel size of the frontend.
     backend_resnet_size : int
         ResNet depth: 18, 34, 50, 101 or 152.
     norm_type : str
-        Input normalisation: ``instancenorm``, ``groupnorm`` or ``batchnorm``.
+        Input normalisation: ``instancenorm``, ``groupnorm`` or
+        ``batchnorm``.
     dropout : float
         Backend dropout rate.
     use_blurpool : bool
         Anti-aliased downsampling in the backend.
     use_resnet_cd : bool
-        ResNet-C deep stem and ResNet-D average-pool downsampling in the backend.
+        ResNet-C deep stem and ResNet-D average-pool downsampling in
+        the backend.
     """
 
     uncertainty = False
@@ -72,15 +76,22 @@ class MSCNN1D_2DResNetCBAM(FrontendTap, nn.Module):
 
     def forward(self, x: torch.Tensor) -> tuple:
         """
+        Ranking statistic, estimates and non-astrophysical logit.
+
         Parameters
         ----------
         x : torch.Tensor, shape ``(B, D, L)``
+            Strain of ``D`` detectors.
 
         Returns
         -------
         ranking_statistic : torch.Tensor, shape ``(B, 1)``
+            Signal vs noise logit.
         point_estimates : torch.Tensor, shape ``(B, P)``
-        non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``, or ``(B, 0)`` without the class
+            One estimate per parameter.
+        non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``
+            Non-astrophysical vs noise logit; ``(B, 0)`` without the
+            class.
         """
         x = normalise(self.norm, x)
         cnn_outputs = [detector(x[:, i : i + 1]) for i, detector in enumerate(self.frontend)]

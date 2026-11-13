@@ -1,22 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Anti-aliased downsampling (BlurPool).
+Anti-aliased downsampling (BlurPool) for the networks' learned layers.
 
-Zhang, "Making Convolutional Networks Shift-Invariant Again", ICML 2019. Naive
-strided pooling / strided convolution subsamples WITHOUT a low-pass first, so any
-feature content above the new Nyquist rate aliases (folds down and corrupts the
-feature maps) and the network becomes shift-variant. The fix: dense operation at
-stride 1, then a fixed low-pass BLUR, then the strided subsample.
-
-These modules implement the blur + subsample step: a depthwise (per-channel),
-non-learnable binomial (Pascal) low-pass. Place one AFTER a stride-1 max-pool or
-conv to anti-alias a downsampling by ``stride``. ``filt_size`` widens with the
-stride so the low-pass cutoff roughly tracks the new Nyquist rate (a stride-2 pool
-needs cutoff pi/2, a stride-8 pool needs pi/8, i.e. a wider filter).
-
-NB: Sage's physics multirate stage is already anti-aliased (63-tap Kaiser); these
-handle the LEARNED downsampling (frontend max-pools, ResNet stem + strided convs).
+A depthwise, fixed binomial low-pass followed by the strided subsample,
+placed after a stride-1 max-pool or convolution.
 """
 
 from math import comb
@@ -27,22 +15,35 @@ import torch.nn.functional as F
 
 
 def _binomial_kernel(n):
-    """1D binomial (Pascal-row) low-pass of length ``n`` (unnormalised)."""
+    """
+    Binomial (Pascal-row) low-pass of length ``n``, unnormalised.
+
+    Parameters
+    ----------
+    n : int
+        Filter length.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(n,)``
+        Binomial coefficients, float32.
+    """
     return torch.tensor([comb(n - 1, k) for k in range(n)], dtype=torch.float32)
 
 
 class BlurPool1d(nn.Module):
-    """Depthwise binomial low-pass + stride-``stride`` subsample (1D).
+    """
+    Depthwise binomial low-pass and stride-``stride`` subsample (1D).
 
     Parameters
     ----------
     channels : int
-        Number of channels (the filter is applied per-channel / depthwise).
+        Number of channels; the filter is applied per channel.
     stride : int
         Downsampling factor.
     filt_size : int or None
-        Binomial filter length. ``None`` -> ``2*stride + 1`` (a wider low-pass for
-        larger strides, so the cutoff roughly matches the new Nyquist rate).
+        Binomial filter length; None gives ``2*stride + 1``, so the
+        cutoff widens with the stride.
     """
 
     def __init__(self, channels, stride, filt_size=None):
@@ -57,16 +58,38 @@ class BlurPool1d(nn.Module):
         self.pad = filt_size // 2
 
     def forward(self, x):
+        """
+        Reflect-pad, low-pass and subsample along the last axis.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, C, L)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, C, L_out)``
+            Subsampled features, ``L_out = ceil(L / stride)`` for an
+            odd ``filt_size``.
+        """
         x = F.pad(x, (self.pad, self.pad), mode="reflect")
         return F.conv1d(x, self.filt, stride=self.stride, groups=self.channels)
 
 
 class BlurPool2d(nn.Module):
-    """Depthwise separable-binomial low-pass + stride-``stride`` subsample (2D).
+    """
+    Depthwise binomial low-pass and stride-``stride`` subsample (2D).
 
-    Filter = outer product of the 1D binomial kernel. ``filt_size`` defaults to 3
-    (``[1,2,1]``), Zhang's small-stride recommendation; deep feature maps are
-    small, so a compact filter keeps the reflect-pad well within bounds.
+    The filter is the outer product of the 1D binomial kernel.
+
+    Parameters
+    ----------
+    channels : int
+        Number of channels; the filter is applied per channel.
+    stride : int
+        Downsampling factor along both axes.
+    filt_size : int
+        Binomial filter length; 3 gives ``[1, 2, 1]``.
     """
 
     def __init__(self, channels, stride, filt_size=3):
@@ -82,5 +105,18 @@ class BlurPool2d(nn.Module):
         self.pad = filt_size // 2
 
     def forward(self, x):
+        """
+        Reflect-pad, low-pass and subsample along the last two axes.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, C, H, W)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, C, H_out, W_out)``
+            Subsampled features.
+        """
         x = F.pad(x, (self.pad, self.pad, self.pad, self.pad), mode="reflect")
         return F.conv2d(x, self.filt, stride=self.stride, groups=self.channels)

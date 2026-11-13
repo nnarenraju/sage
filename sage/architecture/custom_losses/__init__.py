@@ -2,6 +2,8 @@
 #!/usr/bin/env python
 
 """
+Classification and parameter-estimation losses of the networks.
+
 Filename        = Foobar.py
 Description     = Lorem ipsum dolor sit amet
 

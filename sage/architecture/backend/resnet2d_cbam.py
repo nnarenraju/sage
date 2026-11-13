@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+2D ResNet backend with CBAM channel and spatial attention in every
+residual block.
+
 Filename        : resnet2d_cbam.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import math
 import torch
 import torch.nn as nn
@@ -52,7 +54,21 @@ model_urls = {
 
 
 def conv3x3(in_planes, out_planes, stride=1):
-    "3x3 convolution with padding"
+    """
+    3x3 convolution with padding 1 and no bias.
+
+    Parameters
+    ----------
+    in_planes, out_planes : int
+        Input and output channels.
+    stride : int
+        Convolution stride.
+
+    Returns
+    -------
+    nn.Conv2d
+        The convolution.
+    """
     return nn.Conv2d(
         in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False
     )
@@ -60,19 +76,17 @@ def conv3x3(in_planes, out_planes, stride=1):
 
 class ChannelAttention(nn.Module):
     """
-    CBAM channel attention gate.
+    CBAM channel attention weights.
 
-    Squeezes spatial dimensions to a single scalar per channel using both
-    average and max pooling, then routes through a shared two-layer MLP and
-    sums the results before sigmoid gating.  Reduces channel redundancy by
-    re-weighting each feature map proportionally to its global importance.
+    Average- and max-pooled channel descriptors pass through a shared
+    two-layer 1x1-convolution MLP; their sum goes through a sigmoid.
 
     Parameters
     ----------
     in_planes : int
         Number of input channels.
     ratio : int
-        Reduction ratio for the bottleneck MLP (default 16).
+        Unused; the MLP bottleneck is ``in_planes // 16``.
     """
 
     def __init__(self, in_planes, ratio=16):
@@ -88,6 +102,19 @@ class ChannelAttention(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
+        """
+        Channel weights of ``x``.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, C, H, W)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, C, 1, 1)``
+            Sigmoid weights per channel.
+        """
         avg_out = self.fc(self.avg_pool(x))
         max_out = self.fc(self.max_pool(x))
         out = avg_out + max_out
@@ -96,17 +123,15 @@ class ChannelAttention(nn.Module):
 
 class SpatialAttention(nn.Module):
     """
-    CBAM spatial attention gate.
+    CBAM spatial attention weights.
 
-    Collapses the channel dimension into a 2-channel descriptor (channel-wise
-    average and max), then applies a single convolution to produce a spatial
-    weight map.  Highlights informative spatial locations while suppressing
-    background.
+    The channel-wise mean and max pass through one convolution and a
+    sigmoid.
 
     Parameters
     ----------
     kernel_size : int
-        Kernel size of the spatial convolution (default 7; must be odd).
+        Kernel size of the convolution; odd keeps the spatial size.
     """
 
     def __init__(self, kernel_size=7):
@@ -116,6 +141,19 @@ class SpatialAttention(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
+        """
+        Spatial weights of ``x``.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, C, H, W)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, 1, H, W)``
+            Sigmoid weights per position.
+        """
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         x = torch.cat([avg_out, max_out], dim=1)
@@ -125,29 +163,31 @@ class SpatialAttention(nn.Module):
 
 class BasicBlock(nn.Module):
     """
-    ResNet basic residual block with CBAM attention (for ResNet-18/34).
+    Basic residual block with CBAM attention, for ResNet-18/34.
 
-    Structure: Conv-BN-ReLU → Conv-BN → channel attention → spatial attention
-    → residual add → ReLU.  Expansion factor is 1 (output channels == planes).
+    Conv-BN-ReLU, Conv-BN, channel then spatial attention, dropout,
+    residual add, ReLU. Output channels equal ``planes``.
 
     Parameters
     ----------
     inplanes : int
         Number of input channels.
     planes : int
-        Number of output channels (= expansion * planes).
+        Number of output channels.
     stride : int
-        Stride for the first convolution (default 1).
+        Stride of the first convolution.
     downsample : nn.Module or None
-        Optional 1×1 projection shortcut when dimensions mismatch.
+        Projection shortcut when the shapes differ.
+    dropout : float
+        Channel dropout rate before the residual add.
+    use_blurpool : bool
+        Unused; keeps the block signature uniform.
     """
 
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, dropout=0.0,
                  use_blurpool=True):
-        # use_blurpool accepted for a uniform block API but unused here: BasicBlock
-        # (resnet18/34) is outside the anti-aliasing recipe and stays old-style.
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -157,14 +197,25 @@ class BasicBlock(nn.Module):
 
         self.ca = ChannelAttention(planes)
         self.sa = SpatialAttention()
-        # Spatial (channel) dropout on the block output before the residual add.
-        # p=0 is a no-op, so default leaves the block unchanged.
         self.drop = nn.Dropout2d(dropout)
 
         self.downsample = downsample
         self.stride = stride
 
     def forward(self, x):
+        """
+        Residual block output.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, inplanes, H, W)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, planes, H / stride, W / stride)``
+            Output features.
+        """
         residual = x
 
         out = self.conv1(x)
@@ -189,22 +240,27 @@ class BasicBlock(nn.Module):
 
 class Bottleneck(nn.Module):
     """
-    ResNet bottleneck residual block with CBAM attention (for ResNet-50/101/152).
+    Bottleneck residual block with CBAM attention, for ResNet-50+.
 
-    Structure: 1×1 Conv-BN-ReLU → 3×3 Conv-BN-ReLU → 1×1 Conv-BN →
-    channel attention → spatial attention → residual add → ReLU.
-    Expansion factor is 4 (output channels = 4 * planes).
+    1x1 Conv-BN-ReLU, 3x3 Conv-BN-ReLU (strided or blur-pooled),
+    1x1 Conv-BN, channel then spatial attention, dropout, residual add,
+    ReLU.
 
     Parameters
     ----------
     inplanes : int
         Number of input channels.
     planes : int
-        Bottleneck width; output channels = 4 * planes.
+        Bottleneck width; output channels are ``4 * planes``.
     stride : int
-        Stride applied to the 3×3 convolution (default 1).
+        Downsampling factor of the block.
     downsample : nn.Module or None
-        Optional 1×1 projection shortcut when dimensions mismatch.
+        Projection shortcut when the shapes differ.
+    dropout : float
+        Channel dropout rate before the residual add.
+    use_blurpool : bool
+        Downsample with a BlurPool after a stride-1 3x3 convolution
+        instead of a strided 3x3 convolution.
     """
 
     expansion = 4
@@ -214,9 +270,8 @@ class Bottleneck(nn.Module):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
-        # Anti-aliased downsampling (use_blurpool): the stride moves OUT of conv2
-        # into a BlurPool applied after it (Zhang, ICML 2019). Otherwise the
-        # stride stays in conv2 with an identity blur (pre-df55e89 / o3b_dummy_1).
+        # With use_blurpool the stride moves from conv2 to a BlurPool
+        # after it
         self.conv2 = nn.Conv2d(
             planes, planes, kernel_size=3,
             stride=(1 if use_blurpool else stride), padding=1, bias=False
@@ -230,14 +285,25 @@ class Bottleneck(nn.Module):
 
         self.ca = ChannelAttention(planes * 4)
         self.sa = SpatialAttention()
-        # Spatial (channel) dropout on the block output before the residual add.
-        # p=0 is a no-op, so default leaves the block unchanged.
         self.drop = nn.Dropout2d(dropout)
 
         self.downsample = downsample
         self.stride = stride
 
     def forward(self, x):
+        """
+        Residual block output.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, inplanes, H, W)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, 4 * planes, H / stride, W / stride)``
+            Output features.
+        """
         residual = x
 
         out = self.conv1(x)
@@ -267,40 +333,39 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
     """
-    2D ResNet backbone with CBAM attention in every residual block.
+    2D ResNet with CBAM attention in every residual block.
 
-    Adapted from the standard torchvision ResNet to:
-    1. Accept multi-channel gravitational-wave inputs (default ``in_channels=2``
-       for H1/L1 detector pair).
-    2. Insert :class:`ChannelAttention` and :class:`SpatialAttention` gates
-       inside every :class:`BasicBlock` and :class:`Bottleneck`.
-    3. Output a flat feature vector of size ``num_classes`` (default 512)
-       via global average pooling + a linear projection.
-
-    The model is used as the **backend** of the Sage detection network,
-    receiving 2D feature maps produced by the per-detector 1D CNN frontend.
+    The torchvision ResNet with ``in_channels`` input channels; global
+    average pooling and a linear layer give ``num_classes`` features.
 
     Parameters
     ----------
     block : type
-        Residual block class — :class:`BasicBlock` (ResNet-18/34) or
-        :class:`Bottleneck` (ResNet-50/101/152).
-    layers : list[int]
+        :class:`BasicBlock` (ResNet-18/34) or :class:`Bottleneck`
+        (ResNet-50/101/152).
+    layers : list of int
         Number of blocks per stage, e.g. ``[3, 4, 6, 3]`` for ResNet-50.
     num_classes : int
-        Output feature dimension (default 512).
+        Output feature dimension.
     in_channels : int
-        Number of input channels (default 2 for dual-detector).
+        Number of input channels.
+    dropout : float
+        Channel dropout rate in every residual block.
+    use_blurpool : bool
+        Anti-aliased (BlurPool) downsampling in the stem and the
+        bottleneck blocks.
+    use_resnet_cd : bool
+        ResNet-C deep stem and ResNet-D average-pool shortcuts.
+    zero_init_residual : bool
+        Zero the last BatchNorm scale of every residual block.
     """
 
     def __init__(self, block, layers, num_classes=512, in_channels=2, dropout=0.0,
                  use_blurpool=True, use_resnet_cd=True, zero_init_residual=True):
         self.inplanes = 64
         super(ResNet, self).__init__()
-        # STEM. use_resnet_cd -> ResNet-C deep stem: three stacked 3x3 convs
-        # replace one 7x7 (He et al., "Bag of Tricks", CVPR 2019); same 2x
-        # downsample, stronger early features at ~equal FLOPs. Else the original
-        # single 7x7 stride-2 conv (pre-df55e89 / o3b_dummy_1).
+        # With use_resnet_cd, the ResNet-C deep stem: three 3x3
+        # convolutions for one 7x7
         if use_resnet_cd:
             self.conv1 = nn.Sequential(
                 nn.Conv2d(in_channels, 32, 3, stride=2, padding=1, bias=False),
@@ -315,8 +380,8 @@ class ResNet(nn.Module):
             )
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        # STEM downsample. use_blurpool -> anti-aliased (dense max stride-1 then
-        # BlurPool, Zhang ICML 2019); else the original naive stride-2 max-pool.
+        # Stem downsample: stride-1 max-pool then BlurPool, or a
+        # stride-2 max-pool
         if use_blurpool:
             self.maxpool = nn.Sequential(
                 nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
@@ -341,10 +406,8 @@ class ResNet(nn.Module):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
 
-        # Zero-gamma residual init (He et al., "Bag of Tricks", CVPR 2019): zero
-        # the LAST BN scale in each residual block so the block starts as identity
-        # (residual branch == 0). Eases optimisation of the deep stack, no
-        # inference cost. Must run AFTER the ones-init above (which it overrides).
+        # Zero the last BN scale of each block so it starts as the
+        # identity; overrides the ones-init above
         if zero_init_residual:
             for m in self.modules():
                 if isinstance(m, Bottleneck):
@@ -357,31 +420,36 @@ class ResNet(nn.Module):
 
     def _make_layer(self, block, planes, blocks, stride=1, dropout=0.0,
                     use_blurpool=True, use_resnet_cd=True):
-        """Build one ResNet stage as a sequential stack of residual blocks.
+        """
+        One ResNet stage: a stack of residual blocks.
 
         Parameters
         ----------
         block : type
             Block class to instantiate.
         planes : int
-            Target channel width for this stage.
+            Channel width of the stage.
         blocks : int
-            Number of residual blocks in this stage.
+            Number of residual blocks.
         stride : int
-            Stride for the first block's convolution (halves spatial resolution
-            when stride=2).
+            Downsampling factor of the first block.
+        dropout : float
+            Channel dropout rate of every block.
+        use_blurpool : bool
+            Passed to every block.
+        use_resnet_cd : bool
+            ResNet-D shortcut: average pool then a stride-1 1x1
+            convolution, instead of a strided 1x1 convolution.
 
         Returns
         -------
         nn.Sequential
-            The stacked residual stage.
+            The stage.
         """
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             if use_resnet_cd:
-                # ResNet-D downsample: average-pool (stride) THEN a 1x1 stride-1
-                # conv, instead of a 1x1 stride-2 conv that samples 1-in-4 and
-                # discards ~75% of the shortcut (He et al., "Bag of Tricks", 2019).
+                # ResNet-D shortcut
                 downsample = nn.Sequential(
                     (nn.AvgPool2d(kernel_size=stride, stride=stride, ceil_mode=True)
                      if stride != 1 else nn.Identity()),
@@ -390,7 +458,7 @@ class ResNet(nn.Module):
                     nn.BatchNorm2d(planes * block.expansion),
                 )
             else:
-                # Original 1x1 stride-2 projection shortcut (pre-df55e89).
+                # Strided 1x1 projection shortcut
                 downsample = nn.Sequential(
                     nn.Conv2d(self.inplanes, planes * block.expansion,
                               kernel_size=1, stride=stride, bias=False),
@@ -408,6 +476,19 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        """
+        Backend features.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, in_channels, H, W)``
+            Input feature maps.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, num_classes)``
+            Features.
+        """
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -426,10 +507,20 @@ class ResNet(nn.Module):
 
 
 def resnet18_cbam(pretrained=False, **kwargs):
-    """Constructs a ResNet-18 model.
+    """
+    ResNet-18 with CBAM attention.
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    Parameters
+    ----------
+    pretrained : bool
+        Load the torchvision ImageNet weights into the model.
+    **kwargs
+        Passed to :class:`ResNet`.
+
+    Returns
+    -------
+    ResNet
+        The backend.
     """
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
     if pretrained:
@@ -441,10 +532,20 @@ def resnet18_cbam(pretrained=False, **kwargs):
 
 
 def resnet34_cbam(pretrained=False, **kwargs):
-    """Constructs a ResNet-34 model.
+    """
+    ResNet-34 with CBAM attention.
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    Parameters
+    ----------
+    pretrained : bool
+        Load the torchvision ImageNet weights into the model.
+    **kwargs
+        Passed to :class:`ResNet`.
+
+    Returns
+    -------
+    ResNet
+        The backend.
     """
     model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
     if pretrained:
@@ -456,10 +557,20 @@ def resnet34_cbam(pretrained=False, **kwargs):
 
 
 def resnet50_cbam(pretrained=False, **kwargs):
-    """Constructs a ResNet-50 model.
+    """
+    ResNet-50 with CBAM attention.
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    Parameters
+    ----------
+    pretrained : bool
+        Load the torchvision ImageNet weights into the model.
+    **kwargs
+        Passed to :class:`ResNet`.
+
+    Returns
+    -------
+    ResNet
+        The backend.
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
@@ -471,10 +582,20 @@ def resnet50_cbam(pretrained=False, **kwargs):
 
 
 def resnet101_cbam(pretrained=False, **kwargs):
-    """Constructs a ResNet-101 model.
+    """
+    ResNet-101 with CBAM attention.
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    Parameters
+    ----------
+    pretrained : bool
+        Load the torchvision ImageNet weights into the model.
+    **kwargs
+        Passed to :class:`ResNet`.
+
+    Returns
+    -------
+    ResNet
+        The backend.
     """
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     if pretrained:
@@ -486,10 +607,20 @@ def resnet101_cbam(pretrained=False, **kwargs):
 
 
 def resnet152_cbam(pretrained=False, **kwargs):
-    """Constructs a ResNet-152 model.
+    """
+    ResNet-152 with CBAM attention.
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    Parameters
+    ----------
+    pretrained : bool
+        Load the torchvision ImageNet weights into the model.
+    **kwargs
+        Passed to :class:`ResNet`.
+
+    Returns
+    -------
+    ResNet
+        The backend.
     """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     if pretrained:

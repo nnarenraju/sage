@@ -1,4 +1,4 @@
-"""Attention frontend per detector, cross-attention between two detectors, 2D ResNet-CBAM backend."""
+"""Attention frontends, axial cross-attention, ResNet-CBAM backend."""
 
 import torch
 from torch import nn
@@ -10,11 +10,11 @@ from .common import FrontendTap, initialise_heads, make_heads, norm_layer, norma
 
 class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
     """
-    Multi-scale frontend with attention per detector, gated axial cross-attention
-    between the two detectors, 2D ResNet-CBAM backend on ``[f1, f2, |f1 - f2|]``.
+    Attention frontends, gated axial cross-attention, ResNet-CBAM.
 
-    Exactly two detectors. Outputs the ranking statistic and one estimate per
-    parameter (no uncertainty).
+    Exactly two detectors; the backend sees ``[f1, f2, |f1 - f2|]``.
+    Outputs the ranking statistic, one estimate per parameter (no
+    uncertainty) and the non-astrophysical logit.
 
     Parameters
     ----------
@@ -23,7 +23,8 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
     num_estimates : int
         Estimated parameters; from ``signal.targets``.
     non_astrophysical : bool
-        Add the non-astrophysical head; from ``signal.non_astrophysical``.
+        Add the non-astrophysical head; from
+        ``signal.non_astrophysical``.
     frontend_filters, frontend_kernel : int
         Base filter count and kernel size of the frontend.
     cross_attention_heads : int
@@ -31,11 +32,13 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
     backend_resnet_size : int
         ResNet depth: 18, 34, 50, 101 or 152.
     norm_type : str
-        Input normalisation: ``instancenorm``, ``groupnorm`` or ``batchnorm``.
+        Input normalisation: ``instancenorm``, ``groupnorm`` or
+        ``batchnorm``.
     use_blurpool : bool
         Anti-aliased downsampling in the frontend and backend.
     use_resnet_cd : bool
-        ResNet-C deep stem and ResNet-D average-pool downsampling in the backend.
+        ResNet-C deep stem and ResNet-D average-pool downsampling in
+        the backend.
 
     Raises
     ------
@@ -98,23 +101,31 @@ class MSCNN1Datt_catt_2DResNetCBAM(FrontendTap, nn.Module):
 
     def forward(self, x: torch.Tensor) -> tuple:
         """
+        Ranking statistic, estimates and non-astrophysical logit.
+
         Parameters
         ----------
         x : torch.Tensor, shape ``(B, 2, L)``
+            Strain of the two detectors.
 
         Returns
         -------
         ranking_statistic : torch.Tensor, shape ``(B, 1)``
+            Signal vs noise logit.
         point_estimates : torch.Tensor, shape ``(B, P)``
-        non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``, or ``(B, 0)`` without the class
+            One estimate per parameter.
+        non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``
+            Non-astrophysical vs noise logit; ``(B, 0)`` without the
+            class.
         """
         x = normalise(self.norm, x)
         cnn_outputs = [detector(x[:, i : i + 1]) for i, detector in enumerate(self.frontend)]
         self.tap(cnn_outputs)
 
         f1_attn, f2_attn = self.cross_attention(*cnn_outputs)
-        # Gate from both detectors' projected features; the residual keeps each
-        # detector's own features if the attention contributes nothing.
+        # Gate from both detectors' projected features; the residual
+        # keeps each detector's own features when the attention adds
+        # nothing.
         proj_f1 = self.proj_gate(cnn_outputs[0])
         proj_f2 = self.proj_gate(cnn_outputs[1])
         g = self.gate(torch.cat([proj_f1, proj_f2], dim=1))

@@ -1,11 +1,10 @@
 """Named networks: a frontend per detector feeding a shared backend.
 
-``MSCNN1D`` frontends have no attention; ``MSCNN1Datt`` frontends have channel
-and temporal attention; ``catt`` marks cross-attention between detectors.
-
-Every network declares ``uncertainty`` (estimate heads also give a raw width)
-and ``separable`` (detectors meet only at the backend input, so the search can
-compute each detector's frontend once and reuse it across time slides).
+``MSCNN1D`` frontends have no attention; ``MSCNN1Datt`` frontends have
+channel and temporal attention; ``catt`` marks cross-attention between
+detectors. Each network declares ``uncertainty`` (estimate heads also
+give a raw width) and ``separable`` (detectors meet only at the
+backend).
 """
 
 from .mc_dropout import enable_mc_dropout, mc_predict

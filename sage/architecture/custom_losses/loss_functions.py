@@ -1,13 +1,9 @@
-"""Classification + parameter-estimation losses.
+"""Classification and parameter-estimation losses.
 
-Each loss returns a vector of named components (``component_names``): ``total``
-(the one back-propagated), ``classification``, one ``regression_<target>`` per
-target and, for :class:`BCE_PE_Sigma`, ``coupling``. The total is built from the
-regression summed over every target and sample, as before the per-target split.
-
-The class label is 0 for noise, 1 for a signal and 2 for a non-astrophysical pair.
-Without the non-astrophysical class the classification is BCE on the ranking
-statistic; with it, the multinomial cross-entropy of :func:`classification`.
+Each loss returns its named components (``component_names``): ``total``,
+``classification``, ``regression_<target>`` per target and, for
+:class:`BCE_PE_Sigma`, ``coupling``. Class labels: 0 noise, 1 signal,
+2 non-astrophysical.
 """
 
 import torch
@@ -17,11 +13,21 @@ import torch.nn.functional as F
 
 def width_to_sigma(raw: torch.Tensor, sigma_min: float, sigma_max: float) -> torch.Tensor:
     """
-    Standard deviation from a raw width output: softplus plus ``sigma_min``,
-    clamped to ``[sigma_min, sigma_max]``.
+    Standard deviation from a raw width output.
 
-    No ``exp``, so a momentarily large output cannot collapse the width and blow
-    up ``(mu - y)^2 / sigma^2``.
+    Softplus plus ``sigma_min``, clamped to ``[sigma_min, sigma_max]``.
+
+    Parameters
+    ----------
+    raw : torch.Tensor
+        Raw width outputs.
+    sigma_min, sigma_max : float
+        Bounds of the standard deviation.
+
+    Returns
+    -------
+    torch.Tensor
+        Standard deviations, shape of ``raw``.
     """
     return torch.clamp(F.softplus(raw) + sigma_min, sigma_min, sigma_max)
 
@@ -30,16 +36,17 @@ def classification(ranking_statistic: torch.Tensor, non_astrophysical_logit: tor
     """
     Classification loss and the signal probability of each sample.
 
-    With the non-astrophysical class the logits of noise, signal and non-astrophysical are
-    ``(0, r, a)``, noise the reference category (baseline-category logits), so the ranking
-    statistic ``r`` stays the signal vs noise log odds; the loss is their multinomial
-    cross-entropy (multinomial density-ratio estimation, Srivastava et al. 2023, TMLR).
-    Without it, ``a`` is empty and the loss is BCE on ``r``.
+    With the non-astrophysical class the logits are ``(0, r, a)``, noise
+    the reference, and the loss is their multinomial cross-entropy;
+    without it, BCE on ``r``.
 
     Parameters
     ----------
     ranking_statistic : torch.Tensor, shape ``(B, 1)``
-    non_astrophysical_logit : torch.Tensor, shape ``(B, 1)`` or ``(B, 0)``
+        Signal vs noise logit ``r``.
+    non_astrophysical_logit : torch.Tensor
+        Non-astrophysical vs noise logit ``a``, shape ``(B, 1)``, or
+        ``(B, 0)`` without the class.
     label : torch.Tensor, shape ``(B,)``
         Class label.
 
@@ -48,6 +55,7 @@ def classification(ranking_statistic: torch.Tensor, non_astrophysical_logit: tor
     loss : torch.Tensor
         Mean over the batch.
     signal_probability : torch.Tensor, shape ``(B,)``
+        Softmax signal probability, or ``sigmoid(r)`` without the class.
     """
     r = ranking_statistic.reshape(-1)
     if non_astrophysical_logit.shape[1] == 0:
@@ -57,21 +65,41 @@ def classification(ranking_statistic: torch.Tensor, non_astrophysical_logit: tor
 
 
 def component_names(targets: list, coupling: bool) -> list:
-    """Names of a loss's components, in output order."""
+    """
+    Names of a loss's components, in output order.
+
+    Parameters
+    ----------
+    targets : list of str
+        Estimated parameters.
+    coupling : bool
+        Whether the loss has a coupling term.
+
+    Returns
+    -------
+    list of str
+        Component names.
+    """
     names = ["total", "classification", *[f"regression_{target}" for target in targets]]
     return names + ["coupling"] if coupling else names
 
 
 class EstimateLoss(nn.Module):
     """
-    BCE on the ranking statistic + a regression of the estimates (no widths).
+    Classification plus a regression of the estimates (no widths).
 
-        L = BCE + regression_weight * sum(w * r) / n_signal
+    Loss: classification + regression_weight * :meth:`regression` summed
+    over signal samples / n_signal; with ``confidence_weighting`` each
+    sample is weighted by the detached signal probability.
 
-    ``r`` is the elementwise regression of :meth:`regression`, kept on signal
-    samples only; with ``confidence_weighting`` each sample is weighted by the
-    detached signal probability. BCE is the multinomial cross-entropy with the
-    non-astrophysical class (:func:`classification`).
+    Parameters
+    ----------
+    targets : list of str
+        Estimated parameters, in head order.
+    regression_weight : float
+        Weight of the regression against the classification.
+    confidence_weighting : bool
+        Weight each sample's regression by its signal probability.
     """
 
     uncertainty = False
@@ -84,15 +112,37 @@ class EstimateLoss(nn.Module):
         self.num_components = len(self.component_names)
 
     def regression(self, estimates: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Elementwise regression loss; defined by each subclass.
+
+        Parameters
+        ----------
+        estimates : torch.Tensor, shape ``(B, P)``
+            Point estimates.
+        targets : torch.Tensor, shape ``(B, P)``
+            Scaled targets.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, P)``
+            Loss per sample and parameter.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, on this base class.
+        """
         raise NotImplementedError
 
     def forward(self, outputs: tuple, targets: torch.Tensor) -> torch.Tensor:
         """
+        Loss components of a batch.
+
         Parameters
         ----------
         outputs : tuple
-            ``(ranking_statistic, estimates, non_astrophysical_logit)``, shapes ``(B, 1)``,
-            ``(B, P)`` and ``(B, 1)`` or ``(B, 0)``.
+            ``(ranking_statistic, estimates, non_astrophysical_logit)``,
+            shapes ``(B, 1)``, ``(B, P)`` and ``(B, 1)`` or ``(B, 0)``.
         targets : torch.Tensor, shape ``(B, P + 1)``
             Scaled estimate targets, then the class label.
 
@@ -116,74 +166,94 @@ class EstimateLoss(nn.Module):
 
 class BCE_PE_Huber(EstimateLoss):
     """
-    BCE + smooth-L1 (Huber) regression of the estimates.
+    Classification plus smooth-L1 (Huber) regression of the estimates.
 
     Parameters
     ----------
     targets : list of str
         Estimated parameters, in head order; from ``signal.targets``.
     regression_weight : float
-        Weight of the regression against BCE.
+        Weight of the regression against the classification.
     confidence_weighting : bool
-        Weight each sample's regression by the network's detection confidence.
+        Weight each sample's regression by its signal probability.
     """
 
     def __init__(self, targets: list, regression_weight: float = 1.0, confidence_weighting: bool = True):
         super().__init__(targets, regression_weight, confidence_weighting)
 
     def regression(self, estimates, targets):
+        """
+        Elementwise smooth-L1 loss.
+
+        Parameters
+        ----------
+        estimates, targets : torch.Tensor, shape ``(B, P)``
+            Point estimates and scaled targets.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, P)``
+            Loss per sample and parameter.
+        """
         return F.smooth_l1_loss(estimates, targets, reduction="none")
 
 
 class BCE_PE_MSE(EstimateLoss):
     """
-    BCE + mean-squared-error regression of the estimates.
+    Classification plus mean-squared-error regression of the estimates.
 
     Parameters
     ----------
     targets : list of str
         Estimated parameters, in head order; from ``signal.targets``.
     regression_weight : float
-        Weight of the regression against BCE.
+        Weight of the regression against the classification.
     confidence_weighting : bool
-        Weight each sample's regression by the network's detection confidence.
+        Weight each sample's regression by its signal probability.
     """
 
     def __init__(self, targets: list, regression_weight: float = 1.0, confidence_weighting: bool = False):
         super().__init__(targets, regression_weight, confidence_weighting)
 
     def regression(self, estimates, targets):
+        """
+        Elementwise squared error.
+
+        Parameters
+        ----------
+        estimates, targets : torch.Tensor, shape ``(B, P)``
+            Point estimates and scaled targets.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, P)``
+            Loss per sample and parameter.
+        """
         return F.mse_loss(estimates, targets, reduction="none")
 
 
 class BCE_PE_Sigma(nn.Module):
     """
-    BCE + heteroscedastic beta-NLL regression + coupling. The production loss.
+    Classification, beta-NLL regression and coupling; production loss.
 
-        L = BCE + regression_weight * sum(w * nll) / n_signal
-                + coupling_weight * mean(mean_sigma * signal_probability)
-
-    ``nll = 0.5 (mu - y)^2 / sigma^2 + log sigma``, scaled by
-    ``stop_grad(sigma^(2 beta))`` (beta-NLL, Seitzer et al. 2022), on signal
-    samples only; with ``confidence_weighting`` each sample is weighted by the
-    detached signal probability. ``sigma`` comes from :func:`width_to_sigma`. BCE
-    is the multinomial cross-entropy with the non-astrophysical class
-    (:func:`classification`).
+    Gaussian NLL on signal samples times ``stop_grad(sigma^(2 beta))``
+    (beta-NLL), sigma from :func:`width_to_sigma`;
+    coupling: batch mean of mean sigma times signal probability.
 
     Parameters
     ----------
     targets : list of str
         Estimated parameters, in head order; from ``signal.targets``.
     regression_weight : float
-        Weight of the regression against BCE.
+        Weight of the regression against the classification.
     coupling_weight : float
-        Weight of the coupling between width and detection confidence.
+        Weight of the coupling between width and signal probability.
     beta : float
         beta-NLL exponent; 0 gives the plain Gaussian NLL.
     sigma_min, sigma_max : float
         Bounds of the standard deviation.
     confidence_weighting : bool
-        Weight each sample's regression by the network's detection confidence.
+        Weight each sample's regression by its signal probability.
     """
 
     uncertainty = True
@@ -210,18 +280,22 @@ class BCE_PE_Sigma(nn.Module):
 
     def forward(self, outputs: tuple, targets: torch.Tensor) -> torch.Tensor:
         """
+        Loss components of a batch.
+
         Parameters
         ----------
         outputs : tuple
-            ``(ranking_statistic, estimates, non_astrophysical_logit)``, shapes ``(B, 1)``,
-            ``(B, 2P)`` (all means, then all raw widths) and ``(B, 1)`` or ``(B, 0)``.
+            ``(ranking_statistic, estimates, non_astrophysical_logit)``,
+            shapes ``(B, 1)``, ``(B, 2P)`` (all means, then all raw
+            widths) and ``(B, 1)`` or ``(B, 0)``.
         targets : torch.Tensor, shape ``(B, P + 1)``
             Scaled estimate targets, then the class label.
 
         Returns
         -------
         torch.Tensor, shape ``(P + 3,)``
-            ``[total, classification, regression_<target>..., coupling]``.
+            ``[total, classification, regression_<target>...,
+            coupling]``.
         """
         ranking_stat, point_estimates, non_astrophysical_logit = outputs
         bce_loss, signal_probability = classification(ranking_stat, non_astrophysical_logit, targets[:, -1])
@@ -230,13 +304,12 @@ class BCE_PE_Sigma(nn.Module):
         signal_mask = (targets[:, -1] == 1).to(targets.dtype).unsqueeze(1)
         num_pe = pe_targets.shape[1]
 
-        # float32 throughout: 1/sigma^2 can exceed fp16 range under autocast.
+        # float32: 1/sigma^2 can exceed the fp16 range under autocast
         mu = point_estimates[:, :num_pe].float()
         sigma = width_to_sigma(point_estimates[:, num_pe:].float(), self.sigma_min, self.sigma_max)
         var = sigma * sigma
         nll = 0.5 * (mu - pe_targets.float()) ** 2 / var + torch.log(sigma)
-        # beta-NLL tempers the ~1/sigma^2 gradient that lets a briefly
-        # overconfident head explode, without moving the optimum.
+        # beta-NLL damps the 1/sigma^2 gradient, optimum unchanged
         if self.beta > 0.0:
             nll = nll * (var**self.beta).detach()
 

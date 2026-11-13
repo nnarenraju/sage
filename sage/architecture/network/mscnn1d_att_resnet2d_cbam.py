@@ -1,4 +1,4 @@
-"""Multi-scale 1D CNN frontend with attention per detector + 2D ResNet-CBAM backend."""
+"""Attention multi-scale 1D CNN per detector, 2D ResNet-CBAM backend."""
 
 import torch
 from torch import nn
@@ -9,11 +9,11 @@ from .common import FrontendTap, initialise_heads, make_heads, norm_layer, norma
 
 class MSCNN1Datt_2DResNetCBAM(FrontendTap, nn.Module):
     """
-    Multi-scale frontend with channel and temporal attention per detector,
-    2D ResNet-CBAM backend. The production network.
+    Attention multi-scale frontend per detector, 2D ResNet-CBAM backend.
 
-    Outputs the ranking statistic and, per parameter, an estimate and a raw
-    width (all means, then all widths).
+    The production network. Outputs the ranking statistic, per parameter
+    an estimate and a raw width (all means, then all widths), and the
+    non-astrophysical logit.
 
     Parameters
     ----------
@@ -22,19 +22,22 @@ class MSCNN1Datt_2DResNetCBAM(FrontendTap, nn.Module):
     num_estimates : int
         Estimated parameters; from ``signal.targets``.
     non_astrophysical : bool
-        Add the non-astrophysical head; from ``signal.non_astrophysical``.
+        Add the non-astrophysical head; from
+        ``signal.non_astrophysical``.
     frontend_filters, frontend_kernel : int
         Base filter count and kernel size of the frontend.
     backend_resnet_size : int
         ResNet depth: 18, 34, 50, 101 or 152.
     norm_type : str
-        Input normalisation: ``instancenorm``, ``groupnorm`` or ``batchnorm``.
+        Input normalisation: ``instancenorm``, ``groupnorm`` or
+        ``batchnorm``.
     dropout : float
         Frontend and backend dropout rate.
     use_blurpool : bool
         Anti-aliased downsampling in the frontend and backend.
     use_resnet_cd : bool
-        ResNet-C deep stem and ResNet-D average-pool downsampling in the backend.
+        ResNet-C deep stem and ResNet-D average-pool downsampling in
+        the backend.
     """
 
     uncertainty = True
@@ -77,15 +80,22 @@ class MSCNN1Datt_2DResNetCBAM(FrontendTap, nn.Module):
 
     def forward(self, x: torch.Tensor) -> tuple:
         """
+        Ranking statistic, estimates and non-astrophysical logit.
+
         Parameters
         ----------
         x : torch.Tensor, shape ``(B, D, L)``
+            Strain of ``D`` detectors.
 
         Returns
         -------
         ranking_statistic : torch.Tensor, shape ``(B, 1)``
+            Signal vs noise logit.
         point_estimates : torch.Tensor, shape ``(B, 2P)``
-        non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``, or ``(B, 0)`` without the class
+            All means, then all raw widths.
+        non_astrophysical_logit : torch.Tensor, shape ``(B, 1)``
+            Non-astrophysical vs noise logit; ``(B, 0)`` without the
+            class.
         """
         x = normalise(self.norm, x)
         cnn_outputs = [detector(x[:, i : i + 1]) for i, detector in enumerate(self.frontend)]

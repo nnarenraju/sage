@@ -2,6 +2,9 @@
 #!/usr/bin/env python
 
 """
+Multi-scale 1D CNN frontend without attention: one detector's strain to
+a 2D feature map for the ResNet backend.
+
 Filename        = Foobar.py
 Description     = Lorem ipsum dolor sit amet
 
@@ -24,10 +27,8 @@ Documentation
 
 """
 
-# Future imports
 from __future__ import annotations
 
-# PyTorch imports
 import torch
 import torch.nn as nn
 
@@ -36,11 +37,18 @@ from torch.nn import MaxPool1d, BatchNorm1d
 
 class Conv1dSame(nn.Conv1d):
     """
-    1D convolution with ``padding='same'`` semantics.
+    1D convolution with ``padding='same'``.
 
-    Thin wrapper around :class:`torch.nn.Conv1d` that always requests
-    ``padding='same'``, ensuring the output length matches the input length
-    regardless of kernel size or dilation.
+    Parameters
+    ----------
+    in_channels, out_channels : int
+        Input and output channels.
+    kernel_size : int
+        Kernel size.
+    stride, dilation, groups : int
+        As in :class:`torch.nn.Conv1d`.
+    bias : bool
+        Whether the convolution has a bias.
     """
 
     def __init__(
@@ -68,28 +76,30 @@ class Conv1dSame(nn.Conv1d):
 
 class ConcatBlockConv5(nn.Module):
     """
-    Multi-scale inception-style block with five parallel convolutions.
+    Inception-style block of five parallel 1D convolutions.
 
-    Applies five 1D convolutions in parallel at scales ``k``, ``2k``, ``k//2``,
-    ``k//4``, and ``4k``, concatenates their outputs together with the
-    identity skip connection, then fuses with a 1×1 pointwise convolution.
-    This allows each block to capture temporal features across a wide range
-    of time scales simultaneously — critical for gravitational-wave signals
-    whose frequency sweeps from low to high over hundreds of milliseconds.
+    Branches at kernel sizes ``k``, ``2k``, ``k//2``, ``k//4`` and
+    ``4k`` (each Conv-BN-activation) are concatenated with the input
+    and fused by a 1x1 Conv-BN-activation.
 
     Parameters
     ----------
     in_channels : int
         Number of input channels.
     out_channels : int
-        Number of output channels per parallel branch (and the final output).
+        Output channels of each branch and of the fused output.
     kernel_size : int
-        Base kernel size (``k``).  The five branches use ``k``, ``2k``,
-        ``k//2``, ``k//4``, and ``4k``.
+        Base kernel size ``k``.
     stride : int
-        Stride for all parallel convolutions (default 1).
-    act : callable
-        Activation class to instantiate (default :class:`nn.SiLU`).
+        Stride of every convolution.
+    padding : int
+        Unused; every convolution uses ``padding='same'``.
+    dilation, groups : int
+        As in :class:`torch.nn.Conv1d`, for every convolution.
+    bias : bool
+        Whether the convolutions have a bias.
+    act : type
+        Activation class, instantiated with ``inplace=True``.
     """
 
     def __init__(
@@ -197,6 +207,19 @@ class ConcatBlockConv5(nn.Module):
         )
 
     def forward(self, x):
+        """
+        Fused multi-scale features.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, in_channels, L)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, out_channels, L)``
+            Output features.
+        """
         x1 = self.c1(x)
         x2 = self.c2(x)
         x3 = self.c3(x)
@@ -210,28 +233,20 @@ class ConcatBlockConv5(nn.Module):
 
 class ConvBlock(nn.Module):
     """
-    Three-stage multi-scale 1D CNN frontend for a single detector channel.
+    Three-stage multi-scale 1D CNN frontend for one detector.
 
-    Processes one detector's time-domain waveform through three successive
-    :class:`ConcatBlockConv5` pairs with decreasing kernel scales and
-    interleaved downsampling:
-
-    * Stage 1: kernels ``k``, ``k//2+1`` → MaxPool1d(8)   (8× downsample)
-    * Stage 2: kernels ``k//2+1``, ``k//4+1`` → MaxPool1d(4)   (4× downsample)
-    * Stage 3: kernels ``k//4+1``, ``k//4+1``   (no spatial downsample)
-
-    Output is unsqueezed to add a height dimension, converting the 1D
-    time-series into a 2D feature map ``(B, 1, C, T_down)`` suitable for
-    the 2D ResNet backend.
+    Three stages of two :class:`ConcatBlockConv5`: kernels ``k``,
+    ``k//2+1`` and a stride-8 max-pool; ``k//2+1``, ``k//4+1`` and a
+    stride-4 max-pool; ``k//4+1`` twice.
 
     Parameters
     ----------
     filters_start : int
-        Base number of output filters (default 32).
+        Filters of the first stage, doubled in each later stage.
     kernel_start : int
-        Base kernel size ``k`` (default 64).
+        Base kernel size ``k``.
     in_channels : int
-        Number of input channels (1 for single-detector input, default 1).
+        Number of input channels.
     """
 
     def __init__(self, filters_start=32, kernel_start=64, in_channels=1):
@@ -259,6 +274,19 @@ class ConvBlock(nn.Module):
         )
 
     def forward(self, x):
+        """
+        Frontend feature map.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, in_channels, L)``
+            Strain of one detector.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, 1, 4 * filters_start, L // 32)``
+            Feature map for the 2D backend.
+        """
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
@@ -268,17 +296,15 @@ class ConvBlock(nn.Module):
 
 def _initialize_frontend_weights(self):
     """
-    Apply Kaiming-normal initialisation to all 1D CNN and linear layers.
+    Initialise the Conv1d, BatchNorm1d and Linear layers of a module.
 
-    Intended to be called on a :class:`ConvBlock` (or any module that
-    contains ``nn.Conv1d``, ``nn.BatchNorm1d``, and ``nn.Linear`` layers)
-    immediately after construction.  Batch norm scales are set to 1 and
-    biases to 0; linear biases are zeroed.
+    Kaiming-normal Conv1d weights, unit BatchNorm1d scales, normal
+    Linear weights with std 0.01, and zero biases.
 
     Parameters
     ----------
     self : nn.Module
-        The module whose parameters are initialised in-place.
+        Module whose parameters are initialised in place.
     """
 
     for m in self.modules():

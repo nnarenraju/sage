@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Multi-scale 1D CNN frontend with channel and temporal attention: one
+detector's strain to a 2D feature map for the ResNet backend.
+
 Filename        : mscnn1d_cbam.py
 Description     : Short description of the file
 
@@ -23,10 +26,8 @@ Documentation: NULL
 
 """
 
-# Future imports
 from __future__ import annotations
 
-# PyTorch imports
 import torch
 import torch.nn as nn
 
@@ -37,11 +38,18 @@ from ..antialias import BlurPool1d
 
 class Conv1dSame(nn.Conv1d):
     """
-    1D convolution with ``padding="same"`` semantics (output length == input length).
+    1D convolution with ``padding="same"``.
 
-    Thin subclass of :class:`torch.nn.Conv1d` that hard-codes
-    ``padding="same"`` so callers do not need to compute padding manually.
-    Accepts all standard ``nn.Conv1d`` arguments except ``padding``.
+    Parameters
+    ----------
+    in_channels, out_channels : int
+        Input and output channels.
+    kernel_size : int
+        Kernel size.
+    stride, dilation, groups : int
+        As in :class:`torch.nn.Conv1d`.
+    bias : bool
+        Whether the convolution has a bias.
     """
 
     def __init__(
@@ -69,35 +77,30 @@ class Conv1dSame(nn.Conv1d):
 
 class ConcatBlockConv5(nn.Module):
     """
-    Inception-style multi-scale 1D convolution block with five parallel paths.
+    Inception-style block of five parallel 1D convolutions.
 
-    Runs five Conv1dSame branches at kernel sizes ``k``, ``2k``, ``k/2``,
-    ``k/4``, and ``4k`` in parallel, concatenates all outputs with the
-    identity skip, then fuses with a pointwise (1×1) convolution.  The wide
-    range of receptive fields lets a single block capture both fine-grained
-    features and long-range chirp structure simultaneously.
+    Branches at kernel sizes ``k``, ``2k``, ``k//2``, ``k//4`` and
+    ``4k`` (each Conv-BN-activation) are concatenated with the input
+    and fused by a 1x1 Conv-BN-activation.
 
     Parameters
     ----------
     in_channels : int
         Number of input channels.
     out_channels : int
-        Number of output channels produced by each branch and the fused output.
+        Output channels of each branch and of the fused output.
     kernel_size : int
-        Base kernel size ``k``; the five branches use ``k, 2k, k//2, k//4,
-        4k``.
+        Base kernel size ``k``.
     stride : int
-        Convolution stride (default ``1``).
+        Stride of every convolution.
     padding : int
-        Ignored — ``Conv1dSame`` handles padding automatically.
-    dilation : int
-        Dilation factor for all branches (default ``1``).
-    groups : int
-        Grouped convolution groups (default ``1``).
+        Unused; every convolution uses ``padding="same"``.
+    dilation, groups : int
+        As in :class:`torch.nn.Conv1d`, for every convolution.
     bias : bool
-        Whether to add a bias term (default ``True``).
-    act : nn.Module
-        Activation class applied after each BN (default :class:`~torch.nn.SiLU`).
+        Whether the convolutions have a bias.
+    act : type
+        Activation class, instantiated with ``inplace=True``.
     """
 
     def __init__(
@@ -205,6 +208,19 @@ class ConcatBlockConv5(nn.Module):
         )
 
     def forward(self, x):
+        """
+        Fused multi-scale features.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, in_channels, L)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, out_channels, L)``
+            Output features.
+        """
         x1 = self.c1(x)
         x2 = self.c2(x)
         x3 = self.c3(x)
@@ -218,18 +234,17 @@ class ConcatBlockConv5(nn.Module):
 
 class ChannelAttention1D(nn.Module):
     """
-    1D CBAM channel-attention gate.
+    1D CBAM channel attention gate.
 
-    Applies both average and max global temporal pooling, passes each through
-    a shared two-layer FC (with bottleneck ratio ``reduction``), sums, applies
-    sigmoid, and rescales the input channel-wise.
+    Average- and max-pooled channel descriptors pass through a shared
+    two-layer MLP; the sigmoid of their sum rescales each channel.
 
     Parameters
     ----------
     in_channels : int
         Number of input channels.
     reduction : int
-        Bottleneck reduction ratio for the FC layers (default ``16``).
+        Bottleneck reduction ratio of the MLP.
     """
 
     def __init__(self, in_channels, reduction=16):
@@ -245,7 +260,19 @@ class ChannelAttention1D(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        # x: (B, C, T)
+        """
+        Channel-gated features.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, C, T)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, C, T)``
+            ``x`` scaled by the channel weights.
+        """
         avg_out = self.fc(self.avg_pool(x).squeeze(-1))
         max_out = self.fc(self.max_pool(x).squeeze(-1))
         out = avg_out + max_out
@@ -255,20 +282,17 @@ class ChannelAttention1D(nn.Module):
 
 class TemporalAttention1D(nn.Module):
     """
-    1D CBAM temporal (spatial) attention gate.
+    1D CBAM temporal attention gate.
 
-    Concatenates channel-wise average and max features along the time axis,
-    applies a single 1D convolution + sigmoid to produce a time-step attention
-    map, and rescales the input point-wise.  This highlights signal-rich time
-    regions (e.g. the merger) and suppresses flat noise segments.
+    The channel-wise mean and max pass through one convolution and a
+    sigmoid; the result rescales every time step.
 
     Parameters
     ----------
     in_channels : int
-        Number of input channels (used for context; the conv operates on 2
-        channels after the channel-wise reduction).
+        Unused; the convolution sees the two pooled channels.
     kernel_size : int
-        Temporal kernel size for the attention convolution (default ``7``).
+        Kernel size of the attention convolution.
     """
 
     def __init__(self, in_channels, kernel_size=7):
@@ -280,7 +304,19 @@ class TemporalAttention1D(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        # x: (B, C, T)
+        """
+        Time-gated features.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, C, T)``
+            Input features.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, C, T)``
+            ``x`` scaled by the temporal weights.
+        """
         avg_out = x.mean(dim=1, keepdim=True)  # (B,1,T)
         max_out, _ = x.max(dim=1, keepdim=True)  # (B,1,T)
         x_cat = torch.cat([avg_out, max_out], dim=1)
@@ -290,34 +326,32 @@ class TemporalAttention1D(nn.Module):
 
 class ConvBlock(nn.Module):
     """
-    Three-stage multi-scale 1D CNN frontend with per-stage CBAM attention.
+    Three-stage multi-scale 1D CNN frontend with CBAM attention.
 
-    Processes a single detector strain time-series through three cascaded
-    stages, each containing two :class:`ConcatBlockConv5` blocks followed by
-    a :class:`ChannelAttention1D` and :class:`TemporalAttention1D` gate.
-    Max-pooling between stages achieves dyadic downsampling (÷8, ÷4) before
-    the final stage.  The output is unsqueezed to add a channel dimension for
-    downstream 2D or 3D processing.
+    Each stage: two :class:`ConcatBlockConv5` with kernels from ``k``
+    down to ``k//4+1``, a downsample (by 8, by 4, none), channel and
+    temporal attention, and channel dropout.
 
     Parameters
     ----------
     filters_start : int
-        Base number of feature maps in stage 1 (doubled per stage, default
-        ``32``).
+        Filters of the first stage, doubled in each later stage.
     kernel_start : int
-        Base kernel size for the first :class:`ConcatBlockConv5` block (halved
-        per stage, default ``64``).
+        Base kernel size ``k``.
     in_channels : int
-        Number of input channels (default ``1`` for a single detector).
+        Number of input channels.
+    dropout : float
+        Channel dropout rate after each stage.
+    use_blurpool : bool
+        Downsample by a stride-1 max-pool then a BlurPool, instead of
+        a strided max-pool.
     """
 
     def __init__(self, filters_start=32, kernel_start=64, in_channels=1, dropout=0.0,
                  use_blurpool=True):
         super().__init__()
 
-        # Channel (spatial) dropout after each stage. ``Dropout1d`` zeroes whole
-        # feature channels (better for conv features than element-wise). p=0 is a
-        # no-op, so the default leaves the frontend unchanged.
+        # Dropout1d zeroes whole channels
         self.drop1 = nn.Dropout1d(dropout)
         self.drop2 = nn.Dropout1d(dropout)
         self.drop3 = nn.Dropout1d(dropout)
@@ -326,9 +360,8 @@ class ConvBlock(nn.Module):
         k2 = kernel_start // 2 + 1
         k3 = kernel_start // 4 + 1
 
-        # /8 downsample. use_blurpool -> anti-aliased (dense max stride-1 then a
-        # binomial BlurPool, Zhang ICML 2019, cutoff ~ the /8 Nyquist); else the
-        # original strided max-pool (pre-df55e89 / o3b_dummy_1 architecture).
+        # Downsample by 8: stride-1 max-pool then BlurPool, or a
+        # stride-8 max-pool
         _down1 = (
             [MaxPool1d(kernel_size=8, stride=1, padding=4),
              BlurPool1d(filters_start, stride=8)]
@@ -344,8 +377,7 @@ class ConvBlock(nn.Module):
         self.ca1 = ChannelAttention1D(filters_start)
         self.ta1 = TemporalAttention1D(filters_start)
 
-        # /4 downsample (anti-aliased if use_blurpool, else the original strided
-        # max-pool).
+        # Downsample by 4, as above
         _down2 = (
             [MaxPool1d(kernel_size=4, stride=1, padding=2),
              BlurPool1d(filters_start * 2, stride=4)]
@@ -370,6 +402,20 @@ class ConvBlock(nn.Module):
         self.ta3 = TemporalAttention1D(filters_start * 4)
 
     def forward(self, x):
+        """
+        Frontend feature map.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape ``(B, in_channels, L)``
+            Strain of one detector.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, 1, 4 * filters_start, L_down)``
+            Feature map for the 2D backend; ``L_down`` is about
+            ``L/32``.
+        """
 
         x = self.conv1(x)
         x = self.ca1(x)
@@ -391,6 +437,17 @@ class ConvBlock(nn.Module):
 
 
 def _initialize_frontend_weights(self):
+    """
+    Initialise the Conv1d, BatchNorm1d and Linear layers of a module.
+
+    Kaiming-normal Conv1d weights, unit BatchNorm1d scales, normal
+    Linear weights with std 0.01, and zero biases.
+
+    Parameters
+    ----------
+    self : nn.Module
+        Module whose parameters are initialised in place.
+    """
 
     for m in self.modules():
 
