@@ -37,6 +37,9 @@ def atomic_h5(path, mode="a"):
     """
     path = str(path)
     tmp = path + ".tmp"
+    # A killed earlier write can leave a temp copy; never write onto it
+    if os.path.exists(tmp):
+        os.remove(tmp)
     if mode == "a" and os.path.exists(path):
         shutil.copy2(path, tmp)          # snapshot committed state to append onto
     committed = False
