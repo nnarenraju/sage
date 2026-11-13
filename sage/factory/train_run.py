@@ -17,7 +17,13 @@ import torch
 import yaml
 
 from sage.config import load_run, prepare_run_dir
-from sage.config.machine import MissingData, dataset_file, fiducial_dir, read_data_dir
+from sage.config.machine import (
+    MissingASDs,
+    MissingData,
+    dataset_file,
+    fiducial_dir,
+    read_data_dir,
+)
 from sage.config.prior import load_prior
 from sage.config.run_dir import (
     check_derived,
@@ -246,15 +252,23 @@ def check_data(run_dir: Path, settings: dict, data_dir: Path, fiducial: bool = F
     Raises
     ------
     MissingData
-        Naming every missing file.
+        Naming every missing downloaded file.
+    MissingASDs
+        Naming every missing ASD file, once no downloaded file is missing.
     ValueError
         If an observing run's strain is at another sample rate than the run.
     """
     files = data_files(settings, data_dir, fiducial=fiducial)
     missing = [path for path in files if not path.exists()]
-    if missing:
-        raise MissingData(f"{len(missing)} of the {len(files)} data files this run reads are missing:\n"
-                          + "\n".join(f"  {path}" for path in missing))
+    asds = Path(data_dir) / "asds"
+    built = [path for path in missing if asds in path.parents]
+    downloaded = [path for path in missing if path not in built]
+    if downloaded:
+        listed = "\n".join(f"  {path}" for path in downloaded)
+        raise MissingData(f"downloaded files this run reads are missing:\n{listed}")
+    if built:
+        listed = "\n".join(f"  {path}" for path in built)
+        raise MissingASDs(f"ASD files this run reads are missing:\n{listed}")
     sample_rate = settings["data"]["sample_rate_in_hz"]
     for run in strain_runs(settings["noise"]):
         recorded = yaml.safe_load(dataset_file(data_dir, run).read_text())["sample_rate_in_hz"]

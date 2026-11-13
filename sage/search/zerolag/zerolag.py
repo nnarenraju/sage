@@ -1,16 +1,23 @@
-"""Score every zero-lag window and keep the loud ones as triggers."""
+"""Score every zero-lag window: all network outputs, resumable.
 
+``score_windows`` keeps only loud windows as triggers, for the time-lag
+background.
+"""
+
+import os
+import time
 from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
 
-from sage.data.noise.data_quality import Interval
 from sage.search.dataprep.strain import window_batches
-from sage.search.dataprep.windows import analysis_windows, load_segments
-from sage.search.model.score import score_strain
-from sage.search.removal.vetoes import flag_vetoed
-from sage.search.zerolag.triggers import concatenate, loud_triggers, write_triggers
+from sage.search.model.score import network_outputs, score_strain, window_spectra
+from sage.search.records import record_done, start_stream, stream_files, write_rows
+from sage.search.zerolag.triggers import concatenate, loud_triggers
+
+WINDOW_TABLE = "windows.npy"
+SCORES = "scores"
 
 
 def score_windows(
@@ -69,21 +76,74 @@ def score_windows(
     return concatenate(kept)
 
 
-def zerolag(
+def window_table(windows: Dict[str, np.ndarray], detectors: List[str]) -> np.ndarray:
+    """
+    Each window's GPS start and, per detector, its segment and start sample.
+
+    Parameters
+    ----------
+    windows : dict of str to numpy.ndarray
+        Output of ``analysis_windows``.
+    detectors : list of str
+        Detectors of the network.
+
+    Returns
+    -------
+    numpy.ndarray
+        Structured array, one row per window.
+    """
+    fields = [("gps", "<f8")]
+    fields += [(f"{detector}_segment", "<i8") for detector in detectors]
+    fields += [(f"{detector}_sample", "<i8") for detector in detectors]
+    table = np.empty(len(windows["gps"]), dtype=fields)
+    for name, _ in fields:
+        table[name] = windows[name]
+    return table
+
+
+def save_window_table(path: Path, table: np.ndarray) -> None:
+    """
+    Write the window table once; a resumed pass must find the same windows.
+
+    Parameters
+    ----------
+    path : Path
+        Table file, ``.npy``.
+    table : numpy.ndarray
+        Output of ``window_table``.
+
+    Raises
+    ------
+    ValueError
+        If the saved table differs, so the release has changed.
+    """
+    if path.exists():
+        if not np.array_equal(np.load(path), table):
+            raise ValueError(f"{path}: the strain release's windows have changed")
+        return
+
+    part = path.with_name(f"{path.name}.part")
+    with open(part, "wb") as handle:
+        np.save(handle, table)
+    os.replace(part, path)
+
+
+def score_zerolag(
     network: Dict[str, object],
     release_dir: Path,
     run: str,
-    output: Path,
-    vetoes: Dict[str, List[Interval]],
-    stride_samples: int = 204,
-    keep_threshold: float = 0.0,
-    batch_size: int = 4096,
-    device: str = "cuda",
+    windows: Dict[str, np.ndarray],
+    directory: Path,
+    stride_samples: int,
+    batch_size: int,
+    device: str,
+    attrs: dict,
 ) -> None:
-    """Score every zero-lag window and write the loud ones to one file.
+    """
+    Score every zero-lag window, resuming after the last batch written.
 
-    Triggers whose data touches bad time are flagged ``vetoed``; the
-    analysed time is ``n_live_windows * stride_samples / sample_rate``.
+    Writes ``windows.npy`` and the ``scores`` stream (every network
+    output of every window, row ``i`` for window ``i``) into ``directory``.
 
     Parameters
     ----------
@@ -92,47 +152,49 @@ def zerolag(
     release_dir : Path
         Strain release directory.
     run : str
-        Observing run.
-    output : Path
-        Trigger file to write.
-    vetoes : dict of str to list of tuple of float
-        ``sage.data.noise.data_quality.bad_segments`` per detector.
+        Observing run as the release names it, e.g. ``O3a``.
+    windows : dict of str to numpy.ndarray
+        Output of ``analysis_windows``.
+    directory : Path
+        Zero-lag directory of the search.
     stride_samples : int
         Step between window starts in samples.
-    keep_threshold : float
-        Ranking statistic above which a window is kept as a trigger.
     batch_size : int
         Maximum windows scored at once.
     device : str
         Device to score on.
+    attrs : dict
+        Settings recorded with the scores; a resumed pass must match them.
     """
     detectors = network["detectors"]
-    segments = {
-        detector: load_segments(release_dir, run, detector) for detector in detectors
-    }
-    windows = analysis_windows(segments, network["window_samples"], stride_samples)
+    window_samples = network["window_samples"]
+    total = len(windows["gps"])
+    directory.mkdir(parents=True, exist_ok=True)
+    save_window_table(directory / WINDOW_TABLE, window_table(windows, detectors))
 
-    columns = score_windows(
-        network,
-        release_dir,
-        run,
-        windows,
-        stride_samples,
-        keep_threshold,
-        batch_size,
-        device,
-    )
-    columns["vetoed"] = flag_vetoed(network, columns, vetoes)
+    done = start_stream(directory, SCORES, network["columns"], total, attrs)
+    print(f"Zero-lag: {done:,} of {total:,} windows scored before", flush=True)
+    started, reported = time.monotonic(), done
+    with open(stream_files(directory, SCORES)[0], "r+b") as handle:
+        for batch, strain in window_batches(
+            release_dir,
+            run,
+            windows,
+            detectors,
+            window_samples,
+            stride_samples,
+            batch_size,
+            start=done,
+        ):
+            spectra = window_spectra(strain, window_samples, stride_samples, device)
+            write_rows(handle, batch.start, network_outputs(network, spectra))
+            record_done(handle, directory, SCORES, batch.stop)
 
-    attrs = {
-        **network["provenance"],
-        "release_dir": str(Path(release_dir).resolve()),
-        "run": run,
-        "detectors": detectors,
-        "n_windows": len(windows["gps"]),
-        "n_live_windows": int((~flag_vetoed(network, windows, vetoes)).sum()),
-        "stride_samples": stride_samples,
-        "sample_rate": segments[detectors[0]][0]["sample_rate"],
-        "keep_threshold": keep_threshold,
-    }
-    write_triggers(output, columns, attrs)
+            if batch.stop - reported >= total // 100 or batch.stop == total:
+                rate = (batch.stop - done) / (time.monotonic() - started)
+                print(
+                    f"Zero-lag: {batch.stop:,} of {total:,} windows "
+                    f"({100 * batch.stop / total:.1f}%), {rate:,.0f} windows/s",
+                    flush=True,
+                )
+                reported = batch.stop

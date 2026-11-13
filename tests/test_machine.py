@@ -16,7 +16,7 @@ def machine_file(tmp_path, monkeypatch):
 
 
 def test_missing(machine_file):
-    with pytest.raises(FileNotFoundError, match="run `sage machine-setup`"):
+    with pytest.raises(FileNotFoundError, match="run `sage setup`"):
         machine.read_data_dir()
 
 

@@ -1,4 +1,4 @@
-"""``sage machine-setup`` and ``sage machine``: the machine file."""
+"""``sage setup`` and ``sage machine``: the machine file."""
 
 import argparse
 import os
@@ -9,37 +9,44 @@ import yaml
 from sage.cli.journey import next_command
 from sage.cli.registry import CommandError, command
 from sage.config import machine
-from sage.config.loader import check, read_yaml
 from sage.utils.schedulers import schedulers
 from sage.utils.slurm import query
 
 
-@command("machine-setup", "Tell Sage where all downloaded data goes (once per machine)", journey=1)
-def setup_machine(arguments: list) -> None:
-    """Write the machine file, asking for the data directory unless given."""
+@command(
+    "setup",
+    "Write the file that says where all data goes (once per machine)",
+    journey=1,
+)
+def setup(arguments: list) -> None:
+    """Write the machine file; ``data_dir`` is left empty unless given."""
     parser = argparse.ArgumentParser(
-        prog="sage machine-setup", description="Write the machine file: the directory all downloaded data goes to."
+        prog="sage setup",
+        description="Write the machine file: the directory for all data.",
     )
-    parser.add_argument("--data-dir", help="data directory (asked for if not given)")
+    parser.add_argument("--data-dir", help="data directory (default: fill it in yourself)")
     options = parser.parse_args(arguments)
 
-    current = None
-    if machine.MACHINE_FILE.exists():
-        try:
-            current = check(read_yaml(machine.MACHINE_FILE), machine.SCHEMA, str(machine.MACHINE_FILE))["data_dir"]
-        except (ValueError, yaml.YAMLError) as error:
-            print(f"{machine.MACHINE_FILE} is unreadable and will be replaced: {error}")
-    answer = options.data_dir
-    if answer is None:
-        answer = input(f"Directory for all downloaded data{f' [{current}]' if current else ''}: ").strip() or current
-    if not answer:
-        raise CommandError("no data directory given", "sage machine-setup --data-dir <directory>")
+    path = machine.MACHINE_FILE
+    if options.data_dir is None:
+        if path.exists():
+            print(f"{path} exists; edit data_dir there, or: "
+                  "sage setup --data-dir <directory>")
+            print("Next: sage machine")
+            return
+        machine.write_machine_file(None)
+        print(f"Wrote {path}; open it and fill in data_dir")
+        print("Next: sage machine")
+        return
 
-    data_dir = Path(answer).expanduser().resolve()
+    data_dir = Path(options.data_dir).expanduser().resolve()
     if not data_dir.is_dir():
-        raise CommandError(f"{data_dir} is not a directory", f"mkdir -p {data_dir} && sage machine-setup --data-dir {data_dir}")
-    machine.write_data_dir(data_dir)
-    print(f"Wrote {machine.MACHINE_FILE}: data_dir {data_dir}")
+        raise CommandError(
+            f"{data_dir} is not a directory",
+            f"mkdir -p {data_dir} && sage setup --data-dir {data_dir}",
+        )
+    machine.write_machine_file(data_dir)
+    print(f"Wrote {path}: data_dir {data_dir}")
     print("Next: sage machine")
 
 
@@ -50,16 +57,16 @@ def show_machine(arguments: list) -> None:
     parser.parse_args(arguments)
 
     if not machine.MACHINE_FILE.exists():
-        raise CommandError(f"no machine file at {machine.MACHINE_FILE}", "sage machine-setup")
+        raise CommandError(f"no machine file at {machine.MACHINE_FILE}", "sage setup")
     try:
         data_dir = machine.read_data_dir()
     except (FileNotFoundError, ValueError, yaml.YAMLError) as error:
-        raise CommandError(str(error), "sage machine-setup") from None
+        raise CommandError(str(error), "sage setup --data-dir <directory>") from None
     print(f"Machine file: {machine.MACHINE_FILE}")
     print(f"data_dir: {data_dir}")
     if not os.access(data_dir, os.R_OK | os.W_OK | os.X_OK):
         raise CommandError(f"data_dir {data_dir} is not readable and writable by you",
-                           "sage machine-setup --data-dir <directory you can write>")
+                           "sage setup --data-dir <directory you can write>")
     found = schedulers()
     if not found:
         print("Scheduler: none (no sbatch or condor_submit on PATH); jobs run where they are started")

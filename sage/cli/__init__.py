@@ -15,6 +15,7 @@ from sage.cli import jobs as _jobs  # noqa: F401  (registers its commands)
 from sage.cli import machine as _machine  # noqa: F401  (registers its commands)
 from sage.cli import results as _results  # noqa: F401  (registers its commands)
 from sage.cli import runs as _runs  # noqa: F401  (registers its commands)
+from sage.cli import search as _search  # noqa: F401  (registers its commands)
 from sage.cli import training as _training  # noqa: F401  (registers its commands)
 from sage.cli.journey import journey
 from sage.cli.registry import COMMANDS, CommandError, closest

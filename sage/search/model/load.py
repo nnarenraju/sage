@@ -65,7 +65,9 @@ def load_search_network(checkpoint: Path, device: str = "cuda") -> Dict[str, obj
     dict of str to object
         ``model``, ``processor``, ``detectors``, ``window_samples``,
         ``sample_rate``, ``padding_s``, ``targets``, ``offsets``, ``scales``,
-        ``width_bounds``, and the ``provenance`` written into every trigger file.
+        ``width_bounds``, ``columns`` (names of the network outputs, in
+        ``network_outputs`` order), and the ``provenance`` written into
+        every trigger file.
 
     Raises
     ------
@@ -94,6 +96,11 @@ def load_search_network(checkpoint: Path, device: str = "cuda") -> Dict[str, obj
 
     targets = list(settings["signal"]["targets"])
     scaling = derived["target_scaling"]
+    columns = ["ranking_statistic"]
+    if "non_astrophysical" in settings["signal"]:
+        columns.append("non_astrophysical_logit")
+    columns += [f"{target}_raw_mean" for target in targets]
+    columns += [f"{target}_raw_width" for target in targets]
     loss = resolve_loss(settings["loss"])
     return {
         "model": model,
@@ -106,6 +113,7 @@ def load_search_network(checkpoint: Path, device: str = "cuda") -> Dict[str, obj
         "offsets": np.array([scaling[target]["offset"] for target in targets], dtype=np.float64),
         "scales": np.array([scaling[target]["scale"] for target in targets], dtype=np.float64),
         "width_bounds": (loss["sigma_min"], loss["sigma_max"]),
+        "columns": columns,
         "provenance": {
             "checkpoint": str(Path(checkpoint).resolve()),
             "model": settings["model"]["name"],

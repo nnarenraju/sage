@@ -49,7 +49,7 @@ def test_zero_runs(tmp_path, monkeypatch):
     samples = np.memmap(path, dtype="<f4", mode="r+")
     samples[40960 + 100:40960 + 110] = 0  # missing data in the second segment
     samples.flush()
-    download_run(tmp_path, "o3b", ["H1"], 2, False, False)
+    download_run(tmp_path, "o3b", ["H1"], 2)
     start = 1e9 + 600.0
     assert json.loads(machine.zero_runs_file(path).read_text())["intervals"] == [
         [start + 100 / 2048, start + 110 / 2048]
@@ -107,7 +107,8 @@ def test_adopt_strain(tmp_path, monkeypatch):
     monkeypatch.setitem(download.ASDS, "bank_size", 3)
     monkeypatch.setitem(download.FIDUCIAL, "line_stretches_per_run", 2)
     path = write_strain(tmp_path, [40960, 45056])
-    assert download_run(tmp_path, "o3b", ["H1"], 2, True, True)["H1"]["pieces"] == 2
+    assert download_run(tmp_path, "o3b", ["H1"], 2)["H1"]["pieces"] == 2
+    download.build_asds(tmp_path, "o3b", ["H1"], True, True)
     assert yaml.safe_load(machine.dataset_file(tmp_path, "o3b").read_text())["sample_rate_in_hz"] == 2048.0
     record = yaml.safe_load(machine.asds_file(tmp_path, "o3b").read_text())
     assert record["detectors"]["H1"] == {"segment_asds": 2, "bank_seed": download.BANK_SEED}
@@ -116,17 +117,18 @@ def test_adopt_strain(tmp_path, monkeypatch):
     records = [machine.dataset_file(tmp_path, "o3b"), machine.asds_file(tmp_path, "o3b")]
     for record in records:
         record.chmod(0o444)
-    download_run(tmp_path, "o3b", ["H1"], 2, True, True)  # nothing new: no record rewritten
+    download_run(tmp_path, "o3b", ["H1"], 2)  # nothing new: no record rewritten
+    download.build_asds(tmp_path, "o3b", ["H1"], True, True)
     for record in records:
         record.chmod(0o644)
     monkeypatch.setattr(download, "gwosc_run", str.upper)
     monkeypatch.setattr(download, "find_datasets", lambda detector, type: ["O3B"] if detector == "H1" else [])
-    assert machine.fiducial_file(download.download_fiducial(tmp_path, ["o3b"], ["H1"], 1), "H1").exists()
+    assert machine.fiducial_file(download.build_fiducials(tmp_path, ["o3b"], ["H1"], 1), "H1").exists()
     gwosc = yaml.safe_load(machine.dataset_file(tmp_path, "o3b").read_text())["gwosc"]
     assert gwosc == {"name": "O3B", "detectors": ["H1"]}
     monkeypatch.setattr(download, "gwosc_run", unreachable)
     monkeypatch.setattr(download, "find_datasets", unreachable)
-    download.download_fiducial(tmp_path, ["o3b"], ["H1"], 1)  # checked from the record, offline
+    download.build_fiducials(tmp_path, ["o3b"], ["H1"], 1)  # checked from the record, offline
     fiducial = machine.fiducial_file(machine.fiducial_dir(tmp_path, ["o3b"]), "H1")
     asd = np.fromfile(fiducial, dtype="<f4")
     asd[100] = np.inf  # an excised bin
@@ -138,10 +140,10 @@ def test_adopt_strain(tmp_path, monkeypatch):
         download.check_fiducial(tmp_path, ["o3b"], "H1")
     machine.bad_time_file(path).write_text(json.dumps({"flags": ["CBC_CAT2"], "intervals": []}))
     with pytest.raises(ValueError, match="flags"):
-        download_run(tmp_path, "o3b", ["H1"], 2, False, False)
+        download_run(tmp_path, "o3b", ["H1"], 2)
     path.write_bytes(path.read_bytes()[:-4])
     with pytest.raises(ValueError, match="bytes"):
-        download_run(tmp_path, "o3b", ["H1"], 2, False, False)
+        download_run(tmp_path, "o3b", ["H1"], 2)
 
 
 def test_line_workers(tmp_path, monkeypatch):
@@ -160,5 +162,20 @@ def test_unreachable(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(machine, "MACHINE_FILE", machine_file)
     monkeypatch.setattr(download, "find_datasets", unreachable)
     assert main(["download", "o3b"]) == 1
+    assert capsys.readouterr().err.endswith("fix: sage download o3b --train\n")
+    assert main(["download", "o3b", "--train"]) == 1
     err = capsys.readouterr().err
-    assert "GWOSC could not be reached from here: proxy 503" in err and "sage download o3b" in err
+    assert "GWOSC could not be reached from here: proxy 503" in err
+    assert err.endswith("sage download o3b --train\n")
+
+
+def test_build_asds_flags(tmp_path, monkeypatch, capsys):
+    """build-asds needs one kind of ASD and the training strain."""
+    machine_file = tmp_path / "machine.yaml"
+    machine_file.write_text(f"data_dir: {tmp_path}\n")
+    monkeypatch.setattr(machine, "MACHINE_FILE", machine_file)
+    assert main(["build-asds", "o3b"]) == 1
+    assert capsys.readouterr().err.endswith("fix: sage build-asds o3b --segments\n")
+    assert main(["build-asds", "o3b", "--segments"]) == 1
+    assert capsys.readouterr().err.endswith("fix: sage download o3b --train\n")
+

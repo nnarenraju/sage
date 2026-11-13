@@ -1,7 +1,7 @@
 """
 Observing-run data in the data directory: the dataset's fixed numbers, the
-strain's download from GWOSC with resume, the ASDs estimated from it, and the
-records written beside them.
+training and search strain's download from GWOSC with resume, the ASDs
+estimated from it, and the records written beside them.
 """
 
 import json
@@ -19,6 +19,7 @@ from pycbc import DYN_RANGE_FAC
 
 from sage.config.loader import yaml_text
 from sage.config.machine import (
+    MissingASDs,
     MissingData,
     asd_dir,
     asds_file,
@@ -29,6 +30,8 @@ from sage.config.machine import (
     fiducial_file,
     observing_run_dir,
     recolour_bank_file,
+    search_dataset_file,
+    search_strain_file,
     segment_asd_file,
     segments_file,
     strain_file,
@@ -43,6 +46,7 @@ from sage.data.noise.data_quality import read_bad_time, write_bad_time, write_ze
 from sage.data.primer import DataReleaseDownloader, NoBlackout, TimelineQuery
 from sage.data.primer.retry import retry_detector
 from sage.dsp.welch import TorchWelch
+from sage.search.dataprep.release import download_search_data
 
 # Source: runs/<run>/dataset.py, the same for O3a, O3b, O4a and O4b.
 SAMPLE_RATE = 2048.0
@@ -54,6 +58,18 @@ DATASET = {
     "minimum_segment_in_s": 22.0,
     "piece_in_s": 512.0,
     "minimum_piece_in_s": 16.0,
+    "sample_rate_in_hz": SAMPLE_RATE,
+    "highpass_in_hz": 15.0,
+    "trim_in_s": TRIM,
+    "scale": float(DYN_RANGE_FAC),
+    "dtype": "float32",
+}
+# Source: the O3a search release (its spec.json), as
+# sage.search.dataprep.release.download_search_data builds it.
+SEARCH_DATASET = {
+    "gwosc_files": "<run>_4KHZ_R1",
+    "segments": "<detector>_DATA",
+    "minimum_segment_in_s": 16.0,
     "sample_rate_in_hz": SAMPLE_RATE,
     "highpass_in_hz": 15.0,
     "trim_in_s": TRIM,
@@ -125,13 +141,22 @@ def gwosc_record(data_dir: Path, run: str) -> dict:
     if recorded is not None:
         return recorded
     name = gwosc_run(run)
-    detectors = [detector for detector in sorted(_DETECTORS) if name in find_datasets(detector=detector, type="run")]
+    detectors = gwosc_detectors(name)
     path = dataset_file(data_dir, run)
     record = yaml.safe_load(path.read_text()) if path.exists() else {**DATASET, "detectors": {}}
     record["gwosc"] = {"name": name, "detectors": detectors}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml_text(record))
     return record["gwosc"]
+
+
+def gwosc_detectors(name: str) -> list:
+    """Detectors GWOSC lists with strain for a run, by GWOSC's name."""
+    return [
+        detector
+        for detector in sorted(_DETECTORS)
+        if name in find_datasets(detector=detector, type="run")
+    ]
 
 
 def run_detectors(data_dir: Path, run: str) -> list:
@@ -528,16 +553,54 @@ def check_fiducial(data_dir: Path, runs: list, detector: str) -> None:
         raise ValueError(f"{path}: {int(invalid.sum())} values are NaN or -inf")
 
 
-def download_fiducial(data_dir: Path, runs: list, detectors: list, workers: int) -> Path:
+def build_fiducials(data_dir: Path, runs: list, detectors: list, workers: int) -> Path:
     """
-    Build or adopt the fiducial of ``runs`` for each detector; the runs' recolour banks and strain must be on disk.
-    Its line tests run in ``workers`` processes.
+    Build or adopt the fiducial of ``runs`` for each detector.
+
+    Each detector pools the runs with its strain. Line tests run in
+    ``workers`` processes.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    runs : list of str
+        Observing runs to pool.
+    detectors : list of str
+        Detectors to build.
+    workers : int
+        Processes for the line tests.
 
     Returns
     -------
     Path
         The fiducial's directory.
+
+    Raises
+    ------
+    MissingData
+        If a pooled run's strain or its record is missing.
+    MissingASDs
+        If a pooled run's recolour bank is missing.
     """
+    # The records name each run's detectors, so they are checked first.
+    records = [dataset_file(data_dir, run) for run in runs]
+    missing_strain = [path for path in records if not path.exists()]
+    missing_banks = []
+    if not missing_strain:
+        for detector in detectors:
+            for run in fiducial_runs(data_dir, runs, detector):
+                strain = strain_file(data_dir, run, detector)
+                bank = recolour_bank_file(asd_dir(data_dir, run), detector)
+                missing_strain += [strain] if not strain.exists() else []
+                missing_banks += [bank] if not bank.exists() else []
+    if missing_strain:
+        listed = "\n".join(f"  {path}" for path in missing_strain)
+        raise MissingData(f"strain files are missing:\n{listed}")
+    if missing_banks:
+        listed = "\n".join(f"  {path}" for path in missing_banks)
+        raise MissingASDs(f"recolour banks are missing:\n{listed}")
+
     for detector in detectors:
         if not fiducial_file(fiducial_dir(data_dir, runs), detector).exists():
             build_fiducial(data_dir, runs, detector, workers)
@@ -567,11 +630,60 @@ def write_record(path: Path, numbers: dict, detectors: dict) -> Path:
     return path
 
 
-def download_run(data_dir: Path, run: str, detectors: list, workers: int, asds: bool, bank: bool) -> dict:
+def download_search(data_dir: Path, run: str, detectors: list, workers: int) -> dict:
     """
-    Download, resume or adopt each detector's strain of an observing run, check it and save its
-    data-quality time and zero runs beside it; build or adopt its per-segment ASDs and recolour bank
-    if asked; record both.
+    Download or resume an observing run's search strain per detector.
+
+    Bad time and zero spans are saved beside it, and it is recorded.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3a"``.
+    detectors : list of str
+        Detectors to download.
+    workers : int
+        Parallel downloads.
+
+    Returns
+    -------
+    dict of str to dict
+        ``segments``, ``days`` and ``gps`` (first start, last end) per
+        detector.
+    """
+    download_search_data(
+        gwosc_run(run),
+        detectors,
+        observing_run_dir(data_dir, run, "search"),
+        sample_rate=SEARCH_DATASET["sample_rate_in_hz"],
+        low_frequency_cutoff=SEARCH_DATASET["highpass_in_hz"],
+        trim_s=SEARCH_DATASET["trim_in_s"],
+        minimum_segment_s=SEARCH_DATASET["minimum_segment_in_s"],
+        workers=workers,
+    )
+
+    summaries = {}
+    for detector in detectors:
+        path = segments_file(search_strain_file(data_dir, run, detector))
+        records = json.loads(path.read_text())
+        seconds = sum(record["nsamples"] / record["sample_rate"] for record in records)
+        summaries[detector] = {
+            "segments": len(records),
+            "days": seconds / 86400,
+            "gps": [records[0]["gps_start"], records[-1]["gps_end"]],
+        }
+    write_record(search_dataset_file(data_dir, run), SEARCH_DATASET, summaries)
+    return summaries
+
+
+def download_run(data_dir: Path, run: str, detectors: list, workers: int) -> dict:
+    """
+    Download, resume or adopt an observing run's strain per detector.
+
+    It is checked, its data-quality time and zero runs are saved beside
+    it, and it is recorded.
 
     Parameters
     ----------
@@ -583,10 +695,6 @@ def download_run(data_dir: Path, run: str, detectors: list, workers: int, asds: 
         Detectors to download.
     workers : int
         Parallel downloads.
-    asds : bool
-        Also build or adopt the per-segment ASDs.
-    bank : bool
-        Also build or adopt the recolour bank; an adopted bank's seed is recorded as unknown.
 
     Returns
     -------
@@ -612,12 +720,57 @@ def download_run(data_dir: Path, run: str, detectors: list, workers: int, asds: 
             write_zero_runs(path)
         read_bad_time(path)
     write_record(dataset_file(data_dir, run), DATASET, summaries)
+    return summaries
+
+
+def build_asds(
+    data_dir: Path, run: str, detectors: list, segments: bool, bank: bool
+) -> Path:
+    """
+    Build or adopt an observing run's per-segment ASDs or recolour bank.
+
+    Each detector's are checked and recorded.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detectors : list of str
+        Detectors to build.
+    segments : bool
+        Build or adopt the per-segment ASDs.
+    bank : bool
+        Build or adopt the recolour bank; an adopted bank's seed is
+        recorded as unknown.
+
+    Returns
+    -------
+    Path
+        The ASD record.
+
+    Raises
+    ------
+    MissingData
+        If a detector's strain, sidecar, bad time or zero runs are missing.
+    """
+    missing = []
+    for detector in detectors:
+        path = strain_file(data_dir, run, detector)
+        files = [path, segments_file(path), bad_time_file(path), zero_runs_file(path)]
+        missing += [file for file in files if not file.exists()]
+    if missing:
+        listed = "\n".join(f"  {path}" for path in missing)
+        raise MissingData(f"strain files are missing:\n{listed}")
+    for detector in detectors:
+        check_strain(data_dir, run, detector)
 
     record = asds_file(data_dir, run)
     recorded = yaml.safe_load(record.read_text())["detectors"] if record.exists() else {}
     entries = {detector: {} for detector in detectors}
     for detector in detectors:
-        if asds:
+        if segments:
             if not segment_asd_file(asd_dir(data_dir, run), detector).exists():
                 build_segment_asds(data_dir, run, detector)
             entries[detector]["segment_asds"] = check_segment_asds(data_dir, run, detector)
@@ -628,6 +781,4 @@ def download_run(data_dir: Path, run: str, detectors: list, workers: int, asds: 
                 seed = BANK_SEED
             check_bank(data_dir, run, detector)
             entries[detector]["bank_seed"] = seed
-    if asds or bank:
-        write_record(record, ASDS, entries)
-    return summaries
+    return write_record(record, ASDS, entries)

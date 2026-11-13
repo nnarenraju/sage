@@ -10,6 +10,7 @@ prior and derived values may not change.
 """
 
 import datetime
+import os
 import platform
 import shutil
 import subprocess
@@ -48,6 +49,33 @@ class StateMismatch(ValueError):
     def __init__(self, message: str, weights_only: bool):
         super().__init__(message)
         self.weights_only = weights_only
+
+
+def find_run_dir(directory: str | Path) -> Path:
+    """
+    Nearest directory at or above ``directory`` holding a ``run.yaml``.
+
+    Found as git finds ``.git``.
+
+    Parameters
+    ----------
+    directory : str or Path
+        Where to start, e.g. ``"."``.
+
+    Returns
+    -------
+    Path
+        ``directory`` as given if it holds a ``run.yaml`` or no
+        directory above it does; otherwise the absolute path of the
+        nearest directory above it that holds one.
+    """
+    start = Path(directory)
+    if (start / "run.yaml").exists():
+        return start
+    for parent in Path(os.path.abspath(start)).parents:
+        if (parent / "run.yaml").exists():
+            return parent
+    return start
 
 
 def training_started(run_dir: Path) -> bool:

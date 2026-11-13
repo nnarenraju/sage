@@ -1,7 +1,8 @@
 """Build a search-grade strain release from GWOSC.
 
 One HDF5 file per detector holds one dataset per observing segment; a
-JSON sidecar lists the segments. An interrupted build resumes.
+JSON sidecar lists the segments. Bad time and exactly-zero spans are
+saved beside each file. An interrupted build resumes.
 """
 
 import contextlib
@@ -18,6 +19,8 @@ import numpy as np
 import requests
 from pycbc import DYN_RANGE_FAC
 
+from sage.config.machine import bad_time_file, segments_file, zero_runs_file
+from sage.data.noise.data_quality import merge, write_bad_time
 from sage.dsp.filters import pycbc_downsample
 from sage.search.dataprep.download import (
     Interval,
@@ -125,6 +128,65 @@ def read_strain(
     if n_nan:
         raise ValueError(f"[{gps_start}, {gps_end}) has {n_nan} NaN samples")
     return raw
+
+
+def zero_spans(
+    samples: np.ndarray, gps_start: float, sample_rate: float
+) -> List[Interval]:
+    """GPS spans of exactly-zero samples, as training's ``zero_runs``.
+
+    Parameters
+    ----------
+    samples : numpy.ndarray
+        Strain samples.
+    gps_start : float
+        GPS time of the first sample.
+    sample_rate : float
+        Sample rate in Hz.
+
+    Returns
+    -------
+    list of tuple of float
+        ``[start, end)`` of each run of zeros, in order.
+    """
+    zero = samples == 0
+    if not zero.any():
+        return []
+
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], zero.view(np.int8), [0]))))
+    return [
+        (gps_start + first / sample_rate, gps_start + last / sample_rate)
+        for first, last in zip(edges[::2].tolist(), edges[1::2].tolist())
+    ]
+
+
+def write_zero_runs(strain_path: Path, records: List[dict]) -> None:
+    """Save the zero spans of every segment beside the strain file.
+
+    A record without ``zero_spans`` has its stored strain scanned.
+
+    Parameters
+    ----------
+    strain_path : Path
+        Strain file.
+    records : list of dict
+        Sidecar records of the file.
+    """
+    spans = []
+    with h5py.File(strain_path, "r") as handle:
+        for record in records:
+            if "zero_spans" in record:
+                spans += [tuple(span) for span in record["zero_spans"]]
+            else:
+                samples = handle[record["dataset"]][:]
+                spans += zero_spans(
+                    samples, record["gps_start"], record["sample_rate"]
+                )
+
+    path = zero_runs_file(strain_path)
+    part = path.with_name(f"{path.name}.part")
+    part.write_text(json.dumps({"intervals": merge(spans)}))
+    os.replace(part, path)
 
 
 def write_segment(
@@ -243,11 +305,12 @@ def build_detector(
     workers: int,
     files_ahead: int,
     download_attempts: int,
-) -> Path:
+) -> int:
     """Write, or resume writing, one detector's strain file.
 
     Source files are downloaded in parallel ahead of the segment being
-    written and deleted once no later segment needs them.
+    written and deleted once no later segment needs them. Each record
+    holds the zero spans of the segment's raw strain.
 
     Parameters
     ----------
@@ -278,8 +341,8 @@ def build_detector(
 
     Returns
     -------
-    Path
-        Strain file.
+    int
+        Segments written.
     """
     strain_path = release_dir / f"data_{detector}_{run}.h5"
     sidecar = release_dir / f"data_{detector}_{run}_segments.json"
@@ -342,6 +405,7 @@ def build_detector(
                     trim_samples,
                     low_frequency_cutoff,
                 )
+                record["zero_spans"] = zero_spans(raw, segments[index][0], 4096.0)
                 records.append(record)
                 handle.flush()
                 partial = sidecar.with_suffix(".part")
@@ -360,7 +424,7 @@ def build_detector(
 
     for leftover in scratch_dir.glob(f"{detector}-*.hdf5"):
         leftover.unlink()
-    return strain_path
+    return len(segments) - n_done
 
 
 def download_search_data(
@@ -380,7 +444,8 @@ def download_search_data(
     """Download and condition search strain for every detector.
 
     Source files are staged in ``release_dir/scratch``, which is removed
-    once empty. Calling again resumes an interrupted build.
+    once empty. Each detector's bad time and zero spans are saved beside
+    its strain. Calling again resumes an interrupted build.
 
     Parameters
     ----------
@@ -426,7 +491,7 @@ def download_search_data(
         segments = select_segments(
             segments, minimum_samples / sample_rate, sample_rate, gps_range
         )
-        build_detector(
+        written = build_detector(
             session,
             run,
             detector,
@@ -440,6 +505,13 @@ def download_search_data(
             files_ahead,
             download_attempts,
         )
+
+        strain_path = release_dir / f"data_{detector}_{run}.h5"
+        if written or not zero_runs_file(strain_path).exists():
+            records = json.loads(segments_file(strain_path).read_text())
+            write_zero_runs(strain_path, records)
+        if not bad_time_file(strain_path).exists():
+            write_bad_time(strain_path, run, detector)
     # Kept if another build is still staging files here.
     with contextlib.suppress(OSError):
         scratch_dir.rmdir()

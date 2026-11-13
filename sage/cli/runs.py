@@ -11,6 +11,7 @@ from sage.cli.registry import CommandError, closest, command
 from sage.config import machine
 from sage.config import loader
 from sage.config.loader import suggestion
+from sage.config.run_dir import find_run_dir
 
 
 def parameters(cls, provided: set, overrides: dict | None = None) -> str:
@@ -56,7 +57,7 @@ def data_lines() -> list:
     try:
         data_dir = machine.read_data_dir()
     except (FileNotFoundError, ValueError) as error:
-        raise CommandError(str(error), "sage machine-setup") from None
+        raise CommandError(str(error), "sage setup --data-dir <directory>") from None
     lines = [f"Data in {data_dir}:"]
     for entry in sorted(p for p in data_dir.iterdir() if p.is_dir()):
         parts = sorted(p.name for p in entry.iterdir() if p.is_dir())
@@ -129,8 +130,14 @@ def copy_prior(arguments: list) -> None:
     """Write a prior preset to ``prior.yaml`` in the run directory, unchanged, for editing."""
     parser = argparse.ArgumentParser(prog="sage copy-prior", description="Copy a prior preset into the run directory to edit it.")
     parser.add_argument("preset", help="prior preset")
-    parser.add_argument("directory", nargs="?", default=".", help="run directory (default: here)")
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="run directory, or a directory inside it (default: here)",
+    )
     options = parser.parse_args(arguments)
+    options.directory = str(find_run_dir(options.directory))
 
     names = loader.preset_names("priors")
     if options.preset not in names:
@@ -155,7 +162,9 @@ def clone_run(arguments: list) -> None:
 
     parser = argparse.ArgumentParser(prog="sage clone", description="Start a new run directory from a stored checkpoint "
                                      "of another run.")
-    parser.add_argument("old", help="run directory to clone")
+    parser.add_argument(
+        "old", help="run directory to clone, or a directory inside it"
+    )
     parser.add_argument("new", help="new run directory")
     state = parser.add_mutually_exclusive_group(required=True)
     state.add_argument("--full-state", action="store_true",
@@ -164,7 +173,7 @@ def clone_run(arguments: list) -> None:
     parser.add_argument("--from-epoch", type=int, help="stored epoch to start from (default: the latest)")
     options = parser.parse_args(arguments)
 
-    old, new = Path(options.old), Path(options.new)
+    old, new = find_run_dir(options.old), Path(options.new)
     flag = "--full-state" if options.full_state else "--weights-only"
     latest = f"sage clone {old} {new} {flag}"
     again = latest + ("" if options.from_epoch is None else f" --from-epoch {options.from_epoch}")

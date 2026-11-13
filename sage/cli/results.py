@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sage.cli.registry import CommandError, command
 from sage.cli.training import checked_settings, device_available, on, parse
-from sage.config.run_dir import SettingsChanged
+from sage.config.run_dir import SettingsChanged, find_run_dir
 
 
 @command("validate", "Validate one stored checkpoint on the run's final validation set")
@@ -92,7 +92,7 @@ def benchmark(arguments: list) -> None:
     print(f"Next: {on('status', options.directory)}")
 
 
-@command("plot", "Draw the run's validation figures into results/plots", journey=7)
+@command("plot", "Draw the run's validation figures into results/plots", journey=8)
 def plot(arguments: list) -> None:
     """Draw the figure suite for the best validated epoch, or another validation group."""
     import matplotlib
@@ -133,14 +133,19 @@ def compare(arguments: list) -> None:
 
     parser = argparse.ArgumentParser(prog="sage compare", description="Score several runs' best.pt on identical "
                                      "validation windows.")
-    parser.add_argument("runs", nargs="+", help="run directories; the first one's validation settings define the windows")
+    parser.add_argument(
+        "runs",
+        nargs="+",
+        help="run directories, or directories inside them; the first "
+        "one's validation settings define the windows",
+    )
     parser.add_argument("--output", required=True, help=f"new directory for {OUTPUT_FILE}, {REPORT_FILE} and the figures")
     parser.add_argument("--noise-windows", type=int, default=10_000_000, help="noise-only windows (default: 10000000)")
     parser.add_argument("--signal-windows", type=int, default=1_000_000, help="windows with a signal (default: 1000000)")
     parser.add_argument("--seed", type=int, default=170817, help="seed of the windows (default: 170817)")
     options = parser.parse_args(arguments)
     again = shlex.join(["sage", "compare", *arguments])
-    runs = [Path(run) for run in options.runs]
+    runs = [find_run_dir(run) for run in options.runs]
     for run in runs:
         if not (run / "run.yaml").exists():
             raise CommandError(f"no run.yaml in {run}", "sage init <directory> --preset <name>")

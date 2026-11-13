@@ -3,14 +3,20 @@
 from importlib.metadata import version
 from pathlib import Path
 
+import yaml
+
 from sage.cli.registry import COMMANDS
 from sage.config import machine
+from sage.config.run_dir import find_run_dir
 
 
 def next_command(directory: Path = Path(".")) -> str:
     """The command to run next, from the state of the machine and of ``directory``."""
-    if not machine.MACHINE_FILE.exists():
-        return "sage machine-setup"
+    directory = find_run_dir(directory)
+    try:
+        machine.read_data_dir()
+    except (FileNotFoundError, ValueError, yaml.YAMLError):
+        return "sage setup"
     if not (Path(directory) / "run.yaml").exists():
         return "sage init <directory> --preset <name>"
     if not (Path(directory) / "resolved" / "derived.yaml").exists():

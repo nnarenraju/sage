@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from sage.cli.registry import CommandError, command
+from sage.config.run_dir import find_run_dir
 from sage.utils.schedulers import schedulers
 from sage.utils.slurm.chain import JOB_LOGS, chain
 
@@ -23,11 +24,14 @@ def chain_jobs(arguments: list) -> None:
     script = Path(options.script)
     if not script.is_file():
         raise CommandError(f"no job script {script}", f"sage slurm-chain <your job script> --jobs {options.jobs}")
-    run_dir = script.resolve().parent  # job output goes to its logs/jobs
+    run_dir = find_run_dir(script.resolve().parent)  # output: its logs/jobs
     if not (run_dir / "run.yaml").exists():
-        raise CommandError(f"{script}: a job script lives in the run directory it trains, and {run_dir} has no "
-                           "run.yaml", f"mv {script} <run directory>/, then: sage slurm-chain <run directory>/{script.name} "
-                           f"--jobs {options.jobs}")
+        raise CommandError(
+            f"{script}: a job script lives in or below the run directory "
+            f"it trains, and no directory from {run_dir} up has a run.yaml",
+            f"mv {script} <run directory>/, then: sage slurm-chain "
+            f"<run directory>/{script.name} --jobs {options.jobs}",
+        )
     if options.jobs < 1:
         raise CommandError(f"--jobs {options.jobs}: a chain needs at least one job", f"sage slurm-chain {script} --jobs 1")
     if "slurm" not in schedulers():

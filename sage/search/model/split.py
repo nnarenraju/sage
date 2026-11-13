@@ -1,12 +1,15 @@
 """Per-detector and shared halves of a trained network.
 
 The per-detector half is computed once per detector and reused across
-time slides; the shared half combines the detectors.
+time slides; the shared half combines the detectors. Both call the
+network's own layers, as ``model.forward`` does.
 """
 
-from typing import List, Tuple
+from typing import List
 
 import torch
+
+from sage.architecture.network.common import normalise, run_heads
 
 
 def frontend(
@@ -31,17 +34,12 @@ def frontend(
     torch.Tensor
         Features of that detector.
     """
-    with torch.autocast(device_type=strain.device.type, enabled=False):
-        normed = model.norm(strain.float())
+    normed = normalise(model.norm, strain)
     return model.frontend[detector](normed[:, detector : detector + 1])
 
 
-def backend(
-    model: torch.nn.Module, features: List[torch.Tensor]
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Ranking statistic and point estimates from per-detector features.
-
-    The output heads run in full precision, as in ``model.forward``.
+def backend(model: torch.nn.Module, features: List[torch.Tensor]) -> tuple:
+    """Every network output from per-detector features.
 
     Parameters
     ----------
@@ -52,27 +50,24 @@ def backend(
 
     Returns
     -------
-    statistic : torch.Tensor
-        Ranking statistic per window.
-    estimates : torch.Tensor
-        Point-estimate means followed by their widths, per window.
+    tuple of torch.Tensor
+        ``(ranking_statistic, point_estimates, non_astrophysical_logit)``,
+        as ``model.forward`` returns them.
     """
     pooled = model.backend(torch.cat(features, dim=1))
     pooled = model.flatten(model.avg_pool_1d(pooled))
-    with torch.autocast(device_type=pooled.device.type, enabled=False):
-        pooled = pooled.float()
-        statistic = model.get_ranking_statistic(pooled)
-        outputs = [layer(pooled) for layer in model.point_estimate_layers]
-        means = torch.cat([output[:, :1] for output in outputs], dim=1)
-        widths = torch.cat([output[:, 1:] for output in outputs], dim=1)
-    return statistic, torch.cat([means, widths], dim=1)
+    return run_heads(
+        pooled,
+        model.get_ranking_statistic,
+        model.point_estimate_layers,
+        model.get_non_astrophysical_logit,
+    )
 
 
 def check_split(model: torch.nn.Module, strain: torch.Tensor) -> None:
     """Check the halves reproduce the network and detectors stay separate.
 
-    Both checks are exact. Run once per checkpoint before reusing
-    per-detector features across time slides.
+    Both checks are exact.
 
     Parameters
     ----------
@@ -99,7 +94,7 @@ def check_split(model: torch.nn.Module, strain: torch.Tensor) -> None:
         expected = model(strain)
         features = [frontend(model, strain, index) for index in range(n_detectors)]
         actual = backend(model, features)
-        for want, got in zip(expected, actual):
+        for want, got in zip(expected, actual, strict=True):
             if not torch.equal(want, got):
                 raise ValueError("the network halves do not reproduce model.forward")
 

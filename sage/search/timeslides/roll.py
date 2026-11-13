@@ -1,21 +1,29 @@
 """Time-slide background by rolling the window list, as in sgwc-1.
 
-Each other detector's windows are shifted along the zero-lag window
-list by a whole number of windows, wrapping at the end.
+Roll ``j`` pairs each reference window ``i`` with follower ``f``'s window
+``(i + j (f + 1) k) mod N`` of the zero-lag list, ``k`` windows spanning
+at least the step between rolls. Rolls are grouped into files of about
+a year of live time; a file's rolls share each window's frontend.
 """
 
+import math
+import time
+from fractions import Fraction
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+from pycbc.conversions import sec_to_year
 
-from sage.data.noise.data_quality import Interval
-from sage.search.dataprep.strain import window_batches
-from sage.search.dataprep.windows import analysis_windows, load_segments
-from sage.search.model.score import backend_scores, frontend_features, window_spectra
-from sage.search.removal.vetoes import flag_vetoed
-from sage.search.zerolag.triggers import concatenate, loud_triggers, write_triggers
+from sage.search.dataprep.strain import batch_bounds, window_batches
+from sage.search.model.score import (
+    backend_outputs,
+    check_separable,
+    frontend_features,
+    window_spectra,
+)
+from sage.search.records import record_done, start_stream, stream_files, write_rows
 
 
 def roll_shifts(
@@ -92,69 +100,137 @@ def gather(
     return torch.cat(pieces)
 
 
-def score_slide(
-    network: Dict[str, object],
-    windows: Dict[str, np.ndarray],
-    stored: List[List[Tuple[int, torch.Tensor]]],
-    reference: slice,
-    shifts: np.ndarray,
-    keep_threshold: float,
-) -> Dict[str, np.ndarray]:
-    """Trigger columns of one batch of reference windows under one roll.
+def step_windows(step_s: float, stride_samples: int, sample_rate: float) -> int:
+    """Fewest whole windows whose starts span at least ``step_s``.
 
     Parameters
     ----------
-    network : dict of str to object
-        Output of ``load_search_network``.
+    step_s : float
+        Smallest time between rolls, in seconds.
+    stride_samples : int
+        Step between window starts in samples.
+    sample_rate : float
+        Sample rate in Hz.
+
+    Returns
+    -------
+    int
+        Windows per roll step.
+    """
+    return math.ceil(Fraction(step_s) * Fraction(sample_rate) / stride_samples)
+
+
+def plan_rolls(
+    clear: Dict[str, np.ndarray],
+    detectors: List[str],
+    step: int,
+    step_s: float,
+    live_time_years: float,
+    file_years: float,
+    stride_samples: int,
+    sample_rate: float,
+) -> List[dict]:
+    """Rolls 1, 2, ... grouped into files, until the live time is reached.
+
+    A roll's live time is its pairs clear of bad time in every detector
+    times the stride; a file is closed once its live time reaches
+    ``file_years``.
+
+    Parameters
+    ----------
+    clear : dict of str to numpy.ndarray
+        ``clear_windows`` of the zero-lag windows.
+    detectors : list of str
+        Detectors, the reference first.
+    step : int
+        Windows per roll step, ``step_windows``.
+    step_s : float
+        Smallest time between rolls, in seconds.
+    live_time_years : float
+        Live time of the whole background, in years.
+    file_years : float
+        Live time after which a file is closed, in years.
+    stride_samples : int
+        Step between window starts in samples.
+    sample_rate : float
+        Sample rate in Hz.
+
+    Returns
+    -------
+    list of dict
+        Per file, ``shifts`` (one row per roll, one shift per follower)
+        and ``live_time_s`` (per roll).
+
+    Raises
+    ------
+    ValueError
+        If a roll has no pair clear of bad time.
+    """
+    reference, followers = detectors[0], detectors[1:]
+    stride_s = stride_samples / sample_rate
+    files, total_s, roll = [], 0.0, 0
+    while sec_to_year(total_s) < live_time_years:
+        roll += 1
+        shifts = roll_shifts(
+            roll, step, len(followers), step_s, stride_samples, sample_rate
+        )[-1]
+        pairs = clear[reference].copy()
+        for follower, shift in zip(followers, shifts):
+            pairs &= np.roll(clear[follower], -shift)
+        if not pairs.any():
+            raise ValueError(f"roll {roll} has no pair clear of bad time")
+
+        live_s = int(pairs.sum()) * stride_s
+        if not files or sec_to_year(sum(files[-1]["live_time_s"])) >= file_years:
+            files.append({"shifts": [], "live_time_s": []})
+        files[-1]["shifts"].append([int(shift) for shift in shifts])
+        files[-1]["live_time_s"].append(live_s)
+        total_s += live_s
+    return files
+
+
+def rotated_windows(
+    windows: Dict[str, np.ndarray], offset: int, extra: int
+) -> Dict[str, np.ndarray]:
+    """The window list from window ``offset`` on, wrapping, ``extra`` longer.
+
+    Parameters
+    ----------
     windows : dict of str to numpy.ndarray
-        Zero-lag windows, from ``analysis_windows``.
-    stored : list of list of tuple of int and torch.Tensor
-        Feature chunks per detector.
-    reference : slice
-        Reference windows in the batch.
-    shifts : numpy.ndarray
-        Shift of every detector in windows, zero for the reference.
-    keep_threshold : float
-        Ranking statistic above which a window is kept.
+        Output of ``analysis_windows``.
+    offset : int
+        Window at position 0.
+    extra : int
+        Windows after the full list, wrapping again.
 
     Returns
     -------
     dict of str to numpy.ndarray
-        Trigger columns of the kept windows.
+        Windows at positions ``0 .. N + extra``.
     """
-    count = reference.stop - reference.start
-    features = [
-        gather(chunks, reference.start + shift, count)
-        for chunks, shift in zip(stored, shifts)
-    ]
-    statistic, estimates = backend_scores(network, features)
-
-    ordinals = np.arange(reference.start, reference.stop)
-    paired = {"gps": windows["gps"][reference]}
-    for detector, shift in zip(network["detectors"], shifts):
-        partner = (ordinals + shift) % len(windows["gps"])
-        paired[f"{detector}_segment"] = windows[f"{detector}_segment"][partner]
-        paired[f"{detector}_sample"] = windows[f"{detector}_sample"][partner]
-        paired[f"{detector}_gps"] = windows[f"{detector}_gps"][partner]
-    return loud_triggers(network, statistic, estimates, paired, keep_threshold)
+    n_windows = len(windows["gps"])
+    positions = (offset + np.arange(n_windows + extra)) % n_windows
+    return {name: values[positions] for name, values in windows.items()}
 
 
-def score_rolls(
+def score_roll_file(
     network: Dict[str, object],
     release_dir: Path,
     run: str,
     windows: Dict[str, np.ndarray],
-    shifts: np.ndarray,
-    stride_samples: int = 204,
-    keep_threshold: float = 0.0,
-    batch_size: int = 4096,
-    device: str = "cuda",
-) -> List[Dict[str, np.ndarray]]:
-    """Score every roll with each window's frontend computed once.
+    directory: Path,
+    name: str,
+    shifts: List[List[int]],
+    stride_samples: int,
+    batch_size: int,
+    device: str,
+    attrs: dict,
+) -> None:
+    """Score the rolls of one background file, resuming after the last batch.
 
-    Features are held for the largest shift ahead of the windows being
-    scored. The first windows are read again after the last, so shifts
-    that wrap find their features.
+    Row ``r * N + i`` holds roll ``r`` of the file: reference window ``i``
+    with follower ``f``'s window ``(i + shifts[r][f]) mod N``. Each
+    window's frontend features are computed once for the file.
 
     Parameters
     ----------
@@ -163,154 +239,107 @@ def score_rolls(
     release_dir : Path
         Strain release directory.
     run : str
-        Observing run.
+        Observing run as the release names it, e.g. ``O3a``.
     windows : dict of str to numpy.ndarray
         Zero-lag windows, from ``analysis_windows``.
-    shifts : numpy.ndarray
-        Output of ``roll_shifts``.
+    directory : Path
+        Background directory of the search.
+    name : str
+        File name.
+    shifts : list of list of int
+        Per roll, the shift of each follower in windows.
     stride_samples : int
         Step between window starts in samples.
-    keep_threshold : float
-        Ranking statistic above which a window is kept.
     batch_size : int
         Maximum windows scored at once.
     device : str
         Device to score on.
-
-    Returns
-    -------
-    list of dict of str to numpy.ndarray
-        Trigger columns of each slide.
+    attrs : dict
+        Settings recorded with the scores; a resumed pass must match them.
     """
     detectors = network["detectors"]
+    window_samples = network["window_samples"]
     n_windows = len(windows["gps"])
-    max_shift = int(shifts.max())
-    extended = {
-        name: np.concatenate([values, values[:max_shift]])
-        for name, values in windows.items()
-    }
+    rows = len(shifts) * n_windows
+    done = start_stream(directory, name, network["columns"], rows, attrs)
+    if done == n_windows:
+        return
 
-    stored = [[] for _ in detectors]
-    pending = []
-    kept = [[] for _ in shifts]
-    for batch, strain in window_batches(
-        release_dir,
-        run,
-        extended,
-        detectors,
-        network["window_samples"],
-        stride_samples,
-        batch_size,
-    ):
-        spectra = window_spectra(
-            strain, network["window_samples"], stride_samples, device
+    # Each follower's windows from its smallest shift on, read in batches
+    # that do not depend on where a job stopped.
+    shifts = np.asarray(shifts)
+    offsets = shifts.min(axis=0)
+    spans = shifts.max(axis=0) - offsets
+    followers = []
+    for offset, span in zip(offsets, spans):
+        rotated = rotated_windows(windows, offset, span)
+        bounds = batch_bounds(rotated, detectors, stride_samples, batch_size)
+        start = max(first for first, _ in bounds if first <= done)
+        batches = window_batches(
+            release_dir,
+            run,
+            rotated,
+            detectors,
+            window_samples,
+            stride_samples,
+            batch_size,
+            start=start,
         )
-        detector_features = frontend_features(network, spectra)
-        for chunks, features in zip(stored, detector_features):
-            chunks.append((batch.start, features))
-        if batch.start < n_windows:
-            pending.append(batch)
+        followers.append({"batches": batches, "chunks": [], "end": start})
 
-        # A batch is scored once its partners' features exist.
-        while pending and pending[0].stop + max_shift <= batch.stop:
-            reference = pending.pop(0)
-            for slide, row in enumerate(shifts):
-                kept[slide].append(
-                    score_slide(
-                        network,
-                        windows,
-                        stored,
-                        reference,
-                        np.concatenate([[0], row]),
-                        keep_threshold,
-                    )
-                )
-
-            oldest = pending[0].start if pending else reference.stop
-            for chunks in stored:
-                while chunks and chunks[0][0] + len(chunks[0][1]) <= oldest:
-                    chunks.pop(0)
-
-    return [concatenate(parts) for parts in kept]
-
-
-def roll_background(
-    network: Dict[str, object],
-    release_dir: Path,
-    run: str,
-    shifts: np.ndarray,
-    output_dir: Path,
-    vetoes: Dict[str, List[Interval]],
-    stride_samples: int = 204,
-    keep_threshold: float = 0.0,
-    batch_size: int = 4096,
-    device: str = "cuda",
-) -> None:
-    """Score roll slides and write one trigger file per slide.
-
-    Every slide pairs all zero-lag windows; triggers whose data touches
-    bad time are flagged ``vetoed``, and a slide's background time is its
-    pairs clear of bad time times the stride.
-
-    Parameters
-    ----------
-    network : dict of str to object
-        Output of ``load_search_network``.
-    release_dir : Path
-        Strain release directory.
-    run : str
-        Observing run.
-    shifts : numpy.ndarray
-        Output of ``roll_shifts``.
-    output_dir : Path
-        Directory for the trigger files.
-    vetoes : dict of str to list of tuple of float
-        ``sage.data.noise.data_quality.bad_segments`` per detector.
-    stride_samples : int
-        Step between window starts in samples.
-    keep_threshold : float
-        Ranking statistic above which a window is kept.
-    batch_size : int
-        Maximum windows scored at once.
-    device : str
-        Device to score on.
-    """
-    detectors = network["detectors"]
-    segments = {
-        detector: load_segments(release_dir, run, detector) for detector in detectors
-    }
-    windows = analysis_windows(segments, network["window_samples"], stride_samples)
-
-    slides = score_rolls(
-        network,
-        release_dir,
-        run,
-        windows,
-        shifts,
-        stride_samples,
-        keep_threshold,
-        batch_size,
-        device,
+    print(
+        f"Background {name}: {done:,} of {n_windows:,} windows scored before",
+        flush=True,
     )
-    for row, columns in zip(shifts, slides):
-        columns["vetoed"] = flag_vetoed(network, columns, vetoes)
+    started, reported, checked = time.monotonic(), done, False
+    with open(stream_files(directory, name)[0], "r+b") as handle:
+        for batch, strain in window_batches(
+            release_dir,
+            run,
+            windows,
+            detectors,
+            window_samples,
+            stride_samples,
+            batch_size,
+            start=done,
+        ):
+            spectra = window_spectra(strain, window_samples, stride_samples, device)
+            if not checked:
+                check_separable(network, spectra)
+                checked = True
+            reference = frontend_features(network, spectra, [0])
 
-        # Each window paired with its partners under this roll.
-        paired = {"gps": windows["gps"]}
-        for detector, shift in zip(detectors, np.concatenate([[0], row])):
-            paired[f"{detector}_gps"] = np.roll(windows[f"{detector}_gps"], -shift)
+            for channel, (follower, span) in enumerate(zip(followers, spans), 1):
+                while follower["end"] < batch.stop + span:
+                    position, follower_strain = next(follower["batches"])
+                    follower_spectra = window_spectra(
+                        follower_strain, window_samples, stride_samples, device
+                    )
+                    features = frontend_features(network, follower_spectra, [channel])
+                    follower["chunks"].append((position.start, features[0]))
+                    follower["end"] = position.stop
 
-        attrs = {
-            **network["provenance"],
-            "release_dir": str(Path(release_dir).resolve()),
-            "run": run,
-            "detectors": detectors,
-            "method": "roll",
-            "shifts": row,
-            "n_windows": len(windows["gps"]),
-            "n_live_windows": int((~flag_vetoed(network, paired, vetoes)).sum()),
-            "stride_samples": stride_samples,
-            "sample_rate": segments[detectors[0]][0]["sample_rate"],
-            "keep_threshold": keep_threshold,
-        }
-        write_triggers(output_dir / f"roll_{row[0]}.h5", columns, attrs)
+            count = batch.stop - batch.start
+            for row, shift in enumerate(shifts):
+                paired = reference + [
+                    gather(follower["chunks"], batch.start + ahead - offset, count)
+                    for follower, ahead, offset in zip(followers, shift, offsets)
+                ]
+                first_row = row * n_windows + batch.start
+                write_rows(handle, first_row, backend_outputs(network, paired))
+            record_done(handle, directory, name, batch.stop)
+
+            for follower in followers:
+                follower["chunks"] = [
+                    (first, features)
+                    for first, features in follower["chunks"]
+                    if first + len(features) > batch.stop
+                ]
+            if batch.stop - reported >= n_windows // 100 or batch.stop == n_windows:
+                rate = len(shifts) * (batch.stop - done) / (time.monotonic() - started)
+                print(
+                    f"Background {name}: {batch.stop:,} of {n_windows:,} windows "
+                    f"({100 * batch.stop / n_windows:.1f}%), {rate:,.0f} pairs/s",
+                    flush=True,
+                )
+                reported = batch.stop

@@ -10,10 +10,15 @@ from sage.config.loader import check, read_yaml, yaml_text
 
 MACHINE_FILE = Path.home() / ".config" / "sage" / "machine.yaml"
 SCHEMA = {"data_dir": str}
+COMMENT = "# data_dir: the directory that holds all data Sage downloads and builds."
 
 
 class MissingData(FileNotFoundError):
     """Files a run reads are missing from the data directory."""
+
+
+class MissingASDs(MissingData):
+    """ASD files, built by ``sage build-asds``, are missing."""
 
 
 def read_data_dir() -> Path:
@@ -29,10 +34,15 @@ def read_data_dir() -> Path:
     ------
     FileNotFoundError
         If the machine file is missing or ``data_dir`` is not a directory.
+    ValueError
+        If ``data_dir`` is empty.
     """
     if not MACHINE_FILE.exists():
-        raise FileNotFoundError(f"{MACHINE_FILE} missing; run `sage machine-setup`")
-    values = check(read_yaml(MACHINE_FILE), SCHEMA, str(MACHINE_FILE))
+        raise FileNotFoundError(f"{MACHINE_FILE} missing; run `sage setup`")
+    values = read_yaml(MACHINE_FILE)
+    if "data_dir" in values and not values["data_dir"]:
+        raise ValueError(f"data_dir in {MACHINE_FILE} is empty; fill it in")
+    values = check(values, SCHEMA, str(MACHINE_FILE))
 
     data_dir = Path(values["data_dir"])
     if not data_dir.is_dir():
@@ -40,10 +50,21 @@ def read_data_dir() -> Path:
     return data_dir
 
 
-def write_data_dir(data_dir: Path) -> None:
-    """Write ``data_dir`` to the machine file, creating the file's directory."""
+def write_machine_file(data_dir: Path | None) -> None:
+    """
+    Write the machine file, creating its directory.
+
+    Parameters
+    ----------
+    data_dir : Path or None
+        Directory for all data; None leaves ``data_dir`` empty.
+    """
     MACHINE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MACHINE_FILE.write_text(yaml_text({"data_dir": str(data_dir)}))
+    if data_dir is None:
+        value = "data_dir:\n"
+    else:
+        value = yaml_text({"data_dir": str(data_dir)})
+    MACHINE_FILE.write_text(f"{COMMENT}\n{value}")
 
 
 def observing_run_dir(data_dir: Path, run: str, part: str) -> Path:
@@ -67,6 +88,11 @@ def observing_run_dir(data_dir: Path, run: str, part: str) -> Path:
     return Path(data_dir) / run.lower() / part
 
 
+def gwosc_label(run: str) -> str:
+    """An observing run as GWOSC writes it in file names, e.g. ``O3b``."""
+    return run[0].upper() + run[1:].lower()
+
+
 def strain_file(data_dir: Path, run: str, detector: str) -> Path:
     """
     Training strain file of one detector in one observing run.
@@ -86,8 +112,29 @@ def strain_file(data_dir: Path, run: str, detector: str) -> Path:
         ``<data_dir>/<run>/training/data_<detector>_<Run>.bin``, the run
         written as GWOSC names it (``O3b``).
     """
-    label = run[0].upper() + run[1:].lower()
-    return observing_run_dir(data_dir, run, "training") / f"data_{detector}_{label}.bin"
+    return observing_run_dir(data_dir, run, "training") / f"data_{detector}_{gwosc_label(run)}.bin"
+
+
+def search_strain_file(data_dir: Path, run: str, detector: str) -> Path:
+    """
+    Search strain file of one detector in one observing run.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3a"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
+
+    Returns
+    -------
+    Path
+        ``<data_dir>/<run>/search/data_<detector>_<Run>.h5``.
+    """
+    label = gwosc_label(run)
+    return observing_run_dir(data_dir, run, "search") / f"data_{detector}_{label}.h5"
 
 
 def asd_dir(data_dir: Path, run: str) -> Path:
@@ -142,6 +189,11 @@ def zero_runs_file(path: Path) -> Path:
 def dataset_file(data_dir: Path, run: str) -> Path:
     """Record of an observing run's strain, ``<data_dir>/<run>/training/dataset.yaml``."""
     return observing_run_dir(data_dir, run, "training") / "dataset.yaml"
+
+
+def search_dataset_file(data_dir: Path, run: str) -> Path:
+    """Search strain record, ``<data_dir>/<run>/search/dataset.yaml``."""
+    return observing_run_dir(data_dir, run, "search") / "dataset.yaml"
 
 
 def asds_file(data_dir: Path, run: str) -> Path:

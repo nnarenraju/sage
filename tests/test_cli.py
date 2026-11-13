@@ -9,6 +9,7 @@ from sage.cli.registry import COMMANDS
 from sage.cli.training import epoch_seconds
 from sage.config import loader, machine
 from sage.config.prior import load_prior
+from sage.config.run_dir import find_run_dir
 from sage.factory.build import resolve_settings
 
 RUN = """
@@ -34,7 +35,7 @@ def test_journey(capsys, tmp_path, monkeypatch):
     monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "machine.yaml")
     assert main([]) == 0
     out = capsys.readouterr().out
-    assert "1. sage machine-setup" in out and out.rstrip().endswith("Next: sage machine-setup")
+    assert "1. sage setup" in out and out.rstrip().endswith("Next: sage setup")
 
 
 def test_unknown_command(capsys):
@@ -44,10 +45,15 @@ def test_unknown_command(capsys):
 
 def test_machine_file(capsys, tmp_path, monkeypatch):
     monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "config" / "machine.yaml")
-    assert main(["machine"]) == 1 and capsys.readouterr().err.endswith("fix: sage machine-setup\n")
-    assert main(["machine-setup", "--data-dir", str(tmp_path / "missing")]) == 1
+    assert main(["machine"]) == 1 and capsys.readouterr().err.endswith("fix: sage setup\n")
+    assert main(["setup"]) == 0
+    assert machine.MACHINE_FILE.read_text().endswith("data_dir:\n")
+    assert main(["machine"]) == 1
+    error = capsys.readouterr().err
+    assert error.endswith("fill it in\nfix: sage setup --data-dir <directory>\n")
+    assert main(["setup", "--data-dir", str(tmp_path / "missing")]) == 1
     assert "fix: mkdir -p" in capsys.readouterr().err
-    assert main(["machine-setup", "--data-dir", str(tmp_path)]) == 0
+    assert main(["setup", "--data-dir", str(tmp_path)]) == 0
     assert machine.read_data_dir() == tmp_path.resolve() and main(["machine"]) == 0
 
 
@@ -59,7 +65,7 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     shutil.copyfile(loader.PRESETS / "priors" / "bbh_narrow.yaml", presets / "priors" / "bbh_narrow.yaml")
     monkeypatch.setattr(loader, "PRESETS", presets)
     monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "machine.yaml")
-    machine.write_data_dir(tmp_path)
+    machine.write_machine_file(tmp_path)
     run_dir = tmp_path / "run"
     assert main(["list", "presets"]) == 0 and "tiny" in capsys.readouterr().out
     assert main(["init", str(run_dir), "--preset", "tiny"]) == 0
@@ -74,6 +80,17 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     assert capsys.readouterr().err.endswith(f"fix: rm {run_dir / 'flags' / 'stop'} && sage train {run_dir}\n")
     assert main(["check", str(run_dir)]) == 1  # the data directory is empty
     assert capsys.readouterr().err.endswith(f"fix: sage download {run_dir}\n")
+
+
+def test_run_dir_from_inside(capsys, tmp_path, monkeypatch):
+    """A command run below a run directory acts on that run."""
+    run_dir = tmp_path / "run"
+    (run_dir / "logs" / "jobs").mkdir(parents=True)
+    (run_dir / "run.yaml").write_text(RUN)
+    monkeypatch.chdir(run_dir / "logs" / "jobs")
+    assert main(["stop"]) == 0 and (run_dir / "flags" / "stop").exists()
+    assert capsys.readouterr().out.rstrip().endswith("Next: sage status")
+    assert find_run_dir(tmp_path) == tmp_path
 
 
 def test_run_presets(tmp_path):

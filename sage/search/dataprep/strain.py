@@ -48,6 +48,40 @@ def contiguous_runs(
     return list(zip(starts.tolist(), ends.tolist()))
 
 
+def batch_bounds(
+    windows: Dict[str, np.ndarray],
+    detectors: List[str],
+    stride_samples: int,
+    batch_size: int,
+) -> List[Tuple[int, int]]:
+    """First and end window of every batch.
+
+    A batch is at most ``batch_size`` consecutive windows of one
+    contiguous run.
+
+    Parameters
+    ----------
+    windows : dict of str to numpy.ndarray
+        Output of ``analysis_windows``.
+    detectors : list of str
+        Detectors to read.
+    stride_samples : int
+        Step between window starts in samples.
+    batch_size : int
+        Maximum windows per batch.
+
+    Returns
+    -------
+    list of tuple of int
+        ``(first, end)`` of each batch, in order.
+    """
+    return [
+        (first, min(first + batch_size, run_end))
+        for run_start, run_end in contiguous_runs(windows, detectors, stride_samples)
+        for first in range(run_start, run_end, batch_size)
+    ]
+
+
 def window_batches(
     release_dir: Path,
     run: str,
@@ -56,11 +90,14 @@ def window_batches(
     window_samples: int,
     stride_samples: int = 204,
     batch_size: int = 4096,
+    start: int = 0,
 ) -> Iterator[Tuple[slice, np.ndarray]]:
     """Strain for consecutive batches of windows.
 
     Each batch lies inside one segment of every detector, so each
     detector is read as one stretch. ``DYN_RANGE_FAC`` is divided out.
+    Batches before ``start`` are skipped unread, so a resumed pass reads
+    the same batches as an uninterrupted one.
 
     Parameters
     ----------
@@ -78,6 +115,8 @@ def window_batches(
         Step between window starts in samples.
     batch_size : int
         Maximum windows per batch.
+    start : int
+        First window to read; it must begin a batch.
 
     Yields
     ------
@@ -85,27 +124,37 @@ def window_batches(
         Indices of the windows in the batch.
     strain : numpy.ndarray
         Float32 strain of shape ``(detectors, samples)`` covering them.
+
+    Raises
+    ------
+    ValueError
+        If ``start`` does not begin a batch.
     """
+    batches = batch_bounds(windows, detectors, stride_samples, batch_size)
+    starts = [first for first, _ in batches]
+    if start < len(windows["gps"]) and start not in starts:
+        raise ValueError(f"window {start} does not begin a batch")
+
     files = {
         detector: h5py.File(release_dir / f"data_{detector}_{run}.h5", "r")
         for detector in detectors
     }
     
     try:
-        for run_start, run_end in contiguous_runs(windows, detectors, stride_samples):
-            for first in range(run_start, run_end, batch_size):
-                last = min(first + batch_size, run_end)
-                n_samples = window_samples + stride_samples * (last - first - 1)
+        for first, last in batches:
+            if first < start:
+                continue
+            n_samples = window_samples + stride_samples * (last - first - 1)
 
-                strain = np.empty((len(detectors), n_samples), dtype=np.float32)
-                for row, detector in enumerate(detectors):
-                    segment = windows[f"{detector}_segment"][first]
-                    start = windows[f"{detector}_sample"][first]
-                    dataset = files[detector][f"segments/{segment:06d}"]
-                    strain[row] = dataset[start : start + n_samples]
+            strain = np.empty((len(detectors), n_samples), dtype=np.float32)
+            for row, detector in enumerate(detectors):
+                segment = windows[f"{detector}_segment"][first]
+                sample = windows[f"{detector}_sample"][first]
+                dataset = files[detector][f"segments/{segment:06d}"]
+                strain[row] = dataset[sample : sample + n_samples]
 
-                np.divide(strain, DYN_RANGE_FAC, out=strain, dtype=np.float32)
-                yield slice(first, last), strain
+            np.divide(strain, DYN_RANGE_FAC, out=strain, dtype=np.float32)
+            yield slice(first, last), strain
     finally:
         for handle in files.values():
             handle.close()

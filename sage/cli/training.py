@@ -16,7 +16,7 @@ import yaml
 
 from sage.cli.registry import CommandError, command
 from sage.config import machine
-from sage.config.run_dir import NotPrepared, SettingsChanged, StateMismatch, training_started
+from sage.config.run_dir import NotPrepared, SettingsChanged, StateMismatch, find_run_dir, training_started
 
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 TIMEZONES = {  # sage status --timezone: name -> IANA time zone
@@ -39,17 +39,27 @@ JOB_START = re.compile(r" \| Run .* from epoch \d+, seed ")
 
 
 def on(name: str, directory: str) -> str:
-    """``sage <name>`` acting on ``directory``, which is left out when it is the current one."""
-    return f"sage {name}" if Path(directory) == Path(".") else f"sage {name} {directory}"
+    """``sage <name>`` on ``directory``, omitted if found from here."""
+    here = os.path.abspath(find_run_dir("."))
+    if os.path.abspath(directory) == here:
+        return f"sage {name}"
+    return f"sage {name} {directory}"
 
 
 def parse(name: str, summary: str, arguments: list, *options) -> argparse.Namespace:
     """Parse a run-directory command's arguments; each option is ``(flags, keywords)``."""
     parser = argparse.ArgumentParser(prog=f"sage {name}", description=f"{summary}.")
-    parser.add_argument("directory", nargs="?", default=".", help="run directory (default: here)")
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="run directory, or a directory inside it (default: here)",
+    )
     for flags, keywords in options:
         parser.add_argument(*flags, **keywords)
-    return parser.parse_args(arguments)
+    options = parser.parse_args(arguments)
+    options.directory = str(find_run_dir(options.directory))
+    return options
 
 
 def seconds(duration: str) -> float:
@@ -70,12 +80,14 @@ def checked_settings(name: str, directory: str) -> dict:
     try:
         data_dir = machine.read_data_dir()
     except (FileNotFoundError, ValueError) as error:
-        raise CommandError(str(error), "sage machine-setup") from None
+        raise CommandError(str(error), "sage setup --data-dir <directory>") from None
     if not os.access(data_dir, os.R_OK | os.X_OK):
         raise CommandError(f"the data directory {data_dir} is not readable here", f"chmod u+rx {data_dir}")
     try:
         settings = check_run(Path(directory))[0]
         check_data(Path(directory), settings, data_dir)
+    except machine.MissingASDs as error:
+        raise CommandError(str(error), on("build-asds", directory)) from None
     except machine.MissingData as error:
         raise CommandError(str(error), on("download", directory)) from None
     except (ValueError, FileNotFoundError, yaml.YAMLError) as error:
@@ -148,7 +160,7 @@ def checked_step(name: str, directory: str) -> None:
     print(f"All checks passed; one training step on {device}: loss {loss:.5f}. Wrote flags/checked")
 
 
-@command("prepare", "Check the run and write every setting it uses to resolved/", journey=4)
+@command("prepare", "Check the run and write every setting it uses to resolved/", journey=5)
 def prepare(arguments: list) -> None:
     """Write ``resolved/``: settings with every default, prior, fiducial copy and derived values; rerun after edits."""
     from sage.factory.train_run import prepare_run
@@ -161,6 +173,8 @@ def prepare(arguments: list) -> None:
                            f"sage clone {options.directory} <new directory> --full-state")
     try:
         prepare_run(directory)
+    except machine.MissingASDs as error:
+        raise CommandError(str(error), on("build-asds", options.directory)) from None
     except machine.MissingData as error:
         raise CommandError(str(error), on("download", options.directory)) from None
     except StateMismatch as error:
@@ -170,7 +184,7 @@ def prepare(arguments: list) -> None:
     print(f"Next: {on('check', options.directory)}")
 
 
-@command("check", "Run every start-up check and one real training step; marks the run checked", journey=5)
+@command("check", "Run every start-up check and one real training step; marks the run checked", journey=6)
 def check(arguments: list) -> None:
     """Check the run as ``sage train`` would start it and take one training step: on a GPU if one is visible."""
     options = parse("check", "Run every start-up check and one real training step; marks the run checked", arguments)
@@ -178,7 +192,7 @@ def check(arguments: list) -> None:
     print(f"Next: {on('train', options.directory)}")
 
 
-@command("train", "Train the run, resuming from its latest checkpoint", journey=6)
+@command("train", "Train the run, resuming from its latest checkpoint", journey=7)
 def train(arguments: list) -> None:
     """Train the run to its last epoch, then run the final check; ``--stop-after`` ends a job segment early."""
     from sage.factory.train_run import STOP_FLAG, flag, train_run
