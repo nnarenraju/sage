@@ -2,12 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Training callbacks — objects that hook into :class:`SageVanillaTraining`'s loop.
+Training callbacks: hooks into the :class:`SageVanillaTraining` loop.
 
-A callback can transform the per-batch context and/or run work at epoch
-boundaries (e.g. hard-noise mining). Every hook is a no-op by default, so a
-trainer constructed with no callbacks behaves exactly like plain vanilla
-training.
+Hard-noise mining and the per-step weight EMA. Every hook does nothing
+by default, so a trainer without callbacks trains plainly.
 """
 
 import time
@@ -19,58 +17,67 @@ from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 
 
 class Callback:
-    """Base training callback. Subclass and override only the hooks you need.
+    """
+    Base training callback; subclasses override the hooks they need.
 
-    Hooks
-    -----
-    on_sample(ctx, trainer)
-        Called once per batch *after* the batch is assembled (post signal
-        injection) and *before* preprocessing. ``ctx`` is a plain dict the
-        trainer threads through the iteration — read/write its tensors
-        (``ctx['x']``, ``ctx['targets']``). Mutate ``ctx`` in place. No shipped
-        callback overrides this hook today; it is a generic extension point.
-    on_epoch_end(nepoch, trainer)
-        Called once after an epoch's training iterations complete (e.g. to mine
-        hard noise and push it to the sampler).
-
-    ``trainer`` is the :class:`SageVanillaTraining` instance, exposing
-    ``model``, ``noise_sampler``, ``signal_sampler``, ``processor``, etc.
+    Each hook receives the :class:`SageVanillaTraining` instance, which
+    exposes ``model``, ``noise_sampler``, ``signal_sampler``,
+    ``processor`` and the other loop state.
     """
 
     def on_sample(self, ctx, trainer):
+        """
+        Hook called once per batch, after sampling and before assembly.
+
+        ``ctx`` holds the sampled ``signal_data``, ``signal_targets``,
+        ``noise_data`` and ``noise_targets``, with ``x`` and ``targets``
+        None; setting both replaces the default batch assembly.
+
+        Parameters
+        ----------
+        ctx : dict
+            Per-batch context, changed in place.
+        trainer : SageVanillaTraining
+            The trainer.
+        """
         pass
 
     def on_batch_end(self, nbatch, nepoch, trainer):
-        """Called once per batch, AFTER the optimiser + scheduler step (e.g. to
-        update a per-step weight EMA). No-op by default."""
+        """
+        Hook called after each batch's optimiser and scheduler step.
+
+        Parameters
+        ----------
+        nbatch : int
+            Batch index within the epoch.
+        nepoch : int
+            Epoch.
+        trainer : SageVanillaTraining
+            The trainer.
+        """
         pass
 
     def on_epoch_end(self, nepoch, trainer):
+        """
+        Hook called once after an epoch's training batches.
+
+        Parameters
+        ----------
+        nepoch : int
+            Epoch just trained.
+        trainer : SageVanillaTraining
+            The trainer.
+        """
         pass
 
 
 class HardMiningCallback(Callback):
-    """Continuous CMA-MAE hard-noise mining, as a training callback.
+    """
+    Continuous CMA-MAE hard-noise mining, as a training callback.
 
-    On scheduled epochs it (1) mines hard noise with
-    :class:`~sage.data.noise.cma_mae_mining.CMAMAEMiner`, appending start-times
-    and a diverse embedding subset to a file-resident
-    :class:`~sage.data.noise.hard_bank.HardMiningBank`; (2) re-evaluates the
-    *entire* start-time bank with the current model so each window's hardness
-    trajectory across training is recorded; and (3) pushes the **currently-hard**
-    start-times (latest re-eval ranking stat >= keep threshold) to the noise
-    sampler, which augments its random start-times with them at up to
-    ``replay.probability`` (see :meth:`_bias_for`).  Nothing is held in RAM
-    between rounds -- the bank is the single source of truth on disk; the miner
-    learns continuously (one cold start, never rebuilt).
-
-    Mining runs at the end of each epoch in ``mine_epochs`` (from the
-    ``mining`` section: ``start_epoch``, every ``every_n_epochs``, stopping
-    where the schedule's flat tail starts). The keep bar is a raw detection
-    logit.
-
-    pyribs / the miner are imported lazily, so importing this module — and pure
-    vanilla training — never requires pyribs.
+    After each epoch in ``mine_epochs`` it mines hard noise into the
+    on-disk bank, re-scores the whole bank with the current model and
+    gives the noise sampler the starts scoring >= ``keep_threshold``.
 
     Parameters
     ----------
@@ -93,7 +100,7 @@ class HardMiningCallback(Callback):
         replay, archive, emitter = mining["replay"], mining["archive"], mining["emitter"]
         self.bank_path = Path(bank_path)
         self.mine_epochs = set(mine_epochs)
-        # How signal-like a window must look to count as "hard" (raw logit).
+        # Raw logit at or above which a window counts as hard
         self.keep_threshold = mining["keep_threshold"]
         self.mine_iters = mining["iterations"]
         self.hard_bias_prob = replay["probability"]      # target/max bias
@@ -114,16 +121,40 @@ class HardMiningCallback(Callback):
         self._miner = None              # lazily built from the trainer's graph
 
     def _should_mine(self, nepoch):
+        """
+        Whether a mining round runs after epoch ``nepoch``.
+
+        Parameters
+        ----------
+        nepoch : int
+            Epoch just trained.
+
+        Returns
+        -------
+        bool
+            True for an epoch in ``mine_epochs``.
+        """
         return int(nepoch) in self.mine_epochs
 
     def _bias_for(self, active, trainer):
-        """Anneal the hard-noise bias with the ACTIVE-bank size so each hard
-        window is replayed at most ~``bias_replays`` times/epoch.
+        """
+        Replay probability of hard windows, annealed with their count.
 
-        Early on only a few thousand windows are hard; a fixed 0.2 bias would
-        replay each hundreds of times/epoch -> noise-variance collapse. This ramps
-        the bias 0 -> ``hard_bias_prob`` as the active bank grows:
-        ``p = min(hard_bias_prob, bias_replays * n_active / (iters * batch))``.
+        Each active window is replayed at most about ``bias_replays``
+        times per epoch: ``p = min(hard_bias_prob, bias_replays *
+        n_active / (iterations * batch_size))``.
+
+        Parameters
+        ----------
+        active : array-like
+            Indices of the active (currently hard) starts.
+        trainer : SageVanillaTraining
+            The trainer, for its batches per epoch and batch size.
+
+        Returns
+        -------
+        float
+            Replay probability; 0 without active starts.
         """
         n = int(len(active))
         draws = int(trainer.num_iterations) * int(trainer.batch_size)
@@ -132,7 +163,20 @@ class HardMiningCallback(Callback):
         return float(min(self.hard_bias_prob, self.bias_replays * n / draws))
 
     def _lazy_init(self, trainer):
-        # Local imports: only the hard-mining path needs pyribs / the miner.
+        """
+        Build the bank, mining reader, miner preprocessing and miner.
+
+        Parameters
+        ----------
+        trainer : SageVanillaTraining
+            The trainer, whose noise sampler and processor are used.
+
+        Raises
+        ------
+        TypeError
+            If the noise sampler cannot take a hard bank.
+        """
+        # Local imports: only hard mining needs pyribs and the miner
         from sage.data.noise.cma_mae_mining import (
             CMAMAEMiner, make_miner_preprocessor,
         )
@@ -145,10 +189,9 @@ class HardMiningCallback(Callback):
                 "HardMiningCallback needs a noise sampler with set_hard_bank "
                 "(e.g. MemmapNoiseSampler)."
             )
-        # Run identity MUST match the noise sampler's authoritative order -- ns.run_names
-        # is the exact list/order that assigned the run ids in the pooled segment table and
-        # the bank's start_runs column, so a resume replays hard windows through the right
-        # run's mmap.
+        # Runs in ns.run_names order: it set the run ids of the segment
+        # table and of the bank's start_runs, so replay reads the right
+        # run's memmap.
         runs = list(ns.run_names)
         detectors = self.detectors
         self._bank = HardMiningBank(
@@ -158,12 +201,9 @@ class HardMiningCallback(Callback):
             descriptor_dim=self.descriptor_dim, novelty_dist=self.novelty_dist,
             max_embeddings=self.max_embeddings,
         )
-        # postprocess=False: mine and re-evaluate on REAL noise, never recoloured.
-        # Hardness must be a property of the stored (run, segment, start) pointer,
-        # and re-eval gates replay via HardMiningBank.active_indices -- a random
-        # ASD draw there would mask hard windows and promote benign ones. Recolour
-        # still applies when these windows are replayed through the training
-        # sampler. Also keeps mining off the recolour RNG stream.
+        # postprocess=False: mining and re-evaluation read unrecoloured
+        # noise, so hardness is a property of the stored window; replay
+        # through the training sampler is still recoloured.
         self._reader = _MiningReader(ns, seed=self.mine_seed, postprocess=False)
         self._preprocess = make_miner_preprocessor(trainer.processor)
         self._miner = CMAMAEMiner(
@@ -176,8 +216,17 @@ class HardMiningCallback(Callback):
             novelty_weight=self.novelty_weight, seed=self.mine_seed,
         )
 
-    # ------------------------------------------------------------------
     def on_epoch_end(self, nepoch, trainer):
+        """
+        Run a mining round if ``nepoch`` is a mining epoch.
+
+        Parameters
+        ----------
+        nepoch : int
+            Epoch just trained.
+        trainer : SageVanillaTraining
+            The trainer.
+        """
         if not self._should_mine(nepoch):
             return
         if self._miner is None:
@@ -185,13 +234,17 @@ class HardMiningCallback(Callback):
         self._mine(nepoch, trainer)
 
     def attach_for_resume(self, trainer):
-        """Re-bias the sampler from the persisted bank on resume.
+        """
+        Give the noise sampler the hard starts of the stored bank.
 
-        The freshly-built noise sampler starts unbiased; without this, a resumed
-        run would train with purely random noise until the next scheduled mine
-        epoch (up to ``every_n_epochs`` epochs of lost hard biasing).  Call once
-        after restoring a checkpoint when ``start_epoch > 0``.  No-op if no bank
-        exists yet (nothing mined before the checkpoint).
+        Called once after a checkpoint is restored, since a rebuilt
+        sampler starts without them. Does nothing while the bank holds
+        no start.
+
+        Parameters
+        ----------
+        trainer : SageVanillaTraining
+            The trainer.
         """
         if self._miner is None:
             self._lazy_init(trainer)
@@ -207,35 +260,46 @@ class HardMiningCallback(Callback):
             flush=True,
         )
 
-    # ------------------------------------------------------------------
     def _build_evaluate_fn(self, trainer):
-        """``(starts, segs) -> (scores, embeddings)`` via read -> model -> embed.
+        """
+        The miner's window evaluation function, and its cleanup.
 
-        The QD diversity descriptor is the model's own **frontend** embedding
-        (pre-backend per-detector morphology, where glitch families stay
-        separable) -- NOT the backend/ranking-stat feature, which is collapsed
-        toward the detection decision.
-          * every network carries the frontend tap
-            (:class:`~sage.architecture.network.common.FrontendTap`): set
-            ``return_frontend_embedding`` and read ``model.frontend_embedding``
-            (compile-safe; no forward hook).
+        Windows are scored by the uncompiled model in chunks of a batch;
+        the diversity descriptor is the model's frontend embedding
+        (``FrontendTap``), not the backend feature.
 
-        Runs the eager (compile-free, no-grad) model in chunks.  Returns
-        ``(evaluate_fn, cleanup_fn)``.
+        Parameters
+        ----------
+        trainer : SageVanillaTraining
+            The trainer, for its model and batch size.
+
+        Returns
+        -------
+        tuple
+            ``(evaluate_fn, cleanup)``: ``evaluate_fn(starts, segs,
+            runs) -> (scores, embeddings)``; ``cleanup()`` restores
+            the model's ``return_frontend_embedding`` flag.
+
+        Raises
+        ------
+        TypeError
+            If the model has no frontend tap.
         """
         eager = getattr(trainer.model, "_orig_mod", trainer.model)
         chunk = trainer.batch_size
         cleanup = lambda: None
 
         if hasattr(eager, "return_frontend_embedding"):
-            # Frontend embedding via the model's flag (no hook -> fullgraph-safe).
+            # Through the model's flag, not a forward hook
             _prev = eager.return_frontend_embedding
             eager.return_frontend_embedding = True
 
             def cleanup(eager=eager, prev=_prev):
+                """Restore the model's frontend-embedding flag."""
                 eager.return_frontend_embedding = prev
 
             def run(net_input):
+                """Ranking statistic and frontend embedding."""
                 out = eager(net_input)
                 score = (out[0] if isinstance(out, tuple) else out).reshape(-1).float()
                 return score, eager.frontend_embedding.float()   # (B, D*C), unit/det
@@ -246,6 +310,7 @@ class HardMiningCallback(Callback):
             )
 
         def evaluate_fn(starts, segs, runs):
+            """Scores and frontend embeddings of the given windows."""
             scores, embs = [], []
             for i in range(0, len(starts), chunk):
                 net_input = self._preprocess(
@@ -261,10 +326,19 @@ class HardMiningCallback(Callback):
 
     @torch.inference_mode()
     def _mine(self, nepoch, trainer):
-        # Idempotent across a crash-resume: if this epoch's round is already in
-        # the bank (mined pre-crash, before the epoch checkpoint saved), do NOT
-        # double-append it -- just refresh the sampler's active view from the
-        # persisted bank and return.
+        """
+        One round: mine, re-score the bank and update the noise sampler.
+
+        A round already in the bank (a resume after a crash) is not
+        mined again; the sampler's hard starts are refreshed from it.
+
+        Parameters
+        ----------
+        nepoch : int
+            Epoch just trained.
+        trainer : SageVanillaTraining
+            The trainer.
+        """
         if self._bank.has_epoch(nepoch):
             active = self._bank.active_start_indices(self.keep_threshold)
             trainer.noise_sampler.set_hard_bank(
@@ -281,19 +355,15 @@ class HardMiningCallback(Callback):
         trainer.model.eval()
         evaluate_fn, cleanup = self._build_evaluate_fn(trainer)
         try:
-            # All bank writes of this round (append_starts / add_embeddings /
-            # save_pca / append_eval) go through the same bank object, so wrap
-            # the whole round in one atomic transaction: a mid-round kill (e.g. a
-            # SLURM TIMEOUT landing in the ~10-20 min mine/reeval window) then
-            # leaves the live bank untouched instead of half-written. has_epoch
-            # (above) makes the re-mine on resume idempotent.
+            # One atomic round: a job stopped mid-round leaves the bank
+            # as it was
             with self._bank.atomic_round():
-                # 1. mine new hard windows -> append start-times + diverse embeddings
+                # Mine new hard starts and a diverse embedding subset
                 _t0 = time.perf_counter()
                 mstats = self._miner.mine(evaluate_fn, self.mine_iters, epoch=nepoch)
                 _t_mine = time.perf_counter() - _t0
-                # 2. re-score the ENTIRE bank with the current model (family drift).
-                #    Cost grows with the bank size -> timed separately for monitoring.
+                # Re-score the whole bank with the current model, timed
+                # apart since its cost grows with the bank
                 _t1 = time.perf_counter()
                 rstats = self._miner.reevaluate(evaluate_fn, model_epoch=nepoch)
                 _t_reeval = time.perf_counter() - _t1
@@ -302,8 +372,8 @@ class HardMiningCallback(Callback):
             if was_training:
                 trainer.model.train()
 
-        # 3. push only the CURRENTLY-hard start-times (latest re-eval >= bar);
-        #    nothing is removed from the bank -- this is just a refreshed view.
+        # The sampler gets the currently hard starts (latest score >=
+        # keep threshold); the bank keeps every start
         active = self._bank.active_start_indices(self.keep_threshold)
         trainer.noise_sampler.set_hard_bank(
             self._bank, active, hard_bias_prob=self._bias_for(active, trainer)
@@ -317,8 +387,7 @@ class HardMiningCallback(Callback):
             f"mine {_t_mine:.1f}s reeval {_t_reeval:.1f}s",
             flush=True,
         )
-        # Hardness longevity: surface windows that have stayed hard a long time
-        # (age_epochs = span still hard since first found). Study candidates.
+        # How long the active starts have stayed hard
         try:
             ages = self._bank.hard_sample_ages(self.keep_threshold)
             act = ages[ages["currently_active"]] if len(ages) else ages
@@ -334,40 +403,40 @@ class HardMiningCallback(Callback):
 
 
 class EMACallback(Callback):
-    """Per-STEP exponential moving average (EMA) of the model weights.
+    """
+    Per-step exponential moving average (EMA) of the model weights.
 
-    The averaged weights are the recommended single model for evaluation /
-    deployment: weight averaging over the low-LR tail generalises better than the
-    raw final iterate (Polyak-Ruppert averaging; Izmailov et al., SWA, UAI 2018).
-    Updated EVERY batch -- the per-step form is where the variance-reduction lives;
-    a per-epoch average discards most of it.
-
-    Thin wrapper over the OFFICIAL torch EMA
-    (:class:`torch.optim.swa_utils.AveragedModel` driven by
-    :func:`~torch.optim.swa_utils.get_ema_multi_avg_fn`): the update is
-    ``ema = decay*ema + (1-decay)*param`` every batch via a fused multi-tensor op,
-    with integer buffers (e.g. BatchNorm's ``num_batches_tracked``) copied rather
-    than averaged. ``use_buffers=True`` so BN running stats are tracked too.
-    :class:`~sage.utils.checkpoint.CheckpointManager` saves ``ema_model`` with
-    every checkpoint (and the averaged weights as ``ema.pt``) and restores it on
-    resume, so the average continues.
+    Uses :class:`torch.optim.swa_utils.AveragedModel` with
+    ``get_ema_multi_avg_fn``, updated every batch, buffers included.
 
     Parameters
     ----------
     model : nn.Module
-        The uncompiled network: it shares parameter tensors with the compiled
-        model, so each step reads the current weights.
+        The uncompiled network: it shares parameter tensors with the
+        compiled model, so each step reads the current weights.
     decay : float
         Weight of the running average at each step.
     """
 
     def __init__(self, model, decay):
         self.model = model
-        # AveragedModel deep-copies the model; n_averaged starts at 0, so the
-        # first update seeds the average with the live weights.
+        # AveragedModel deep-copies the model; n_averaged starts at 0,
+        # so the first update seeds the average with the live weights.
         self.ema_model = AveragedModel(
             model, multi_avg_fn=get_ema_multi_avg_fn(decay), use_buffers=True,
         )
 
     def on_batch_end(self, nbatch, nepoch, trainer):
+        """
+        Update the average with the current weights.
+
+        Parameters
+        ----------
+        nbatch : int
+            Batch index within the epoch.
+        nepoch : int
+            Epoch.
+        trainer : SageVanillaTraining
+            The trainer.
+        """
         self.ema_model.update_parameters(self.model)

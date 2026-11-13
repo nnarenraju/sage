@@ -1,11 +1,8 @@
-"""Score several trained runs on identical validation windows (``sage compare``).
+"""
+Score several trained runs on identical validation windows.
 
-Port of runs/o3b/compare_validation.py and compare_validation_report.py. Every
-batch is drawn once from the first run's validation streams and passed through
-every run's ``best.pt``, each through its own preprocessing. Results are
-appended to ``compare.h5`` as they are produced; a killed job keeps everything
-written so far, beside a file named ``incomplete``. Every comparison writes
-into a new directory.
+For ``sage compare``: each batch is drawn once from the first run's
+validation streams and scored by every run's ``best.pt``.
 """
 
 import dataclasses
@@ -50,11 +47,24 @@ FLUSH_EVERY = 200
 
 
 class WindowMismatch(ValueError):
-    """A run does not share the first run's detectors and window geometry."""
+    """A run does not share the first run's detectors and window."""
 
 
 class Appender:
-    """Resizable HDF5 datasets, appended along axis 0."""
+    """
+    A resizable HDF5 dataset, appended along axis 0.
+
+    Parameters
+    ----------
+    group : h5py.Group
+        Group the dataset is created in.
+    name : str
+        Dataset name.
+    width : int
+        Columns per row.
+    dtype : numpy dtype
+        Dataset dtype.
+    """
 
     def __init__(self, group, name, width, dtype=np.float32):
         self.ds = group.create_dataset(
@@ -64,9 +74,11 @@ class Appender:
         self.buf = []
 
     def add(self, arr):
+        """Buffer rows ``arr`` until the next ``flush``."""
         self.buf.append(np.asarray(arr))
 
     def flush(self):
+        """Append the buffered rows to the dataset."""
         if not self.buf:
             return
         data = np.concatenate(self.buf)
@@ -78,7 +90,7 @@ class Appender:
 
 def load_network(run_dir: Path, checkpoint: Path, device, data_dir: Path) -> SimpleNamespace:
     """
-    A run's checkpoint with its own preprocessing, target scaling and precision.
+    A run's checkpoint with its preprocessing, scaling and precision.
 
     Parameters
     ----------
@@ -94,17 +106,19 @@ def load_network(run_dir: Path, checkpoint: Path, device, data_dir: Path) -> Sim
     Returns
     -------
     SimpleNamespace
-        ``path``, ``name``, ``epoch``, ``window``, ``detectors``, ``dtype``,
-        ``bounds`` (prior bounds), ``asds``, ``processor``, ``network``,
-        ``loss``, ``targets``, ``offset``, ``scale``, ``autocast_dtype`` and
-        ``columns`` (output column names).
+        ``path``, ``name``, ``epoch``, ``window``, ``detectors``,
+        ``dtype``, ``bounds`` (prior bounds), ``asds``, ``processor``,
+        ``network``, ``loss``, ``targets``, ``offset``, ``scale``,
+        ``autocast_dtype`` and ``columns`` (output column names).
 
     Raises
     ------
+    ValueError
+        On invalid settings or a device not available here.
     FileNotFoundError
         If the run has no checkpoint.
     SettingsChanged
-        As ``train_run``.
+        If the settings or prior changed after training started.
     """
     settings, prior = check_run(run_dir)
     if not training_started(run_dir):
@@ -142,12 +156,28 @@ def load_network(run_dir: Path, checkpoint: Path, device, data_dir: Path) -> Sim
 
 
 def scores(run: SimpleNamespace, x: torch.Tensor) -> np.ndarray:
-    """Rank, then the means and widths in physical units, for one batch of windows."""
+    """
+    Rank, then means and widths in physical units, for a batch.
+
+    Parameters
+    ----------
+    run : SimpleNamespace
+        Run from ``load_network``.
+    x : torch.Tensor
+        Batch of windows, before preprocessing.
+
+    Returns
+    -------
+    numpy.ndarray
+        One row per window: rank, means and, if the model has them,
+        widths (sigma).
+    """
     batch = run.processor(GWBatch(x, state=run.processor.input_state))
     with (torch.autocast(device_type=x.device.type, dtype=run.autocast_dtype)
           if run.autocast_dtype is not None else nullcontext()):
         out = run.network(batch.to_network_input())
-    raw = torch.cat([out[0], out[1]], dim=1).float()  # rank and estimates; not the non-astrophysical logit
+    # Rank and estimates; not the non-astrophysical logit
+    raw = torch.cat([out[0], out[1]], dim=1).float()
     count = len(run.targets)
     columns = [raw[:, :1], raw[:, 1:1 + count] * run.scale + run.offset]
     if raw.shape[1] >= 1 + 2 * count:  # mean-only models have no widths
@@ -157,23 +187,23 @@ def scores(run: SimpleNamespace, x: torch.Tensor) -> np.ndarray:
 
 def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_windows: int, seed: int) -> str:
     """
-    Score every run's ``best.pt`` on the same windows; write ``compare.h5``, the report and the figures.
+    Score every run's ``best.pt`` on the same windows.
 
-    The windows are the first run's validation noise, prior and SNR
-    distribution, their streams seeded from ``seed`` (``stream_seed``), so they
-    depend on the first run and ``seed`` alone.
+    The windows follow the first run's validation noise, prior and SNR
+    distribution, seeded from ``seed`` alone. Scores are appended to
+    ``compare.h5``; ``incomplete`` sits beside it until it is complete.
 
     Parameters
     ----------
     run_dirs : list of Path
-        Started run directories with distinct names; all share the first
-        one's detectors and window geometry.
+        Started run directories with distinct names; all share the
+        first one's detectors and window geometry.
     output_dir : Path
-        New directory for ``compare.h5``, ``report.txt`` and the figures
-        (``plot_comparison``); it must not exist.
+        New directory for ``compare.h5``, ``report.txt`` and the
+        figures (``plot_comparison``); it must not exist.
     noise_windows, signal_windows : int
-        Noise-only windows and windows carrying a signal (whole batches: at
-        least these many).
+        Noise-only windows and windows carrying a signal (whole
+        batches: at least these many).
     seed : int
         Seed of the windows.
 
@@ -185,9 +215,11 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
     Raises
     ------
     ValueError
-        If two runs share a directory name or a window count is below one.
+        If two runs share a directory name, a window count is below
+        one or a run's settings are invalid.
     WindowMismatch
-        If a run does not share the first one's detectors and window geometry.
+        If a run does not share the first one's detectors and window
+        geometry.
     FileExistsError
         If ``output_dir`` exists.
     """
@@ -241,8 +273,10 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
             outputs = {}
 
             def add(group, run, x):
+                """Buffer one run's scores of ``x`` in ``group``."""
                 values = scores(run, x)
-                if (group.name, run.name) not in outputs:  # mean-only models have no width columns
+                # Mean-only models have no width columns
+                if (group.name, run.name) not in outputs:
                     outputs[group.name, run.name] = Appender(group, run.name, values.shape[1])
                     group[run.name].attrs["columns"] = run.columns[:values.shape[1]]
                 outputs[group.name, run.name].add(values)
@@ -310,10 +344,20 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
 
 def recovered_fractions(background: np.ndarray, foreground: np.ndarray, probabilities) -> list:
     """
-    Recovered fraction of signals at fixed noise false-alarm probabilities per window.
+    Recovered signal fraction at fixed false-alarm probabilities.
 
-    The threshold is the ``count``-th loudest background score, ``count =
-    round(probability * windows)``; the loudest when ``count`` is 0.
+    The threshold is the ``count``-th loudest background score, with
+    ``count = round(probability * windows)``; the loudest when
+    ``count`` is 0. A signal is recovered above the threshold.
+
+    Parameters
+    ----------
+    background : numpy.ndarray
+        Ranking statistic of the noise-only windows.
+    foreground : numpy.ndarray
+        Ranking statistic of the signal windows.
+    probabilities : iterable of float
+        False-alarm probabilities per window.
 
     Returns
     -------
@@ -330,7 +374,24 @@ def recovered_fractions(background: np.ndarray, foreground: np.ndarray, probabil
 
 
 def report(path: Path) -> str:
-    """The recovered-fraction tables and the loudest noise windows of a complete ``compare.h5``."""
+    """
+    The recovered-fraction tables and loudest noise windows of a file.
+
+    Parameters
+    ----------
+    path : Path
+        A complete ``compare.h5``.
+
+    Returns
+    -------
+    str
+        Report text.
+
+    Raises
+    ------
+    ValueError
+        If ``path`` is not complete.
+    """
     with h5py.File(path, "r") as file:
         if not file.attrs["complete"]:
             raise ValueError(f"{path} is not complete")

@@ -2,40 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Sage testing loop.
+Sage testing loop: separate noise and signal passes at any window count.
 
-SageVanillaTesting
-    Large-scale sensitivity testing, shaped like SageVanillaValidation but split
-    into two INDEPENDENT passes, each run on demand at whatever window count is
-    asked for (rather than one training-sized, fixed class-balance loop):
-
-      * ``run_noise(n)``  -- pure noise windows -> ranking scores. The empirical
-                             background; its high quantiles set the false-alarm-
-                             rate (FAR) threshold. No waveform generation, so it
-                             scales to O(1e8) windows for a low FAR (1 / 6 months).
-      * ``run_signal(n)`` -- one injection per window (signal added to noise) ->
-                             (ranking score, injected SNR, injection params).
-
-    For the ``keep_loud`` loudest noise windows -- the ones that set the lowest
-    FARs -- a compact per-window RECORD is stored (ranking, physical PE mean/sigma,
-    per-detector peak, and per-detector run/segment/start provenance) rather than
-    raw strain. :func:`reconstruct_noise` re-reads the exact strain from the noise
-    memmaps on demand; :func:`query_testing` selects records by FAR / detector /
-    PE / peak. Efficiency vs SNR at a fixed FAR is :func:`efficiency_at_far`.
-
-    Confound-free comparisons are the caller's to arrange -- this class does not
-    couple the SNR reference to the whitening. Rescale signals to a chosen SNR
-    reference via the signal sampler's ``augment`` (an ``OptimalSNRRescaler``
-    whose estimator ASD you set), and whiten with the model's own fiducial via
-    ``processor``. The injected SNR per window is read from
-    ``signal_sampler.augment.target_snr_sampler.last``.
+The noise pass gives the background tail that sets FAR thresholds and
+records of the loudest noise windows, which :func:`query_testing`
+selects and :func:`reconstruct_noise` re-reads from the memmaps.
 """
 
 import time
 import torch
 import numpy as np
 
-# LOCAL
 from sage.architecture.custom_losses import width_to_sigma
 from sage.core.logger import get_logger, format_duration as _fmt_duration
 from sage.factory.contract import forward_batch
@@ -44,19 +21,30 @@ from sage.utils.atomic_io import write_h5
 logger = get_logger(__name__)
 
 
-# ======================================================================= io/query
-# Kept as a module-local name for the existing call sites; the implementation is shared
-# with the search, which writes its trigger shards and manifests the same way.
+# Module-local name of the writer the search also uses
 _write_h5 = write_h5
 
 
 def far_threshold(top_noise, n_noise, far):
-    """Ranking threshold whose noise exceedance rate is ``far`` (per window).
+    """
+    Ranking threshold whose noise exceedance rate is ``far`` per window.
 
-    ``top_noise`` is the descending high tail of ``n_noise`` background scores; the
-    threshold is the ``ceil(far * n_noise)``-th largest. ``far`` below ``1/n_noise``
-    is not resolvable (returns the largest score); a ``far`` needing a deeper tail
-    than retained returns NaN.
+    The threshold is the ``ceil(far * n_noise)``-th largest score; the
+    largest when ``far < 1 / n_noise``, NaN when beyond the kept tail.
+
+    Parameters
+    ----------
+    top_noise : array-like
+        Descending high tail of the background scores.
+    n_noise : int
+        Number of background windows.
+    far : float
+        False-alarm rate per window.
+
+    Returns
+    -------
+    float
+        The threshold, or NaN.
     """
     rank = max(1, int(np.ceil(far * n_noise)))
     if rank > np.asarray(top_noise).size:
@@ -65,10 +53,28 @@ def far_threshold(top_noise, n_noise, far):
 
 
 def efficiency_at_far(top_noise, n_noise, sig_scores, sig_snr, far, snr_edges):
-    """Detection efficiency vs SNR at a fixed FAR.
+    """
+    Detection efficiency vs SNR at a fixed FAR.
 
-    Returns ``(snr_centres, efficiency, counts)``; ``efficiency[i]`` is the
-    fraction of injections in SNR bin ``i`` scoring above ``far_threshold``.
+    Parameters
+    ----------
+    top_noise : array-like
+        Descending high tail of the background scores.
+    n_noise : int
+        Number of background windows.
+    sig_scores, sig_snr : array-like
+        Ranking statistic and injected SNR of each injection.
+    far : float
+        False-alarm rate per window.
+    snr_edges : numpy.ndarray
+        SNR bin edges.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        ``(snr_centres, efficiency, counts)``; ``efficiency[i]`` is the
+        fraction of injections in bin ``i`` above ``far_threshold``,
+        NaN for an empty bin.
     """
     thr = far_threshold(top_noise, n_noise, far)
     centres = 0.5 * (snr_edges[:-1] + snr_edges[1:])
@@ -85,25 +91,29 @@ def efficiency_at_far(top_noise, n_noise, sig_scores, sig_snr, far, snr_edges):
 
 def query_testing(h5path, far=None, score_above=None, detector=None,
                   peak_above=None, pe_below=None, pe_above=None):
-    """Select loud-noise record indices matching predicates.
+    """
+    Indices of the loud-noise records matching every given predicate.
 
     Parameters
     ----------
-    far : float
-        Keep records louder than the FAR threshold (i.e. false alarms at <= far).
-    score_above : float
+    h5path : str or Path
+        File written by :meth:`SageVanillaTesting.run_noise`.
+    far : float or None
+        Keep records above the threshold of this FAR per window.
+    score_above : float or None
         Keep records with ranking above this raw value.
-    detector : str
-        Keep records whose LOUDEST detector (max per-detector peak) is this one.
-    peak_above : float
-        Keep records whose max per-detector peak exceeds this.
-    pe_below, pe_above : dict[str, float]
-        Keep records whose physical PE mean for the named head is below / above
-        the value (head names are the run's ``signal.targets``, e.g. "delta_tc","mchirp").
+    detector : str or None
+        Keep records whose loudest detector (largest peak) is this one.
+    peak_above : float or None
+        Keep records whose largest per-detector peak exceeds this.
+    pe_below, pe_above : dict of str to float, or None
+        Keep records whose physical PE mean of each named head is
+        below / above the value (heads as ``signal.targets``).
 
     Returns
     -------
-    np.ndarray[int]  indices into the ``loud_*`` record arrays.
+    numpy.ndarray of int
+        Indices into the ``loud_*`` record arrays.
     """
     import h5py
     with h5py.File(h5path, "r") as f:
@@ -131,11 +141,24 @@ def query_testing(h5path, far=None, score_above=None, detector=None,
 
 
 def reconstruct_noise(h5path, sampler, indices=None):
-    """Re-read the exact strain of loud-noise records from the noise memmaps.
+    """
+    Re-read the exact strain of loud-noise records from the memmaps.
 
-    ``sampler`` is a live ``MemmapNoiseSampler`` (built from the same run config)
-    exposing ``mmaps[d][run]`` and ``seq_len``. Returns ``(N, D, seq_len)`` float32
-    physical strain (dyn-range restored), matching what the model was scored on.
+    Parameters
+    ----------
+    h5path : str or Path
+        File written by :meth:`SageVanillaTesting.run_noise`.
+    sampler : MemmapNoiseSampler
+        Live sampler built from the same run settings, exposing
+        ``mmaps[d][run]`` and ``seq_len``.
+    indices : array-like of int or None
+        Records to read; None reads all.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(N, D, seq_len)`` float32 physical strain (stored values
+        divided by the dynamic-range factor).
     """
     import h5py
     from sage.data.noise._pycbc_lazy import dyn_range_fac
@@ -155,15 +178,19 @@ def reconstruct_noise(h5path, sampler, indices=None):
     return out
 
 
-# ==================================================================== testing loop
 class SageVanillaTesting(torch.nn.Module):
     """
-    Large-scale sensitivity testing loop (see module docstring).
+    Large-scale sensitivity testing: separate noise and signal passes.
 
     Parameters
     ----------
-    signal_sampler, noise_sampler, processor, model
-        Samplers, preprocessing chain and network.
+    signal_sampler, noise_sampler : torch.nn.Module
+        Samplers; loud-noise records need the noise sampler's
+        ``last_provenance``.
+    processor : Preprocessor
+        Preprocessing chain.
+    model : torch.nn.Module
+        The network.
     targets : list of str
         Estimated parameters, in head order (``signal.targets``).
     detectors : list of str
@@ -215,17 +242,22 @@ class SageVanillaTesting(torch.nn.Module):
         self.num_pe   = len(targets)
         self.pe_names = list(targets)
 
-    # ------------------------------------------------------------------ core
     def _forward(self, x):
-        """Raw strain batch ``(B, D, F)`` -> full network output ``(B, C)``.
+        """
+        Network output of a frequency-domain strain batch.
 
-        Mirrors SageVanillaValidation's forward path (GWBatch -> processor ->
-        autocast model). Column 0 is the ranking statistic; the rest
-        are the raw PE means then sigmas.
+        Runs :func:`sage.factory.contract.forward_batch`.
 
-        The path itself lives in ``sage.factory.contract`` so that testing,
-        benchmarking and the search all run the identical contract rather than
-        three copies that can drift.
+        Parameters
+        ----------
+        x : torch.Tensor
+            Complex ``(B, D, F)`` strain batch.
+
+        Returns
+        -------
+        torch.Tensor
+            ``(B, C)`` float32: column 0 the ranking statistic, then the
+            raw PE means and sigmas.
         """
         return forward_batch(
             x,
@@ -237,7 +269,20 @@ class SageVanillaTesting(torch.nn.Module):
         )
 
     def _physical_pe(self, net):
-        """Full output ``(B, C)`` -> physical PE mean/sigma ``(B, P)`` (as validation)."""
+        """
+        Physical PE means and sigmas of a network output, as validation.
+
+        Parameters
+        ----------
+        net : torch.Tensor
+            Network output ``(B, C)``.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(mu, sigma)``, each ``(B, P)`` float32; sigma is NaN for a
+            mean-only model.
+        """
         P = self.num_pe
         ps = self.signal_sampler.param_sampler
         mu_phys = ps.unscale_targets(net[:, 1:1 + P])
@@ -248,15 +293,29 @@ class SageVanillaTesting(torch.nn.Module):
             sigma_phys = torch.full_like(mu_phys, float("nan"))
         return mu_phys.float(), sigma_phys.float()
 
-    # ----------------------------------------------------------------- passes
     @torch.inference_mode()
     def run_noise(self, n_windows, save_path=None, log_every=500):
-        """Score ``n_windows`` pure-noise windows; keep loud-window records.
+        """
+        Score ``n_windows`` noise windows; keep records of the loudest.
 
-        Stores the descending score tail + histogram (FAR thresholds), and for the
-        ``keep_loud`` loudest windows a record of {ranking, physical PE mean/sigma,
-        per-detector peak, per-detector run/segment/start}. Needs a noise sampler
-        exposing ``last_provenance`` (TestNoiseSampler).
+        Keeps the descending score tail and a histogram, and, when the
+        noise sampler gives ``last_provenance``, records of the
+        ``keep_loud`` loudest windows (ranking, PE, peak, provenance).
+
+        Parameters
+        ----------
+        n_windows : int
+            Noise windows to score.
+        save_path : str or Path or None
+            HDF5 file for the result; None writes nothing.
+        log_every : int
+            Batches between progress lines; 0 for none.
+
+        Returns
+        -------
+        dict
+            ``top_noise``, ``n_noise``, ``noise_hist``, ``noise_edges``
+            and, with provenance, the ``loud_*`` record arrays.
         """
         self.model.eval()
         n_windows = int(n_windows)
@@ -276,7 +335,8 @@ class SageVanillaTesting(torch.nn.Module):
             mu, sigma = self._physical_pe(net)                 # (B, P) each
             s = net[:, 0].cpu().numpy()
             mu_np, sig_np = mu.cpu().numpy(), sigma.cpu().numpy()
-            peak_np = noise.abs().amax(dim=2).cpu().numpy()    # (B, D) per-detector loudness
+            # (B, D) per-detector loudness
+            peak_np = noise.abs().amax(dim=2).cpu().numpy()
             k = min(s.shape[0], n_windows - p)
             scores[p:p + k] = s[:k]
 
@@ -343,11 +403,32 @@ class SageVanillaTesting(torch.nn.Module):
 
     @torch.inference_mode()
     def run_signal(self, n_windows, save_path=None, log_every=500):
-        """Score ``n_windows`` signal-in-noise windows.
+        """
+        Score ``n_windows`` signal-in-noise windows.
 
-        Records {ranking, injected SNR, physical PE mean/sigma, full injection
-        params ``all_theta``} so misses slice by loudness, PE error, or intrinsic
-        parameters (masses/spins/sky). SNR is the augment's recorded last draw.
+        Records the ranking, the injected SNR (the augment's last draw),
+        the physical PE and every injection parameter.
+
+        Parameters
+        ----------
+        n_windows : int
+            Signal windows to score.
+        save_path : str or Path or None
+            HDF5 file for the result; None writes nothing.
+        log_every : int
+            Batches between progress lines; 0 for none.
+
+        Returns
+        -------
+        dict
+            ``sig_scores``, ``sig_snr``, ``sig_theta``, ``sig_pe_mu``
+            and ``sig_pe_sigma``.
+
+        Raises
+        ------
+        TypeError
+            If ``signal_sampler.augment.target_snr_sampler`` records no
+            ``last`` draw.
         """
         self.model.eval()
         aug = getattr(self.signal_sampler, "augment", None)
@@ -365,10 +446,12 @@ class SageVanillaTesting(torch.nn.Module):
         theta_arr = None
         p, t0 = 0, time.time()
         while p < n_windows:
-            hf, _, theta = self.signal_sampler(return_theta=True)   # rescaled to target SNR
+            # Signals rescaled to their target SNR
+            hf, _, theta = self.signal_sampler(return_theta=True)
             last = sampler.last.detach().cpu().numpy()
             noise, _ = self.noise_sampler()
-            nb = min(noise.shape[0], hf.shape[0])          # align (signal batch = B*class_balance)
+            # Signal and noise batches may differ in size
+            nb = min(noise.shape[0], hf.shape[0])
             net = self._forward(noise[:nb] + hf[:nb])
             mu, sigma = self._physical_pe(net)
             s = net[:, 0].cpu().numpy()

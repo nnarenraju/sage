@@ -2,13 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Sage validation loop.
-
-SageVanillaValidation
-    Mirrors SageVanillaTraining exactly except the model runs in eval +
-    inference_mode, and per-epoch outputs (network predictions, targets,
-    raw parameters) are saved to an HDF5 file for offline diagnostics
-    (ROC curves, parameter recovery, etc.).
+The Sage validation loop: training batches in inference mode, with each
+pass's outputs, targets and parameters saved to HDF5.
 """
 
 import sys
@@ -31,39 +26,38 @@ def save_validation(name, output, target, params, param_names, signal_idx, auxil
     """
     Append one validation pass's results to an HDF5 file.
 
-    Creates a group ``name`` inside ``savepath`` containing four
-    gzip-compressed datasets.
+    Group ``name`` holds four gzip-compressed datasets, and
+    ``auxiliary`` when the run has the non-astrophysical class; an
+    existing group of that name is replaced.
 
     Parameters
     ----------
     name : str
-        Group name: ``epoch_NNNN`` for a regular pass, ``final`` for the
-        check of ``best.pt`` after training.
-    output : torch.Tensor, shape ``(N, 1 + 2*num_pe)``
-        Network outputs: ranking statistic, predicted means, predicted sigmas
-        (in physical units).
+        Group name: ``epoch_NNNN`` for a regular pass; ``final_best``,
+        ``final_ema`` or ``validate_<checkpoint>`` otherwise.
+    output : torch.Tensor, shape ``(N, 1 + k * num_pe)``
+        Network outputs: ranking statistic, predicted means and, with
+        ``k = 2``, predicted sigmas (in physical units).
     target : torch.Tensor, shape ``(N, num_pe + 1)``
         Ground-truth targets (regression values + class label).
     params : torch.Tensor, shape ``(N, num_params)``
-        Raw waveform parameters (``theta``) returned by the signal sampler.
+        Raw waveform parameters (``theta``) from the signal sampler.
     param_names : list of str
-        Name of each ``params`` column, recorded as its ``names`` attribute.
+        Name of each ``params`` column, recorded as its ``names``
+        attribute.
     signal_idx : torch.Tensor, shape ``(num_iter, S)``
         Batch positions where signals were injected for each iteration.
     auxiliary : torch.Tensor, shape ``(N, 1)`` or ``(N, 0)``
-        The non-astrophysical vs noise logit, saved as ``auxiliary`` when the run has the class.
-    savepath : str
+        The non-astrophysical vs noise logit, saved as ``auxiliary``
+        when the run has the class.
+    savepath : str or Path
         Path to the HDF5 output file.
     """
-    # Appended in place: this file reaches ~300 MB, so snapshotting it every
-    # epoch (atomic_h5) would move tens of GB per run to protect a diagnostic
-    # that training does not read back. append_h5 instead absorbs a kill on the
-    # NEXT open, quarantining a damaged file so it cannot crash the run.
+    # Appended in place; append_h5 moves a file damaged by a killed job
+    # aside on the next open
     with append_h5(savepath) as f:
         if name in f:
-            # Overwrite a re-validated / restarted epoch rather than crashing on
-            # a pre-existing validation_data.h5 (e.g. a fresh run reusing an
-            # export dir, or re-running the same epoch).
+            # A repeated pass replaces its group
             del f[name]
         grp = f.create_group(name)
         grp.create_dataset("network_output", data=output.numpy(), compression="gzip")
@@ -77,42 +71,22 @@ def save_validation(name, output, target, params, param_names, signal_idx, auxil
 
 class SageVanillaValidation(torch.nn.Module):
     """
-    Standard Sage validation loop with full diagnostic output saving.
+    The Sage validation loop; one call runs one validation pass.
 
-    Mirrors :class:`~sage.factory.training.SageVanillaTraining` but:
-
-    * Runs the model in ``eval`` + ``inference_mode``.
-    * Calls ``signal_sampler(return_theta=True)`` to obtain raw waveform
-      parameters for parameter-recovery diagnostics.
-    * Unscales predicted means back to physical units.
-    * Converts the raw widths to sigma with the loss's mapping and bounds
-      (:func:`~sage.architecture.custom_losses.width_to_sigma`), then
-      unscales to physical units.
-    * Writes each pass's results to ``results_path`` (``results/validation.h5``).
-
-    GWBatch tracking works as in the training loop.
-
-    Resume note
-    -----------
-    The *trained model* is fully resume-deterministic, but the validation
-    *loss curve* is not bit-reproducible across a resume. The val signal/noise
-    samplers and the injection permutation's generator are seeded once at
-    construction and advance per call, so a run resuming at epoch K draws
-    different validation realisations than a fresh run did at epoch K. This is only Monte-Carlo
-    sampling noise on an unbiased estimate of the same fixed-distribution loss;
-    it never affects the trained weights, only the exact val-loss value (and
-    hence a marginal, MC-level wobble in best.pt selection). Making the curve
-    bit-identical across resume would require per-epoch reseeding of the
-    (threaded) val samplers; deliberately not done.
+    Batches are made as in training and run in ``eval`` and inference
+    mode; means and widths are unscaled to physical units and each
+    pass's outputs, targets and parameters go to ``results_path``.
 
     Parameters
     ----------
-    signal_sampler, noise_sampler, processor, model, loss_function
-        Validation samplers, and the objects passed to the training class.
+    signal_sampler, noise_sampler : torch.nn.Module
+        Validation samplers; the signal sampler also returns ``theta``.
+    processor, model, loss_function : torch.nn.Module
+        As passed to the training loop.
     num_iterations : int
         Batches per validation pass.
     num_epochs : int
-        Total epochs (pre-allocates the ``loss_components`` tracking tensor).
+        Rows of the ``loss_components`` tracking tensor.
     batch_size : int
         Windows per batch (the training one).
     signal_batch_size : int
@@ -122,7 +96,8 @@ class SageVanillaValidation(torch.nn.Module):
     placement : torch.Generator
         Generator of the signal positions in a batch, on ``device``.
     non_astrophysical : NonAstrophysicalInjector or None
-        Non-astrophysical pairs added to the noise windows; None for none.
+        Non-astrophysical pairs added to the noise windows; None for
+        none.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -172,7 +147,6 @@ class SageVanillaValidation(torch.nn.Module):
         self.placement         = placement
         self.non_astrophysical = non_astrophysical
 
-        # ── Loss tracking ─────────────────────────────────────────────────
         self.loss_components = torch.zeros(
             (num_epochs, self.loss_function.num_components), device=self.device, dtype=dtype,
         )
@@ -198,8 +172,7 @@ class SageVanillaValidation(torch.nn.Module):
             "auxiliary":      [],
         }
 
-        # See the note in training.forward: a tqdm bar on a non-TTY fills the
-        # job's .out file with carriage-return redraws.
+        # Progress bar on a TTY only, as in training
         interactive = sys.stdout.isatty()
         t_epoch = time.time()
         logger.info(
@@ -215,24 +188,20 @@ class SageVanillaValidation(torch.nn.Module):
                 leave=False,
             ):
 
-                # ── 1. Sample ─────────────────────────────────────────────
                 signal_data, signal_targets, theta = self.signal_sampler(
                     return_theta=True
                 )
                 noise_data, noise_targets = self.noise_sampler()
 
-                # ── 2. Random signal injection ────────────────────────────
                 x, targets, idx = assemble_batch(
                     signal_data, signal_targets, noise_data, noise_targets,
                     self.signal_batch_size, self.num_estimates, self.placement, self.non_astrophysical,
                 )
                 diagnostics["signal_idx"].append(idx.cpu())
 
-                # ── 3. Wrap in GWBatch and preprocess ─────────────────────
                 batch     = self.processor(GWBatch(x, state=self.processor.input_state))
                 net_input = batch.to_network_input()
 
-                # ── 4. Forward pass ───────────────────────────────────────
                 with (
                     torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype)
                     if self.autocast_dtype is not None
@@ -241,23 +210,19 @@ class SageVanillaValidation(torch.nn.Module):
                     out  = self.model(net_input)
                     loss = self.loss_function(out, targets)
 
-                # ── 5. Diagnostics ────────────────────────────────────────
                 network_output = torch.cat([out[0], out[1]], dim=1)
                 diagnostics["auxiliary"].append(out[2].float().cpu())
 
                 ranking   = network_output[:, 0:1]
                 mu_scaled = network_output[:, 1 : 1 + self.num_estimates]
                 mu_phys   = self.signal_sampler.param_sampler.unscale_targets(mu_scaled)
-                # Heteroscedastic models also emit a raw sigma per point estimate
-                # (columns after the means); mean-only models (e.g. with BCE_PE_Huber)
-                # do not -- their network_output has no sigma columns, so export
-                # ranking + mu only (no sigma_phys) instead of crashing on an empty slice.
+                # Mean-only models (e.g. BCE_PE_Huber) have no width
+                # columns after the means
                 if network_output.shape[1] >= 1 + 2 * self.num_estimates:
                     sigma_raw = network_output[
                         :, 1 + self.num_estimates : 1 + 2 * self.num_estimates
                     ]
-                    # The loss's own mapping and bounds, so exported sigma matches
-                    # the trained parameterisation.
+                    # The loss's own mapping and bounds, as in training
                     sigma_scaled = width_to_sigma(
                         sigma_raw, self.loss_function.sigma_min, self.loss_function.sigma_max
                     )
@@ -283,7 +248,6 @@ class SageVanillaValidation(torch.nn.Module):
             _fmt_duration(time.time() - t_epoch),
         )
 
-        # ── Save diagnostic outputs ───────────────────────────────────────
         network_output = torch.vstack(diagnostics["network_output"])
         network_target = torch.vstack(diagnostics["network_target"])
         signal_params  = torch.vstack(diagnostics["signal_params"])

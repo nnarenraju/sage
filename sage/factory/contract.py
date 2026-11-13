@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+The forward path of a trained network: preprocessing outside
+autocast, then the model inside it.
+
 Filename      : contract.py
 Description   : The trained model's input and forward contract, in one place.
 
@@ -14,32 +17,6 @@ __version__     = 0.0.1
 __maintainer__  = Narenraju Nagarajan
 __email__       = N/A
 __status__      = inProgress
-
-How strain becomes a network output is a contract between training and everything that
-runs a trained network afterwards: validation, testing, benchmarking and the search. If a
-consumer re-derives it, the two drift and the network is quietly fed something it was not
-trained on -- a failure that produces plausible numbers rather than an error.
-
-So the contract lives here once and is called, not copied.
-
-Two pieces:
-
-* :func:`sage.factory.build.build_preprocess` builds the preprocessing chain from the
-  run's ``preprocess`` settings, for training and every consumer alike. Whitening is the
-  network's input normalisation, so the fiducial spectra are part of the contract: a
-  search uses the ones the network was trained with, not those of the run it analyses.
-* :func:`forward_batch` runs the input through the processor and the model, preserving the
-  boundary that matters: the preprocessor runs OUTSIDE autocast, because it consumes
-  complex frequency-domain input which must not be cast, and only the model runs inside.
-
-The input is already frequency-domain: ``torch.fft.rfft(x, dim=-1, norm="forward")`` over
-the padded window. The ``norm="forward"`` is not incidental -- it divides by N, and the
-fiducial whitening buffer is scaled to match. Feeding an unnormalised transform produces
-an output that looks reasonable and is wrong by a factor of N.
-
-The ranking statistic is column 0 of the returned tensor; the remaining columns are the
-raw point-estimate means followed by their raw sigmas. A network with the non-astrophysical
-class also gives that class's logit; it is not part of this output.
 """
 
 from contextlib import nullcontext
@@ -62,46 +39,43 @@ def forward_batch(
     device_type: str = "cuda",
 ) -> torch.Tensor:
     """
-    Run a frequency-domain strain batch through the preprocessor and the network.
+    Run a frequency-domain strain batch through preprocessing and model.
+
+    The preprocessor runs outside autocast and only the model inside;
+    the output is cast to float32.
 
     Parameters
     ----------
-    x : Tensor
-        Complex ``(B, D, F)``, already ``rfft(..., norm="forward")`` of the padded window.
-    model : Module
-        The trained network. Returns ``(ranking_statistic, point_estimates, non_astrophysical_logit)``.
+    x : torch.Tensor
+        Complex ``(B, D, F)``: ``torch.fft.rfft(..., norm="forward")``
+        of the padded window; the fiducial whitening is scaled to it.
+    model : torch.nn.Module
+        The trained network, returning ``(ranking_statistic,
+        point_estimates, non_astrophysical_logit)``.
     processor : Preprocessor
         Built by :func:`sage.factory.build.build_preprocess`.
     state : ProcessingState, optional
-        Grid the input is on. Defaults to the processor's input state.
+        Grid the input is on; defaults to the processor's input state.
     amp_dtype : torch.dtype
-        Autocast dtype for the model.
+        Autocast dtype of the model.
     autocast : bool
-        Whether the model runs under autocast. Taken from the training configuration; a
-        search must use the same setting the network was trained and validated with.
+        Whether the model runs under autocast; a search uses the
+        setting the network was trained and validated with.
     device_type : str
-        Autocast device type. Left as ``"cuda"`` by default rather than derived from the
-        input, because deriving it would silently enable CPU autocast on a CPU tensor and
-        change the numerics of any CPU-side comparison.
+        Autocast device type; not derived from the input, so a CPU
+        tensor does not enable CPU autocast.
 
     Returns
     -------
-    Tensor
-        ``(B, C)`` in float32: column 0 the ranking statistic, then the raw point-estimate
-        means and their raw sigmas.
-
-    Notes
-    -----
-    The output is cast to float32 here, and the network's own heads already run in float32
-    with autocast disabled. That is deliberate: a reduced-precision logit is quantised in
-    steps coarse enough to be visible right where a false-alarm threshold sits, which shows
-    up as a comb in the background distribution.
+    torch.Tensor
+        ``(B, C)`` float32: column 0 the ranking statistic, then the
+        raw point-estimate means and their raw sigmas.
     """
     if state is None:
         state = processor.input_state
     batch = GWBatch(x, state=state)
-    # Outside autocast: the preprocessor consumes complex frequency-domain input, which
-    # must not be cast to a reduced dtype.
+    # Outside autocast: the complex input must not be cast to a reduced
+    # dtype.
     batch = processor(batch)
     context = (
         torch.autocast(device_type=device_type, dtype=amp_dtype)

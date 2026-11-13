@@ -1,7 +1,9 @@
-"""Start a run directory from a stored checkpoint of another run (``sage clone``).
+"""
+Start a run directory from a stored checkpoint of another run.
 
-The new directory gets the old ``run.yaml`` (and a prior file it names), the
-checkpoint it starts from under ``clone/``, and ``resolved/clone.yaml``.
+For ``sage clone``: the new directory gets the old ``run.yaml`` (and a
+prior file it names), the start checkpoint under ``clone/`` and
+``resolved/clone.yaml``.
 """
 
 import dataclasses
@@ -21,19 +23,31 @@ from sage.config.run_dir import StateMismatch, differences, training_started, wr
 from sage.factory.build import build_data, resolve_settings
 from sage.utils.checkpoint import TRAINING_ONLY, next_epoch
 
-# Settings the saved weights cannot follow a change of; with full state also
-# those the restored optimiser and schedule states would override.
+# Settings the saved weights cannot follow a change of; with full state
+# also those the restored optimiser and schedule states would override.
 BREAKING = ("model", "data.detectors", "signal.targets")
 FULL_STATE_BREAKING = ("optimiser", "schedule", "train.epochs", "train.samples_per_epoch", "train.batch_size")
 START_DIR = "clone"
 
 
 class EpochUnavailable(ValueError):
-    """The state of the requested epoch can no longer be restored exactly."""
+    """The requested epoch's state can no longer be restored exactly."""
 
 
 def stored_checkpoints(run_dir: Path) -> dict:
-    """Epoch -> file of every stored epoch of a run (``epoch_NNNN.pt``, ``latest.pt``)."""
+    """
+    Every stored epoch of a run (``epoch_NNNN.pt``, ``latest.pt``).
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+
+    Returns
+    -------
+    dict
+        Epoch -> checkpoint path, in epoch order.
+    """
     checkpoints = Path(run_dir) / "checkpoints"
     stored = {int(path.stem.removeprefix("epoch_")): path for path in checkpoints.glob("epoch_*.pt")}
     if (checkpoints / "latest.pt").exists():
@@ -75,7 +89,7 @@ def start_checkpoint(run_dir: Path, from_epoch: int | None) -> tuple:
 
 def state_mismatches(settings: dict, record: dict, full_state: bool) -> list:
     """
-    Changes from a checkpoint's settings that its saved state cannot take.
+    Changes from a checkpoint's settings its saved state cannot take.
 
     Parameters
     ----------
@@ -89,7 +103,8 @@ def state_mismatches(settings: dict, record: dict, full_state: bool) -> list:
     Returns
     -------
     list of str
-        One ``location: old -> new`` entry per change, window geometry included.
+        One ``location: old -> new`` entry per change, window geometry
+        included.
     """
     old = resolve_settings(load_run_record(record["run"]))
     found = []
@@ -103,7 +118,7 @@ def state_mismatches(settings: dict, record: dict, full_state: bool) -> list:
 
 def best_up_to(run_dir: Path, epoch: int, best_loss: float) -> Path | None:
     """
-    The stored checkpoint with validation loss ``best_loss`` at or before ``epoch``.
+    The stored checkpoint up to ``epoch`` with loss ``best_loss``.
 
     Parameters
     ----------
@@ -117,7 +132,7 @@ def best_up_to(run_dir: Path, epoch: int, best_loss: float) -> Path | None:
     Returns
     -------
     Path or None
-        None if it is no longer stored.
+        The checkpoint, or None if it is no longer stored.
     """
     for path in [Path(run_dir) / "checkpoints" / "best.pt", *stored_checkpoints(run_dir).values()]:
         if path.exists():
@@ -128,7 +143,22 @@ def best_up_to(run_dir: Path, epoch: int, best_loss: float) -> Path | None:
 
 
 def full_state_epochs(run_dir: Path) -> list:
-    """Stored epochs whose best checkpoint up to them is stored too."""
+    """
+    Stored epochs a full-state clone can start from.
+
+    These are the epochs whose best checkpoint up to them is stored
+    too, or that have no validation loss yet.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+
+    Returns
+    -------
+    list of int
+        Epochs, in order.
+    """
     epochs = []
     for epoch, path in stored_checkpoints(run_dir).items():
         best_loss = torch.load(path, map_location="cpu", weights_only=False, mmap=True)["best_validation_loss"]
@@ -138,13 +168,37 @@ def full_state_epochs(run_dir: Path) -> list:
 
 
 def prior_copy(old_dir: Path, new_dir: Path, setting: str) -> list:
-    """``[(source, target)]`` for a prior file ``signal.prior`` names inside the run directory, else empty."""
+    """
+    The copy of a prior file that ``signal.prior`` names in the run.
+
+    Parameters
+    ----------
+    old_dir, new_dir : Path
+        Run directory cloned, and the new one.
+    setting : str
+        ``signal.prior``, a path relative to the run directory.
+
+    Returns
+    -------
+    list of tuple
+        ``[(source, target)]`` if the file lies inside the run
+        directory, else empty.
+    """
     source, target = (Path(old_dir) / setting).resolve(), (Path(new_dir) / setting).resolve()
     return [(source, target)] if target.is_relative_to(Path(new_dir).resolve()) else []
 
 
 def copy_history(old_dir: Path, new_dir: Path, epoch: int) -> None:
-    """Copy ``results/losses.h5`` and ``validation.h5`` up to ``epoch``."""
+    """
+    Copy ``results/losses.h5`` and ``validation.h5`` up to ``epoch``.
+
+    Parameters
+    ----------
+    old_dir, new_dir : Path
+        Run directory cloned, and the new one.
+    epoch : int
+        Last epoch copied; later loss rows are reset to 0.
+    """
     old, new = Path(old_dir) / "results", Path(new_dir) / "results"
     new.mkdir(parents=True, exist_ok=True)
     if (old / "losses.h5").exists():
@@ -164,7 +218,8 @@ def clone_run(old_dir: Path, new_dir: Path, settings: dict, full_state: bool, fr
     Start ``new_dir`` from a stored checkpoint of ``old_dir``.
 
     Full state also copies the best checkpoint up to that epoch (to
-    ``clone/best.pt``), the mining bank and the results up to that epoch.
+    ``clone/best.pt``), the mining bank and the results up to that
+    epoch.
 
     Parameters
     ----------
@@ -173,8 +228,8 @@ def clone_run(old_dir: Path, new_dir: Path, settings: dict, full_state: bool, fr
     settings : dict
         Settings of ``old_dir/run.yaml``, from ``check_run``.
     full_state : bool
-        Restore weights, optimiser, schedule, EMA and mining bank, continuing
-        the epoch count; else the weights only, from epoch 0.
+        Restore weights, optimiser, schedule, EMA and mining bank,
+        continuing the epoch count; else the weights only, from epoch 0.
     from_epoch : int or None
         Stored epoch to start from; None takes the latest.
 
@@ -233,7 +288,7 @@ def clone_run(old_dir: Path, new_dir: Path, settings: dict, full_state: bool, fr
 
 def clone_start(run_dir: Path) -> tuple | None:
     """
-    The checkpoint a cloned run starts from, until its first checkpoint is saved.
+    The checkpoint a cloned run starts from, until it saves its own.
 
     Parameters
     ----------
@@ -243,7 +298,8 @@ def clone_start(run_dir: Path) -> tuple | None:
     Returns
     -------
     tuple or None
-        ``(state, full_state)``; None for a run not cloned or already started.
+        ``(state, full_state)``; None for a run not cloned or already
+        started.
     """
     run_dir = Path(run_dir)
     if training_started(run_dir) or not (run_dir / START_DIR / "start.pt").exists():
@@ -285,7 +341,10 @@ def check_start(settings: dict, state: dict, full_state: bool) -> list:
 
 def check_built(derived: dict, state: dict, scaler, full_state: bool) -> None:
     """
-    Check a built cloned run against its start checkpoint: multirate bins and, with full state, the loss scaler.
+    Check a built cloned run against its start checkpoint.
+
+    Compares the multirate bins and, with full state, the use of a loss
+    scaler.
 
     Parameters
     ----------
@@ -314,7 +373,9 @@ def check_built(derived: dict, state: dict, scaler, full_state: bool) -> None:
 
 def install_full_state(run_dir: Path, state: dict, ema: bool) -> None:
     """
-    Make a full-state clone's start checkpoint the run's ``checkpoints/``, as if trained to that epoch.
+    Install a full-state clone's start checkpoint as ``checkpoints/``.
+
+    The run then resumes as if trained to that epoch.
 
     Parameters
     ----------
@@ -323,7 +384,8 @@ def install_full_state(run_dir: Path, state: dict, ema: bool) -> None:
     state : dict
         The start checkpoint.
     ema : bool
-        Whether the run keeps an EMA (``ema.pt``, from the checkpoint's EMA or else its weights).
+        Whether the run keeps an EMA; ``ema.pt`` is made from the
+        checkpoint's EMA, or else its weights.
     """
     start, part = Path(run_dir) / START_DIR, Path(run_dir) / "checkpoints.part"
     shutil.rmtree(part, ignore_errors=True)

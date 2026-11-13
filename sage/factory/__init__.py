@@ -1,3 +1,5 @@
+"""Building, training, validating and testing Sage runs."""
+
 from .training import SageVanillaTraining
 from .validation import SageVanillaValidation
 from .testing import (SageVanillaTesting, query_testing, reconstruct_noise,

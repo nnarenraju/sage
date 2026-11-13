@@ -1,11 +1,9 @@
 """
-EMA calibration at the end of training.
+Batch-norm recalibration of the EMA weights at the end of training.
 
-The per-step weight EMA averages the batch-norm running statistics along with
-the weights, but the statistics that belong to the averaged weights are the
-activation statistics under those weights. :func:`recalibrate_batchnorm`
-recomputes them over training batches with the official
-``torch.optim.swa_utils.update_bn`` (statistics reset, cumulative average).
+:func:`recalibrate_batchnorm` recomputes the running statistics under
+the averaged weights over training batches, with
+``torch.optim.swa_utils.update_bn`` (reset, cumulative average).
 """
 
 import torch
@@ -20,7 +18,7 @@ def calibration_inputs(
     signal_sampler, noise_sampler, processor, signal_batch_size, num_estimates, num_batches, placement, non_astrophysical,
 ):
     """
-    Network inputs of training batches, assembled and preprocessed as in training.
+    Network inputs of training batches, made as in training.
 
     Parameters
     ----------
@@ -37,7 +35,8 @@ def calibration_inputs(
     placement : torch.Generator
         Generator of the signal positions in a batch.
     non_astrophysical : NonAstrophysicalInjector or None
-        Non-astrophysical pairs added to the noise windows, as in training; None for none.
+        Non-astrophysical pairs added to the noise windows, as in
+        training; None for none.
 
     Yields
     ------
@@ -56,7 +55,7 @@ def calibration_inputs(
 
 def recalibrate_batchnorm(model, inputs) -> int:
     """
-    Recompute the batch-norm running statistics of ``model`` from ``inputs``.
+    Recompute the batch-norm running statistics of ``model``.
 
     Parameters
     ----------

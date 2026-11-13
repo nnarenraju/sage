@@ -5,16 +5,11 @@ from torch.optim.lr_scheduler import LambdaLR
 
 class WarmupPolynomialDecayFlatTail(LambdaLR):
     """
-    Linear warmup, polynomial decay to a floor, then a flat tail at the floor.
+    Linear warmup, polynomial decay to a floor, then a flat tail.
 
-    Sage's production schedule, stepped every batch; its peak is the
-    optimiser's learning rate. With ``floor = min_lr / peak`` and
-    ``decay_steps = total_steps - warmup_steps - flat tail``, the factor on the
-    peak at ``step`` is::
-
-        warmup_start_factor + (1 - warmup_start_factor) * step / warmup_steps   step < warmup_steps
-        floor + (1 - floor) * (1 - s / decay_steps) ** decay_power              s = step - warmup_steps < decay_steps
-        floor                                                                   after
+    Stepped every batch, peaking at the optimiser's learning rate. With
+    ``f = min_lr / peak`` and ``s`` batches into the decay, the decay
+    factor is ``f + (1 - f) * (1 - s / decay_steps) ** decay_power``.
 
     Parameters
     ----------
@@ -38,8 +33,8 @@ class WarmupPolynomialDecayFlatTail(LambdaLR):
     Raises
     ------
     ValueError
-        If the warmup is longer than half the run, or the warmup and flat tail
-        together are longer than the run.
+        If the warmup is longer than half the run, or the warmup and
+        flat tail together are longer than the run.
     """
 
     def __init__(
@@ -69,6 +64,7 @@ class WarmupPolynomialDecayFlatTail(LambdaLR):
         decay_steps = max(1, total_steps - warmup_steps - flat_steps)
 
         def factor(step):
+            """Factor on the peak learning rate at batch ``step``."""
             if step < warmup_steps:
                 return warmup_start_factor + (1.0 - warmup_start_factor) * (step / max(1, warmup_steps))
             s = step - warmup_steps
@@ -91,6 +87,11 @@ class ManageScheduler:
         ``"batch"`` steps after every batch, ``"epoch"`` once per epoch,
         ``"metric"`` once per epoch with the validation loss (e.g.
         :class:`torch.optim.lr_scheduler.ReduceLROnPlateau`).
+
+    Raises
+    ------
+    ValueError
+        If ``mode`` is unknown.
     """
 
     MODES = ("batch", "epoch", "metric")
@@ -104,18 +105,25 @@ class ManageScheduler:
         self.mode = mode
 
     def batch_step(self):
-        """Advance a ``"batch"``-mode scheduler at the end of a batch."""
+        """Advance a ``"batch"``-mode scheduler after a batch."""
         if self.mode == "batch":
             self.scheduler.step()
 
     def epoch_step(self, metric=None):
         """
-        Advance an ``"epoch"`` or ``"metric"``-mode scheduler at the end of an epoch.
+        Advance an ``"epoch"`` or ``"metric"``-mode scheduler.
+
+        Called at the end of an epoch.
 
         Parameters
         ----------
         metric : float or None
             Validation loss, required in ``"metric"`` mode.
+
+        Raises
+        ------
+        ValueError
+            If ``metric`` is None in ``"metric"`` mode.
         """
         if self.mode == "epoch":
             self.scheduler.step()

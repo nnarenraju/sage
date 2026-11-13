@@ -186,7 +186,8 @@ def lookup(table: dict, component: dict, where: str) -> tuple:
     return table[name], {key: value for key, value in component.items() if key != "name"}
 
 
-# Random streams of the prior, SNR and GMST draws: the signal's, and the non-astrophysical pool's.
+# Random streams of the prior, SNR and GMST draws: the signal's, and
+# the non-astrophysical pool's
 SIGNAL_STREAMS = ("prior", "snr", "gmst")
 NON_ASTROPHYSICAL_STREAMS = ("non_astrophysical_prior", "non_astrophysical_snr", "non_astrophysical_gmst")
 
@@ -224,7 +225,8 @@ def build_signal(
     signal_batch_size : int
         Signals drawn per call.
     seed, epoch : int
-        The prior, SNR and GMST streams are ``stream_seed(seed, <stream>, epoch)``.
+        The prior, SNR and GMST streams are
+        ``stream_seed(seed, <stream>, epoch)``.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -232,7 +234,8 @@ def build_signal(
     streams : tuple of str
         Names of the prior, SNR and GMST streams.
     per_detector_targets : bool
-        Append each detector's arrival time and chirp mass to the targets.
+        Append each detector's arrival time and chirp mass to the
+        targets.
 
     Returns
     -------
@@ -242,8 +245,9 @@ def build_signal(
     Raises
     ------
     ValueError
-        If a frequency is off the grid, the delta_tc prior leaves the window, a
-        target is not a prior parameter, or a component setting is wrong.
+        If a frequency is off the grid, the delta_tc prior leaves the
+        window, a target is not a prior parameter, or a component
+        setting is wrong.
     """
     f_low = signal["low_frequency_cutoff_in_hz"]
     f_ref = signal["reference_frequency_in_hz"]
@@ -312,23 +316,26 @@ def build_non_astrophysical(
     dtype: torch.dtype,
 ):
     """
-    The non-astrophysical injector of ``signal.non_astrophysical``, or None without it.
+    The injector of ``signal.non_astrophysical``, or None without it.
 
-    Its pool is a second signal sampler on its own streams, drawn only for the windows chosen;
-    the masker's and the window choice's draws take the ``non_astrophysical`` stream.
+    Its pool is a second signal sampler on its own streams, drawn only
+    for the windows chosen; the masker's and the window choice's draws
+    take the ``non_astrophysical`` stream.
 
     Parameters
     ----------
     signal, prior, window, detectors, asds, seed, epoch, device, dtype
         As for :func:`build_signal`.
     pool_size : int
-        Signals per pool call: the noise windows per batch, so a batch calls the pool at most once.
+        Signals per pool call: the noise windows per batch, so a batch
+        calls the pool at most once.
     num_estimates : int
         Estimated parameters.
 
     Returns
     -------
     NonAstrophysicalInjector or None
+        The injector; None without ``signal.non_astrophysical``.
 
     Raises
     ------
@@ -355,7 +362,7 @@ def build_non_astrophysical(
 
 def noise_runs(source: dict, data_dir: Path, detectors: list) -> list:
     """
-    Strain files and ASD directory of every run a real noise source pools.
+    Strain files and ASD directory of each run a real noise source uses.
 
     Parameters
     ----------
@@ -369,8 +376,9 @@ def noise_runs(source: dict, data_dir: Path, detectors: list) -> list:
     Returns
     -------
     list of dict
-        ``{"run", "data_dir", "bins"}`` per run, for ``MemmapNoiseSampler``,
-        with the source's ``portion`` or ``gps_range`` if it has one.
+        ``{"run", "data_dir", "bins"}`` per run, for
+        ``MemmapNoiseSampler``, with the source's ``portion`` or
+        ``gps_range`` if it has one.
     """
     selection = {key: source[key] for key in ("portion", "gps_range") if key in source}
     return [
@@ -453,7 +461,19 @@ def build_recolour(
 
 def recoloured(noise: dict, role: str) -> bool:
     """
-    Whether the ``role`` noise (``training`` or ``validation``) is recoloured.
+    Whether the ``role`` noise is recoloured.
+
+    Parameters
+    ----------
+    noise : dict
+        Checked ``noise`` section.
+    role : str
+        ``training`` or ``validation``.
+
+    Returns
+    -------
+    bool
+        True if ``noise.recolour`` applies to this role.
 
     Raises
     ------
@@ -468,23 +488,59 @@ def recoloured(noise: dict, role: str) -> bool:
 
 
 def strain_runs(noise: dict) -> list:
-    """Observing runs whose strain the real noise sources read, sorted."""
+    """
+    Observing runs whose strain the real noise sources read.
+
+    Parameters
+    ----------
+    noise : dict
+        Checked ``noise`` section.
+
+    Returns
+    -------
+    list of str
+        Runs, sorted.
+    """
     return sorted({run for role in ("training", "validation") if noise[role]["name"] == "real" for run in noise[role]["runs"]})
 
 
 def asd_runs(noise: dict) -> list:
-    """Observing runs whose per-segment ASDs the recoloured noise sources read, sorted."""
+    """
+    Observing runs whose per-segment ASDs recoloured noise reads.
+
+    Parameters
+    ----------
+    noise : dict
+        Checked ``noise`` section.
+
+    Returns
+    -------
+    list of str
+        Runs, sorted.
+    """
     return sorted({run for role in ("training", "validation") if recoloured(noise, role) for run in noise[role]["runs"]})
 
 
 def bank_runs(noise: dict) -> list:
-    """Observing runs whose recolour bank the run reads: the recolour target, if any noise is recoloured."""
+    """
+    Observing runs whose recolour bank the run reads.
+
+    Parameters
+    ----------
+    noise : dict
+        Checked ``noise`` section.
+
+    Returns
+    -------
+    list of str
+        The recolour target if any noise is recoloured, else empty.
+    """
     return [noise["recolour"]["target"]] if recoloured(noise, "training") or recoloured(noise, "validation") else []
 
 
 def data_files(settings: dict, data_dir: Path, fiducial: bool = True) -> list:
     """
-    Every file a run reads from the data directory, in a fixed order, without repeats.
+    Every file a run reads from the data directory, without repeats.
 
     Parameters
     ----------
@@ -498,8 +554,10 @@ def data_files(settings: dict, data_dir: Path, fiducial: bool = True) -> list:
     Returns
     -------
     list of Path
-        Strain records, strain files with their sidecars, bad time and zero runs, the recoloured runs' ASD records
-        and per-segment ASDs and the recolour target's bank, then the fiducial ASDs.
+        In a fixed order: strain records, strain files with their
+        sidecars, bad time and zero runs, the recoloured runs' ASD
+        records and per-segment ASDs and the recolour target's bank,
+        then the fiducial ASDs.
     """
     noise, detectors = settings["noise"], settings["data"]["detectors"]
     files = [dataset_file(data_dir, run) for run in strain_runs(noise)]
@@ -561,7 +619,8 @@ def build_noise_stream(
     batch_size : int
         Windows per batch.
     seed, epoch : int
-        The noise and recolour streams are ``stream_seed(seed, <stream>, epoch)``.
+        The noise and recolour streams are
+        ``stream_seed(seed, <stream>, epoch)``.
     hard_start_jitter_s, hard_focal_gamma : float
         Replay of mined windows; see ``MemmapNoiseSampler``.
     device : str or torch.device
@@ -611,16 +670,20 @@ def build_noise(
     small: bool = False,
 ):
     """
-    Check the training and validation noise sources, then build the training noise sampler.
+    Check both noise sources, then build the training noise sampler.
 
-    Validation passes build their own stream each time (``build_noise_stream``).
+    Validation passes build their own stream each time
+    (``build_noise_stream``).
 
     Parameters
     ----------
-    noise, data_dir, window, detectors, batch_size, hard_start_jitter_s, hard_focal_gamma, device, dtype, small
+    noise, data_dir, window, detectors, batch_size
+        As ``build_noise_stream``.
+    hard_start_jitter_s, hard_focal_gamma, device, dtype, small
         As ``build_noise_stream``.
     seed, epoch : int
-        Seed of the training streams and the epoch the segment starts at.
+        Seed of the training streams and the epoch the segment starts
+        at.
 
     Returns
     -------
@@ -663,7 +726,7 @@ def build_preprocess(
     dtype: torch.dtype,
 ) -> Preprocessor:
     """
-    Build the preprocessing chain from the ``preprocess`` steps, in order.
+    Build the preprocessing chain from the ``preprocess`` steps.
 
     Parameters
     ----------
@@ -674,8 +737,8 @@ def build_preprocess(
     window : Window
         Window geometry.
     bounds : dict
-        Prior bounds from the signal sampler; ``mass1`` and ``delta_tc`` set the
-        multirate bins.
+        Prior bounds from the signal sampler; ``mass1`` and ``delta_tc``
+        set the multirate bins.
     low_frequency_cutoff_in_hz : float
         Signal low-frequency cutoff.
     input_state : ProcessingState
@@ -730,13 +793,14 @@ def resolve_component(table: dict, component: dict, provided: set, where: str) -
     Returns
     -------
     dict
-        ``name``, then each parameter converted by the class's type hints;
-        unset parameters take the class's defaults.
+        ``name``, then each parameter converted by the class's type
+        hints; unset parameters take the class's defaults.
 
     Raises
     ------
     ValueError
-        If the name or a parameter is unknown, or a value has the wrong type.
+        If the name or a parameter is unknown, or a value has the wrong
+        type.
     """
     cls, parameters = lookup(table, component, where)
     arguments = component_arguments(cls, parameters, provided, where)
@@ -753,8 +817,9 @@ def resolve_settings(settings: dict) -> dict:
     """
     Checked settings with every named component's parameters filled in.
 
-    The result is the run record: every value used, defaults included, and
-    it reads back through ``load_run`` + ``resolve_settings`` unchanged.
+    The result is the run record: every value used, defaults included,
+    and it reads back through ``load_run`` + ``resolve_settings``
+    unchanged.
 
     Parameters
     ----------
@@ -765,8 +830,8 @@ def resolve_settings(settings: dict) -> dict:
     -------
     dict
         The same settings; ``signal.waveform``, ``signal.projection``,
-        ``signal.snr``, ``model``, ``loss``, ``optimiser``, ``schedule`` and
-        ``validation.snr`` resolved.
+        ``signal.snr``, ``model``, ``loss``, ``optimiser``,
+        ``schedule`` and ``validation.snr`` resolved.
     """
     signal = settings["signal"]
     return {
@@ -793,22 +858,55 @@ def resolve_settings(settings: dict) -> dict:
 
 
 def resolve_model(model: dict) -> dict:
-    """The ``model`` section with every parameter; see :func:`resolve_component`."""
+    """
+    The ``model`` section with every parameter.
+
+    Parameters
+    ----------
+    model : dict
+        Checked ``model`` section.
+
+    Returns
+    -------
+    dict
+        As :func:`resolve_component`.
+    """
     return resolve_component(MODELS, model, MODEL_PROVIDED, "model")
 
 
 def resolve_loss(loss: dict) -> dict:
-    """The ``loss`` section with every parameter; see :func:`resolve_component`."""
+    """
+    The ``loss`` section with every parameter.
+
+    Parameters
+    ----------
+    loss : dict
+        Checked ``loss`` section.
+
+    Returns
+    -------
+    dict
+        As :func:`resolve_component`.
+    """
     return resolve_component(LOSSES, loss, LOSS_PROVIDED, "loss")
 
 
 def resolve_optimiser(optimiser: dict) -> dict:
     """
-    The ``optimiser`` section with every parameter of the torch optimiser.
+    The ``optimiser`` section with every parameter of the optimiser.
 
-    Unset parameters take the production values for AdamW (``lr`` 2e-4,
-    ``weight_decay`` 1e-4) and PyTorch's defaults otherwise; see
-    :func:`resolve_component`.
+    Unset parameters take the production values for AdamW (``lr``
+    2e-4, ``weight_decay`` 1e-4) and PyTorch's defaults otherwise.
+
+    Parameters
+    ----------
+    optimiser : dict
+        Checked ``optimiser`` section.
+
+    Returns
+    -------
+    dict
+        As :func:`resolve_component`, with the production values.
     """
     settings = resolve_component(OPTIMISERS, optimiser, OPTIMISER_PROVIDED, "optimiser")
     production = OPTIMISER_DEFAULTS.get(settings["name"], {})
@@ -827,8 +925,9 @@ def check_heads(model: dict, loss: dict) -> None:
     Raises
     ------
     ValueError
-        If the loss needs a width per estimate and the model has none, or
-        the other way round; the message lists the names that would match.
+        If the loss needs a width per estimate and the model has none,
+        or the other way round; the message lists the names that would
+        match.
     """
     model_cls, _ = lookup(MODELS, model, "model")
     loss_cls, _ = lookup(LOSSES, loss, "loss")
@@ -858,7 +957,8 @@ def build_model(
     num_estimates : int
         Estimated parameters, from ``signal.targets``.
     non_astrophysical : bool
-        Whether the run has the non-astrophysical class (``signal.non_astrophysical``).
+        Whether the run has the non-astrophysical class
+        (``signal.non_astrophysical``).
     device : str or torch.device
         Device of the network.
     dtype : torch.dtype
@@ -885,7 +985,8 @@ def build_loss(loss: dict, targets: list) -> torch.nn.Module:
     loss : dict
         Checked ``loss`` section.
     targets : list of str
-        Estimated parameters, from ``signal.targets``; name the components.
+        Estimated parameters, from ``signal.targets``; they name the
+        components.
 
     Returns
     -------
@@ -901,10 +1002,8 @@ def build_optimiser(optimiser: dict, model: torch.nn.Module) -> torch.optim.Opti
     """
     Build the torch optimiser the ``optimiser`` section names.
 
-    Weight decay applies only to parameters of two or more dimensions;
-    normalisation scales and shifts and biases get none (He et al., "Bag of
-    Tricks", CVPR 2019). The fused kernel is used whenever the optimiser offers
-    one; PyTorch stops with its own error on a device that lacks it.
+    Weight decay applies only to parameters of two or more dimensions.
+    The fused kernel is used whenever the optimiser offers one.
 
     Parameters
     ----------
@@ -941,8 +1040,8 @@ def resolve_schedule(schedule: dict) -> dict:
     The ``schedule`` section with every parameter of the schedule.
 
     ``WarmupPolynomialDecayFlatTail`` steps every batch and takes no
-    ``step_every``; a PyTorch scheduler needs ``step_every`` (batch, epoch or
-    metric), the unit its own parameters count in.
+    ``step_every``; a PyTorch scheduler needs ``step_every`` (batch,
+    epoch or metric), the unit its own parameters count in.
 
     Parameters
     ----------
@@ -958,7 +1057,8 @@ def resolve_schedule(schedule: dict) -> dict:
     Raises
     ------
     ValueError
-        On an unknown name or parameter, or a missing or misplaced ``step_every``.
+        On an unknown name or parameter, or a missing or misplaced
+        ``step_every``.
     """
     cls, _ = lookup(SCHEDULES, schedule, "schedule")
     if cls is WarmupPolynomialDecayFlatTail:
@@ -1017,7 +1117,8 @@ def flat_tail_start_epoch(schedule: dict, num_epochs: int):
     Returns
     -------
     int or None
-        ``num_epochs - flat_tail_epochs`` for ``WarmupPolynomialDecayFlatTail``.
+        ``num_epochs - flat_tail_epochs`` for
+        ``WarmupPolynomialDecayFlatTail``, else None.
     """
     settings = resolve_schedule(schedule)
     if SCHEDULES[settings["name"]] is not WarmupPolynomialDecayFlatTail:
@@ -1072,8 +1173,8 @@ def check_train(train: dict) -> None:
     ------
     ValueError
         If an epoch is not whole batches, the signal fraction gives a
-        fractional count, the compile settings are invalid, fewer than one
-        checkpoint is kept, or the device is not a device name.
+        fractional count, the compile settings are invalid, fewer than
+        one checkpoint is kept, or the device is not a device name.
     """
     check_whole_batches("train.samples_per_epoch", train["samples_per_epoch"], train["batch_size"])
     check_whole_signals(train["signal_fraction"], train["batch_size"])
@@ -1088,17 +1189,18 @@ def check_train(train: dict) -> None:
 
 def check_device(train: dict) -> None:
     """
-    Check that ``train.device`` and ``train.precision`` are available here.
+    Check that ``train.device`` and ``train.precision`` are available.
 
     Parameters
     ----------
     train : dict
-        ``train`` section passed by ``check_train``.
+        ``train`` section that passed ``check_train``.
 
     Raises
     ------
     ValueError
-        If the device is a GPU and none is visible, or the GPU lacks bf16.
+        If the device is a GPU and none is visible, or the GPU lacks
+        bf16.
     """
     if torch.device(train["device"]).type == "cuda":
         if not torch.cuda.is_available():
@@ -1121,8 +1223,8 @@ def check_validation(validation: dict, batch_size: int) -> None:
     Raises
     ------
     ValueError
-        If a sample count is not whole batches, the final set is smaller than
-        a regular pass, or ``every_n_epochs`` is below 1.
+        If a sample count is not whole batches, the final set is smaller
+        than a regular pass, or ``every_n_epochs`` is below 1.
     """
     check_whole_batches("validation.samples", validation["samples"], batch_size)
     check_whole_batches("validation.final_samples", validation["final_samples"], batch_size)
@@ -1136,14 +1238,48 @@ def check_validation(validation: dict, batch_size: int) -> None:
 
 
 def validates(epoch: int, validation: dict, epochs: int) -> bool:
-    """Whether a regular validation pass follows ``epoch``: every
-    ``every_n_epochs`` epochs from epoch 0, and the final epoch."""
+    """
+    Whether a regular validation pass follows ``epoch``.
+
+    Passes follow every ``every_n_epochs`` epochs from epoch 0, and the
+    final epoch.
+
+    Parameters
+    ----------
+    epoch : int
+        Epoch just trained.
+    validation : dict
+        Checked ``validation`` section.
+    epochs : int
+        Epochs in the run.
+
+    Returns
+    -------
+    bool
+        True if a pass follows.
+    """
     return epoch % validation["every_n_epochs"] == 0 or epoch == epochs - 1
 
 
 def mining_epochs(mining: dict, schedule: dict, num_epochs: int) -> list:
-    """Epochs after which a mining round runs: every ``every_n_epochs`` from
-    ``start_epoch``, before the schedule's flat tail (or the run's end)."""
+    """
+    Epochs after which a mining round runs.
+
+    Every ``every_n_epochs`` from ``start_epoch``, before the schedule's
+    flat tail (or the run's end).
+
+    Parameters
+    ----------
+    mining, schedule : dict
+        Checked ``mining`` and ``schedule`` sections.
+    num_epochs : int
+        Epochs in the run.
+
+    Returns
+    -------
+    list of int
+        Mining epochs, in order.
+    """
     stop = flat_tail_start_epoch(schedule, num_epochs)
     return list(range(mining["start_epoch"], num_epochs if stop is None else stop, mining["every_n_epochs"]))
 
@@ -1162,9 +1298,9 @@ def check_mining(mining: dict, noise: dict, model: dict, schedule: dict, num_epo
     Raises
     ------
     ValueError
-        If the training noise is not real, the model has no frontend tap, the
-        start epoch is negative, ``every_n_epochs`` is below 1, or no round
-        falls before mining stops.
+        If the training noise is not real, the model has no frontend
+        tap, the start epoch is negative, ``every_n_epochs`` is below 1,
+        or no round falls before mining stops.
     ModuleNotFoundError
         If pyribs is not installed.
     """
@@ -1190,6 +1326,11 @@ def precision_setup(train: dict) -> tuple:
     """
     Autocast dtype and loss scaler of ``train.precision``.
 
+    Parameters
+    ----------
+    train : dict
+        Checked ``train`` section.
+
     Returns
     -------
     autocast_dtype : torch.dtype or None
@@ -1203,6 +1344,20 @@ def precision_setup(train: dict) -> tuple:
 
 
 def compile_network(network: torch.nn.Module, train: dict) -> torch.nn.Module:
-    """The network compiled as ``train.compile`` says, or unchanged for ``false``."""
+    """
+    The network compiled as ``train.compile`` says.
+
+    Parameters
+    ----------
+    network : torch.nn.Module
+        The uncompiled network.
+    train : dict
+        Checked ``train`` section.
+
+    Returns
+    -------
+    torch.nn.Module
+        ``torch.compile(network)``, or ``network`` itself for ``false``.
+    """
     arguments = compile_arguments(train["compile"])
     return network if arguments is None else torch.compile(network, **arguments)

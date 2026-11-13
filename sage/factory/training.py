@@ -2,25 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Sage training loop.
+The Sage training loop and its batch assembly.
 
-SageVanillaTraining
-    The standard Sage training loop.  Compiles nothing — the neural network
-    model should be compiled externally with ``torch.compile(model, ...)``
-    before being passed in, which is where the meaningful speedup comes from.
-
-    GWBatch tracking: after combining signal + noise, the joint tensor is
-    wrapped in a :class:`~sage.core.pipeline.GWBatch` that carries the
-    current grid type and whitening state through the preprocessing pipeline.
-    Pipeline violations (e.g. IFFT on a non-uniform grid, multirate sampling
-    before TD conversion) raise :class:`~sage.core.pipeline.PipelineError`
-    immediately when the offending module is called.
-
-    The model receives ``batch.to_network_input()`` — a real float32 tensor
-    of shape ``(B, D, T)``.
+Batches are preprocessed as a :class:`~sage.core.pipeline.GWBatch` and
+reach the model as ``to_network_input()``; the model is compiled
+outside the loop.
 """
 
-# Packages
 import sys
 import time
 import torch
@@ -28,7 +16,6 @@ import torch
 from tqdm import tqdm
 from contextlib import nullcontext
 
-# LOCAL
 from sage.core.logger import get_logger, format_duration as _fmt_duration
 from sage.core.pipeline import GWBatch
 from .schedulers import ManageScheduler
@@ -41,7 +28,7 @@ def assemble_batch(
     non_astrophysical,
 ):
     """
-    Inject the signals into the noise batch at random positions, then the non-astrophysical pairs.
+    Inject signals at random windows, then non-astrophysical pairs.
 
     Parameters
     ----------
@@ -56,12 +43,14 @@ def assemble_batch(
     generator : torch.Generator
         Generator of the positions, on the batch's device.
     non_astrophysical : NonAstrophysicalInjector or None
-        Turns a share of the noise windows into non-astrophysical ones; None for none.
+        Turns a share of the noise windows into non-astrophysical ones;
+        None for none.
 
     Returns
     -------
     x, targets : torch.Tensor
-        The batch and its targets (zero estimates in noise and non-astrophysical windows).
+        The batch and its targets (zero estimates in noise and
+        non-astrophysical windows).
     idx : torch.Tensor
         Positions of the signals.
     """
@@ -82,18 +71,11 @@ def assemble_batch(
 
 class SageVanillaTraining(torch.nn.Module):
     """
-    Standard Sage training loop.
+    The Sage training loop; one call trains one epoch.
 
-    Each epoch iterates over ``num_iterations`` batches:
-
-    1. Draw a signal batch ``(S, D, F/T)`` and a noise batch ``(B, D, F/T)``
-       from the respective samplers.
-    2. Scatter-inject signal waveforms at random positions in the noise batch.
-    3. Wrap the combined tensor in a :class:`~sage.core.pipeline.GWBatch`
-       carrying the current grid state.
-    4. Pass through the preprocessing pipeline (whitening, optional IFFT and
-       multirate sampling).
-    5. Forward pass through the compiled model, loss, backpropagation.
+    Each of the ``num_iterations`` batches: sample signals and noise,
+    inject the signals at random windows, preprocess, then forward,
+    loss, backward and optimiser step.
 
     Parameters
     ----------
@@ -102,16 +84,18 @@ class SageVanillaTraining(torch.nn.Module):
     noise_sampler : nn.Module
         Noise sampler (e.g. :class:`MemmapNoiseSampler`).
     processor : nn.Module
-        Preprocessing pipeline (e.g. :class:`~sage.core.graph.Preprocessor`
-        wrapping :class:`FiducialWhitening` and optionally
+        Preprocessing pipeline (e.g.
+        :class:`~sage.core.graph.Preprocessor` wrapping
+        :class:`FiducialWhitening` and optionally
         :class:`MultirateSampler`).
     model : nn.Module
-        The neural network.  Should be compiled externally with
-        ``torch.compile(model)`` before being passed here.
+        The network, compiled (if at all) before it is passed here.
     loss_function : nn.Module
         Loss function returning a stacked component tensor, total first.
     optimiser : torch.optim.Optimizer
+        Optimiser of the model parameters.
     scheduler : torch.optim.lr_scheduler.LRScheduler
+        Learning-rate scheduler, stepped as ``scheduler_mode`` says.
     scaler : torch.amp.GradScaler or None
         Loss scaler (fp16 only), or None.
     num_iterations : int
@@ -127,7 +111,8 @@ class SageVanillaTraining(torch.nn.Module):
     placement : torch.Generator
         Generator of the signal positions in a batch, on ``device``.
     non_astrophysical : NonAstrophysicalInjector or None
-        Non-astrophysical pairs added to the noise windows; None for none.
+        Non-astrophysical pairs added to the noise windows; None for
+        none.
     clip_norm : float
         Gradient-norm clipping threshold.
     device : str or torch.device
@@ -135,10 +120,11 @@ class SageVanillaTraining(torch.nn.Module):
     dtype : torch.dtype
         Dtype of the model and loss.
     autocast_dtype : torch.dtype or None
-        Autocast dtype (bf16 or fp16) on ``device``; None runs without autocast.
+        Autocast dtype (bf16 or fp16) on ``device``; None runs without
+        autocast.
     scheduler_mode : str
-        ``"batch"`` to step the scheduler every batch, ``"epoch"`` once per
-        epoch, ``"metric"`` once per epoch with the validation loss.
+        ``"batch"`` to step the scheduler every batch, ``"epoch"`` once
+        per epoch, ``"metric"`` once per epoch with the validation loss.
     callbacks : list
         Loop hooks (mining, EMA); empty for plain training.
     """
@@ -177,8 +163,7 @@ class SageVanillaTraining(torch.nn.Module):
         self.processor      = processor
         self.model          = model.to(device=self.device, dtype=dtype)
 
-        # Vanilla single loss: called as loss_function(out, targets) and
-        # returning a components tensor whose [0] is the total to backprop.
+        # loss_function(out, targets) returns components, total first
         self.loss_function = loss_function.to(device=self.device, dtype=dtype)
         self.optimiser  = optimiser
         self.scheduler  = ManageScheduler(scheduler, scheduler_mode)
@@ -194,19 +179,31 @@ class SageVanillaTraining(torch.nn.Module):
         self.clip_norm         = clip_norm
         self.autocast_dtype    = autocast_dtype
 
-        # Training callbacks (loop hooks). Empty -> plain vanilla training.
         self.callbacks = list(callbacks)
 
-        # ── Loss tracking ─────────────────────────────────────────────────
         n_components = self.loss_function.num_components
         self.loss_components = torch.zeros(
             (num_epochs, n_components), device=self.device, dtype=dtype,
         )
 
     def _default_assembly(self, signal_data, signal_targets, noise_data, noise_targets):
-        """Vanilla batch assembly (:func:`assemble_batch`). Returns ``(x, targets)``.
-        Skipped when an on_sample callback assembles the batch itself (no shipped
-        callback does)."""
+        """
+        Default batch assembly (:func:`assemble_batch`).
+
+        Skipped when an ``on_sample`` callback assembles the batch.
+
+        Parameters
+        ----------
+        signal_data, signal_targets : torch.Tensor
+            Signals and their targets.
+        noise_data, noise_targets : torch.Tensor
+            Noise batch and its class labels.
+
+        Returns
+        -------
+        x, targets : torch.Tensor
+            The batch and its targets.
+        """
         x, targets, _ = assemble_batch(
             signal_data, signal_targets, noise_data, noise_targets, self.signal_batch_size, self.num_estimates,
             self.placement, self.non_astrophysical,
@@ -226,14 +223,19 @@ class SageVanillaTraining(torch.nn.Module):
             self.scheduler.epoch_step(metric)
 
     def forward(self, nepoch):
+        """
+        Train one epoch and record its mean loss components.
+
+        Parameters
+        ----------
+        nepoch : int
+            Epoch; its row of ``loss_components`` is filled.
+        """
 
         self.model.train()
 
-        # A progress bar is useful interactively and actively harmful in a
-        # batch job: tqdm repaints with carriage returns, which a SLURM .out
-        # file records verbatim, so a long run buries its own output under
-        # hundreds of MB of redraw. Show the bar on a TTY; on anything else
-        # emit a periodic single line instead.
+        # Progress bar on a TTY only; a job log gets a line every tenth
+        # of the epoch instead of tqdm redraws.
         interactive = sys.stdout.isatty()
         log_every = max(1, self.num_iterations // 10)
         t_epoch = time.time()
@@ -251,16 +253,11 @@ class SageVanillaTraining(torch.nn.Module):
         )
         for nbatch in _iter:
 
-            # ── 1. Sample ─────────────────────────────────────────────────
             signal_data, signal_targets = self.signal_sampler()
             noise_data,  noise_targets  = self.noise_sampler()
 
-            # ── 2. Per-batch context + on_sample callbacks ────────────────
-            # ctx is built only when callbacks are present and threaded to each
-            # callback's on_sample hook. A callback MAY assemble the batch by
-            # setting ctx['x'] / ctx['targets'] (a generic extension point — no
-            # shipped callback uses it). Pure vanilla / hard-mining -> both fall
-            # through to _default_assembly below; with no callbacks ctx is None.
+            # With callbacks, an on_sample hook may assemble the batch
+            # by setting ctx["x"] and ctx["targets"]
             ctx = None
             if self.callbacks:
                 ctx = {
@@ -271,8 +268,7 @@ class SageVanillaTraining(torch.nn.Module):
                 for cb in self.callbacks:
                     cb.on_sample(ctx, self)
 
-            # ── 3. Default assembly (random signal injection) unless a
-            #        callback already produced ctx['x'] / ctx['targets']. ────
+            # Default assembly unless a callback assembled the batch
             if ctx is not None and ctx.get("x") is not None:
                 x, targets = ctx["x"], ctx["targets"]
             else:
@@ -280,12 +276,10 @@ class SageVanillaTraining(torch.nn.Module):
                 if ctx is not None:
                     ctx["x"], ctx["targets"] = x, targets
 
-            # ── 4. Wrap in GWBatch and preprocess ─────────────────────────
             batch = self.processor(GWBatch(x, state=self.processor.input_state))
 
             net_input = batch.to_network_input()
 
-            # ── 5. Forward + backward ─────────────────────────────────────
             self.optimiser.zero_grad(set_to_none=True)
 
             with (
@@ -317,7 +311,6 @@ class SageVanillaTraining(torch.nn.Module):
             self.scheduler.batch_step()
             self.loss_components[nepoch] += loss.detach()
 
-            # ── Progress reporting ────────────────────────────────────────
             done = nbatch + 1
             if interactive:
                 if done % 50 == 0:
@@ -334,23 +327,18 @@ class SageVanillaTraining(torch.nn.Module):
                     _fmt_duration((self.num_iterations - done) / max(rate, 1e-9)),
                 )
 
-            # Per-batch callback hook (e.g. per-step weight EMA).
             for cb in self.callbacks:
                 cb.on_batch_end(nbatch, nepoch, self)
 
-        # ── End-of-epoch callback hook (e.g. hard-noise mining) ───────────
         for cb in self.callbacks:
             cb.on_epoch_end(nepoch, self)
 
-        # "metric" mode steps in metric_step, once a validation metric exists.
+        # "metric" mode steps in metric_step, after validation
         if self.scheduler.mode == "epoch":
             self.scheduler.epoch_step()
 
         self.loss_components[nepoch] /= self.num_iterations
 
-        # One summary line per epoch. This is the record that matters when
-        # reading back a multi-day run, and until now nothing was emitted at
-        # all -- a 46-hour job reported no loss whatsoever.
         comps = self.loss_components[nepoch].detach().cpu()
         elapsed = time.time() - t_epoch
         try:

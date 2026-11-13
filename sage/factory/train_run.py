@@ -1,4 +1,5 @@
-"""Train a run from its directory: record the settings, build every component, train.
+"""
+Prepare, check, train and validate a run from its run directory.
 
 Every random stream has its own seed (``sage.core.seed.stream_seed``).
 """
@@ -78,12 +79,13 @@ FLAGS_DIR = "flags"  # empty files named for what is happening in the run direct
 STOP_FLAG = "stop"  # written by `sage stop`; training stops before its next epoch
 RUNNING_FLAG = "running"  # present while a job trains the run
 CHECKED_FLAG = "checked"  # written by a passed `sage check`; removed by `sage prepare`
-FINAL_CHECK_ESTIMATE = "final_check_estimate.json"  # in results/; written at every validation pass
+# In results/; written at every validation pass
+FINAL_CHECK_ESTIMATE = "final_check_estimate.json"
 
 
 def derived_values(settings: dict, window, processor, signal) -> dict:
     """
-    Values computed from the settings, recorded in ``resolved/derived.yaml``.
+    Values computed from the settings, for ``resolved/derived.yaml``.
 
     Parameters
     ----------
@@ -99,8 +101,8 @@ def derived_values(settings: dict, window, processor, signal) -> dict:
     Returns
     -------
     dict
-        ``window``, ``multirate_bins``, ``target_scaling`` (offset and scale
-        per target), ``flat_tail_start_epoch`` and ``seeds``.
+        ``window``, ``multirate_bins``, ``target_scaling`` (offset and
+        scale per target), ``flat_tail_start_epoch`` and ``seeds``.
     """
     targets = settings["signal"]["targets"]
     sampler = signal.param_sampler
@@ -126,13 +128,14 @@ def recorded_scaling(run_dir: Path, start: dict | None) -> dict | None:
     """
     The target scaling a run trains against once it has one recorded.
 
-    A started run keeps its own, and a clone the old run's, whatever the
-    current code or prior would give.
+    A started run keeps its own, and a clone the old run's, whatever
+    the current code or prior would give.
 
     Parameters
     ----------
     run_dir : Path
-        Run directory; a started run's ``resolved/derived.yaml`` holds it.
+        Run directory; a started run's ``resolved/derived.yaml``
+        holds it.
     start : dict or None
         A cloned run's start checkpoint, whose record holds it.
 
@@ -147,30 +150,77 @@ def recorded_scaling(run_dir: Path, start: dict | None) -> dict | None:
 
 
 def use_scaling(signal, targets: list, scaling: dict) -> None:
-    """Set the training signal sampler's target scaling (``recorded_scaling``), targets in head order."""
+    """
+    Set the training signal sampler's target scaling.
+
+    Parameters
+    ----------
+    signal : torch.nn.Module
+        Training signal sampler.
+    targets : list of str
+        Targets, in head order.
+    scaling : dict
+        Offset and scale per target (``recorded_scaling``).
+    """
     sampler = signal.param_sampler
     for buffer, key in ((sampler._target_offsets, "offset"), (sampler._target_scales, "scale")):
         buffer.copy_(torch.tensor([scaling[target][key] for target in targets], dtype=buffer.dtype))
 
 
 def flag(run_dir: Path, name: str) -> Path:
-    """A run directory's flag file, ``<run_dir>/flags/<name>``."""
+    """
+    A run directory's flag file, ``<run_dir>/flags/<name>``.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+    name : str
+        Flag name.
+
+    Returns
+    -------
+    Path
+        Path of the flag file.
+    """
     return Path(run_dir) / FLAGS_DIR / name
 
 
 class AlreadyRunning(RuntimeError):
-    """A job already trains the run directory: its ``flags/running`` exists."""
+    """A job already trains the run: its ``flags/running`` exists."""
 
 
 def terminate(signum, frame):
-    """SIGTERM (a scheduler ending the job) as ``SystemExit``, so ``finally`` blocks run."""
+    """
+    Handle SIGTERM as ``SystemExit``, so ``finally`` blocks run.
+
+    Parameters
+    ----------
+    signum : int
+        Signal number.
+    frame : frame or None
+        Interrupted stack frame.
+
+    Raises
+    ------
+    SystemExit
+        With code ``128 + signum``.
+    """
     raise SystemExit(128 + signum)
 
 
 @contextmanager
 def running(run_dir: Path):
     """
-    Hold ``flags/running`` while a job trains: made atomically, removed when the job ends, fails or gets SIGTERM.
+    Hold ``flags/running`` while a job trains.
+
+    The flag is made atomically and removed when the job ends, fails or
+    receives SIGTERM.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
 
     Raises
     ------
@@ -192,10 +242,23 @@ def running(run_dir: Path):
 
 
 def one_job(train):
-    """``train(run_dir, ...)`` inside ``running(run_dir)``: one job at a time per run directory."""
+    """
+    Run ``train(run_dir, ...)`` inside ``running(run_dir)``.
+
+    Parameters
+    ----------
+    train : callable
+        Function whose first argument is a run directory.
+
+    Returns
+    -------
+    callable
+        ``train`` wrapped so one job at a time trains a run directory.
+    """
 
     @functools.wraps(train)
     def wrapper(run_dir, *args, **kwargs):
+        """Call ``train`` while holding ``flags/running``."""
         with running(run_dir):
             return train(run_dir, *args, **kwargs)
 
@@ -235,7 +298,7 @@ def check_run(run_dir: Path) -> tuple:
 
 def check_data(run_dir: Path, settings: dict, data_dir: Path, fiducial: bool = False) -> None:
     """
-    Raise if a file the run reads is missing, or its strain is at another sample rate.
+    Raise if a file the run reads is missing or at another sample rate.
 
     Parameters
     ----------
@@ -246,17 +309,19 @@ def check_data(run_dir: Path, settings: dict, data_dir: Path, fiducial: bool = F
     data_dir : Path
         The machine's data directory.
     fiducial : bool
-        Include the fiducial ASDs, which ``sage prepare`` copies; training
-        reads the copy.
+        Include the fiducial ASDs, which ``sage prepare`` copies;
+        training reads the copy.
 
     Raises
     ------
     MissingData
         Naming every missing downloaded file.
     MissingASDs
-        Naming every missing ASD file, once no downloaded file is missing.
+        Naming every missing ASD file, once no downloaded file is
+        missing.
     ValueError
-        If an observing run's strain is at another sample rate than the run.
+        If an observing run's strain is at another sample rate than
+        the run.
     """
     files = data_files(settings, data_dir, fiducial=fiducial)
     missing = [path for path in files if not path.exists()]
@@ -280,9 +345,9 @@ def prepare_run(run_dir: Path) -> dict:
     """
     Check the run and write its record under ``resolved/``.
 
-    Writes the resolved settings, the prior, a copy of the fiducial ASDs
-    and the derived values, built on the CPU as training builds them, and
-    removes ``flags/checked``.
+    Writes the resolved settings, the prior, a copy of the fiducial
+    ASDs and the derived values, built on the CPU as training builds
+    them, and removes ``flags/checked``.
 
     Parameters
     ----------
@@ -301,7 +366,8 @@ def prepare_run(run_dir: Path) -> dict:
     MissingData
         If a file the run reads is missing from the data directory.
     StateMismatch
-        If a clone's settings or multirate bins differ from its start checkpoint.
+        If a clone's settings or multirate bins differ from its start
+        checkpoint.
     """
     run_dir = Path(run_dir)
     settings, prior = check_run(run_dir)
@@ -357,17 +423,18 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     start_epoch : int
         Epoch the segment starts at; keys every training stream.
     scaling : dict or None
-        Target scaling to train against (``recorded_scaling``); None keeps
-        the training sampler's estimate.
+        Target scaling to train against (``recorded_scaling``); None
+        keeps the training sampler's estimate.
     small : bool
         Built for ``sage check``: a small recolour bank.
 
     Returns
     -------
     SimpleNamespace
-        The data geometry, samplers, preprocessing, network (``network``
-        uncompiled, ``model`` as trained), loss, optimiser, schedule and
-        precision, with the batch sizes and seed they were built with.
+        The data geometry, samplers, preprocessing, network
+        (``network`` uncompiled, ``model`` as trained), loss,
+        optimiser, schedule and precision, with the batch sizes and
+        seed they were built with.
     """
     train, mining = settings["train"], settings["mining"]
     torch.backends.cudnn.benchmark = True
@@ -379,9 +446,11 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     asds = read_fiducial_asds(fiducial, detectors, window, device)
 
     batches = train["samples_per_epoch"] // train["batch_size"]
-    signal_batch_size = round(train["batch_size"] * train["signal_fraction"])  # whole: check_train
+    # A whole number: check_train requires it
+    signal_batch_size = round(train["batch_size"] * train["signal_fraction"])
     seed = train["seed"]
-    torch.manual_seed(stream_seed(seed, "global", start_epoch))  # also every GPU: model initialisation, dropout
+    # Seeds every GPU too: model initialisation and dropout
+    torch.manual_seed(stream_seed(seed, "global", start_epoch))
     logger.info("Run %s from epoch %d, seed %d", run_dir, start_epoch, seed)
 
     signal = build_signal(
@@ -421,10 +490,10 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
 
 def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run, small: bool = False) -> tuple:
     """
-    The training or validation signal, noise and placement streams, rebuilt from their seed at epoch 0.
+    Training or validation streams, rebuilt from their seed at epoch 0.
 
-    Every validation pass, the final check and ``sage validate`` start from these, so they see the same
-    windows (the final check's first ``validation.samples`` are a pass's); EMA calibration takes the
+    Every validation pass, the final check and ``sage validate`` start
+    from these, so they see the same windows; EMA calibration takes the
     training ones (no mined-window replay).
 
     Parameters
@@ -436,7 +505,8 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run, s
     data_dir : Path
         The machine's data directory.
     run : SimpleNamespace
-        Window, detectors, ASDs, signal batch size, device and dtype (``build_run``, or the same fields).
+        Window, detectors, ASDs, signal batch size, device and dtype
+        (``build_run``, or the same fields).
     small : bool
         Built for ``sage check``: a small recolour bank.
 
@@ -467,10 +537,27 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run, s
 
 def final_check_seconds(settings: dict, pass_seconds: float, epoch_seconds: float, batches: int) -> float:
     """
-    Time the final check takes, from one regular validation pass and one training epoch of the run.
+    Time the final check takes, from one validation pass and one epoch.
 
-    Each checkpoint's pass is ``final_samples / samples`` regular passes; with EMA a second pass, and the
-    calibration's ``calibration_batches`` batches at the training rate.
+    Each checkpoint's pass is ``final_samples / samples`` regular
+    passes; with EMA a second pass, and the calibration's
+    ``calibration_batches`` batches at the training rate.
+
+    Parameters
+    ----------
+    settings : dict
+        Settings from ``load_run``.
+    pass_seconds : float
+        Duration of one regular validation pass.
+    epoch_seconds : float
+        Duration of one training epoch.
+    batches : int
+        Batches per training epoch.
+
+    Returns
+    -------
+    float
+        Estimated duration in seconds.
     """
     validation, ema = settings["validation"], settings["ema"]
     seconds = (2 if ema["enabled"] else 1) * validation["final_samples"] / validation["samples"] * pass_seconds
@@ -480,7 +567,25 @@ def final_check_seconds(settings: dict, pass_seconds: float, epoch_seconds: floa
 
 
 def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> SageVanillaTraining:
-    """The trainer of a built run (``build_run``), ``num_iterations`` batches per epoch."""
+    """
+    The trainer of a built run.
+
+    Parameters
+    ----------
+    run : SimpleNamespace
+        Built run, from ``build_run``.
+    settings : dict
+        Settings from ``load_run``.
+    num_iterations : int
+        Batches per epoch.
+    callbacks : list
+        Training callbacks.
+
+    Returns
+    -------
+    SageVanillaTraining
+        The trainer.
+    """
     train = settings["train"]
     return SageVanillaTraining(
         run.signal, run.noise, run.processor, run.model, run.loss, run.optimiser, run.schedule, run.scaler,
@@ -495,31 +600,38 @@ def trainer_for(run, settings: dict, num_iterations: int, callbacks: list) -> Sa
 @one_job
 def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     """
-    Train the run in ``run_dir`` from ``run.yaml``, resuming from its latest checkpoint.
+    Train a run from ``run.yaml``, resuming from its latest checkpoint.
 
-    Once the run is trained to the end (``results/final_check.json`` written), only the
-    settings are checked.
+    Once the run is trained to the end (``results/final_check.json``
+    written), only the settings are checked. Training stops before an
+    epoch while ``flags/stop`` exists in ``run_dir``.
 
     Parameters
     ----------
     run_dir : Path
         Run directory holding ``run.yaml``.
     stop_after : float or None
-        Seconds after which to stop: no epoch starts once the time left is
-        less than the longest epoch so far, and the final check does not start
-        when it would not end in time (``final_check_seconds``). None trains to
-        the end. Training
-        also stops before an epoch while ``flags/stop`` exists in ``run_dir``.
+        Seconds after which to stop: no epoch starts once the time left
+        is less than the longest epoch so far, and the final check does
+        not start when it would not end in time
+        (``final_check_seconds``). None trains to the end.
 
     Raises
     ------
     ValueError
-        On invalid settings or a heads / loss mismatch (``check_run``), or a
-        device or precision not available here (``check_device``).
+        On invalid settings or a heads / loss mismatch (``check_run``),
+        or a device or precision not available here (``check_device``).
     MissingData
         If a file the run reads is missing from the data directory.
+    NotPrepared
+        If training has not started and ``resolved/`` is missing or
+        differs from the settings.
     SettingsChanged
-        If the settings, prior or derived values changed after training started.
+        If the settings, prior or derived values changed after training
+        started.
+    StateMismatch
+        If a clone's settings or built state differ from its start
+        checkpoint in ways the saved state cannot take.
     AlreadyRunning
         If another job trains the run (``one_job``).
     """
@@ -549,15 +661,17 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         check_built(derived, start, run.scaler, full_state)
     check_derived(run_dir, derived)
     if start is not None:
-        # The EMA built below starts from these weights; full state then restores the rest as a resume.
+        # The EMA below starts from these weights; full state restores
+        # the rest as a resume.
         run.network.load_state_dict(start["model"])
         if full_state:
             install_full_state(run_dir, start, settings["ema"]["enabled"])
 
     callbacks = []
     if mining["enabled"]:
-        # Not keyed by the segment: the miner reseeds each round from it and the
-        # epoch, so a resumed run mines as an uninterrupted one.
+        # Not keyed by the segment: the miner reseeds each round from
+        # it and the epoch, so a resumed run mines as an uninterrupted
+        # one.
         miner = HardMiningCallback(
             mining, run_dir / "mining" / "bank.h5", mining_epochs(mining, settings["schedule"], train["epochs"]),
             stream_seed(train["seed"], "mining"), run.detectors, run.window.sample_rate_in_hz,
@@ -570,6 +684,7 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     trainer = trainer_for(run, settings, run.batches, callbacks)
 
     def validator(signal_sampler, noise_sampler, placement, non_astrophysical, samples, num_epochs):
+        """A validation pass over ``samples`` windows of the streams."""
         return SageVanillaValidation(
             signal_sampler, noise_sampler, run.processor, run.model, run.loss,
             num_iterations=samples // train["batch_size"], num_epochs=num_epochs,
@@ -605,7 +720,7 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         losses.log(trainer.loss_components, epoch, split="training")
         validation_loss = None
         if validates(epoch, validation, train["epochs"]):
-            # The same windows every pass: the validation streams start afresh.
+            # Same windows each pass: validation streams start afresh
             signal, noise, placement, non_astrophysical = fresh_streams("validation", settings, prior, data_dir, run)
             validate = validator(signal, noise, placement, non_astrophysical, validation["samples"], train["epochs"])
             passed = time.monotonic()
@@ -650,8 +765,10 @@ CHECK_READ_WORKERS, CHECK_PREFETCH_BATCHES = 2, 1
 
 def check_settings(settings: dict, cpu: bool) -> dict:
     """
-    The settings of a check: the smallest batch with whole signals, few
-    read workers; on the CPU when ``cpu``. Compilation is as ``train.compile``.
+    The settings of a check: a small batch and few read workers.
+
+    The batch is the smallest with a whole number of signals; the check
+    runs on the CPU when ``cpu``. Compilation is as ``train.compile``.
 
     Parameters
     ----------
@@ -679,10 +796,10 @@ def check_settings(settings: dict, cpu: bool) -> dict:
 
 def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
     """
-    Run every start-up check of ``train_run`` and one real training step; write only ``flags/checked``.
+    Run the start-up checks of ``train_run`` and one training step.
 
-    A started run is checked as its next segment would be (record, derived
-    values) and the step starts from its latest checkpoint. The step
+    Writes only ``flags/checked``. A started run is checked as its next
+    segment would be and steps from its latest checkpoint; the step
     trains without mining, which would write the bank.
 
     Parameters
@@ -690,8 +807,8 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
     run_dir : Path
         Run directory holding ``run.yaml``.
     cpu : bool
-        Check on the CPU instead of ``train.device``. Either way the check
-        is small (``check_settings``, a small recolour bank).
+        Check on the CPU instead of ``train.device``. Either way the
+        check is small (``check_settings``, a small recolour bank).
     progress : callable or None
         Called with the index into ``CHECK_STEPS`` as each step starts.
 
@@ -702,7 +819,8 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
 
     Raises
     ------
-    As ``train_run``.
+    ValueError, MissingData, NotPrepared, SettingsChanged, StateMismatch
+        As ``train_run``.
     """
     report = progress or (lambda index: None)
     run_dir = Path(run_dir)
@@ -743,10 +861,12 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
             restore(start, run.network, run.optimiser, run.schedule, run.scaler, ema_model)
         report(4)
         trainer = trainer_for(run, settings, 1, callbacks)
-        epoch = min(start_epoch, settings["train"]["epochs"] - 1)  # a finished run steps at its last epoch
+        # A finished run steps at its last epoch
+        epoch = min(start_epoch, settings["train"]["epochs"] - 1)
         trainer(nepoch=epoch)
         report(5)
-        fresh_streams("validation", settings, prior, data_dir, run, small=True)[1].shutdown()  # every pass builds it
+        # Every validation pass builds these streams
+        fresh_streams("validation", settings, prior, data_dir, run, small=True)[1].shutdown()
     finally:
         run.noise.shutdown()
     flag(run_dir, CHECKED_FLAG).parent.mkdir(exist_ok=True)
@@ -759,15 +879,12 @@ def final_check(
     signal_batch_size: int, device,
 ) -> None:
     """
-    Validate ``best.pt`` and, with EMA, the calibrated EMA weights on the same
-    ``validation.final_samples`` set; write ``results/final_check.json``.
+    Validate ``best.pt`` and, with EMA, ``ema_calibrated.pt``.
 
-    The run's noise sampler is shut down first, freeing its memory. With
-    EMA, the batch-norm statistics of ``ema.pt`` are recalibrated over
-    ``ema.calibration_batches`` batches from fresh training samplers (the
-    streams' first draws, no mined-window replay) and saved as
-    ``ema_calibrated.pt``. Each checkpoint is validated on fresh validation
-    streams, so both see the same batches.
+    With EMA, the batch-norm statistics of ``ema.pt`` are recalibrated
+    on fresh training streams and saved as ``ema_calibrated.pt``. Both
+    see the same ``validation.final_samples`` windows; the result goes
+    to ``results/final_check.json``.
 
     Parameters
     ----------
@@ -776,17 +893,21 @@ def final_check(
     settings : dict
         Settings from ``load_run``.
     network : torch.nn.Module
-        The uncompiled network; each checkpoint's weights are loaded into it.
+        The uncompiled network; each checkpoint's weights are loaded
+        into it.
     processor : Preprocessor
         Preprocessing chain.
     loss : torch.nn.Module
         The loss (its component names label the results).
     live_noise : torch.nn.Module
-        The run's training noise sampler.
+        The run's training noise sampler; shut down first to free its
+        memory.
     fresh_samplers : callable
-        ``role -> (signal, noise, placement, non_astrophysical)`` (``fresh_streams``).
+        ``role -> (signal, noise, placement, non_astrophysical)``
+        (``fresh_streams``).
     validator : callable
-        ``(signal, noise, placement, non_astrophysical, samples, num_epochs) -> SageVanillaValidation``.
+        ``(signal, noise, placement, non_astrophysical, samples,
+        num_epochs) -> SageVanillaValidation``.
     signal_batch_size : int
         Windows per batch that receive a signal.
     device : torch.device
@@ -841,7 +962,8 @@ def chosen_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: boo
     run_dir : Path
         A started run directory.
     from_epoch : int or None
-        Stored epoch (``epoch_NNNN.pt`` or ``latest.pt``); None takes ``best.pt``.
+        Stored epoch (``epoch_NNNN.pt`` or ``latest.pt``); None takes
+        ``best.pt``.
     ema_calibrated : bool
         Take ``ema_calibrated.pt`` (written by the final check) instead.
 
@@ -853,7 +975,8 @@ def chosen_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: boo
     Raises
     ------
     FileNotFoundError
-        If ``ema_calibrated.pt`` is asked for and not written.
+        If ``ema_calibrated.pt`` is asked for and not written, or the
+        run has no checkpoint.
     EpochUnavailable
         If ``from_epoch`` is not stored.
     """
@@ -869,35 +992,41 @@ def chosen_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: boo
 
 def validate_checkpoint(run_dir: Path, from_epoch: int | None, ema_calibrated: bool) -> dict:
     """
-    Validate one stored checkpoint on ``validation.final_samples`` windows of the run's validation set.
+    Validate one stored checkpoint on the final check's windows.
 
-    The validation streams are rebuilt from their seed, so a checkpoint always
-    gives the same result, on the final check's windows. The pass is
-    added to ``results/validate.h5``, which training never writes, so a running
-    job is not disturbed.
+    The validation streams are rebuilt from their seed, so a checkpoint
+    always gives the same result. The pass is added to
+    ``results/validate.h5``, which training never writes.
 
     Parameters
     ----------
     run_dir : Path
         A started run directory.
     from_epoch : int or None
-        Stored epoch (``epoch_NNNN.pt`` or ``latest.pt``); None takes ``best.pt``.
+        Stored epoch (``epoch_NNNN.pt`` or ``latest.pt``); None takes
+        ``best.pt``.
     ema_calibrated : bool
         Take ``ema_calibrated.pt`` (written by the final check) instead.
 
     Returns
     -------
     dict
-        ``file``, ``epoch``, ``samples``, ``group`` and ``loss`` (component -> value).
+        ``file``, ``epoch``, ``samples``, ``group`` and ``loss``
+        (component -> value).
 
     Raises
     ------
+    ValueError
+        On invalid settings, a device not available here or a missing
+        record in ``resolved/``.
+    MissingData
+        If a file the run reads is missing from the data directory.
     FileNotFoundError
         If the run has no checkpoint, or not the one asked for.
     EpochUnavailable
         If ``from_epoch`` is not stored.
     SettingsChanged
-        As ``train_run``.
+        If the settings or prior changed after training started.
     """
     run_dir = Path(run_dir)
     settings, prior = check_run(run_dir)
