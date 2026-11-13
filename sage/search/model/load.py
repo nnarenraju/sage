@@ -1,7 +1,8 @@
-"""Load a trained network and what a search needs to run it, from one checkpoint.
+"""Load a trained network and what a search needs, from a checkpoint.
 
-The checkpoint's record gives the network, the preprocessor (fiducial ASDs
-included) and the target scaling that decodes the point estimates.
+The checkpoint's record gives the network, the preprocessor (fiducial
+ASDs included) and the target scaling that decodes the point
+estimates.
 """
 
 from pathlib import Path
@@ -64,16 +65,16 @@ def load_search_network(checkpoint: Path, device: str = "cuda") -> Dict[str, obj
     -------
     dict of str to object
         ``model``, ``processor``, ``detectors``, ``window_samples``,
-        ``sample_rate``, ``padding_s``, ``targets``, ``offsets``, ``scales``,
-        ``width_bounds``, ``columns`` (names of the network outputs, in
-        ``network_outputs`` order), and the ``provenance`` written into
-        every trigger file.
+        ``sample_rate``, ``padding_s``, ``targets``, ``offsets``,
+        ``scales``, ``width_bounds``, ``columns`` (names of the network
+        outputs, in ``network_outputs`` order), and the ``provenance``
+        written into every trigger file.
 
     Raises
     ------
     ValueError
-        If the multirate bins rebuilt from the record differ from those the
-        network was trained with.
+        If the multirate bins rebuilt from the record differ from
+        those the network was trained with.
     """
     model, settings, record = load_network(checkpoint, device)
     window, detectors, dtype = build_data(settings["data"])

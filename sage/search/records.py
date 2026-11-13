@@ -1,8 +1,8 @@
-"""Score files of a search: fixed-size float32 rows, written batch by batch.
+"""Score streams of a search: float32 rows written batch by batch.
 
-Each stream is ``<name>.bin`` (``rows`` rows of ``columns`` float32 values,
-created at full size) and ``<name>.json`` (its columns, settings and the
-windows done). A resumed stream rewrites everything after ``done``.
+A stream is ``<name>.bin``, ``(rows, columns)`` float32 values created
+at full size, and ``<name>.json``: its columns, settings and windows
+done. A resumed stream rewrites everything after ``done``.
 """
 
 import json
@@ -16,12 +16,33 @@ from sage.config.run_dir import SettingsChanged, differences
 
 
 def stream_files(directory: Path, name: str) -> tuple:
-    """The ``.bin`` rows and ``.json`` progress of one stream."""
+    """The ``.bin`` rows and ``.json`` progress of one stream.
+
+    Parameters
+    ----------
+    directory : Path
+        Directory of the stream.
+    name : str
+        Stream name.
+
+    Returns
+    -------
+    tuple of Path
+        Paths of the ``.bin`` and ``.json`` files.
+    """
     return directory / f"{name}.bin", directory / f"{name}.json"
 
 
 def write_progress(path: Path, progress: dict) -> None:
-    """Replace a progress file in one step."""
+    """Replace a progress file in one step.
+
+    Parameters
+    ----------
+    path : Path
+        Progress file.
+    progress : dict
+        Contents, JSON types only.
+    """
     part = path.with_name(f"{path.name}.part")
     part.write_text(json.dumps(progress, indent=1))
     os.replace(part, path)

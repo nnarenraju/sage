@@ -1,4 +1,4 @@
-"""Settings of one search, its directory inside the run, and its data checks.
+"""A search's settings, its directory in the run, and its data checks.
 
 ``search.yaml`` holds every setting; ``sage search-init`` writes it.
 """
@@ -20,8 +20,9 @@ from sage.config.machine import (
 SETTINGS_FILE = "search.yaml"
 COMMENT = "# Edit before the first sage search; then these settings are fixed."
 
-# Sources: stride, sgwc-1 (user ruling 2026-10-21); batch size, the measured
-# best on an H100 (2026-08-21); background, user rulings 2026-11-13.
+# Sources: stride, sgwc-1 (user ruling 2026-10-21); batch size, the
+# measured best on an H100 (2026-08-21); background, user rulings
+# 2026-11-13.
 ROLL = {
     "name": str,
     "step_in_s": (float, 7200.0),
@@ -39,7 +40,20 @@ SCHEMA = {
 
 
 def search_dir(run_dir: Path, name: str) -> Path:
-    """Directory of one search, ``<run_dir>/search/<name>``."""
+    """Directory of one search, ``<run_dir>/search/<name>``.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+    name : str
+        Search name.
+
+    Returns
+    -------
+    Path
+        The search directory.
+    """
     return Path(run_dir) / "search" / name
 
 
@@ -118,9 +132,9 @@ def check_search_data(
     """
     Raise if the search release lacks a file or differs from training.
 
-    The release must hold strain, segment list, bad time and zero spans
-    for every detector of the network, at the training sample rate,
-    high-pass, scale and dtype.
+    The release must hold its record, and strain, segment list, bad
+    time and zero spans for every detector of the run, at the run's
+    sample rate and the training high-pass, scale and dtype.
 
     Parameters
     ----------
@@ -131,14 +145,15 @@ def check_search_data(
     run_settings : dict
         Resolved settings of the run.
     training : dict
-        Fixed numbers of the training strain, ``sage.data.download.DATASET``.
+        Fixed numbers of the training strain,
+        ``sage.data.download.DATASET``.
 
     Raises
     ------
     MissingData
-        Naming every missing file.
+        If any file is missing; the message lists them all.
     ValueError
-        If the release was conditioned differently from the training strain.
+        If the release was conditioned differently from training.
     """
     record = search_dataset_file(data_dir, observing_run)
     files = [record]

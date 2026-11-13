@@ -265,7 +265,7 @@ def scattered_window_batches(
     windows : slice
         Indices of the windows in the batch.
     strain : torch.Tensor
-        Float32 strain of shape ``(windows, detectors, window_samples)``.
+        Float32 strain, shape ``(windows, detectors, window_samples)``.
     """
     dataset = WindowStrain(release_dir, run, windows, detectors, window_samples)
     loader = torch.utils.data.DataLoader(

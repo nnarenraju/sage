@@ -1,7 +1,7 @@
-"""Inject population signals into real noise and score them, as in sgwc-1.
+"""Score population signals injected into real noise, as in sgwc-1.
 
-Each signal is generated with PyCBC, added to a random pair of windows of
-the searched run's training noise and scored; every score is kept.
+Each signal is generated with PyCBC, added to a random pair of windows
+of the searched run's training noise and scored; every score is kept.
 """
 
 from pathlib import Path
@@ -23,7 +23,7 @@ from sage.search.zerolag.triggers import concatenate, trigger_columns, write_tri
 
 
 class TrainingNoise(torch.utils.data.Dataset):
-    """Noise windows from a training noise release, one flat ``.bin`` per detector.
+    """Windows of a training noise release, one ``.bin`` per detector.
 
     Known events were cut from the release when it was built.
 
@@ -100,9 +100,9 @@ class TrainingNoise(torch.utils.data.Dataset):
 class InjectionStrain(torch.utils.data.Dataset):
     """Noise windows of each injection with its signal added, by PyCBC.
 
-    As ``pycbc.inject.CBCHDFInjectionSet.apply``: ``get_td_waveform``, the
-    ``projector`` at ``tc``, and LAL's ``SimAddInjection`` into the window,
-    which starts ``padding_s + delta_tc`` before the merger.
+    As ``pycbc.inject.CBCHDFInjectionSet.apply``: ``get_td_waveform``,
+    the ``projector`` at ``tc``, and LAL's ``SimAddInjection`` into the
+    window, which starts ``padding_s + delta_tc`` before the merger.
 
     Parameters
     ----------
@@ -117,7 +117,7 @@ class InjectionStrain(torch.utils.data.Dataset):
     padding_s : float
         Whitening padding at each end of a window, in seconds.
     sample_rate : float
-        Sample rate of the strain.
+        Sample rate of the strain in Hz.
     """
 
     def __init__(
@@ -148,7 +148,7 @@ class InjectionStrain(torch.utils.data.Dataset):
         return len(self.noise)
 
     def __getitem__(self, index: int) -> np.ndarray:
-        """Float32 noise plus signal of one injection, ``(detectors, samples)``.
+        """Float32 noise plus signal of one injection.
 
         Parameters
         ----------
@@ -158,7 +158,7 @@ class InjectionStrain(torch.utils.data.Dataset):
         Returns
         -------
         numpy.ndarray
-            Strain of every detector.
+            Strain of every detector, shape ``(detectors, samples)``.
         """
         values = {name: column[index] for name, column in self.parameters.items()}
         hp, hc = get_td_waveform(
@@ -202,8 +202,8 @@ def injection_study(
     """Score every injection in real noise and write one file.
 
     Row ``i`` of the file is injection ``i``: its parameters, the noise
-    windows it was added to, and the network's score and estimates. Noise
-    segments that touch bad time are not used, as in training.
+    windows it was added to, and the network's score and estimates.
+    Noise segments that touch bad time are not used, as in training.
 
     Parameters
     ----------
@@ -233,6 +233,11 @@ def injection_study(
         Device to score on.
     workers : int
         Processes reading strain and generating signals.
+
+    Raises
+    ------
+    ValueError
+        If a score column has the name of a parameter.
     """
     detectors = network["detectors"]
     segments = {}

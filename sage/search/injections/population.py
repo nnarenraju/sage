@@ -1,8 +1,8 @@
-"""Draw binary black hole parameters from the GWTC-3 Power-Law + Peak model.
+"""Draw binary black holes from the GWTC-3 Power-Law + Peak model.
 
-Ported from sgwc-1 gwtc3_analyses/cpu_pp_intrinsic_params.py, with each
-mass ratio from its own conditional and spin densities marginalised as in
-gwpopulation_pipe; hyperposterior marginalisation from thyme.
+Ported from sgwc-1 gwtc3_analyses/cpu_pp_intrinsic_params.py, each
+mass ratio from its own conditional and spin densities marginalised
+as in gwpopulation_pipe; hyperposterior marginalisation from thyme.
 """
 
 import math
@@ -246,7 +246,7 @@ def sample_intrinsic(
     p_m1, masses = get_p_m1(hyperparameters, n_grid)
     m1 = sample_1d(p_m1, masses, n_samples, rng)
 
-    # Each binary's mass ratio is drawn from its own conditional density.
+    # Each mass ratio is drawn from its own conditional density.
     p_q, qs = get_p_q(m1, hyperparameters, n_grid)
     uniform = rng.random(n_samples)
     q = np.array([np.interp(u, row, qs) for u, row in zip(uniform, cdf(p_q, qs))])
@@ -266,7 +266,7 @@ def sample_intrinsic(
 
 
 def plan_marginalisation(n_samples: int, n_available: int) -> Tuple[int, int]:
-    """Hyperposterior samples to draw from and binaries under each (thyme).
+    """Hyperposterior samples used and binaries per sample, as in thyme.
 
     Parameters
     ----------
@@ -278,8 +278,8 @@ def plan_marginalisation(n_samples: int, n_available: int) -> Tuple[int, int]:
     Returns
     -------
     n_hyper, n_per_hyper : int
-        As many distinct hyperposterior samples as possible, and the fewest
-        binaries per sample that reach ``n_samples``.
+        As many distinct hyperposterior samples as possible, and the
+        fewest binaries per sample that reach ``n_samples``.
     """
     n_hyper = min(n_samples, n_available)
     return n_hyper, math.ceil(n_samples / n_hyper)

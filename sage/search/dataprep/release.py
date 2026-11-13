@@ -477,7 +477,7 @@ def download_search_data(
         Duration removed from each end of a segment, rounded up to whole
         samples.
     minimum_segment_s : float
-        Shortest stored segment after trimming.
+        Shortest stored segment after trimming, in seconds.
     dq_flag : str
         Data-quality flag selecting the segments.
     workers : int

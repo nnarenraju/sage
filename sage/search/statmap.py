@@ -1,4 +1,4 @@
-"""False-alarm rates of a search's zero-lag triggers against its background.
+"""False-alarm rates of zero-lag triggers against the background.
 
 Reads only finished rows, so it runs while a search is still scoring.
 Windows touching bad time are dropped, each stream is clustered on its
@@ -30,7 +30,8 @@ from sage.search.zerolag.zerolag import SCORES, WINDOW_TABLE
 CLUSTERING = {"greedy": greedy_triggers, "pycbc": cluster_triggers}
 REMOVE_NA = ("before-clustering", "after-clustering", "off")
 # Sources: pycbc_coinc_statmap --cluster-window and
-# --hierarchical-removal-window defaults; NA cut, user ruling 2026-11-01.
+# --hierarchical-removal-window defaults; NA cut, user ruling
+# 2026-11-01.
 CLUSTER_WINDOW_S = 10.0
 REMOVAL_WINDOW_S = 1.0
 NA_CUT = 0.0
@@ -59,7 +60,7 @@ def stream_triggers(
     clustering: str,
     remove_na: str,
 ) -> Tuple[Dict[str, np.ndarray], float]:
-    """Clustered triggers of one stream's finished rows, and their live time.
+    """Clustered triggers and live time of a stream's finished rows.
 
     Row ``i`` pairs reference window ``i`` with the other detector's
     window ``(i + shift) mod N``; zero-lag has ``shift`` 0.
@@ -85,7 +86,8 @@ def stream_triggers(
     clustering : str
         Key of ``CLUSTERING``.
     remove_na : str
-        One of ``REMOVE_NA``.
+        One of ``REMOVE_NA``: when to drop triggers whose NA logit
+        exceeds the ranking statistic by more than ``NA_CUT``.
 
     Returns
     -------
@@ -152,12 +154,11 @@ def hierarchical_rates(
     background_time_s: float,
     detectors: List[str],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """False-alarm rates with hierarchical removal, as pycbc_coinc_statmap.
+    """Hierarchical-removal false-alarm rates, as pycbc_coinc_statmap.
 
     While the loudest remaining zero-lag trigger is louder than all
-    background, it keeps its current rate and is removed, with every
-    background trigger whose merger time in any detector is within
-    ``REMOVAL_WINDOW_S`` of it; the rates are then recomputed.
+    background, it keeps its current rate and is removed, along with
+    background triggers within ``REMOVAL_WINDOW_S`` in any detector.
 
     Parameters
     ----------
@@ -176,8 +177,8 @@ def hierarchical_rates(
         Per year, ``(rounds + 1, foreground)``: before any removal, then
         after each; NaN for triggers removed by then.
     far : numpy.ndarray
-        Per year: a removed trigger's rate when it was removed, any other
-        trigger's rate after the last removal.
+        Per year: a removed trigger's rate when it was removed, any
+        other trigger's rate after the last removal.
     removed_round : numpy.ndarray
         Per background trigger, the removal it went in (0: kept).
     """
@@ -285,7 +286,8 @@ def run_statmap(
     Raises
     ------
     ValueError
-        If NA removal is asked of a network without the NA class.
+        If NA removal is asked of a network without the NA class, or
+        no background roll has finished rows.
     """
     directory = search_dir(run_dir, name)
     settings = read_settings(directory)

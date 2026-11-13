@@ -1,4 +1,4 @@
-"""Trigger columns from the network's point estimates, and trigger files.
+"""Trigger columns from the point estimates, and trigger files.
 
 One HDF5 file per GPU job: one dataset per trigger column, and the
 job's settings as file attributes.
@@ -66,8 +66,9 @@ def trigger_columns(
 ) -> Dict[str, np.ndarray]:
     """Point-estimate columns of a trigger file.
 
-    The merger time is made absolute: ``tc = window_start + padding
-    + delta_tc``, since delta_tc is measured from the end of the leading padding.
+    The merger time is made absolute,
+    ``tc = window_start + padding_s + delta_tc``, as ``delta_tc`` is
+    measured from the end of the leading padding.
 
     Parameters
     ----------
@@ -87,8 +88,8 @@ def trigger_columns(
     Returns
     -------
     dict of str to numpy.ndarray
-        ``<target>`` and ``<target>_sigma`` per target, with ``delta_tc``
-        replaced by ``tc``.
+        ``<target>`` and ``<target>_sigma`` per target; the
+        ``delta_tc`` mean is replaced by the absolute ``tc``.
     """
     means, widths = decode(estimates, offsets, scales, *width_bounds)
 
@@ -148,8 +149,8 @@ def merger_times(
 ) -> np.ndarray:
     """Merger time of each trigger in every detector.
 
-    A detector's merger time is its window start plus the merger offset in
-    the window, as in sgwc-1.
+    A detector's merger time is its window start plus the merger offset
+    in the window, as in sgwc-1.
 
     Parameters
     ----------

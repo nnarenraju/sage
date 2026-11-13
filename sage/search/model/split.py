@@ -51,7 +51,7 @@ def backend(model: torch.nn.Module, features: List[torch.Tensor]) -> tuple:
     Returns
     -------
     tuple of torch.Tensor
-        ``(ranking_statistic, point_estimates, non_astrophysical_logit)``,
+        Ranking statistic, point estimates and non-astrophysical logit,
         as ``model.forward`` returns them.
     """
     pooled = model.backend(torch.cat(features, dim=1))
@@ -65,7 +65,7 @@ def backend(model: torch.nn.Module, features: List[torch.Tensor]) -> tuple:
 
 
 def check_split(model: torch.nn.Module, strain: torch.Tensor) -> None:
-    """Check the halves reproduce the network and detectors stay separate.
+    """Check the split is exact and keeps the detectors separate.
 
     Both checks are exact.
 
@@ -79,9 +79,9 @@ def check_split(model: torch.nn.Module, strain: torch.Tensor) -> None:
     Raises
     ------
     ValueError
-        If the network mixes detectors before its backend, the halves do
-        not reproduce ``model.forward``, or replacing one detector's data
-        changes another detector's features.
+        If the network mixes detectors before its backend, the halves
+        do not reproduce ``model.forward``, or replacing one detector's
+        data changes another detector's features.
     """
     if not model.separable:
         raise ValueError(

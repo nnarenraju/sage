@@ -19,7 +19,7 @@ def clear_windows(
     columns: Dict[str, np.ndarray],
     vetoes: Dict[str, List[Interval]],
 ) -> Dict[str, np.ndarray]:
-    """Per detector, whether each window's analysed data is clear of bad time.
+    """Per detector, which windows' analysed data is clear of bad time.
 
     Parameters
     ----------
@@ -50,7 +50,7 @@ def flag_vetoed(
     columns: Dict[str, np.ndarray],
     vetoes: Dict[str, List[Interval]],
 ) -> np.ndarray:
-    """Windows whose analysed data in any detector overlaps its bad time.
+    """Windows whose analysed data overlaps bad time in any detector.
 
     Parameters
     ----------

@@ -21,7 +21,10 @@ Interval = Tuple[float, float]
 
 
 def make_session(workers: int) -> requests.Session:
-    """HTTP session that retries connection failures and 5xx responses.
+    """HTTP session that retries failed requests.
+
+    Connection and read errors and HTTP 429, 500, 502, 503 and 504 are
+    retried up to six times, with exponential backoff.
 
     Parameters
     ----------
@@ -89,6 +92,11 @@ def fetch_segments(
     -------
     list of tuple of float
         Segment start and end GPS times.
+
+    Raises
+    ------
+    requests.HTTPError
+        If GWOSC returns an error status.
     """
     start, end = run_span(run)
     url = _GWOSC_TIMELINE_URL.format(
@@ -182,7 +190,7 @@ def download_file(
     Raises
     ------
     RuntimeError
-        If the file does not exist or every attempt fails.
+        If the server returns 404 or every attempt fails.
     """
     if path.exists():
         return path

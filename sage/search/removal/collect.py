@@ -1,8 +1,8 @@
 """Read trigger files as clustered triggers and the time they cover.
 
-Vetoed triggers and their time are left out. Each file is clustered on its
-own, since each time slide is a separate background run; background times
-are summed over files.
+Vetoed triggers and their time are left out. Each file is clustered
+on its own, since each time slide is a separate background run;
+background times are summed over files.
 """
 
 from pathlib import Path

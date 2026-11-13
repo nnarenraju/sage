@@ -18,10 +18,9 @@ def hierarchical_removal(
 ) -> Tuple[Dict[str, np.ndarray], List[int]]:
     """Remove loud zero-lag triggers and their data from the background.
 
-    Each step takes the loudest remaining zero-lag trigger. If it is
-    louder than every background trigger, the background triggers whose
-    merger time in any detector is within ``window_s`` of it are removed,
-    and the next loudest is taken. The background time is unchanged.
+    While the loudest remaining zero-lag trigger is louder than every
+    background trigger, background triggers within ``window_s`` of it
+    in any detector are removed. The background time is unchanged.
 
     Parameters
     ----------

@@ -1,9 +1,8 @@
 """Time-slide background by rolling the window list, as in sgwc-1.
 
-Roll ``j`` pairs each reference window ``i`` with follower ``f``'s window
-``(i + j (f + 1) k) mod N`` of the zero-lag list, ``k`` windows spanning
-at least the step between rolls. Rolls are grouped into files of about
-a year of live time; a file's rolls share each window's frontend.
+Roll ``j`` pairs reference window ``i`` with follower ``f``'s window
+``(i + j (f + 1) k) mod N``; ``k`` windows span at least the roll step.
+Files group rolls by live time; each window's frontend is shared.
 """
 
 import math
@@ -36,8 +35,8 @@ def roll_shifts(
 ) -> np.ndarray:
     """Window shift of each other detector for each roll.
 
-    Roll ``j`` shifts detector ``f`` by ``j (f + 1) roll_windows`` windows,
-    so every detector pair is at least one roll length apart.
+    Roll ``j`` shifts follower ``f`` by ``j (f + 1) roll_windows``
+    windows, so every detector pair is at least one roll apart.
 
     Parameters
     ----------
@@ -130,7 +129,7 @@ def plan_rolls(
     stride_samples: int,
     sample_rate: float,
 ) -> List[dict]:
-    """Rolls 1, 2, ... grouped into files, until the live time is reached.
+    """Plan rolls 1, 2, ... in files until the live time is reached.
 
     A roll's live time is its pairs clear of bad time in every detector
     times the stride; a file is closed once its live time reaches
@@ -192,7 +191,7 @@ def plan_rolls(
 def rotated_windows(
     windows: Dict[str, np.ndarray], offset: int, extra: int
 ) -> Dict[str, np.ndarray]:
-    """The window list from window ``offset`` on, wrapping, ``extra`` longer.
+    """The window list rotated to ``offset``, ``extra`` windows longer.
 
     Parameters
     ----------
@@ -206,7 +205,8 @@ def rotated_windows(
     Returns
     -------
     dict of str to numpy.ndarray
-        Windows at positions ``0 .. N + extra``.
+        ``N + extra`` windows; position ``p`` holds window
+        ``(offset + p) mod N``.
     """
     n_windows = len(windows["gps"])
     positions = (offset + np.arange(n_windows + extra)) % n_windows
@@ -226,11 +226,11 @@ def score_roll_file(
     device: str,
     attrs: dict,
 ) -> None:
-    """Score the rolls of one background file, resuming after the last batch.
+    """Score every roll of one background file, resuming if stopped.
 
-    Row ``r * N + i`` holds roll ``r`` of the file: reference window ``i``
-    with follower ``f``'s window ``(i + shifts[r][f]) mod N``. Each
-    window's frontend features are computed once for the file.
+    Row ``r * N + i`` holds roll ``r``: reference window ``i`` with
+    follower ``f``'s window ``(i + shifts[r][f]) mod N``. Each window's
+    frontend features are computed once for the file.
 
     Parameters
     ----------
@@ -255,7 +255,15 @@ def score_roll_file(
     device : str
         Device to score on.
     attrs : dict
-        Settings recorded with the scores; a resumed pass must match them.
+        Settings recorded with the scores; a resumed pass must match
+        them.
+
+    Raises
+    ------
+    SettingsChanged
+        If the file was started with other columns, rows or settings.
+    ValueError
+        If the split network is not exact on the first batch scored.
     """
     detectors = network["detectors"]
     window_samples = network["window_samples"]
@@ -265,8 +273,8 @@ def score_roll_file(
     if done == n_windows:
         return
 
-    # Each follower's windows from its smallest shift on, read in batches
-    # that do not depend on where a job stopped.
+    # Each follower's windows from its smallest shift on, read in
+    # batches that do not depend on where a job stopped.
     shifts = np.asarray(shifts)
     offsets = shifts.min(axis=0)
     spans = shifts.max(axis=0) - offsets

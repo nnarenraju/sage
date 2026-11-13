@@ -30,7 +30,7 @@ def score_windows(
     batch_size: int = 4096,
     device: str = "cuda",
 ) -> Dict[str, np.ndarray]:
-    """Score analysis windows and return the loud ones as trigger columns.
+    """Score windows and return the loud ones as trigger columns.
 
     Parameters
     ----------
@@ -78,7 +78,7 @@ def score_windows(
 
 def window_table(windows: Dict[str, np.ndarray], detectors: List[str]) -> np.ndarray:
     """
-    Each window's GPS start and, per detector, its segment and start sample.
+    Table of each window's GPS start, segments and start samples.
 
     Parameters
     ----------
@@ -103,7 +103,7 @@ def window_table(windows: Dict[str, np.ndarray], detectors: List[str]) -> np.nda
 
 def save_window_table(path: Path, table: np.ndarray) -> None:
     """
-    Write the window table once; a resumed pass must find the same windows.
+    Save the window table once; later calls check it is unchanged.
 
     Parameters
     ----------
@@ -143,7 +143,7 @@ def score_zerolag(
     Score every zero-lag window, resuming after the last batch written.
 
     Writes ``windows.npy`` and the ``scores`` stream (every network
-    output of every window, row ``i`` for window ``i``) into ``directory``.
+    output, row ``i`` for window ``i``) into ``directory``.
 
     Parameters
     ----------
@@ -164,7 +164,16 @@ def score_zerolag(
     device : str
         Device to score on.
     attrs : dict
-        Settings recorded with the scores; a resumed pass must match them.
+        Settings recorded with the scores; a resumed pass must match
+        them.
+
+    Raises
+    ------
+    SettingsChanged
+        If the scores were started with other columns, rows or
+        settings.
+    ValueError
+        If the saved window table differs from ``windows``.
     """
     detectors = network["detectors"]
     window_samples = network["window_samples"]

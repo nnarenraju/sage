@@ -1,4 +1,4 @@
-"""Run or resume one search of a run: zero-lag, then the roll background.
+"""Run or resume one search: zero-lag, then the roll background.
 
 Called by ``sage search``; every step resumes after its last batch.
 """

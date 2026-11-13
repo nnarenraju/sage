@@ -1,7 +1,7 @@
 """GWTC-3 Power-Law + Peak population hyperposterior.
 
-Downloads the O1-O3 Power-Law + Peak result (Phys. Rev. X 13, 011048)
-from Zenodo, reads its samples and picks representative samples.
+Downloads the O1-O3 Power-Law + Peak result from Zenodo, reads its
+samples and picks representative samples.
 """
 
 import json
@@ -32,7 +32,7 @@ def download_hyperposterior(
         "o1o2o3_mass_c_iid_mag_iid_tilt_powerlaw_redshift_result.json"
     ),
 ) -> Path:
-    """Download the release archive and extract the Power-Law + Peak result.
+    """Download the archive and extract the Power-Law + Peak result.
 
     Files already in ``directory`` are reused.
 
@@ -117,8 +117,9 @@ def joint_map_index(
 ) -> int:
     """Index of the densest sample under a kernel density estimate.
 
-    The hyperparameters are standardised and the Gaussian kernel width is
-    chosen by cross-validated likelihood.
+    The hyperparameters are standardised and the Gaussian kernel width
+    is chosen by cross-validated likelihood. Constant columns are left
+    out of the density.
 
     Parameters
     ----------

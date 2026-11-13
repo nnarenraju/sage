@@ -1,7 +1,8 @@
 """Run a trained network on analysis windows, in float32.
 
 The forward path is the one training uses (``forward_batch`` without
-autocast): rfft, fiducial whitening, multirate sampling, then the network.
+autocast): rfft, fiducial whitening, multirate sampling, then the
+network.
 """
 
 from typing import Dict, List, Tuple
@@ -75,7 +76,7 @@ def network_outputs(network: Dict[str, object], spectra: torch.Tensor) -> np.nda
     Returns
     -------
     numpy.ndarray
-        Float32 ``(windows, columns)``, columns as ``network["columns"]``:
+        Float32 ``(windows, columns)`` in ``network["columns"]`` order:
         ranking statistic, the non-astrophysical logit if the network
         has that class, the raw point-estimate means, then raw widths.
     """
@@ -89,7 +90,7 @@ def network_outputs(network: Dict[str, object], spectra: torch.Tensor) -> np.nda
 def score(
     network: Dict[str, object], spectra: torch.Tensor
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Ranking statistic and raw point estimates for frequency-domain windows.
+    """Ranking statistic and raw point estimates of each window.
 
     Parameters
     ----------
@@ -104,7 +105,7 @@ def score(
     statistic : numpy.ndarray
         Ranking statistic per window.
     estimates : numpy.ndarray
-        Raw point-estimate head output per window.
+        Raw point-estimate means, then raw widths, per window.
     """
     outputs = network_outputs(network, spectra)
     n_estimates = 2 * len(network["targets"])

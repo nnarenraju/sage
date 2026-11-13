@@ -1,7 +1,7 @@
 """Cluster triggers by greedy non-maximum suppression.
 
-The loudest trigger is kept and its neighbours removed, repeatedly
-(Girshick et al. 2014; Hosang et al. 2017). Windows and ties follow PyCBC.
+The loudest trigger is kept and its neighbours removed, repeatedly.
+Windows and ties follow PyCBC.
 """
 
 from typing import Dict, List
@@ -16,9 +16,9 @@ def greedy_triggers(
 ) -> Dict[str, np.ndarray]:
     """Zero-lag or single-slide triggers, one per event.
 
-    The loudest trigger is kept and every trigger within the window of its
-    merger time removed, until none is left. The window is ``[t - w, t + w)``
-    and ties go to the earlier trigger, as in PyCBC.
+    The loudest trigger is kept and every trigger within the window of
+    its merger time removed, until none is left. The window is
+    ``[t - w, t + w)`` and ties go to the earlier trigger, as in PyCBC.
 
     Parameters
     ----------
@@ -54,8 +54,8 @@ def greedy_pairs(
 ) -> Dict[str, np.ndarray]:
     """Random-pair triggers, one per event.
 
-    The loudest pair is kept and every pair within the window of its merger
-    times in every detector removed, until none is left.
+    The loudest pair is kept and every pair within the window of its
+    merger times in every detector removed, until none is left.
 
     Parameters
     ----------

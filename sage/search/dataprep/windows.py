@@ -93,8 +93,8 @@ def lattice(
 ) -> np.ndarray:
     """GPS start of every window allowed on the reference segments.
 
-    As in sgwc-1: windows start at the beginning of each allowed interval
-    and step by the stride while the whole window still fits.
+    As in sgwc-1: windows start at the beginning of each allowed
+    interval and step by the stride while the whole window still fits.
 
     Parameters
     ----------
@@ -167,7 +167,8 @@ def analysis_windows(
     """Start of every analysis window in every detector.
 
     With ``lags``, a detector's data is read at the window start plus
-    its lag. The analysed time is the number of windows times the stride.
+    its lag. The analysed time is the number of windows times the
+    stride.
 
     Parameters
     ----------
@@ -187,8 +188,8 @@ def analysis_windows(
     -------
     dict of str to numpy.ndarray
         ``gps`` holds the window start times. ``<detector>_segment``,
-        ``<detector>_sample`` and ``<detector>_gps`` hold each detector's
-        segment index, start sample and start time.
+        ``<detector>_sample`` and ``<detector>_gps`` hold each
+        detector's segment index, start sample and start time.
 
     Raises
     ------

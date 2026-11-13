@@ -1,7 +1,8 @@
 """Waveform parameters of injections, as in sgwc-1 injection_study.
 
-The population gives masses, spins and distance; the training prior gives
-sky position, orientation and delta_tc. Masses are detector frame (SB-50).
+The population gives masses, spins and distance; the training prior
+gives sky position, orientation and delta_tc. Masses are detector
+frame (SB-50).
 """
 
 from pathlib import Path
@@ -48,8 +49,8 @@ def injection_parameters(
     Returns
     -------
     dict of str to numpy.ndarray
-        Masses, spins, distance, sky position, orientation, ``tc`` (geocentric
-        GPS merger time) and ``delta_tc``.
+        Masses, spins, distance, sky position, orientation, ``tc``
+        (geocentric GPS merger time) and ``delta_tc``.
     """
     n = len(population["m1"])
     mass1 = population["m1"] * (1.0 + population["z"])
@@ -88,8 +89,8 @@ def in_training_prior(
 ) -> np.ndarray:
     """Mask of binaries whose chirp mass lies within the training prior.
 
-    The bounds are the chirp masses of equal-mass binaries at the ends of
-    the training mass prior, as in sgwc-1.
+    The bounds are the chirp masses of equal-mass binaries at the ends
+    of the training mass prior, as in sgwc-1.
 
     Parameters
     ----------
