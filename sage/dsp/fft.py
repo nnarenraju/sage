@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Batched real-to-complex FFT of time-domain strain.
+
 Filename        : fft.py
 Description     : Short description of the file
 
@@ -23,21 +25,17 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 
 class BatchToFrequencyDomain:
     """
-    Callable that converts a batch of real time-domain strain to the
-    frequency domain via a real-to-complex FFT (``torch.fft.rfft``).
+    Batched rFFT of real time-domain strain.
 
     Parameters
     ----------
     delta_t : float
-        Sampling interval in seconds (= 1 / sample_rate).  Stored for
-        reference; not currently used in the computation but available for
-        downstream normalisation.
+        Sampling interval in seconds; stored, not used by the transform.
     """
 
     def __init__(self, *, delta_t: float):
@@ -45,18 +43,17 @@ class BatchToFrequencyDomain:
 
     def __call__(self, batch_td: torch.Tensor) -> torch.Tensor:
         """
-        Transform a batch of time-domain signals to frequency domain.
+        rFFT along the last axis with ``norm='forward'``.
 
         Parameters
         ----------
         batch_td : torch.Tensor, shape ``(B, D, T)``
-            Batch of real-valued time-domain strain windows; ``D`` detectors,
-            ``T`` samples.
+            Real strain of ``D`` detectors, ``T`` samples each.
 
         Returns
         -------
         torch.Tensor, shape ``(B, D, T//2 + 1)``
-            Complex frequency-domain strain.
+            Complex frequency-domain strain, scaled by ``1/T``.
 
         Raises
         ------
@@ -66,6 +63,5 @@ class BatchToFrequencyDomain:
         if batch_td.ndim != 3:
             raise ValueError("Expected (B, D, T)")
 
-        # rFFT over time dimension
         batch_fd = torch.fft.rfft(batch_td, dim=-1, norm='forward')
         return batch_fd

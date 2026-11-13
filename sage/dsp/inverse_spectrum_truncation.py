@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Inverse spectrum truncation of PSDs in PyTorch, batched or single,
+after PyCBC ``inverse_spectrum_truncation``.
+
 Filename        : inverse_spectrum_truncation.py
 Description     : Short description of the file
 
@@ -26,7 +29,6 @@ Documentation:
 
 """
 
-# Packages
 import numpy as np
 import torch
 
@@ -39,39 +41,36 @@ def inverse_spectrum_truncation_batch(
     trunc_method: str = "hann",
 ) -> torch.Tensor:
     """
-    GPU-native batched inverse spectrum truncation (IST) for PSD smoothing.
+    Inverse spectrum truncation of a batch of PSDs.
 
-    Reproduces the PyCBC ``inverse_spectrum_truncation`` routine in PyTorch
-    for batched, device-resident PSDs.  IST time-limits the inverse-ASD
-    filter so that it cannot introduce correlations beyond ``max_filter_len``
-    samples, preventing the whitening filter from growing unboundedly long.
-
-    Algorithm:
-
-    1. Compute ``1 / sqrt(PSD)`` in the frequency domain (inverse ASD).
-    2. IFFT to the time domain and zero out samples beyond ``max_filter_len/2``
-       from each edge (optionally with a Hann window at the truncation point).
-    3. FFT back and square to recover the truncated PSD.
+    The inverse ASD on bins ``[kmin, N/2)`` is inverse-FFTed; the
+    ``max_filter_len`` samples kept at the ends are optionally tapered,
+    the rest zeroed, and the PSD is ``1 / |rFFT|^2`` of the result.
 
     Parameters
     ----------
     psd : torch.Tensor, shape ``(B, D, F)``
-        Real-valued one-sided PSDs.
+        One-sided PSDs.
     max_filter_len : int
-        Maximum whitening filter length in samples.  Bins beyond this radius
-        are zeroed in the time-domain inverse ASD.
+        Length in samples of the time-domain inverse-ASD filter kept.
     low_frequency_cutoff : float or None
-        Frequency (Hz) below which the inverse ASD is set to zero.
+        Frequency in Hz below which the inverse ASD is zero; None or 0
+        starts at bin 1.
     delta_f : float
-        Frequency bin spacing in Hz (default ``1.0``).
+        Frequency spacing in Hz.
     trunc_method : str or None
-        Window applied at the truncation boundary: ``"hann"`` applies a
-        half-Hann taper; ``None`` uses a hard rectangular truncation.
+        ``"hann"`` tapers the kept samples with the halves of a
+        symmetric Hann window; anything else truncates without a taper.
 
     Returns
     -------
     torch.Tensor, shape ``(B, D, F)``
-        Truncated PSDs ready for use in whitening.
+        Truncated PSDs.
+
+    Raises
+    ------
+    ValueError
+        If ``max_filter_len`` is not positive or exceeds ``2 (F - 1)``.
     """
     B, D, F = psd.shape
     device = psd.device
@@ -82,51 +81,39 @@ def inverse_spectrum_truncation_batch(
 
     N = 2 * (F - 1)  # full time-domain length for real FFT
 
-    # Prepare inverse sqrt PSD in FD
     inv_asd = torch.zeros_like(
         psd, dtype=torch.complex64 if dtype == torch.float32 else torch.complex128
     )
-    # As PyCBC: the inverse ASD spans [kmin, N/2), so DC and Nyquist stay 0.
+    # As PyCBC: the inverse ASD spans [kmin, N/2); DC and Nyquist stay 0
     kmin = 1
     if low_frequency_cutoff:
         kmin = int(low_frequency_cutoff / delta_f)
 
-    # Fill inverse sqrt PSD
     inv_asd[..., kmin : N // 2] = 1.0 / torch.sqrt(
         psd[..., kmin : N // 2].to(inv_asd.real.dtype)
     )
 
-    # Convert to time domain (complex IFFT)
     q = torch.fft.irfft(inv_asd, n=N, dim=-1)
 
-    # Truncate edges
     trunc_start = max_filter_len // 2
     trunc_end = N - max_filter_len // 2
 
     if trunc_end < trunc_start:
         raise ValueError("Invalid max_filter_len too large for PSD length")
 
-    # Apply Hann taper if requested
     if trunc_method == "hann":
-        # PyCBC's window: numpy.hanning (symmetric).
+        # PyCBC's window: numpy.hanning (symmetric)
         window = torch.from_numpy(np.hanning(max_filter_len)).to(device=device, dtype=q.dtype)
-        # left edge
         q[..., :trunc_start] *= window[-trunc_start:]
-        # right edge
         q[..., trunc_end:] *= window[: (N - trunc_end)]
 
-    # Zero out central region if necessary
     if trunc_start < trunc_end:
         q[..., trunc_start:trunc_end] = 0.0
 
-    # Transform back to FD
     psd_trunc = torch.fft.rfft(q, n=N, dim=-1)
-    # Take magnitude squared
     psd_trunc = psd_trunc.abs() ** 2
-    # Invert
     psd_out = 1.0 / psd_trunc
 
-    # Return only first F bins (same as input)
     return psd_out[..., :F]
 
 
@@ -138,17 +125,37 @@ def inverse_spectrum_truncation_single(
     trunc_method: str = "hann",
 ) -> torch.Tensor:
     """
-    CPU version of inverse spectrum truncation for a single PSD (1D tensor).
+    Inverse spectrum truncation of one PSD, in float64.
 
-    Args:
-        psd: torch.Tensor, shape (F,), real-valued PSD
-        max_filter_len: int, maximum length of the time-domain filter
-        low_frequency_cutoff: float or None, zero out PSD below this frequency
-        delta_f: float, frequency bin spacing of PSD
-        trunc_method: str or None, truncation method ("hann" or None)
+    The inverse ASD on bins ``[kmin, N/2)`` is inverse-FFTed; the
+    ``max_filter_len`` samples kept at the ends are optionally tapered,
+    the rest zeroed, and the PSD is ``1 / |rFFT|^2`` of the result.
 
-    Returns:
-        torch.Tensor, shape (F,), truncated PSD
+    Parameters
+    ----------
+    psd : torch.Tensor, shape ``(F,)``
+        One-sided PSD.
+    max_filter_len : int
+        Length in samples of the time-domain inverse-ASD filter kept.
+    low_frequency_cutoff : float or None
+        Frequency in Hz below which the inverse ASD is zero; None or 0
+        starts at bin 1.
+    delta_f : float
+        Frequency spacing in Hz.
+    trunc_method : str or None
+        ``"hann"`` tapers the kept samples with the halves of a
+        symmetric Hann window; anything else truncates without a taper.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(F,)``
+        Truncated PSD, float64, on the device of ``psd``.
+
+    Raises
+    ------
+    ValueError
+        If ``psd`` is not 1D, or ``max_filter_len`` is not positive or
+        exceeds ``2 (F - 1)``.
     """
     if not psd.ndim == 1:
         raise ValueError("PSD must be 1D tensor (single PSD)")
@@ -159,44 +166,32 @@ def inverse_spectrum_truncation_single(
     F = psd.shape[0]
     N = 2 * (F - 1)  # full time-domain length
 
-    # Prepare inverse sqrt PSD in FD
-    # float64 throughout for precision; device follows the input so this works
-    # on GPU too (the batch sibling already does this).
     inv_asd = torch.zeros(F, dtype=torch.complex128, device=psd.device)
-    # As PyCBC: the inverse ASD spans [kmin, N/2), so DC and Nyquist stay 0.
+    # As PyCBC: the inverse ASD spans [kmin, N/2); DC and Nyquist stay 0
     kmin = 1
     if low_frequency_cutoff:
         kmin = int(low_frequency_cutoff / delta_f)
 
-    # Fill inverse sqrt PSD
     inv_asd[kmin : N // 2] = 1.0 / torch.sqrt(psd[kmin : N // 2].to(torch.float64))
 
-    # IFFT to TD
     q = torch.fft.irfft(inv_asd, n=N)
 
-    # Truncate edges
     trunc_start = max_filter_len // 2
     trunc_end = N - max_filter_len // 2
     if trunc_end < trunc_start:
         raise ValueError("max_filter_len too large for PSD length")
 
-    # Apply Hann taper if requested
     if trunc_method == "hann":
-        # PyCBC's window: numpy.hanning (symmetric).
+        # PyCBC's window: numpy.hanning (symmetric)
         window = torch.from_numpy(np.hanning(max_filter_len)).to(device=q.device, dtype=q.dtype)
-        # left edge
         q[:trunc_start] *= window[-trunc_start:]
-        # right edge
         q[trunc_end:] *= window[: (N - trunc_end)]
 
-    # Zero out center if applicable
     if trunc_start < trunc_end:
         q[trunc_start:trunc_end] = 0.0
 
-    # FFT back to FD
     psd_trunc = torch.fft.rfft(q, n=N)
     psd_trunc = psd_trunc.abs() ** 2
     psd_out = 1.0 / psd_trunc
 
-    # Return only first F bins
     return psd_out[:F]

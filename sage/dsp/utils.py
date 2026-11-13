@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Edge trimming of filtered or resampled time series.
+
 Filename        : utils.py
 Description     : Short description of the file
 
@@ -23,7 +25,6 @@ Documentation: NULL
 
 """
 
-# LOCAL
 from sage.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,30 +32,26 @@ logger = get_logger(__name__)
 
 def trim_edges(data, fs, trim=0.2):
     """
-    Trim corrupted edge samples from a filtered or resampled time series.
-
-    Digital filters and resampling operations introduce transient artefacts
-    at the boundaries of a segment.  This function removes ``trim`` seconds
-    from each end to discard those corrupted samples.
+    Remove ``trim`` seconds from each end of a time series.
 
     Parameters
     ----------
     data : array-like, shape ``(N,)``
-        1D time series to trim.
+        Time series to trim.
     fs : float
         Sampling rate in Hz.
     trim : float
-        Number of seconds to remove from each end (default 0.2 s).
+        Seconds to remove from each end.
 
     Returns
     -------
-    numpy.ndarray
-        Trimmed time series of length ``N - 2 * round(trim * fs)``.
+    array-like
+        Trimmed series of length ``N - 2 * round(trim * fs)``.
 
     Raises
     ------
     ValueError
-        If the trim length equals or exceeds half the data length.
+        If the trim is zero samples or at least half the data length.
     """
 
     n = int(round(trim * fs))

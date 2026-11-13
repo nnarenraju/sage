@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Welch PSD estimators: a SciPy wrapper and a PyTorch implementation.
+
 Filename        : welch.py
 Description     : Short description of the file
 
@@ -23,38 +25,36 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 import numpy as np
 import scipy.signal as ss
 
-# LOCAL
 from sage.core.conversions import seconds_to_samples
 
 
 class ScipyWelch:
     """
-    Welch PSD estimator wrapping :func:`scipy.signal.welch`.
-
-    Provides a consistent interface for estimating the one-sided power
-    spectral density of a 1D time series using Welch's overlapping-segment
-    method.  Suitable for offline PSD computation during the data-preparation
-    stage (not used inside the training loop).
+    Welch PSD of a 1D time series with :func:`scipy.signal.welch`.
 
     Parameters
     ----------
     sample_rate : float
         Sampling rate in Hz.
     nperseg_in_seconds : float
-        Welch segment length in seconds (default 4.0 s).
+        Segment length in seconds.
     average : str
-        Segment averaging method — ``"mean"`` or ``"median"`` (default).
+        Segment averaging: ``"mean"`` or ``"median"``.
     detrend : str or None
-        Detrending applied to each segment (default ``"constant"``).
+        Detrending of each segment.
     window : str
-        Window function name (default ``"hann"``).
+        Window name.
     scaling : str
-        ``"density"`` (V²/Hz, default) or ``"spectrum"`` (V²).
+        ``"density"`` (V^2/Hz) or ``"spectrum"`` (V^2).
+
+    Raises
+    ------
+    ValueError
+        If the segment length is not positive.
     """
 
     def __init__(
@@ -66,15 +66,6 @@ class ScipyWelch:
         window: str = "hann",
         scaling: str = "density",
     ):
-        """
-        Args:
-            sample_rate: Sampling rate in Hz
-            nperseg_in_seconds: Segment length in seconds
-            average: 'mean' or 'median'
-            detrend: Detrending method
-            window: Window function
-            scaling: 'density' or 'spectrum'
-        """
         self.sample_rate = sample_rate
         self.nperseg_in_seconds = nperseg_in_seconds
         self.average = average
@@ -88,13 +79,24 @@ class ScipyWelch:
 
     def __call__(self, x: np.ndarray):
         """
-        Compute PSD.
+        One-sided Welch PSD of ``x``.
 
-        Args:
-            x: 1D time-series array
+        Parameters
+        ----------
+        x : numpy.ndarray, shape ``(N,)``
+            Time series.
 
-        Returns:
-            freqs, psd
+        Returns
+        -------
+        freqs : numpy.ndarray
+            Frequencies in Hz.
+        psd : numpy.ndarray
+            PSD at ``freqs``.
+
+        Raises
+        ------
+        ValueError
+            If ``x`` is not 1D.
         """
         if x.ndim != 1:
             raise ValueError("WelchPSD expects a 1D array")
@@ -113,19 +115,33 @@ class ScipyWelch:
 
 class TorchWelch:
     """
-    Welch PSD estimator using PyTorch (CPU-friendly).
+    Welch PSD of one time series in PyTorch.
 
-    Designed for a single time series per call. Returns PSD in frequency domain.
-    Refer: https://pycbc.org/pycbc/latest/html/_modules/pycbc/psd/estimate.html
+    Reference: ``pycbc.psd.estimate.welch``,
+    https://pycbc.org/pycbc/latest/html/_modules/pycbc/psd/estimate.html
 
-    Attributes:
-        delta_t: Sampling interval (seconds)
-        seg_len: Segment length (samples)
-        seg_stride: Stride between segments (samples)
-        window: Window type ('hann') or torch tensor
-        avg_method: 'mean', 'median', 'median-mean'
-        require_exact_data_fit: if True, enforce exact segment fit
-        minimum_segments: minimum number of segments required
+    Parameters
+    ----------
+    delta_t : float
+        Sampling interval in seconds.
+    seg_len : int
+        Segment length in samples.
+    seg_stride : int
+        Stride between segments in samples.
+    window : str or torch.Tensor
+        ``"hann"`` or a window of length ``seg_len``.
+    avg_method : str
+        ``"mean"``, ``"median"`` or ``"median-mean"``.
+    require_exact_data_fit : bool
+        Require the series to fit whole segments exactly; otherwise it
+        is trimmed symmetrically to fit.
+    minimum_segments : int or None
+        Minimum number of segments.
+
+    Raises
+    ------
+    ValueError
+        If the window is unknown or its length is not ``seg_len``.
     """
 
     def __init__(
@@ -150,7 +166,6 @@ class TorchWelch:
             torch.arange(self.seg_len // 2 + 1, dtype=torch.float64) * self.delta_f
         )
 
-        # Window
         if isinstance(window, str):
             if window.lower() == "hann":
                 self.window = torch.hann_window(self.seg_len)
@@ -164,13 +179,27 @@ class TorchWelch:
     @torch.no_grad()
     def __call__(self, timeseries: torch.Tensor) -> torch.Tensor:
         """
-        Compute PSD for a single 1D timeseries.
+        One-sided PSD of a 1D time series.
 
-        Args:
-            timeseries: torch.Tensor of shape (N,), float32 or float64
+        Each segment is mean-subtracted and windowed; the one-sided
+        periodograms are averaged by ``avg_method``, in float64.
 
-        Returns:
-            psd: torch.Tensor of shape (seg_len//2 + 1,)
+        Parameters
+        ----------
+        timeseries : torch.Tensor, shape ``(N,)``
+            Time series.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(seg_len // 2 + 1,)``
+            PSD, float64.
+
+        Raises
+        ------
+        ValueError
+            If the series is not 1D, has fewer than ``minimum_segments``
+            segments or does not fit the segmentation, or
+            ``avg_method`` is unknown.
         """
         if timeseries.ndim != 1:
             raise ValueError("Timeseries must be 1D")
@@ -178,12 +207,11 @@ class TorchWelch:
         N = timeseries.shape[0]
         timeseries = timeseries.to(dtype=torch.float64)
 
-        # Number of segments
         num_segments = (N - self.seg_len) // self.seg_stride + 1
         if self.minimum_segments is not None and num_segments < self.minimum_segments:
             raise ValueError("Not enough segments for PSD estimation")
 
-        # Trim to exact fit if allowed
+        # Trim symmetrically to a whole number of segments
         if not self.require_exact_data_fit:
             data_len = (num_segments - 1) * self.seg_stride + self.seg_len
             if data_len < N:
@@ -199,27 +227,23 @@ class TorchWelch:
         delta_f = 1.0 / (self.seg_len * self.delta_t)
         segment_psds = []
 
-        # Normalizes power of window
         fs = 1.0 / self.delta_t
-        # window power normalization
+        # Window power
         U = (self.window**2).sum()
 
-        # Compute PSD for each segment
         for i in range(num_segments):
             start = i * self.seg_stride
             segment = timeseries[start : start + self.seg_len]
-            # Constant detrending similar to scipy welch
+            # Constant detrend, as scipy.signal.welch
             segment = segment - segment.mean()
             segment = segment * self.window
             fft_seg = torch.fft.rfft(segment)
-            # Correct scaling factors
             seg_psd = fft_seg.abs() ** 2 / (fs * U)
             seg_psd[1:-1] *= 2  # one-sided
             segment_psds.append(seg_psd)
 
         segment_psds = torch.stack(segment_psds, dim=0)
 
-        # Average segments
         if self.avg_method == "mean":
             psd = torch.mean(segment_psds, dim=0)
         elif self.avg_method == "median":
@@ -238,7 +262,24 @@ class TorchWelch:
 
     @staticmethod
     def _median_bias(n: int) -> float:
-        """Median bias correction for PSD estimation"""
+        """
+        Median bias of an n-segment PSD (PyCBC ``median_bias``).
+
+        Parameters
+        ----------
+        n : int
+            Number of segments.
+
+        Returns
+        -------
+        float
+            Bias; ``log(2)`` for ``n >= 1000``.
+
+        Raises
+        ------
+        ValueError
+            If ``n`` is not a positive integer.
+        """
         if not isinstance(n, int) or n <= 0:
             raise ValueError("n must be a positive integer")
 

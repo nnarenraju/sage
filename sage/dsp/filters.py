@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Resampling and high-pass filtering of strain: PyCBC downsampling and a
+zero-phase Butterworth high-pass.
+
 Filename        : filters.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import numpy as np
 
 from scipy.signal import (
@@ -35,12 +37,10 @@ from scipy.signal import (
     sosfreqz,
 )
 
-# PyCBC
 from pycbc.filter import highpass as pycbc_highpass
 from pycbc.types import TimeSeries as TS
 from pycbc.filter.resample import resample_to_delta_t
 
-# LOCAL
 from sage.core.utils import ensure_1d
 from sage.dsp.utils import trim_edges
 from sage.core.logger import get_logger
@@ -56,40 +56,41 @@ def pycbc_downsample(
     noise_low_freq_cutoff=15.0,
 ):
     """
-    Resample and high-pass filter a strain time series via PyCBC.
+    Resample and high-pass a strain time series with PyCBC.
 
-    Downsamples ``strain`` from ``old_sample_rate`` to ``new_sample_rate``
-    using PyCBC's polyphase resampler, applies a high-pass filter at
-    ``noise_low_freq_cutoff``, converts to float32, and trims edge corruption
-    introduced by the resampler.
+    PyCBC ``resample_to_delta_t`` (default Butterworth method), then
+    PyCBC ``highpass``, a cast to float32 and :func:`trim_edges`.
 
     Parameters
     ----------
     strain : array-like, shape ``(N,)``
-        Input time series at ``old_sample_rate``.
+        Time series at ``old_sample_rate``.
     old_sample_rate : float
-        Original sample rate in Hz.
+        Input sample rate in Hz.
     new_sample_rate : float
-        Target sample rate in Hz (default ``2048.0``).
+        Output sample rate in Hz.
     trim : float
-        Edge corruption to remove from each side in seconds (default ``0.2``).
+        Seconds removed from each end.
     noise_low_freq_cutoff : float
-        High-pass cutoff frequency in Hz (default ``15.0``).
+        High-pass frequency in Hz.
 
     Returns
     -------
-    numpy.ndarray, dtype float32
-        Resampled and filtered strain with edges trimmed.
+    numpy.ndarray
+        Resampled, high-passed, trimmed strain, float32.
+
+    Raises
+    ------
+    ValueError
+        If the trim is zero samples or at least half the data length.
     """
 
-    # Resample and apply a highpass filter
     pycbc_strain = TS(strain, delta_t=1.0 / old_sample_rate)
     res = resample_to_delta_t(pycbc_strain, delta_t=1.0 / new_sample_rate)
     ret = pycbc_highpass(res, noise_low_freq_cutoff).numpy()
     ret = ret.astype(np.float32, copy=False)
 
-    # Remove corrupted regions for edge effects
-    # Defaults to 0.2, but user can be more conservative
+    # Remove the samples corrupted by the filters
     ret = trim_edges(ret, new_sample_rate, trim)
     return ret
 
@@ -104,21 +105,42 @@ def highpass(
     fallback_to_sos=False,
 ):
     """
-    Robust zero-phase highpass using Butterworth SOS + filtfilt-like forward-backward.
-    NOTE: Padding reduces edge effects
+    Zero-phase Butterworth high-pass of a padded time series.
 
-    Args:
-        x (array): 1D time series (float).
-        fs (float): sampling rate (Hz).
-        cutoff (float): cutoff frequency (Hz).
-        order (int): nominal Butterworth order (sos built from order).
-        padlen_seconds (float): pad length in seconds (mirror padding)
-        pad_type: 'reflect' or 'odd' or 'constant' (prefer 'reflect').
-        fallback_to_sos: if True and sosfiltfilt fails, do sosfilt (causal).
+    Padded on each side by ``padlen_seconds`` (at least 3 samples;
+    ``n // 2 - 1`` if that reaches the length ``n``), filtered forward
+    and backward, then unpadded.
 
-    Returns:
-        y (np.ndarray): filtered 1D array same length as input.
+    Parameters
+    ----------
+    x : array-like
+        1D time series.
+    fs : float
+        Sampling rate in Hz.
+    cutoff : float
+        Cutoff frequency in Hz.
+    order : int
+        Butterworth order.
+    padlen_seconds : float
+        Padding on each side in seconds.
+    pad_type : str
+        ``"reflect"``, ``"symmetric"``, ``"odd"`` or ``"constant"``
+        (zeros).
+    fallback_to_sos : bool
+        If ``sosfiltfilt`` raises, filter causally with ``sosfilt``
+        instead of re-raising.
 
+    Returns
+    -------
+    numpy.ndarray
+        Filtered series, length of ``x``; an empty ``x`` is returned
+        as is.
+
+    Raises
+    ------
+    ValueError
+        If ``cutoff`` is not inside ``(0, fs/2)`` or ``pad_type`` is
+        unknown.
     """
 
     x = ensure_1d(x)
@@ -131,16 +153,12 @@ def highpass(
         logger.error("cutoff must be between 0 and Nyquist (fs/2)")
         raise ValueError("cutoff must be between 0 and Nyquist (fs/2)")
 
-    # Build SOS
     sos = butter(order, cutoff / nyq, btype="highpass", output="sos")
 
-    # compute pad length in samples (must be >= some multiple of filter transient)
     padlen = int(max(3, padlen_seconds * fs))
-    # ensure padlen < n
     if padlen >= n:
         padlen = max(0, n // 2 - 1)
 
-    # Apply padding
     if padlen > 0:
         if pad_type == "reflect":
             xp = np.pad(x, padlen, mode="reflect")
@@ -156,11 +174,10 @@ def highpass(
     else:
         xp = x
 
-    # Filter with zero-phase sosfiltfilt
     try:
         y = sosfiltfilt(sos, xp)
     except Exception as exc:
-        # fallback: try sosfilt (causal) if requested, otherwise re-raise
+        # Causal sosfilt if requested, otherwise re-raise
         logger.warning("sosfiltfilt failed; falling back to sosfilt if enabled")
         if fallback_to_sos:
             y = sosfilt(sos, xp)
@@ -169,7 +186,6 @@ def highpass(
             logger.info("Set fallback_to_sos to True to enable fallback")
             raise
 
-    # remove padding
     if padlen > 0:
         y = y[padlen : padlen + n]
 

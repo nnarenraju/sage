@@ -2,17 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
+Analytic signal and instantaneous frequency of NumPy or torch series.
+
 Filename        : helpers.py
 Description     : DSP signal helpers.
-
-    Utilities for building and inspecting complex baseband signals — used by the
-    heterodyne demos/tests and any caller that needs an analytic signal or an
-    instantaneous-frequency estimate.  Kept in a separate module from
-    ``sage.dsp.heterodyne`` so the heterodyne hot path stays minimal
-    (complex-in / complex-out, no Hilbert transforms).
-
-        analytic_signal(x)          real -> analytic signal (Hilbert via FFT)
-        instantaneous_frequency(z)  instantaneous frequency of a complex series
 """
 
 import numpy as np
@@ -24,10 +17,12 @@ except ImportError:  # torch is optional for the pure-numpy path
 
 
 def _is_torch(x):
+    """Whether ``x`` is a torch tensor."""
     return torch is not None and isinstance(x, torch.Tensor)
 
 
 def _is_complex(x):
+    """Whether ``x``, a NumPy array or torch tensor, is complex."""
     if _is_torch(x):
         return torch.is_complex(x)
     return np.iscomplexobj(x)
@@ -35,25 +30,23 @@ def _is_complex(x):
 
 def analytic_signal(x, axis=-1):
     """
-    Return the analytic signal of a real array along ``axis``.
+    Analytic signal of a real array along ``axis``.
 
-    Uses the standard FFT construction (identical to
-    :func:`scipy.signal.hilbert`): zero the negative-frequency half, double the
-    positive-frequency half.  ``z = x + i * Hilbert(x)`` satisfies
-    ``z.real == x`` and has only non-negative frequency content, so multiplying
-    by ``exp(-i * phase)`` shifts it cleanly to baseband without generating
-    image (sum-frequency) components.  A complex ``x`` is returned unchanged.
+    The FFT construction of :func:`scipy.signal.hilbert`: negative
+    frequencies zeroed, positive ones doubled. A complex ``x`` is
+    returned unchanged.
 
     Parameters
     ----------
     x : numpy.ndarray or torch.Tensor
-        Real (or complex) input, any shape.
+        Real or complex input, any shape.
     axis : int
-        Axis along which to compute the analytic signal (default last).
+        Axis of the transform.
 
     Returns
     -------
-    Complex array of the same shape and backend as ``x``.
+    numpy.ndarray or torch.Tensor
+        Complex analytic signal, shape and backend of ``x``.
     """
     if _is_complex(x):
         return x
@@ -90,19 +83,24 @@ def analytic_signal(x, axis=-1):
 
 def instantaneous_frequency(z, dt=1.0):
     """
-    Instantaneous frequency (Hz) of a complex series along the last axis.
+    Instantaneous frequency of a complex series along the last axis.
 
-    Uses the phase-difference estimator
-    ``f[n] = angle(z[n+1] * conj(z[n])) / (2*pi*dt)`` — no phase unwrapping,
-    robust for slowly varying baseband signals.  Returns an array one sample
-    shorter than ``z`` along the last axis.
+    Phase-difference estimator ``angle(z[n+1] conj(z[n])) / (2 pi dt)``;
+    no phase unwrapping.
 
     Parameters
     ----------
-    z : complex numpy.ndarray or torch.Tensor
+    z : numpy.ndarray or torch.Tensor
+        Complex series.
     dt : float
-        Sample spacing (seconds).  For frequency-domain input, pass the bin
-        spacing ``df`` to get a "chirp time" per bin instead.
+        Sample spacing in seconds; for a frequency series, the bin
+        spacing, which gives a time per bin instead.
+
+    Returns
+    -------
+    numpy.ndarray or torch.Tensor
+        Frequency in Hz (or time per bin), one sample shorter than
+        ``z`` along the last axis.
     """
     two_pi = 2.0 * np.pi
     if _is_torch(z):

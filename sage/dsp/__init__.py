@@ -1,3 +1,5 @@
+"""Heterodyning, analytic signal, decimation and reference selection."""
+
 from sage.dsp.heterodyne import (
     heterodyne,
     apply_phase,

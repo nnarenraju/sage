@@ -2,23 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
+Uniform power-of-2 decimation by a cascade of half-band Kaiser FIR
+passes, the filter design of ``MultirateSampler``.
+
 Filename        : decimate.py
 Description     : Anti-alias decimation (half-band Kaiser FIR cascade).
-
-    Standalone power-of-2 decimator for real or complex 1-D signals.  Uses the
-    same half-band Kaiser-windowed-sinc FIR design as
-    ``sage.dsp.multirate_sampling.MultirateSampler`` (63-tap, Kaiser beta=9,
-    ~90 dB stopband) but as a plain *uniform* decimator rather than a
-    per-frequency-bin multirate compressor.
-
-    Each pass anti-aliases (half-band lowpass at the new Nyquist) and then
-    downsamples by 2; :func:`decimate` cascades ``log2(factor)`` passes.
-    Complex input is decimated on its real and imaginary parts (the FIR is
-    real, so this is exact).
-
-        h      = halfband_kernel()          # the FIR taps
-        y      = decimate(x, factor)        # anti-alias + downsample
-        fs, k  = rate_and_factor(B, fs0)    # rate/factor for a bandwidth B
 
 Created on 2026-06-24
 
@@ -40,26 +28,32 @@ except ImportError:  # torch is required for the conv, optional at import time
 
 def halfband_kernel(ntaps=63, beta=9.0, normalize="dc"):
     """
-    Kaiser-windowed half-band FIR lowpass (cutoff = fs/4), as in MultirateSampler.
+    Kaiser-windowed half-band FIR low-pass, cutoff ``fs/4``.
 
     Parameters
     ----------
     ntaps : int
-        Number of taps (63 -> ~95 dB stopband with beta=9).
+        Number of taps.
     beta : float
         Kaiser window parameter.
     normalize : {"dc", "l2"}
-        ``"dc"``: DC gain 1 (amplitude-preserving; use for *signals*).
-        ``"l2"``: unit L2 norm (white-noise-variance-preserving; the
-        MultirateSampler convention for whitened data, DC gain != 1).
+        ``"dc"``: unit DC gain, preserving amplitude. ``"l2"``: unit L2
+        norm, preserving white-noise variance (as ``MultirateSampler``).
 
     Returns
     -------
     numpy.ndarray, shape ``(ntaps,)``
+        Filter taps.
+
+    Raises
+    ------
+    ValueError
+        If ``normalize`` is not ``"dc"`` or ``"l2"``.
     """
     M = ntaps - 1
     n = np.arange(ntaps)
-    h = np.sinc((n - M / 2.0) / 2.0) * np.kaiser(ntaps, beta)   # ideal half-band x window
+    # Ideal half-band response times the Kaiser window
+    h = np.sinc((n - M / 2.0) / 2.0) * np.kaiser(ntaps, beta)
     if normalize == "dc":
         return h / h.sum()
     if normalize == "l2":
@@ -68,7 +62,21 @@ def halfband_kernel(ntaps=63, beta=9.0, normalize="dc"):
 
 
 def _decimate_by_2(x2d, kernel):
-    """One half-band anti-alias pass + downsample by 2.  ``x2d``: (B, L) real."""
+    """
+    One half-band low-pass pass and downsample by 2.
+
+    Parameters
+    ----------
+    x2d : torch.Tensor, shape ``(B, L)``
+        Real series, reflect-padded by ``ntaps // 2`` before filtering.
+    kernel : torch.Tensor, shape ``(1, 1, ntaps)``
+        Filter taps.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(B, ceil(L/2))``
+        Decimated series, for an odd ``ntaps``.
+    """
     pad = kernel.shape[-1] // 2
     xp = F.pad(x2d.unsqueeze(1), (pad, pad), mode="reflect")    # (B, 1, L+2pad)
     y = F.conv1d(xp, kernel, stride=2)                          # (B, 1, ~L/2)
@@ -77,25 +85,34 @@ def _decimate_by_2(x2d, kernel):
 
 def decimate(x, factor, *, axis=-1, ntaps=63, beta=9.0, normalize="dc"):
     """
-    Anti-alias then downsample ``x`` by ``factor`` (a power of 2) along ``axis``.
+    Anti-alias and downsample ``x`` by ``factor`` along ``axis``.
 
-    Real or complex; numpy array or torch tensor; arbitrary leading batch
-    dimensions.  Returns the same array type as the input.
+    ``log2(factor)`` half-band passes; a complex ``x`` is decimated on
+    its real and imaginary parts.
 
     Parameters
     ----------
     x : numpy.ndarray or torch.Tensor
+        Real or complex series, any leading dimensions.
     factor : int
         Decimation factor, a power of 2.
     axis : int
-        Axis to decimate (default last).
-    ntaps, beta, normalize :
-        Forwarded to :func:`halfband_kernel`.
+        Axis to decimate.
+    ntaps, beta, normalize
+        Passed to :func:`halfband_kernel`.
 
     Returns
     -------
-    Decimated array of the same backend as ``x``, with ``axis`` shortened by
-    ``~factor``.
+    numpy.ndarray or torch.Tensor
+        Decimated series, backend of ``x``, ``axis`` halved (rounded
+        up) per pass.
+
+    Raises
+    ------
+    ValueError
+        If ``factor`` is not a power of 2.
+    ImportError
+        If torch is not installed.
     """
     if factor < 1 or (factor & (factor - 1)) != 0:
         raise ValueError("factor must be a power of 2")
@@ -131,11 +148,28 @@ def decimate(x, factor, *, axis=-1, ntaps=63, beta=9.0, normalize="dc"):
 
 def rate_and_factor(bandwidth, original_fs, buffer=1.5):
     """
-    Smallest power-of-2 sample rate that satisfies the Nyquist condition for a
-    complex baseband of two-sided half-bandwidth ``bandwidth`` (content spans
-    ``[-B, +B]``, so the requirement is ``rate >= 2 B``), with a safety
-    ``buffer``.  Returns ``(rate, decimation_factor)`` where
-    ``decimation_factor = original_fs / rate`` (floored to a power of 2).
+    Sample rate and decimation factor for a complex baseband.
+
+    The target is the power of 2 at or above ``2 * bandwidth * buffer``,
+    capped at ``original_fs``; the factor ``original_fs // target`` is
+    floored to a power of 2.
+
+    Parameters
+    ----------
+    bandwidth : float
+        Half-bandwidth in Hz: the content spans ``[-bandwidth,
+        bandwidth]``.
+    original_fs : float
+        Input sample rate in Hz.
+    buffer : float
+        Safety factor on the Nyquist rate.
+
+    Returns
+    -------
+    rate : float
+        ``original_fs / factor`` in Hz.
+    factor : int
+        Decimation factor, a power of 2.
     """
     need = 2.0 * bandwidth * buffer
     target = min(2 ** math.ceil(math.log2(need)), original_fs)
