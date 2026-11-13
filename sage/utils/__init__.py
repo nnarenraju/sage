@@ -2,4 +2,4 @@
 # -*- coding: utf-8 -*-
 
 """Utilities: atomic file writes, checkpoints, job schedulers and SLURM
-chaining, and review helpers."""
+chaining."""
