@@ -44,9 +44,9 @@ class _StartTimeCodec:
     """
     Map between genotypes in ``[0, 1]^D`` and per-detector windows.
 
-    Each component indexes linearly into the first
-    ``nsamples - seq_len`` start offsets of each segment of its
-    detector; segments with ``segment_probs`` 0 have none.
+    Each component indexes linearly into the ``nsamples - seq_len + 1``
+    start offsets of each segment of its detector; segments with
+    ``segment_probs`` 0 have none.
 
     Parameters
     ----------
@@ -65,7 +65,7 @@ class _StartTimeCodec:
         (self.cum_valid, self.abs_starts, self.seg_ids, self.run_ids,
          self.valid_per_seg, self.N) = ([], [], [], [], [], [])
         for seg_arr, probs in zip(seg_index, segment_probs):
-            valid = np.maximum(0, seg_arr["nsamples"].astype(np.int64) - self.seq_len)
+            valid = np.maximum(0, seg_arr["nsamples"].astype(np.int64) - self.seq_len + 1)
             valid[probs == 0] = 0
             cum = np.concatenate([[0], np.cumsum(valid)])
             self.cum_valid.append(cum)

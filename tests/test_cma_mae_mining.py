@@ -102,7 +102,7 @@ def test_codec_roundtrips_run_for_pooled_runs():
 
 
 def test_decode_respects_segment_bounds():
-    """Every decoded window lies inside its segment."""
+    """Every decoded window lies inside its segment; the last start too."""
     codec = _StartTimeCodec([_seg()], SEQ, [_probs(_seg())])
     g = np.linspace(0, 1, 200)[:, None]
     s, sg, rn = codec.decode(g)
@@ -110,6 +110,7 @@ def test_decode_respects_segment_bounds():
     for i in range(len(s)):
         base = seg["start"][sg[i, 0]]
         assert base <= s[i, 0] <= base + (NSAMP - SEQ)
+    assert s[-1, 0] == seg["start"][-1] + NSAMP - SEQ
 
 
 def test_decode_skips_undrawn_segments():
