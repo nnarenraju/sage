@@ -89,9 +89,6 @@ class LogSplineSmoothing:
         f = freqs
         p = asd
 
-        # Floor before the log
-        p = np.maximum(p, 1e-60)
-
         mask = f >= self.noise_low_frequency_cutoff
 
         # Fit only above the cutoff
@@ -99,7 +96,9 @@ class LogSplineSmoothing:
         p = p[mask]
 
         logf = np.log(f)
-        logp = np.log(p)
+        # Floor at 1e-60 in log space, as 1e-60 is zero in float32
+        with np.errstate(divide="ignore"):
+            logp = np.maximum(np.log(np.maximum(p, 0.0)), np.log(1e-60))
 
         if smooth_factor is None and self.smooth_factor is None:
             self.smooth_factor = len(logf) * 0.2

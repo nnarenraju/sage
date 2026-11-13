@@ -270,9 +270,9 @@ class AsyncLogger:
     """
     Logger that saves queued entries from a background thread.
 
-    The thread saves each batch of 100 entries to ``filepath`` with
-    ``torch.save``, overwriting the previous batch. Entries logged while
-    the queue is full are dropped.
+    The thread saves each batch of 100 entries, and the last batch when
+    closed, to ``filepath`` with ``torch.save``, overwriting the
+    previous batch. Entries logged while the queue is full are dropped.
 
     Parameters
     ----------
@@ -305,7 +305,7 @@ class AsyncLogger:
             pass  # drop if overloaded
 
     def _worker(self):
-        """Drain the queue, saving each batch of 100 entries."""
+        """Drain the queue, saving each batch of 100 and the last."""
         buffer = []
 
         while self.running or not self.q.empty():
@@ -320,12 +320,11 @@ class AsyncLogger:
             except queue.Empty:
                 continue
 
-    def close(self):
-        """
-        Stop the thread once the queue is drained, and join it.
+        if buffer:
+            torch.save(buffer, self.filepath)
 
-        A final batch of fewer than 100 entries is not saved.
-        """
+    def close(self):
+        """Stop the thread once the queue is drained, and join it."""
         self.running = False
         self.thread.join()
 

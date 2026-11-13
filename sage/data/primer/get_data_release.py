@@ -103,8 +103,9 @@ def validate_segment(
     bin_path : str or Path
         Path to the ``.bin`` file.
     seg_meta : dict
-        Segment metadata with ``"checksum_algo"``, ``"byte_offset"``,
-        ``"byte_length"``, ``"checksum"`` and ``"segment_index"``.
+        Segment metadata with ``"checksum_algorithm"``,
+        ``"byte_offset"``, ``"byte_length"``, ``"checksum"`` and
+        ``"segment_index"``.
     strict : bool
         Raise on a mismatch.
 
@@ -118,7 +119,7 @@ def validate_segment(
     IOError
         If the checksum does not match and ``strict`` is set.
     """
-    algo = seg_meta["checksum_algo"]
+    algo = seg_meta["checksum_algorithm"]
 
     with open(bin_path, "rb") as f:
         f.seek(seg_meta["byte_offset"])
@@ -159,7 +160,7 @@ def validate_all_segments(bin_path, metadata):
             f.seek(seg["byte_offset"])
             raw = f.read(seg["byte_length"])
 
-            h = hashlib.new(seg["checksum_algo"])
+            h = hashlib.new(seg["checksum_algorithm"])
             h.update(raw)
 
             if h.hexdigest() != seg["checksum"]:

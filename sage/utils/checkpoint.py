@@ -247,7 +247,8 @@ class CheckpointManager:
         atomic_json_dump({"epoch": epoch}, self.dir / "progress.json")
         atomic_torch_save(state, self.dir / f"epoch_{epoch:04d}.pt")
         if self.keep != "all":
-            for path in sorted(self.dir.glob("epoch_*.pt"))[: -self.keep]:
+            copies = sorted(self.dir.glob("epoch_*.pt"))
+            for path in copies[: len(copies) - self.keep]:
                 path.unlink()
         if improved:
             atomic_torch_save(state, self.dir / "best.pt")
