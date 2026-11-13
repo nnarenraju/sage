@@ -100,8 +100,8 @@ def merger_frequency(model, theta):
     """
     Tidal merger frequency of one system, from the NRTidalv3 fit.
 
-    Calls ``model._merger_freq_v3`` on the mass fractions, tidal
-    deformabilities and aligned spins.
+    Calls ``model._merger_frequency_v3`` on the total mass, tidal
+    deformabilities, mass ratio and aligned spins.
 
     Parameters
     ----------
@@ -118,11 +118,10 @@ def merger_frequency(model, theta):
     m1, m2 = float(theta[0, 0]), float(theta[0, 1])
     c1, c2 = float(theta[0, 4]), float(theta[0, 7])
     l1, l2 = float(theta[0, 12]), float(theta[0, 13])
-    Mtot = m1 + m2
     one = lambda v: torch.tensor([[v]], dtype=torch.float64)
-    Mf = model._merger_freq_v3(one(m1 / Mtot), one(m2 / Mtot),
-                               one(l1), one(l2), one(c1), one(c2))
-    return float(Mf) / (Mtot * MSUN_S)
+    f_merger = model._merger_frequency_v3(one(m1 + m2), one(l1), one(l2),
+                                          one(m1 / m2), one(c1), one(c2))
+    return float(f_merger)
 
 
 def time_frequency_track(h_band, f_grid, mc):
