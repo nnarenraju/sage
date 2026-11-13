@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Decorators: log a function's references once per session, and trim
+the corrupted edges of a returned segment.
+
 Filename        : decorators.py
 Description     : Short description of the file
 
@@ -23,52 +26,53 @@ Documentation: NULL
 
 """
 
-
-# General
 import functools
 import numpy as np
 
 from functools import wraps
 from dataclasses import dataclass
 
-# LOCAL
 from sage.core.logger import get_logger
 
 logger = get_logger(__name__)
-# Keep track of references logged in this session
+# References already logged in this session
 _logged_references = set()
 
 
 def reference(*urls, category=None):
     """
-    Decorator to log references for a function.
+    Decorator that logs a function's references once per session.
 
     Parameters
     ----------
     *urls : str
-        One or more reference URLs or identifiers.
+        Reference URLs or identifiers.
     category : str, optional
-        Category label for the reference
-        (e.g., "paper", "code", "documentation").
+        Label such as "paper", "code" or "documentation".
 
-    Example usage:
-        @reference(
-            os.path.join(PYCBC_PARENT_URL, "pycbc/filter/resample.html"),
-            os.path.join(PYCBC_PARENT_URL, "pycbc/types/array.html#Array.roll"),
-            category="documentation",
-        )
+    Returns
+    -------
+    callable
+        The decorator.
+
+    Examples
+    --------
+    >>> @reference("https://pycbc.org/", category="code")
+    ... def resample(x): ...
     """
 
     def decorator(func):
+        """Wrap ``func`` to log its references."""
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
+            """Log unseen references, then call ``func``."""
             for url in urls:
                 key = (func.__module__, func.__name__, url)
                 if key not in _logged_references:
                     msg = f"Ref. for {func.__name__} in module {func.__module__}: {url}"
                     if category:
                         msg = f"[{category}] {msg}"
-                    # stacklevel=2 so that logging points to the caller
+                    # stacklevel=2 attributes the record to the caller
                     logger.info(msg, stacklevel=2)
                     _logged_references.add(key)
             return func(*args, **kwargs)
@@ -81,12 +85,10 @@ def reference(*urls, category=None):
 @dataclass(frozen=True)
 class CorruptionBudget:
     """
-    Immutable specification of edge-corruption lengths for a time segment.
+    Corrupted duration at each edge of a processed segment.
 
-    Digital filters, resampling, and Welch windowing introduce artefacts at
-    the left and right edges of a processed segment.  A ``CorruptionBudget``
-    records how many seconds are corrupted on each side so that the
-    ``@corruption`` decorator can trim them automatically.
+    Filters, resampling and Welch windowing corrupt both edges; the
+    ``corruption`` decorator trims them.
 
     Attributes
     ----------
@@ -95,7 +97,7 @@ class CorruptionBudget:
     right : float
         Corrupted duration at the end of the segment (seconds).
     total : float
-        Sum of left and right corruption budgets (property).
+        ``left + right`` (property).
     """
 
     left: float  # seconds
@@ -103,20 +105,47 @@ class CorruptionBudget:
 
     @property
     def total(self):
-        """Total corruption budget in seconds (left + right)."""
+        """
+        Total corrupted duration, ``left + right``, in seconds.
+
+        Returns
+        -------
+        float
+        """
         return self.left + self.right
 
 
 def corruption(budget: CorruptionBudget):
     """
-    Decorator to trim left/right edges of a time series according to CorruptionBudget.
-    Expects a `data_config` keyword argument with a `sample_rate` attribute.
+    Decorator that trims the corrupted edges given by ``budget``.
+
+    The decorated function returns a NumPy array and takes a
+    ``data_config`` keyword argument with a ``sample_rate`` attribute.
+
+    Parameters
+    ----------
+    budget : CorruptionBudget
+        Corrupted seconds at each edge.
+
+    Returns
+    -------
+    callable
+        The decorator.
+
+    Raises
+    ------
+    ValueError
+        If ``data_config`` or its ``sample_rate`` is missing, or the
+        budget covers the whole segment.
+    TypeError
+        If the function does not return a NumPy array.
     """
 
     def decorator(func):
+        """Wrap ``func`` to trim its returned segment."""
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Expect data_config in kwargs
+            """Call ``func`` and trim the corrupted edges."""
             data_cfg = kwargs.get("data_config", None)
             if data_cfg is None:
                 raise ValueError("data_config must be provided to apply corruption")
@@ -125,7 +154,7 @@ def corruption(budget: CorruptionBudget):
             if sample_rate is None:
                 raise ValueError("data_config must have a sample_rate attribute")
 
-            ts = func(*args, **kwargs)  # original segment
+            ts = func(*args, **kwargs)
             if not isinstance(ts, np.ndarray):
                 raise TypeError(
                     "Corruption decorator expects function to return np.ndarray"

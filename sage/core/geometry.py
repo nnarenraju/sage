@@ -1,4 +1,5 @@
-"""The analysis window geometry, computed once from the ``data`` settings."""
+"""The analysis window geometry, computed once from the ``data``
+settings."""
 
 from dataclasses import dataclass
 

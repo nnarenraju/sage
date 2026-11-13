@@ -2,6 +2,9 @@
 #!/usr/bin/env python
 
 """
+Class decorator that prints a warning whenever an unreviewed model is
+built.
+
 Filename         =  decorators.py
 Description      =  Sage decorators
 
@@ -26,11 +29,7 @@ Documentation: NULL
 
 def unreviewed_model(cls):
     """
-    Class decorator that prints a warning when an unreviewed model is instantiated.
-
-    Wraps the class constructor so that a prominent notice is printed any
-    time the decorated model is created.  Used to flag experimental
-    architectures that have not yet been validated on real data.
+    Class decorator that prints a warning whenever the model is built.
 
     Parameters
     ----------
@@ -40,11 +39,10 @@ def unreviewed_model(cls):
     Returns
     -------
     callable
-        A replacement constructor that prints the warning before delegating
-        to the original class.
+        A function that prints the warning, then builds ``cls``.
     """
     def mark_as_unreviewed(*args, **kwargs):
-        """Print an unreviewed-model warning and construct the wrapped class."""
+        """Print the warning, then build ``cls``."""
         print('UNREVIEWED: {} model has not be examined for issues'.format(cls.__name__))
         print('Use at your own discretion!')
         return cls(*args, **kwargs)

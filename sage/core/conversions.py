@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Unit and mass conversions: seconds and samples, component masses,
+chirp mass, symmetric mass ratio and chirp distance.
+
 Filename        : conversions.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 
@@ -40,16 +42,15 @@ def seconds_to_samples(nseconds, sample_rate, approx_mode=int, rounding=True):
     approx_mode : callable
         Type coercion applied to the result (default :class:`int`).
     rounding : bool
-        If ``True`` (default) the result is rounded before coercion, avoiding
-        floating-point artefacts at exact integer multiples.
+        If ``True`` (default), the product is rounded before
+        coercion.
 
     Returns
     -------
-    int (or approx_mode result)
-        Number of samples corresponding to the given duration.
+    int or approx_mode result
+        Number of samples.
     """
     if rounding:
-        # No need to change the base for rounding
         return approx_mode(round(nseconds * sample_rate))
     else:
         return approx_mode(nseconds * sample_rate)
@@ -76,20 +77,20 @@ def samples_to_seconds(nsamples, sample_rate):
 
 def mchirp_eta_to_mass1_mass2(mchirp: torch.Tensor, eta: torch.Tensor):
     """
-    Convert chirp mass and symmetric mass ratio to individual component masses.
+    Component masses from chirp mass and symmetric mass ratio.
 
-    Args:
-        mchirp (torch.Tensor): Chirp mass of the binary (any units)
-        eta (torch.Tensor): Symmetric mass ratio (dimensionless, 0 < eta <= 0.25)
+    Parameters
+    ----------
+    mchirp : torch.Tensor
+        Chirp mass, in any unit.
+    eta : torch.Tensor
+        Symmetric mass ratio, ``0 < eta <= 0.25``.
 
-    Returns:
-        tuple[torch.Tensor, torch.Tensor]:
-            - m1 : Mass of the heavier component
-            - m2 : Mass of the lighter component
-
-    Notes:
-        - The returned masses satisfy m1 >= m2.
-        - Component masses are in the same units as the input chirp mass.
+    Returns
+    -------
+    mass1, mass2 : torch.Tensor
+        Heavier and lighter component masses, in the unit of
+        ``mchirp``.
     """
     M = mchirp / eta ** (3 / 5)
     mass2 = (M - torch.sqrt(M**2 - 4 * M**2 * eta)) / 2
@@ -98,28 +99,79 @@ def mchirp_eta_to_mass1_mass2(mchirp: torch.Tensor, eta: torch.Tensor):
 
 
 def eta_from_mass1_mass2(mass1, mass2):
-    """Returns the symmetric mass ratio from mass1 and mass2."""
+    """
+    Symmetric mass ratio from the component masses.
+
+    Parameters
+    ----------
+    mass1, mass2 : array-like
+        Component masses.
+
+    Returns
+    -------
+    array-like
+        ``mass1 * mass2 / (mass1 + mass2) ** 2``.
+    """
     return mass1 * mass2 / (mass1 + mass2) ** 2.0
 
 
 def mchirp_from_mass1_mass2(mass1, mass2):
-    """Returns the chirp mass from mass1 and mass2."""
+    """
+    Chirp mass from the component masses.
+
+    Parameters
+    ----------
+    mass1, mass2 : array-like
+        Component masses.
+
+    Returns
+    -------
+    array-like
+        Chirp mass, in the unit of the masses.
+    """
     return eta_from_mass1_mass2(mass1, mass2) ** (3.0 / 5) * (mass1 + mass2)
 
 
 def chirp_distance(dist, mchirp, ref_mass=1.4):
-    """Returns the chirp distance given the luminosity distance and chirp mass.
+    """
+    Chirp distance, as ``pycbc.conversions.chirp_distance``.
 
-    As ``pycbc.conversions.chirp_distance``; the reference chirp mass is that
-    of an equal-mass binary of ``ref_mass`` components.
+    Parameters
+    ----------
+    dist : array-like
+        Luminosity distance.
+    mchirp : array-like
+        Chirp mass.
+    ref_mass : float
+        Component mass of the equal-mass reference binary.
+
+    Returns
+    -------
+    array-like
+        Chirp distance, in the unit of ``dist``.
     """
     return dist * (2.0 ** (-1.0 / 5) * ref_mass / mchirp) ** (5.0 / 6)
 
 
 def distance_from_chirp_distance_mchirp(chirp_distance, mchirp, ref_mass=1.4):
-    """Returns the luminosity distance given a chirp distance and chirp mass.
+    """
+    Luminosity distance from chirp distance.
 
     As ``pycbc.conversions.distance_from_chirp_distance_mchirp``.
+
+    Parameters
+    ----------
+    chirp_distance : array-like
+        Chirp distance.
+    mchirp : array-like
+        Chirp mass.
+    ref_mass : float
+        Component mass of the equal-mass reference binary.
+
+    Returns
+    -------
+    array-like
+        Luminosity distance, in the unit of ``chirp_distance``.
     """
     return chirp_distance * (2.0 ** (-1.0 / 5) * ref_mass / mchirp) ** (-5.0 / 6)
 
@@ -136,7 +188,7 @@ def mass1_mass2_to_mchirp_eta(mass1, mass2):
     Returns
     -------
     tuple
-        ``(mchirp, eta)`` — chirp mass and symmetric mass ratio.
+        ``(mchirp, eta)``: chirp mass and symmetric mass ratio.
     """
     mchirp = mchirp_from_mass1_mass2(mass1, mass2)
     eta = eta_from_mass1_mass2(mass1, mass2)

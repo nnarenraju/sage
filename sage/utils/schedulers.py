@@ -1,4 +1,5 @@
-"""Which job schedulers this machine has, from their client commands on PATH."""
+"""Job schedulers available on this machine, from their client commands
+on PATH."""
 
 import shutil
 

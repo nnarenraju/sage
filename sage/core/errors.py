@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Calls that log a failure and return a fallback value instead of
+raising.
+
 Filename        : errors.py
 Description     : Short description of the file
 
@@ -23,8 +26,6 @@ Documentation: NULL
 
 """
 
-
-# LOCAL
 from sage.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -32,11 +33,10 @@ logger = get_logger(__name__)
 
 def safe_call(func, *args, fallback_return=None, **kwargs):
     """
-    Call ``func`` and suppress any exception, returning a fallback value instead.
+    ``func(*args, **kwargs)``, or ``fallback_return`` if it raises.
 
-    Logs the exception at ERROR level (with function name, args, kwargs, and
-    traceback message) then returns ``fallback_return`` so the caller can
-    continue gracefully.
+    A failure is logged at ERROR level with the function name, the
+    arguments and the exception.
 
     Parameters
     ----------
@@ -45,15 +45,14 @@ def safe_call(func, *args, fallback_return=None, **kwargs):
     *args
         Positional arguments forwarded to ``func``.
     fallback_return : any
-        Value returned if ``func`` raises (default ``None``).
+        Value returned if ``func`` raises.
     **kwargs
         Keyword arguments forwarded to ``func``.
 
     Returns
     -------
     any
-        The return value of ``func(*args, **kwargs)``, or ``fallback_return``
-        if an exception was raised.
+        The result of ``func``, or ``fallback_return`` if it raised.
     """
 
     try:

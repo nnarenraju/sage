@@ -1,20 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-"""
-Sage pipeline building blocks.
+"""Pipeline building blocks: the ordered preprocessing chain
+(``Preprocessor``) and a per-sample module choice (``TorchChoice``)."""
 
-Preprocessor
-    Ordered chain of preprocessing steps (whitening, min-max normalisation,
-    multirate sampling) on :class:`~sage.core.pipeline.GWBatch` objects. The
-    order is checked when the chain is built.
-
-TorchChoice
-    Probabilistic per-sample module selection.  Useful for augmentation or
-    domain randomisation.
-"""
-
-# Packages
 import torch
 import torch.nn as nn
 
@@ -28,17 +17,8 @@ class Preprocessor(nn.Module):
     Ordered preprocessing chain for gravitational-wave batches.
 
     Each step declares the state it takes and gives through a static
-    ``next_state(state)``. The chain is walked once at construction, so a step
-    in an impossible position raises before any data flows. For example::
-
-        Preprocessor(
-            [FiducialWhitening(asds, window, device),
-             MultirateSampler(bins, window, device, dtype)],
-            ProcessingState(Grid.FD_UNIFORM),
-        )
-
-    The caller wraps the input in a GWBatch and takes
-    ``batch.to_network_input()`` from the result.
+    ``next_state(state)``; the chain is checked at construction. Input
+    and output are ``GWBatch`` objects.
 
     Parameters
     ----------
@@ -58,6 +38,12 @@ class Preprocessor(nn.Module):
         If a step cannot take the state the step before it gives.
     TypeError
         If a module does not declare ``next_state``.
+
+    Examples
+    --------
+    >>> Preprocessor([FiducialWhitening(asds, window, device),
+    ...               MultirateSampler(bins, window, device, dtype)],
+    ...              ProcessingState(Grid.FD_UNIFORM))
     """
 
     def __init__(self, modules: List[nn.Module], input_state: ProcessingState):
@@ -103,17 +89,14 @@ class Preprocessor(nn.Module):
 
 class TorchChoice(nn.Module):
     """
-    Choose one module per sample according to provided probabilities.
-
-    Useful for data augmentation that should apply different transforms
-    to different samples within a batch.
+    One module per sample, drawn with the given probabilities.
 
     Parameters
     ----------
     modules : list of nn.Module
         Candidate modules.
     probabilities : list of float
-        Probability of selecting each module (automatically normalised).
+        Probability of each module; normalised to sum to 1.
     """
 
     def __init__(self, modules: List[nn.Module], probabilities: List[float]):
@@ -124,6 +107,21 @@ class TorchChoice(nn.Module):
         self.register_buffer("probs", probs / probs.sum())
 
     def forward(self, x, generator=None):
+        """
+        Apply a randomly chosen module to each sample.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Batch, samples along the first axis.
+        generator : torch.Generator, optional
+            Random generator for the choice.
+
+        Returns
+        -------
+        torch.Tensor
+            Batch of the same shape.
+        """
         B = x.shape[0]
         device = x.device
         probs = self.probs.to(device)

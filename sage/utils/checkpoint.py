@@ -1,24 +1,10 @@
-"""Training checkpoints, in one self-contained format.
+"""
+Training checkpoints, each holding the run record and the training
+state, so one file suffices to resume, evaluate or search.
 
-Every file holds the run record and the training state, so a checkpoint alone
-is enough to resume, evaluate or search::
-
-    record                 resolved run.yaml, prior.yaml, derived.yaml and
-                           versions.yaml as text; the fiducial files (name -> bytes)
-    epoch                  last finished epoch
-    validation_loss        this epoch's, or None
-    best_validation_loss
-    model                  weights (uncompiled names)
-    optimiser, schedule    states
-    scaler, ema            states, or None without a loss scaler or EMA
-    rng                    torch, cuda, numpy and python generator states
-    timestamp
-
-``checkpoints/`` holds ``latest.pt`` (every epoch), ``best.pt`` (lowest
-validation loss), ``epoch_NNNN.pt`` (the newest ``keep`` epochs) and, with EMA,
-``ema.pt``: the averaged weights as ``model``, training-only entries None; after
-training, ``ema_calibrated.pt`` is ``ema.pt`` with recalibrated batch-norm
-statistics.
+``checkpoints/`` holds ``latest.pt``, ``best.pt``, the newest ``keep``
+``epoch_NNNN.pt`` and, with EMA, ``ema.pt``: the averaged weights as
+``model``, training-only entries None.
 """
 
 import json
@@ -35,15 +21,35 @@ TRAINING_ONLY = ("optimiser", "schedule", "scaler", "ema", "rng")
 
 
 def atomic_torch_save(obj, path):
-    """``torch.save`` to a sibling temp file then ``os.replace`` (atomic on the
-    same filesystem), so a crash mid-write never truncates a good checkpoint."""
+    """
+    ``torch.save`` to a temp file, then move it over ``path``.
+
+    The move is atomic on one filesystem, so a crash mid-write leaves
+    the previous file intact.
+
+    Parameters
+    ----------
+    obj : object
+        Object to save.
+    path : str or Path
+        Output file.
+    """
     tmp = f"{path}.tmp"
     torch.save(obj, tmp)
     os.replace(tmp, path)
 
 
 def atomic_json_dump(obj, path):
-    """``json.dump`` via a temp file + atomic ``os.replace`` (same rationale)."""
+    """
+    ``json.dump`` to a temp file, then move it atomically over ``path``.
+
+    Parameters
+    ----------
+    obj : object
+        JSON-serialisable object.
+    path : str or Path
+        Output file.
+    """
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
         json.dump(obj, f)
@@ -51,7 +57,14 @@ def atomic_json_dump(obj, path):
 
 
 def rng_state() -> dict:
-    """States of the global torch, CUDA, NumPy and Python generators."""
+    """
+    States of the global torch, CUDA, NumPy and Python generators.
+
+    Returns
+    -------
+    dict
+        ``torch``, ``cuda`` (None without CUDA), ``numpy``, ``python``.
+    """
     return {
         "torch": torch.get_rng_state(),
         "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
@@ -61,8 +74,15 @@ def rng_state() -> dict:
 
 
 def set_rng_state(state: dict) -> None:
-    """Restore the global generators from :func:`rng_state`."""
-    # map_location moves the generator states too; set_rng_state needs them on CPU.
+    """
+    Restore the global generators from :func:`rng_state`.
+
+    Parameters
+    ----------
+    state : dict
+        Output of :func:`rng_state`, on any device.
+    """
+    # set_rng_state needs CPU states; map_location may have moved them
     torch.set_rng_state(state["torch"].cpu())
     if torch.cuda.is_available() and state["cuda"] is not None:
         torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda"]])
@@ -72,7 +92,7 @@ def set_rng_state(state: dict) -> None:
 
 def restore(state: dict, model, optimiser, schedule, scaler, ema_model) -> None:
     """
-    Load a checkpoint's training state into a run and the global generators.
+    Load a checkpoint's training state and global generator states.
 
     Parameters
     ----------
@@ -86,7 +106,9 @@ def restore(state: dict, model, optimiser, schedule, scaler, ema_model) -> None:
     schedule.load_state_dict(state["schedule"])
     if scaler is not None:
         scaler.load_state_dict(state["scaler"])
-    if ema_model is not None and state["ema"] is not None:  # a clone turning EMA on keeps it at the cloned weights
+    # A clone that turns EMA on has no saved EMA state; its EMA
+    # keeps the cloned weights
+    if ema_model is not None and state["ema"] is not None:
         ema_model.load_state_dict(state["ema"])
     set_rng_state(state["rng"])
 
@@ -105,6 +127,11 @@ def run_record(run_dir: Path) -> dict:
     dict
         ``run``, ``prior``, ``derived``, ``versions`` (YAML text) and
         ``fiducial`` (file name to bytes).
+
+    Raises
+    ------
+    FileNotFoundError
+        If a record file or ``resolved/fiducial`` is missing.
     """
     resolved = Path(run_dir) / "resolved"
     record = {name: (resolved / f"{name}.yaml").read_text() for name in RECORD_FILES}
@@ -113,24 +140,39 @@ def run_record(run_dir: Path) -> dict:
 
 
 def next_epoch(run_dir: Path) -> int:
-    """The epoch a run starts at: last saved epoch + 1, or 0 before any checkpoint."""
+    """
+    Epoch a run starts at: last saved epoch + 1, or 0 if none is saved.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory; read from ``checkpoints/progress.json``.
+
+    Returns
+    -------
+    int
+    """
     marker = Path(run_dir) / "checkpoints" / "progress.json"
     return json.loads(marker.read_text())["epoch"] + 1 if marker.exists() else 0
 
 
 class CheckpointManager:
     """
-    Saves a run's checkpoints every epoch and restores the latest on resume.
+    Saves a run's checkpoints every epoch and restores the latest.
 
     Parameters
     ----------
     run_dir : Path
         Run directory; checkpoints go to ``checkpoints/``.
     model : nn.Module
-        The network, uncompiled (so weight names carry no compile prefix).
+        The network, uncompiled, so weight names carry no compile
+        prefix.
     optimiser : torch.optim.Optimizer
+        The optimiser.
     schedule : torch.optim.lr_scheduler.LRScheduler
+        The learning-rate schedule.
     scaler : torch.amp.GradScaler or None
+        The loss scaler, if any.
     ema_model : torch.optim.swa_utils.AveragedModel or None
         The EMA of the weights, when EMA is on.
     keep : int or str
@@ -150,6 +192,22 @@ class CheckpointManager:
         self.best_validation_loss = float("inf")
 
     def _state(self, epoch, validation_loss):
+        """
+        Checkpoint contents after ``epoch``.
+
+        Parameters
+        ----------
+        epoch : int
+            Epoch just finished.
+        validation_loss : float or None
+            This epoch's validation loss.
+
+        Returns
+        -------
+        dict
+            Record, epoch, losses, model and training states, generator
+            states and a timestamp.
+        """
         return {
             "record": self.record,
             "epoch": epoch,
@@ -166,15 +224,19 @@ class CheckpointManager:
 
     def save(self, epoch: int, validation_loss) -> None:
         """
-        Write ``latest.pt``, ``epoch_NNNN.pt``, ``best.pt`` when the
-        validation loss improved, and ``ema.pt`` with EMA.
+        Write the checkpoints of an epoch.
+
+        ``latest.pt``, ``progress.json`` and ``epoch_NNNN.pt`` (older
+        copies beyond ``keep`` deleted); ``best.pt`` when the validation
+        loss improved, and ``ema.pt`` with EMA.
 
         Parameters
         ----------
         epoch : int
             Epoch just finished.
         validation_loss : float or None
-            This epoch's validation loss; None when validation did not run.
+            This epoch's validation loss; None when validation did not
+            run.
         """
         improved = validation_loss is not None and validation_loss < self.best_validation_loss
         if improved:

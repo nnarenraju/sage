@@ -1,19 +1,7 @@
 """
-Sage pipeline state tracking.
-
-Grid, ProcessingState, PipelineError, and GWBatch form a lightweight
-state machine that tracks how a batch of gravitational-wave data has been
-processed and raises informative errors when an invalid operation is attempted.
-
-The supported pipeline paths are:
-
-    FD_UNIFORM  →  FiducialWhitening  →  TD_UNIFORM  →  MultirateSampler  →  TD_MULTIRATE
-                   (whiten + IFFT)           (decimate)
-
-    FD_UNIFORM  →  FiducialWhitening  →  TD_UNIFORM
-                   (no multirate)
-
-An invalid step raises PipelineError immediately, before any computation begins.
+Processing state of a gravitational-wave batch (grid, whitening), its
+valid transitions, and the channel layout of the network input. An
+invalid transition raises ``PipelineError``.
 """
 
 from __future__ import annotations
@@ -24,42 +12,31 @@ from enum import Enum
 import torch
 
 
-# ── Grid type ─────────────────────────────────────────────────────────────────
-
-
 class Grid(str, Enum):
-    """The frequency/time grid type of the current data representation."""
+    """Frequency or time grid of the data."""
 
-    FD_UNIFORM   = "fd_uniform"    # full uniform FD grid — IFFT-able
-    TD_UNIFORM   = "td_uniform"    # uniform time domain — multirate-able
-    TD_MULTIRATE = "td_multirate"  # decimated time domain — network input
-
-
-# ── Error type ────────────────────────────────────────────────────────────────
+    FD_UNIFORM   = "fd_uniform"    # full uniform FD grid, IFFT-able
+    TD_UNIFORM   = "td_uniform"    # uniform time domain, multirate-able
+    TD_MULTIRATE = "td_multirate"  # decimated time domain, network input
 
 
 class PipelineError(RuntimeError):
-    """Raised when an invalid processing step is attempted given the current state."""
+    """Invalid processing step for the current state."""
     pass
-
-
-# ── Immutable processing state ────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class ProcessingState:
     """
-    Immutable descriptor of a GWBatch's processing history.
+    Immutable processing state of a ``GWBatch``.
 
-    Each transition method returns a **new** ProcessingState or raises
-    PipelineError when the requested operation is incompatible with the
-    current state.  Validation fires at call time — before any tensor
-    operations — so invalid pipelines fail fast.
+    Each transition returns a new state, or raises ``PipelineError``
+    before any tensor operation when the step is invalid.
 
     Parameters
     ----------
     grid : Grid
-        Current frequency/time grid type.
+        Current grid.
     whitened : bool
         Whether the batch has been whitened (divided by the ASD).
     """
@@ -67,21 +44,50 @@ class ProcessingState:
     grid:     Grid
     whitened: bool = False
 
-    # ── Compatibility queries ──────────────────────────────────────────────
-
     def is_fd(self) -> bool:
+        """
+        Whether the data are on the uniform frequency grid.
+
+        Returns
+        -------
+        bool
+        """
         return self.grid == Grid.FD_UNIFORM
 
     def is_td(self) -> bool:
+        """
+        Whether the data are on a time grid, uniform or multirate.
+
+        Returns
+        -------
+        bool
+        """
         return self.grid in (Grid.TD_UNIFORM, Grid.TD_MULTIRATE)
 
     def n_channels(self) -> int:
-        """Number of network input channels: 1 for TD (real), 2 for FD (real+imag)."""
+        """
+        Network input channels per detector: 1 for TD, 2 for FD.
+
+        Returns
+        -------
+        int
+        """
         return 1 if self.is_td() else 2
 
-    # ── State transitions ──────────────────────────────────────────────────
-
     def after_whiten(self) -> ProcessingState:
+        """
+        State after whitening.
+
+        Returns
+        -------
+        ProcessingState
+            Same grid, with ``whitened=True``.
+
+        Raises
+        ------
+        PipelineError
+            If the data are already whitened.
+        """
         if self.whitened:
             raise PipelineError(
                 f"Data is already whitened ({self}). Cannot whiten twice."
@@ -89,6 +95,19 @@ class ProcessingState:
         return ProcessingState(self.grid, whitened=True)
 
     def after_ifft(self) -> ProcessingState:
+        """
+        State after an inverse FFT.
+
+        Returns
+        -------
+        ProcessingState
+            ``TD_UNIFORM`` grid, whitening unchanged.
+
+        Raises
+        ------
+        PipelineError
+            If the grid is not ``FD_UNIFORM``.
+        """
         if self.grid != Grid.FD_UNIFORM:
             raise PipelineError(
                 f"Cannot IFFT from {self.grid}: only FD_UNIFORM supports IFFT."
@@ -96,6 +115,19 @@ class ProcessingState:
         return ProcessingState(Grid.TD_UNIFORM, self.whitened)
 
     def after_multirate(self) -> ProcessingState:
+        """
+        State after multirate sampling.
+
+        Returns
+        -------
+        ProcessingState
+            ``TD_MULTIRATE`` grid, whitening unchanged.
+
+        Raises
+        ------
+        PipelineError
+            If the grid is not ``TD_UNIFORM``.
+        """
         if self.grid != Grid.TD_UNIFORM:
             raise PipelineError(
                 f"Cannot apply multirate sampling to {self.grid}.\n"
@@ -111,9 +143,6 @@ class ProcessingState:
         return f"ProcessingState({', '.join(parts)})"
 
 
-# ── Batch wrapper ─────────────────────────────────────────────────────────────
-
-
 @dataclass
 class GWBatch:
     """
@@ -122,11 +151,10 @@ class GWBatch:
     Parameters
     ----------
     data : torch.Tensor
-        Shape ``(B, D, F)`` complex for FD grids, or ``(B, D, T)`` float32
+        Shape ``(B, D, F)`` complex for FD grids, or ``(B, D, T)`` real
         for TD grids.
     state : ProcessingState
-        Current processing state — tracks the grid type and whether the
-        batch has been whitened.
+        Grid and whitening state of ``data``.
     """
 
     data:  torch.Tensor
@@ -134,19 +162,24 @@ class GWBatch:
 
     @property
     def n_channels(self) -> int:
-        """Network input channels: 1 (TD, real) or 2 (FD, real + imag)."""
+        """
+        Network input channels per detector: 1 for TD, 2 for FD.
+
+        Returns
+        -------
+        int
+        """
         return self.state.n_channels()
 
     def to_network_input(self) -> torch.Tensor:
         """
-        Convert to a real float tensor ready for the neural network.
+        Real tensor for the network.
 
         Returns
         -------
         torch.Tensor
-            TD data ``(B, D, T)`` — returned as-is (already float32).
-            FD data ``(B, D, F)`` complex — real and imaginary parts of
-            every detector are stacked into ``(B, 2·D, F)`` float32.
+            TD data ``(B, D, T)`` as is; FD data ``(B, D, F)`` as all
+            real parts, then all imaginary parts, ``(B, 2 D, F)``.
         """
         if self.state.is_td():
             return self.data                                    # (B, D, T)
@@ -156,25 +189,26 @@ class GWBatch:
         return f"GWBatch(shape={tuple(self.data.shape)}, state={self.state})"
 
 
-# ── Network channel-layout contract ───────────────────────────────────────────
-
-
 def blocked_detector_channel_indices(d, num_detectors, channels_per_det=2):
     """
-    Channel indices for detector ``d`` in the BLOCKED real-channel layout that
-    :meth:`GWBatch.to_network_input` produces for FD grids.
+    Channels of detector ``d`` in the FD network input layout.
 
-    ``to_network_input`` returns ``torch.cat([data.real, data.imag], dim=1)``, so
-    for ``D`` detectors the channels are grouped by part (all reals, then all
-    imags) — NOT interleaved per detector::
+    :meth:`GWBatch.to_network_input` stacks all real parts, then all
+    imaginary parts, so part ``k`` of detector ``d`` is at channel
+    ``k * num_detectors + d``; channels are not interleaved by detector.
 
-        [det0_re, det1_re, ..., det(D-1)_re, det0_im, det1_im, ..., det(D-1)_im]
+    Parameters
+    ----------
+    d : int
+        Detector index.
+    num_detectors : int
+        Number of detectors.
+    channels_per_det : int
+        Parts per detector (default 2, real and imaginary).
 
-    Detector ``d``'s real part is therefore at channel ``d`` and its imaginary
-    part at ``D + d`` (in general, part ``k`` at ``k*D + d``).  A network that
-    instead slices ``[d*C : (d+1)*C]`` (interleaved) scrambles detectors for
-    ``D >= 2`` — stream 0 becomes all reals, stream 1 all imags.  Any consumer of
-    ``to_network_input`` that needs per-detector channels must gather them via
-    this function.
+    Returns
+    -------
+    list of int
+        Channel index of each part of detector ``d``.
     """
     return [d + k * num_detectors for k in range(channels_per_det)]

@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Seeds of a run's random streams, from NumPy's ``SeedSequence``.
+
 Filename        : seed.py
 Description     : Short description of the file
 
@@ -27,7 +29,7 @@ import numpy as np
 import torch
 
 
-# Every random stream of a run, by its spawn key (append only: a key's meaning never changes).
+# Spawn key of each random stream; append only, keys never change
 STREAMS = {
     "prior": 0, "snr": 1, "gmst": 2, "noise": 3, "recolour": 4, "placement": 5, "mining": 6, "global": 7,
     "non_astrophysical_prior": 8, "non_astrophysical_snr": 9, "non_astrophysical_gmst": 10, "non_astrophysical": 11,
@@ -36,7 +38,10 @@ STREAMS = {
 
 def stream_seed(seed: int, stream: str, epoch: int = 0) -> int:
     """
-    Seed of one random stream: NumPy's ``SeedSequence(seed)`` child keyed by the stream and the epoch.
+    Seed of one random stream of a run.
+
+    The child of NumPy's ``SeedSequence(seed)`` with spawn key
+    ``(stream key, epoch)``.
 
     Parameters
     ----------
@@ -63,5 +68,22 @@ def stream_seed(seed: int, stream: str, epoch: int = 0) -> int:
 
 
 def generator(seed: int, stream: str, epoch: int, device) -> torch.Generator:
-    """A torch generator on ``device`` seeded with ``stream_seed(seed, stream, epoch)``."""
+    """
+    Torch generator on ``device`` seeded with ``stream_seed``.
+
+    Parameters
+    ----------
+    seed : int
+        The run's seed.
+    stream : str
+        One of ``STREAMS``.
+    epoch : int
+        Epoch a training segment starts at; 0 for validation.
+    device : str or torch.device
+        Device of the generator.
+
+    Returns
+    -------
+    torch.Generator
+    """
     return torch.Generator(device=device).manual_seed(stream_seed(seed, stream, epoch))

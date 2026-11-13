@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Numerical helpers: gradient-safe square roots, a glibc-exact cube
+root, min-max and z-score scalers, and axis rotation matrices.
+
 Filename        : math.py
 Description     : Short description of the file
 
@@ -23,23 +26,17 @@ Documentation: NULL
 
 """
 
-# Packages
 import numpy as np
 import torch
 
 
 def safe_sqrt(x):
     """
-    ``sqrt(x)`` with a zero, rather than infinite, derivative at ``x = 0``.
+    ``sqrt(x)`` with a zero, not infinite, derivative at ``x = 0``.
 
-    The square root is evaluated on an operand masked away from zero and
-    the exact-zero entries are restored afterwards, so the returned
-    values are bit-identical to :func:`torch.sqrt` while the backward
-    pass stays finite.  Used where a physically attainable limit sits on
-    the branch point, e.g. the Wigner half-angle coefficients
-    ``sin(beta/2) = sqrt((1 - cos beta) / 2)`` of the precessing
-    waveform models, which reach ``cos beta = 1`` in the aligned-spin
-    limit.
+    The root is taken on an operand masked away from zero, so values
+    are bit-identical to :func:`torch.sqrt` for ``x >= 0``. Used where
+    an attainable limit sits on the branch point, e.g. ``cos beta = 1``.
 
     Parameters
     ----------
@@ -64,12 +61,42 @@ class _StrongZeroSqrt(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        """
+        Square root of ``x``, saved for the backward pass.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context.
+        x : torch.Tensor
+            Non-negative operand.
+
+        Returns
+        -------
+        torch.Tensor
+            ``sqrt(x)``.
+        """
         result = torch.sqrt(x)
         ctx.save_for_backward(result)
         return result
 
     @staticmethod
     def backward(ctx, grad: torch.Tensor) -> torch.Tensor:
+        """
+        Gradient ``grad / (2 sqrt(x))``, and 0 where ``grad`` is 0.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding ``sqrt(x)``.
+        grad : torch.Tensor
+            Gradient with respect to the output.
+
+        Returns
+        -------
+        torch.Tensor
+            Gradient with respect to ``x``.
+        """
         (result,) = ctx.saved_tensors
         return torch.where(grad == 0, torch.zeros_like(grad), grad / (2.0 * result))
 
@@ -139,6 +166,21 @@ class _Cbrt(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        """
+        glibc ``cbrt``; zero and non-finite entries return ``x + x``.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context; ``x`` is saved for the backward pass.
+        x : torch.Tensor
+            Float64 operand.
+
+        Returns
+        -------
+        torch.Tensor
+            ``cbrt(x)``.
+        """
         ctx.save_for_backward(x)
         xm, xe = torch.frexp(torch.abs(x))
         u = 0.784932344976639262 - 0.145263899385486377 * xm
@@ -154,6 +196,21 @@ class _Cbrt(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad: torch.Tensor) -> torch.Tensor:
+        """
+        Gradient of ``x ** (1/3)``, ``grad * x ** (-2/3) / 3``.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding ``x``.
+        grad : torch.Tensor
+            Gradient with respect to the output.
+
+        Returns
+        -------
+        torch.Tensor
+            Gradient with respect to ``x``.
+        """
         (x,) = ctx.saved_tensors
         return grad * ((1.0 / 3.0) * x.pow(1.0 / 3.0 - 1.0))
 
@@ -181,11 +238,8 @@ class Normalise:
     """
     Min-max normalisation to the unit interval ``[0, 1]``.
 
-    Maps ``val`` linearly so that ``min_val`` → 0 and ``max_val`` → 1.
-    Provides a symmetric :meth:`unnorm` inverse.  Used by
-    :class:`~sage.data.waveform.sampler.DistributionSampler` to normalise
-    waveform parameters to a common scale before regression targets are
-    passed to the network.
+    Maps ``min_val`` to 0 and ``max_val`` to 1; :meth:`unnorm` inverts
+    the map.
 
     Parameters
     ----------
@@ -200,11 +254,35 @@ class Normalise:
         self.max_val = max_val
 
     def norm(self, val):
-        """Normalise ``val`` to ``[0, 1]``."""
+        """
+        Normalise ``val`` to ``[0, 1]``.
+
+        Parameters
+        ----------
+        val : float or array-like
+            Value on the original scale.
+
+        Returns
+        -------
+        float or array-like
+            ``(val - min_val) / (max_val - min_val)``.
+        """
         return (val - self.min_val) / (self.max_val - self.min_val)
 
     def unnorm(self, val):
-        """Invert normalisation, recovering the original scale."""
+        """
+        Map a normalised value back to the original scale.
+
+        Parameters
+        ----------
+        val : float or array-like
+            Normalised value.
+
+        Returns
+        -------
+        float or array-like
+            ``val * (max_val - min_val) + min_val``.
+        """
         return (val * (self.max_val - self.min_val)) + self.min_val
 
 
@@ -212,8 +290,8 @@ class Standardise:
     """
     Z-score standardisation to zero mean and unit variance.
 
-    Maps ``val`` so that the distribution has mean 0 and std 1.  The small
-    ``eps`` guard prevents division by zero for constant-valued parameters.
+    ``eps`` is added to ``std`` to avoid division by zero for a
+    constant parameter; :meth:`unnorm` inverts the map.
 
     Parameters
     ----------
@@ -222,7 +300,7 @@ class Standardise:
     std : float
         Population standard deviation of the parameter.
     eps : float
-        Numerical stability guard (default 1e-8).
+        Added to ``std`` in both directions (default 1e-8).
     """
 
     def __init__(self, mean, std, eps=1e-8):
@@ -231,31 +309,59 @@ class Standardise:
         self.eps = eps
 
     def norm(self, val):
-        """Standardise ``val`` to zero mean, unit variance."""
+        """
+        Standardise ``val`` to zero mean and unit variance.
+
+        Parameters
+        ----------
+        val : float or array-like
+            Value on the original scale.
+
+        Returns
+        -------
+        float or array-like
+            ``(val - mean) / (std + eps)``.
+        """
         return (val - self.mean) / (self.std + self.eps)
 
     def unnorm(self, val):
-        """Invert standardisation, recovering the original scale."""
+        """
+        Map a standardised value back to the original scale.
+
+        Parameters
+        ----------
+        val : float or array-like
+            Standardised value.
+
+        Returns
+        -------
+        float or array-like
+            ``val * (std + eps) + mean``.
+        """
         return val * (self.std + self.eps) + self.mean
 
 
-# Refer: https://docs.astropy.org/en/stable/_modules/astropy/coordinates/matrix_utilities.html#rotation_matrix
+# Adapted from astropy.coordinates.matrix_utilities.rotation_matrix
 def rotation_matrix(angle_in_rad, axis=2):
     """
-    Generate matrices for rotation by some angle around some axis.
-    This version ONLY supports x,y,z axes; general axis version removed
+    Matrix of a rotation by a scalar angle about the x, y or z axis.
 
     Parameters
     ----------
-    angle : angle-like
-        The amount of rotation the matrices should represent.  Can be an array.
+    angle_in_rad : float
+        Rotation angle in radians.
     axis : int
-        Only x,y,z supported. {x,y,z} -> {0,1,2}
+        Rotation axis: 0 (x), 1 (y) or 2 (z).
 
     Returns
     -------
-    rmat : torch.tensor
-        A unitary rotation matrix.
+    numpy.ndarray
+        The 3 x 3 rotation matrix.
+
+    Raises
+    ------
+    ValueError
+        If ``axis`` is not 0, 1 or 2.
     """
 
     if axis not in (0, 1, 2):

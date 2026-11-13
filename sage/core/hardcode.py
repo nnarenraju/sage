@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Values fixed by hand where no source can be queried: GWOSC detectors
+and endpoints, PyCBC noise defaults and LAL detector geometry.
+
 Filename        : hardcode.py
 Description     : All hardcoded parts of Sage
 
@@ -29,40 +32,39 @@ Documentation:
 
 """
 
-# General
 from typing import Union, List, Sequence
 
-# LOCAL
 from sage.core.utils import to_sequence
 
 
-## None of the objects in this file are meant to be accessed by the user
-## This is made clear with the use of '_' in the names
-
 # --- Hardcoded on 08/11/2025 ---
-# Detectors available obtained via https://gwosc.org/timeline
-# GWOSC does not (yet) provide a way to query detector prefixes
-# Using another package to retrieve prefixes is not safe
-# Any det prefix outside this set will throw an error
-# i.e. dets used *must* be a subset of the following
-# Storing as a set is immutable and fine for torch
+# Detector prefixes listed on https://gwosc.org/timeline; GWOSC has no
+# query for them, so a prefix outside this set is refused
 _DETECTORS = {"H1", "H2", "L1", "V1", "G1", "K1"}
 
-# GWOSC endpoints shared by every downloader.
+# GWOSC endpoints shared by every downloader
 _GWOSC_HOST = "https://gwosc.org"
 _GWOSC_TIMELINE_URL = _GWOSC_HOST + "/timeline/segments/json/{run}/{flag}/{start}/{duration}/"
 _GWOSC_ARCHIVE_URL = _GWOSC_HOST + "/archive/data/{tag}/{parent}/"
 
-# Defaults of PyCBC's pycbc.noise.reproduceable.colored_noise.
+# Defaults of PyCBC's pycbc.noise.reproduceable.colored_noise
 PYCBC_FILTER_DURATION = 128.0
 PYCBC_LOW_FREQUENCY_CUTOFF = 1.0
 
 
 def _check_detector_prefixes(dets: Union[str, Sequence[str]]):
-    """Checking if detector prefixes are known
+    """
+    Check that every detector prefix is in ``_DETECTORS``.
 
-    Args:
-        dets (_type_): _description_
+    Parameters
+    ----------
+    dets : str or sequence of str
+        Detector prefixes.
+
+    Raises
+    ------
+    AssertionError
+        If a prefix is unknown.
     """
     dets = to_sequence(dets)
     assert all(
@@ -71,28 +73,10 @@ def _check_detector_prefixes(dets: Union[str, Sequence[str]]):
 
 
 # --- Hardcoded on 25/01/2026 ---
-# Detector response computation requires DET metadata from LAL
-# The following data has been hardcoded from LAL for each detector
-# longitude, latitude, yangle, xangle, xaltitude, yaltitude
-#
-# You can obtain the above information from LAL using:
-# import pycbc
-# pref = 'H1' --> Change to other det names from _DETECTORS
-# lalsim = pycbc.libutils.import_optional('lalsimulation')
-# lal_det = lalsim.DetectorPrefixToLALDetector(pref).frDetector
-#
-# print([pref, # name
-#     lal_det.vertexLongitudeRadians, # longitude
-#     lal_det.vertexLatitudeRadians, # latitude
-#     lal_det.vertexElevation, # height
-#     lal_det.xArmAzimuthRadians, # xangle
-#     lal_det.yArmAzimuthRadians, # yangle
-#     lal_det.xArmMidpoint * 2, # xlength
-#     lal_det.yArmMidpoint * 2, # ylength
-#     lal_det.xArmAltitudeRadians, # xaltitude
-#     lal_det.yArmAltitudeRadians,] # yaltitude
-# )
-#
+# LAL detector geometry, from
+# lalsimulation.DetectorPrefixToLALDetector(prefix).frDetector:
+# vertexLongitudeRadians, vertexLatitudeRadians, vertexElevation,
+# x/yArmAzimuthRadians, 2 * x/yArmMidpoint, x/yArmAltitudeRadians
 _DETMETADATA = {
     "H1": {
         "longitude": -2.08405676917,

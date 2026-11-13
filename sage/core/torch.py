@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Torch helpers: in-place clamps with a margin, and JAX-style
+``grad`` and ``value_and_grad``.
+
 Filename        : torch.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 from typing import Callable, Tuple, Union, Sequence
@@ -31,36 +33,56 @@ from typing import Callable, Tuple, Union, Sequence
 
 def nudge_backward_(foo: torch.Tensor, max_limit: float, nudge_factor=1e-6) -> None:
     """
-    In-place nudge to keep foo <= max_limit with tiny safety margin.
-    Modifies foo directly.
+    Clamp ``foo`` in place to at most ``max_limit - nudge_factor``.
+
+    Parameters
+    ----------
+    foo : torch.Tensor
+        Tensor, clamped in place.
+    max_limit : float
+        Upper limit.
+    nudge_factor : float
+        Margin kept below the limit.
     """
     foo.clamp_(max=max_limit - nudge_factor)
 
 
 def nudge_forward_(foo: torch.Tensor, min_limit: float, nudge_factor=1e-6) -> None:
     """
-    In-place nudge to keep foo >= min_limit with tiny safety margin.
-    Modifies foo directly.
+    Clamp ``foo`` in place to at least ``min_limit + nudge_factor``.
+
+    Parameters
+    ----------
+    foo : torch.Tensor
+        Tensor, clamped in place.
+    min_limit : float
+        Lower limit.
+    nudge_factor : float
+        Margin kept above the limit.
     """
     foo.clamp_(min=min_limit + nudge_factor)
 
 
 def torch_grad(func, args, argnums=0, create_graph=False):
     """
-    PyTorch equivalent of jax.grad.
+    Gradient of ``func`` with respect to ``args[argnums]``, as
+    ``jax.grad``.
 
-    Computes gradient of func w.r.t. args[argnums].
+    Parameters
+    ----------
+    func : callable
+        Function of ``args``.
+    args : tuple of torch.Tensor
+        Arguments of ``func``.
+    argnums : int or tuple of int
+        Arguments to differentiate with respect to.
+    create_graph : bool
+        Build the graph of the gradient, for higher derivatives.
 
-    Args:
-        func: callable
-        args: tuple of arguments passed to func
-        argnums: int or tuple of ints (default: 0)
-        create_graph: whether to construct graph for higher-order grads
-
-    Returns:
-        Gradient(s) corresponding to argnums
-        - Tensor if single argnum
-        - Tuple of tensors if multiple argnums
+    Returns
+    -------
+    torch.Tensor or tuple of torch.Tensor
+        One gradient per entry of ``argnums``; a tensor for one.
     """
     if isinstance(argnums, int):
         argnums = (argnums,)
@@ -95,29 +117,26 @@ def torch_value_and_grad(
     create_graph: bool = False,
 ):
     """
-    Torch equivalent of jax.value_and_grad(fn, argnums).
+    Value of ``fn`` and its gradient, as ``jax.value_and_grad``.
 
-    Call style:
-        value, grads = torch_value_and_grad(fn, (arg1, arg2, arg3))
-        value, grads = torch_value_and_grad(fn, (arg1, arg2, arg3), argnums=(0, 1))
+    Parameters
+    ----------
+    fn : callable
+        Function of ``inputs``.
+    inputs : torch.Tensor or tuple of torch.Tensor
+        Arguments of ``fn``.
+    argnums : int or sequence of int
+        Arguments to differentiate with respect to; the first by
+        default.
+    create_graph : bool
+        Build the graph of the gradient, for higher derivatives.
 
-    Default:
-        Differentiates w.r.t. argnums=0 (first argument only),
-        matching JAX behavior.
-
-    Args:
-    -----
-        fn: callable
-        inputs: Tensor or tuple of Tensors
-        argnums: int or tuple of ints specifying which arguments to differentiate
-        create_graph: whether to construct higher-order graph
-
-    Returns:
-    --------
-        value: fn(*inputs)
-        grads: gradient(s) w.r.t. argnums
-               - Tensor if argnums is int
-               - Tuple[Tensor, ...] if argnums is tuple
+    Returns
+    -------
+    value : torch.Tensor
+        ``fn(*inputs)``.
+    grads : torch.Tensor or tuple of torch.Tensor
+        One gradient per entry of ``argnums``; a tensor for one.
     """
 
     # Normalize inputs to tuple

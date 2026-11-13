@@ -1,21 +1,26 @@
-"""Chain a user's SLURM job script: each job starts once the previous one has ended."""
+"""
+Chain a user's SLURM job script: each job starts once the previous one
+has ended.
+"""
 
 import subprocess
 from pathlib import Path
 
-JOB_LOGS = Path("logs") / "jobs"  # in the run directory: <job name>-<job id>.out per job
+# Under the run directory; one <job name>-<job id>.out per job
+JOB_LOGS = Path("logs") / "jobs"
 
 
 def chain(script, run_dir: Path, jobs: int, after: str | None = None) -> list:
     """
-    Submit ``script`` ``jobs`` times, each depending (``afterany``) on the previous job.
+    Submit ``script`` ``jobs`` times, each after the previous job ends.
 
-    Each job's output and errors go to
-    ``<run_dir>/logs/jobs/<job name>-<job id>.out``, whatever the script asks for.
+    Each job depends (``afterany``) on the previous one. Its output and
+    errors go to ``<run_dir>/logs/jobs/<job name>-<job id>.out``,
+    whatever the script asks for.
 
     Parameters
     ----------
-    script : Path
+    script : str or Path
         The user's job script.
     run_dir : Path
         The run directory the jobs work on.
@@ -32,7 +37,10 @@ def chain(script, run_dir: Path, jobs: int, after: str | None = None) -> list:
     Raises
     ------
     RuntimeError
-        With sbatch's message and the jobs already submitted, if a submission fails.
+        If a submission fails; the message gives sbatch's error and the
+        jobs already submitted.
+    OSError
+        If ``sbatch`` cannot be run.
     """
     logs = Path(run_dir) / JOB_LOGS
     logs.mkdir(parents=True, exist_ok=True)  # SLURM does not create it

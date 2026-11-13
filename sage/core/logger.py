@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Logging setup and module loggers, plus run-side writers: a tensor ring
+buffer, async and chunked tensor savers, and an HDF5 per-epoch loss log.
+
 Filename        : logger.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Logging essentials
 import os
 import sys
 import h5py
@@ -37,27 +39,34 @@ from pathlib import Path
 from sage.utils.atomic_io import atomic_h5
 
 
-# Marker attribute stamped on handlers Sage installs, so setup_logging() can
-# be called again (a resumed segment, a notebook re-run) without stacking
-# duplicate handlers and printing everything twice.
+# Attribute marking handlers Sage installed; a repeat setup_logging()
+# replaces them rather than adding duplicates
 _SAGE_HANDLER = "_sage_handler"
 
-# Console: readable at a glance. No module:lineno at INFO -- that detail is
-# noise when you are watching a run, and it is always in the file anyway.
+# Console format; module:lineno is shown only at DEBUG
 _CONSOLE_FMT = "%(asctime)s | %(levelname)-7s | %(message)s"
 _CONSOLE_FMT_DEBUG = "%(asctime)s | %(levelname)-7s | %(name)s:%(lineno)d | %(message)s"
 _CONSOLE_DATEFMT = "%H:%M:%S"
 
-# File: full provenance, always. The file is for reading after the fact.
+# File format; always includes module:lineno
 _FILE_FMT = "%(asctime)s | %(levelname)-7s | %(name)s:%(lineno)d | %(message)s"
 _FILE_DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
 def format_duration(seconds) -> str:
-    """Render a duration as ``'2h 04m'``, ``'39m 12s'`` or ``'18s'``.
+    """
+    Duration as ``'2h 04m'``, ``'39m 12s'`` or ``'18s'``.
 
-    Used for epoch timings and ETAs so long runs read naturally in the log
-    rather than as a raw float.
+    Negative values become 0; fractions of a second are truncated.
+
+    Parameters
+    ----------
+    seconds : float
+        Duration in seconds.
+
+    Returns
+    -------
+    str
     """
     seconds = int(max(0, seconds))
     h, rem = divmod(seconds, 3600)
@@ -70,7 +79,25 @@ def format_duration(seconds) -> str:
 
 
 def _resolve_level(level=None) -> int:
-    """Resolve the console level: explicit arg, then $SAGE_LOG_LEVEL, then INFO."""
+    """
+    Console log level: ``level``, else ``$SAGE_LOG_LEVEL``, else INFO.
+
+    Parameters
+    ----------
+    level : int or str or None
+        Level number or name; a name unknown to ``logging`` is returned
+        as is.
+
+    Returns
+    -------
+    int
+        The level number.
+
+    Raises
+    ------
+    ValueError
+        If ``$SAGE_LOG_LEVEL`` is not a valid level name.
+    """
     if level is not None:
         return logging._nameToLevel.get(level, level) if isinstance(level, str) else level
     env = os.environ.get("SAGE_LOG_LEVEL")
@@ -87,51 +114,44 @@ def _resolve_level(level=None) -> int:
 
 def setup_logging(export_dir=None, level=None, console: bool = True, filename: str = "run.log"):
     """
-    Attach Sage's log handlers. Call this **once**, at the start of a run.
+    Attach Sage's console and file log handlers, once per run.
 
-    This is the only function that configures handlers. :func:`get_logger` is
-    deliberately inert, so importing a Sage module never touches the
-    filesystem and never emits anything.
+    Handlers Sage installed earlier are removed first, so a repeat call
+    does not double-log. Other libraries log WARNING and above only.
 
     Parameters
     ----------
     export_dir : str or Path or None
-        The run's export directory. Logs are written to
-        ``<export_dir>/logs/<filename>``, so they live with the run they
-        describe rather than in whatever directory the job happened to start
-        in. When ``None``, no file is written and logging goes to the console
-        only -- appropriate for notebooks and one-off scripts.
+        Run directory; the log is appended to
+        ``<export_dir>/logs/<filename>``. ``None`` logs to the console
+        only.
     level : int or str or None
-        Console verbosity. Defaults to ``$SAGE_LOG_LEVEL`` if set, else
-        ``INFO``. The *file* always records Sage's DEBUG regardless, so turning
-        the console down never loses detail you might need afterwards. Other
-        libraries log warnings and errors only.
+        Console level; defaults to ``$SAGE_LOG_LEVEL``, else INFO. The
+        file always records Sage's DEBUG.
     console : bool
-        Attach a stdout handler. Disable for jobs where stdout is captured
-        separately.
+        Attach a stdout handler.
     filename : str
         Log file name within ``<export_dir>/logs/``.
 
     Returns
     -------
     pathlib.Path or None
-        The log file path, or ``None`` if ``export_dir`` was not given.
+        The log file path, or ``None`` if ``export_dir`` is ``None``.
 
-    Notes
-    -----
-    Safe to call more than once: previously installed Sage handlers are
-    removed first, so a resumed run does not double-log.
+    Raises
+    ------
+    ValueError
+        If ``$SAGE_LOG_LEVEL`` is not a valid level name.
     """
     console_level = _resolve_level(level)
 
     root = logging.getLogger()
-    # Other libraries log warnings and errors only (numba's compiler alone
-    # writes thousands of DEBUG lines); Sage's own loggers pass everything,
-    # and the handlers decide what is shown.
+    # Other libraries log WARNING and above; Sage loggers pass every
+    # record and the handlers filter
     root.setLevel(logging.WARNING)
     logging.getLogger("sage").setLevel(logging.DEBUG)
 
-    # Drop handlers we installed previously (leave anyone else's alone).
+    # Remove handlers Sage installed earlier; others are kept
     for h in [h for h in root.handlers if getattr(h, _SAGE_HANDLER, False)]:
         root.removeHandler(h)
         h.close()
@@ -165,17 +185,10 @@ def setup_logging(export_dir=None, level=None, console: bool = True, filename: s
 
 def get_logger(module_name: str) -> logging.Logger:
     """
-    Return the logger for a module. Has no side effects.
+    Logger for a module; installs no handlers and opens no files.
 
-    Safe to call at module scope -- it creates no directories, opens no files
-    and installs no handlers. Until :func:`setup_logging` runs, records simply
-    go nowhere (Python's last-resort handler still surfaces WARNING and above
-    on stderr, so genuine problems are never silently swallowed).
-
-    This used to create a ``logs/`` directory and a per-module log file at call
-    time. Because it is called at module scope throughout the package, merely
-    importing Sage scattered ``logs/`` directories into whatever directory the
-    caller happened to be in, and would fail outright on a read-only one.
+    Until :func:`setup_logging` runs, only WARNING and above are shown,
+    by Python's last-resort handler on stderr.
 
     Parameters
     ----------
@@ -191,44 +204,19 @@ def get_logger(module_name: str) -> logging.Logger:
 
 class TensorRingBuffer:
     """
-    Fixed-capacity ring buffer that stores named tensor fields.
+    Fixed-capacity ring buffer of named tensor fields.
 
-    Pre-allocates a contiguous tensor for each named field and overwrites
-    the oldest entries once the buffer is full.  All data is kept on
-    ``device`` (use ``"cpu"`` to avoid GPU memory pressure).
+    Each field is a zero-filled ``(capacity, *shape)`` tensor on
+    ``device``; once full, the oldest entries are overwritten.
 
     Parameters
     ----------
     capacity : int
-        Maximum number of entries the buffer holds before wrapping.
-    schema : dict[str, tuple]
-        Mapping from field name to per-entry shape.  Example::
-
-            {
-                "loss":   (1,),
-                "params": (P,),
-                "output": (C,),
-                "target": (C,),
-            }
+        Number of entries held before wrapping.
+    schema : dict of str to tuple
+        Per-entry shape of each field, e.g. ``{"loss": (1,)}``.
     device : str
-        Torch device string for the pre-allocated tensors.
-
-    Example
-    -------
-    .. code-block:: python
-
-        buffer = TensorRingBuffer(
-            capacity=10000,
-            schema={"loss": (1,), "params": (P,), "output": (C,), "target": (C,)},
-            device="cpu",
-        )
-        # inside training loop
-        buffer.push(
-            loss=loss.detach().cpu(),
-            params=signal_targets.detach().cpu(),
-            output=out.detach().cpu(),
-            target=targets.detach().cpu(),
-        )
+        Torch device of the buffers.
     """
     def __init__(self, capacity, schema, device="cpu"):
         self.capacity = capacity
@@ -243,13 +231,17 @@ class TensorRingBuffer:
 
     def push(self, **kwargs):
         """
-        Write one entry to the buffer, advancing the write pointer.
+        Write one entry and advance the write pointer.
 
         Parameters
         ----------
         **kwargs : torch.Tensor
-            One keyword per field defined in ``schema``.  Each tensor is
-            detached before copying so no gradient is accidentally stored.
+            Value of each field for this entry; detached before copying.
+
+        Raises
+        ------
+        KeyError
+            If a keyword is not a field of ``schema``.
         """
         for k, v in kwargs.items():
             self.buffers[k][self.ptr].copy_(v.detach())
@@ -261,14 +253,13 @@ class TensorRingBuffer:
 
     def get(self):
         """
-        Return all valid entries.
+        All written entries.
 
         Returns
         -------
-        dict[str, torch.Tensor]
-            If the buffer has not yet wrapped, returns only the filled
-            prefix ``[0 : ptr]``.  Once full, returns all ``capacity``
-            entries (oldest-first order is not guaranteed after wrapping).
+        dict of str to torch.Tensor
+            The filled prefix ``[0 : ptr]`` before the buffer wraps;
+            afterwards all ``capacity`` entries in storage order.
         """
         if not self.full:
             return {k: v[: self.ptr] for k, v in self.buffers.items()}
@@ -277,32 +268,18 @@ class TensorRingBuffer:
 
 class AsyncLogger:
     """
-    Non-blocking logger that offloads disk I/O to a background thread.
+    Logger that saves queued entries from a background thread.
 
-    Incoming data dicts are placed on an in-memory queue; a daemon thread
-    drains the queue in batches of 100 and serialises them to ``filepath``
-    with ``torch.save``.  Excess entries are silently dropped when the
-    queue is full, so the training loop is never blocked.
+    The thread saves each batch of 100 entries to ``filepath`` with
+    ``torch.save``, overwriting the previous batch. Entries logged while
+    the queue is full are dropped.
 
     Parameters
     ----------
     maxsize : int
-        Maximum number of pending log entries before drops occur.
+        Queue capacity.
     filepath : str
-        Path where batched entries are saved (overwritten each flush).
-
-    Example
-    -------
-    .. code-block:: python
-
-        logger = AsyncLogger()
-        logger.log({
-            "loss":   loss.detach().cpu(),
-            "params": signal_targets.detach().cpu(),
-            "output": out.detach().cpu(),
-            "target": targets.detach().cpu(),
-        })
-        logger.close()  # flush remaining entries and join the thread
+        Output file, overwritten on each save.
     """
 
     def __init__(self, maxsize=1000, filepath="log.pt"):
@@ -315,15 +292,12 @@ class AsyncLogger:
 
     def log(self, data):
         """
-        Submit a data dict to the logging queue (non-blocking).
-
-        If the queue is full, the entry is silently discarded rather than
-        blocking the caller.
+        Queue ``data`` without blocking; drop it if the queue is full.
 
         Parameters
         ----------
         data : dict
-            Arbitrary dictionary of tensors or scalars to log.
+            Tensors or scalars to log.
         """
         try:
             self.q.put_nowait(data)
@@ -331,6 +305,7 @@ class AsyncLogger:
             pass  # drop if overloaded
 
     def _worker(self):
+        """Drain the queue, saving each batch of 100 entries."""
         buffer = []
 
         while self.running or not self.q.empty():
@@ -346,25 +321,28 @@ class AsyncLogger:
                 continue
 
     def close(self):
-        """Flush remaining entries and join the background thread."""
+        """
+        Stop the thread once the queue is drained, and join it.
+
+        A final batch of fewer than 100 entries is not saved.
+        """
         self.running = False
         self.thread.join()
 
 
 class ChunkedTensorLogger:
     """
-    Accumulate tensors in memory and flush to disk in fixed-size chunks.
+    Accumulate objects in memory and save them in fixed-size chunks.
 
-    Each flush writes a Python list of tensors to ``{path}_{idx}.pt``
-    (via :func:`torch.save`) and increments the chunk index.
+    Each flush saves the list of objects to ``{path}_{idx}.pt`` with
+    :func:`torch.save` and increments ``idx``.
 
     Parameters
     ----------
     chunk_size : int
-        Number of items to accumulate before automatically flushing.
+        Number of items per chunk.
     path : str
-        File-path prefix for the output files (suffix ``_<idx>.pt`` is
-        appended automatically).
+        Output path prefix.
     """
 
     def __init__(self, chunk_size, path):
@@ -375,12 +353,12 @@ class ChunkedTensorLogger:
 
     def log(self, data):
         """
-        Append *data* to the buffer and flush if the chunk is full.
+        Append ``data`` and flush once the chunk is full.
 
         Parameters
         ----------
-        data : any
-            Tensor or other pickleable object to accumulate.
+        data : object
+            Tensor or other picklable object.
         """
         self.buffer.append(data)
 
@@ -388,7 +366,7 @@ class ChunkedTensorLogger:
             self.flush()
 
     def flush(self):
-        """Write the current buffer to disk and reset state for the next chunk."""
+        """Save the buffer to ``{path}_{idx}.pt``; start a new chunk."""
         torch.save(self.buffer, f"{self.path}_{self.idx}.pt")
         self.buffer = []
         self.idx += 1
@@ -396,33 +374,24 @@ class ChunkedTensorLogger:
 
 class HDF5LossLogger:
     """
-    Persistent, epoch-indexed loss logger backed by an HDF5 file.
+    Per-epoch loss log in an HDF5 file.
 
-    Pre-allocates datasets of shape ``(num_epochs, num_components)`` for
-    both the ``"training"`` and ``"validation"`` splits at construction
-    time, then writes one row per epoch via :meth:`log`.
-
-    The resulting file can be read directly with ``h5py``::
-
-        with h5py.File("losses.h5", "r") as f:
-            train_loss = f["training"]["loss"][:]   # (E, C) float32
-            val_loss   = f["validation"]["loss"][:]
+    Datasets ``training/loss`` and ``validation/loss`` have shape
+    ``(num_epochs, len(component_names))``; :meth:`log` writes one row.
 
     Parameters
     ----------
-    path : str
-        File path for the HDF5 output. A compatible existing file (same
-        ``num_epochs``/``num_components``) is PRESERVED and appended to, so a
-        chained-segment resume keeps prior epochs' loss rows; only an absent or
-        shape-mismatched file is (re)created fresh.
+    path : str or Path
+        HDF5 file. An existing file with the same shape and components
+        is kept, so a resumed run keeps earlier rows; otherwise it is
+        created anew.
     num_epochs : int
-        Total number of training epochs (pre-allocates the dataset).
+        Total number of training epochs.
     component_names : list of str
-        The loss's ``component_names`` (e.g. total, classification,
-        regression_tc, regression_mchirp, coupling), stored as each dataset's
-        ``components`` attribute.
+        Loss component names, stored as each dataset's ``components``
+        attribute.
     dtype : str
-        NumPy dtype string for the stored values (default ``"float32"``).
+        NumPy dtype of the stored values (default ``"float32"``).
     """
 
     def __init__(self, path, num_epochs, component_names, dtype="float32"):
@@ -432,10 +401,7 @@ class HDF5LossLogger:
         self.num_components = len(self.component_names)
         self.dtype = dtype
 
-        # Resume-safe: if a compatible file already exists (same shape), KEEP it
-        # so loss rows written by earlier chained 2-day segments are preserved.
-        # Opening 'w' unconditionally (the old behaviour) truncated the file on
-        # every resume, permanently zeroing all prior epochs' loss history.
+        # Keep a compatible existing file so a resume keeps earlier rows
         if self._existing_is_compatible():
             return
 
@@ -448,9 +414,17 @@ class HDF5LossLogger:
                 dataset.attrs["components"] = self.component_names
 
     def _existing_is_compatible(self):
-        """True iff ``self.path`` already holds training/validation loss datasets
-        of the expected shape and components (i.e. this is a resume of the same
-        run and the history must be preserved)."""
+        """
+        Whether ``path`` already holds matching loss datasets.
+
+        Both splits must have shape ``(num_epochs, num_components)`` and
+        the same ``components`` attribute.
+
+        Returns
+        -------
+        bool
+            False also when the file is missing or unreadable.
+        """
         try:
             with h5py.File(self.path, "r") as f:
                 for split in ("training", "validation"):
@@ -472,9 +446,8 @@ class HDF5LossLogger:
         Parameters
         ----------
         loss_tensor : torch.Tensor
-            Shape ``(num_epochs, num_components)``.  Only row ``epoch`` is
-            written; the rest are ignored.  This matches the
-            ``loss_components`` tensor stored on training/validation objects.
+            Shape ``(num_epochs, num_components)``; only row
+            ``epoch`` is written.
         epoch : int
             Zero-based epoch index selecting the row to write.
         split : str
@@ -482,7 +455,6 @@ class HDF5LossLogger:
         """
         loss = loss_tensor[epoch].detach().cpu().numpy()
 
-        # Crash-atomic: this file is reopened in append mode every epoch, so a
-        # mid-write kill that corrupted it would crash the run on its next open.
+        # Atomic write: a kill mid-write leaves the file intact
         with atomic_h5(self.path) as f:
             f[split]["loss"][epoch] = loss

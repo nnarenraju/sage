@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Shared type aliases and the structured dtype of segment results.
+
 Filename        : base_entities.py
 Description     : Short description of the file
 
@@ -23,14 +25,12 @@ Documentation: NULL
 
 """
 
-# General
 import torch
 import numpy as np
 
 from typing import Union
 
 
-# Speed is key
 TorchArray = Union[torch.Tensor]
 
 # Structured dtype for segment results

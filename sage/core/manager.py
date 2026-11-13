@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Sampling probabilities of a set of classes, keyed by class name.
+
 Filename      : manager.py
 Description   : Short description of the file
 
@@ -22,14 +24,13 @@ Documentation: NULL
 
 """
 
-# Packages
 import numpy as np
 
 from typing import List, Type
 
 
 class ProbabilityManager:
-    """Internal manager to handle probabilities of classes/options."""
+    """Sampling probabilities of classes, keyed by class name."""
 
     def __init__(self):
         self.probs = {}  # name -> probability
@@ -49,7 +50,23 @@ class ProbabilityManager:
         self.probs[name] = prob
 
     def get_normalized_probs(self, classes: List[Type]) -> np.ndarray:
-        """Return normalized probability array for a list of classes"""
+        """
+        Sampling probabilities of ``classes``.
+
+        Registered classes keep their probability; the others share
+        ``max(0, 1 - registered total)`` equally. If every class is
+        registered and the total is below 1, the total is normalised.
+
+        Parameters
+        ----------
+        classes : list[type]
+            Candidate classes.
+
+        Returns
+        -------
+        numpy.ndarray
+            One probability per class.
+        """
         names = [cls.__name__ for cls in classes]
         probs = np.zeros(len(classes), dtype=float)
         assigned_total = 0.0
@@ -69,16 +86,14 @@ class ProbabilityManager:
             for i in unassigned_idx:
                 probs[i] = split
         else:
-            # All assigned, sum <1 -> normalize
+            # All registered and summing below 1: normalise
             if assigned_total > 0 and assigned_total < 1:
                 probs /= probs.sum()
         return probs
 
     def sample(self, classes: List[Type]) -> Type:
         """
-        Draw one class from ``classes`` weighted by registered probabilities.
-
-        Unregistered classes share the remaining probability mass equally.
+        One class drawn from ``classes`` with ``get_normalized_probs``.
 
         Parameters
         ----------

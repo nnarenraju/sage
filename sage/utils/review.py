@@ -2,6 +2,8 @@
 #!/usr/bin/env python
 
 """
+Record of the date each module was last reviewed, in a JSON file.
+
 Filename         =  review.py
 Description      =  Code review for Sage
 
@@ -24,18 +26,22 @@ Documentation: NULL
 
 """
 
-# Modules
 import os
 import json
 import subprocess
 
-# JSON error
 from json.decoder import JSONDecodeError
 
 
 def get_sage_abspath():
-    """Return the absolute path of the Sage repository root via ``git rev-parse``."""
-    # Get Sage abspath
+    """
+    Top level of the git repository holding the working directory.
+
+    Returns
+    -------
+    str
+        Absolute path, or an empty string outside a git repository.
+    """
     git_revparse = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
     )
@@ -45,16 +51,25 @@ def get_sage_abspath():
 
 def set_review_date(parent_name, module_name, last_review_date):
     """
-    Record the last code-review date for a module in the review JSON log.
+    Record the last review date of a module in the review JSON file.
+
+    The entry replaces everything recorded under ``parent_name``. The
+    file path is hard-coded; ``os.path.join`` discards the repository
+    root. An empty or invalid file is started anew.
 
     Parameters
     ----------
     parent_name : str
-        Top-level module group (e.g. ``"data"``).
+        Module group, e.g. ``"data"``.
     module_name : str
-        Specific module being reviewed (e.g. ``"real_noise"``).
+        Module reviewed, e.g. ``"real_noise"``.
     last_review_date : str or datetime
-        ISO-format date string or datetime object for the review date.
+        Review date, stored as ``str(last_review_date)``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the review file does not exist.
     """
     repo_abspath = get_sage_abspath()
     review_file = os.path.join(
@@ -66,8 +81,7 @@ def set_review_date(parent_name, module_name, last_review_date):
         foo = {parent_name: {module_name: str(last_review_date)}}
         data.update(foo)
     except JSONDecodeError:
-        # in case JSON is empty
+        # Empty or invalid JSON: start a new record
         data = {parent_name: {module_name: str(last_review_date)}}
-    # Update JSON file
     with open(review_file, "w") as jfile:
         json.dump(data, jfile)

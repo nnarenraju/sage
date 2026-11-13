@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Interpolation in torch: linear, Catmull-Rom on a uniform grid, and
+the natural cubic spline of GSL's ``gsl_interp_cspline``.
+
 Filename        : interpolation.py
 Description     : Short description of the file
 
@@ -23,41 +26,38 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 
 def torch_linear_interp(x, xp, fp):
     """
-    1D linear interpolation, compatible with ``jnp.interp`` / ``np.interp``.
+    Linear interpolation, as ``np.interp``, along the last axis.
 
-    Interpolation is over the LAST axis of ``fp``, so ``fp`` may carry leading
-    batch dimensions: ``fp`` of shape ``(..., N)`` is interpolated at the query
-    points ``x`` (shape ``(M,)``) to give ``(..., M)``.  The 1-D case
-    (``fp`` shape ``(N,)``) is unchanged.
+    ``fp`` of shape ``(..., N)`` at ``x`` of shape ``(M,)`` gives
+    ``(..., M)``.
 
     Parameters
     ----------
-    x : torch.Tensor, shape ``(M,)`` (or ``(...,)`` for scalar-batch ``fp``)
+    x : torch.Tensor, shape ``(M,)``
         Query points.
     xp : torch.Tensor, shape ``(N,)``
-        Monotonically increasing node x-coordinates.
+        Increasing nodes.
     fp : torch.Tensor, shape ``(..., N)``
-        Function values at ``xp`` (last axis), with optional leading batch dims.
+        Values at ``xp`` along the last axis.
 
     Returns
     -------
     torch.Tensor, shape ``(..., M)``
-        Linearly interpolated values at ``x``.
+        Interpolated values.
     """
-    # indices where elements should be inserted
+    # Right neighbour of each query point
     idx = torch.searchsorted(xp, x, right=True)
 
     idx = torch.clamp(idx, 1, xp.numel() - 1)
 
     x0 = xp[idx - 1]
     x1 = xp[idx]
-    y0 = fp[..., idx - 1]      # gather over the last axis (batched-safe)
+    y0 = fp[..., idx - 1]      # last axis, any leading dimensions
     y1 = fp[..., idx]
 
     slope = (y1 - y0) / (x1 - x0)
@@ -72,37 +72,41 @@ def torch_catmull_rom_cubic_interp(
     dx: float,
 ):
     """
-    Fast cubic interpolation on a *uniform grid* (Catmull-Rom).
+    Catmull-Rom cubic interpolation on a uniform grid.
 
-    Args:
-        xs: (...,) query points
-        y:  (N,) sampled values on uniform grid
-        x0: grid start
-        dx: grid spacing
+    Parameters
+    ----------
+    xs : torch.Tensor
+        Query points, any shape.
+    y : torch.Tensor, shape ``(N,)``
+        Values on the grid.
+    x0 : float
+        First grid point.
+    dx : float
+        Grid spacing.
 
-    Returns:
-        (...,) interpolated values
+    Returns
+    -------
+    torch.Tensor, shape of ``xs``
+        Interpolated values.
     """
 
     # Continuous index
     t = (xs - x0) / dx
 
-    # Left index
     i = torch.floor(t).long()
 
-    # Clamp to valid range
     i = torch.clamp(i, 1, y.shape[0] - 3)
 
     # Local coordinate
     u = t - i
 
-    # Fetch points
     y0 = y[i - 1]
     y1 = y[i]
     y2 = y[i + 1]
     y3 = y[i + 2]
 
-    # Catmull–Rom coefficients
+    # Catmull-Rom coefficients
     a = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3
     b = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3
     c = -0.5 * y0 + 0.5 * y2
@@ -115,16 +119,9 @@ def torch_natural_cubic_coeffs(xp, fp):
     """
     Second derivatives of the natural cubic spline through ``(xp, fp)``.
 
-    The interpolant of GSL's ``gsl_interp_cspline`` ("cubic spline with
-    natural boundary conditions"), which LAL uses for the PhenomD QNM tables.
-    The second derivatives vanish at both ends, and the interior ones solve
-    the tridiagonal system of Press et al., Numerical Recipes 3rd ed., eq. 3.3.7,
-
-        h[i-1] M[i-1] + 2 (h[i-1] + h[i]) M[i] + h[i] M[i+1]
-            = 6 ((fp[i+1] - fp[i]) / h[i] - (fp[i] - fp[i-1]) / h[i-1]),
-
-    with ``h[i] = xp[i+1] - xp[i]``, by the tridiagonal algorithm of §2.4.
-    Leading dimensions are independent splines.
+    As GSL's ``gsl_interp_cspline``: zero at both ends, interior from
+    the tridiagonal system for continuous first derivatives. Leading
+    dimensions are separate splines.
 
     Parameters
     ----------
@@ -165,23 +162,23 @@ def torch_natural_cubic_coeffs(xp, fp):
 
 def torch_natural_cubic_interp(x, xp, fp, M, derivative=False):
     """
-    Natural cubic spline through ``(xp, fp)``, or its derivative, at ``x``.
+    Natural cubic spline through ``(xp, fp)``, or its derivative.
 
-    Press et al., Numerical Recipes 3rd ed., eq. 3.3.3 for the value and
-    eq. 3.3.5 for the derivative; with ``M`` from ``torch_natural_cubic_coeffs``
-    this is what ``gsl_spline_eval`` returns for ``gsl_interp_cspline``.
+    With ``M`` from ``torch_natural_cubic_coeffs`` this is
+    ``gsl_spline_eval`` for ``gsl_interp_cspline``.
 
     Parameters
     ----------
     x : torch.Tensor
-        Query points within ``[xp[0], xp[-1]]``: any shape for 1-D nodes,
-        shape ``(..., K)`` for batched nodes.
+        Query points within ``[xp[0], xp[-1]]``; any shape for 1-D
+        nodes, ``(..., K)`` for batched nodes.
     xp : torch.Tensor, shape ``(N,)`` or ``(..., N)``
         Strictly increasing nodes.
     fp : torch.Tensor, shape like ``xp``
         Values at the nodes.
     M : torch.Tensor, shape like ``xp``
-        Second derivatives at the nodes, from ``torch_natural_cubic_coeffs``.
+        Second derivatives at the nodes, from
+        ``torch_natural_cubic_coeffs``.
     derivative : bool
         Return the first derivative instead of the value.
 
@@ -211,7 +208,6 @@ def torch_natural_cubic_interp(x, xp, fp, M, derivative=False):
             a * y_i + b * y_ip1 + ((a**3 - a) * M_i + (b**3 - b) * M_ip1) * (h**2) / 6
         )
 
-    # derivative
     return (y_ip1 - y_i) / h + h * ((3 * b * b - 1) * M_ip1 - (3 * a * a - 1) * M_i) / 6
 
 
@@ -222,6 +218,7 @@ def _take(values, idx):
     Parameters
     ----------
     values : torch.Tensor, shape ``(N,)`` or ``(..., N)``
+        Values along the last axis.
     idx : torch.Tensor of int
         Any shape for 1-D ``values``, ``(..., K)`` otherwise.
 

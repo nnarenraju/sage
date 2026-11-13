@@ -111,10 +111,20 @@ def check_whole_batches(name: str, samples: int, batch_size: int) -> None:
     """
     Check that a sample count is a whole number of batches.
 
+    Parameters
+    ----------
+    name : str
+        Setting name, for the message.
+    samples : int
+        Sample count.
+    batch_size : int
+        Batch size.
+
     Raises
     ------
     ValueError
-        If not; the message gives the nearest whole number of batches.
+        If not; the message gives the nearest whole number of
+        batches.
     """
     if samples % batch_size:
         nearest = max(1, round(samples / batch_size)) * batch_size
@@ -125,13 +135,20 @@ def check_whole_batches(name: str, samples: int, batch_size: int) -> None:
 
 def check_whole_signals(signal_fraction: float, batch_size: int) -> None:
     """
-    Check that the signal fraction gives a whole number of signals per batch.
+    Check that the signal fraction gives whole signals per batch.
+
+    Parameters
+    ----------
+    signal_fraction : float
+        ``train.signal_fraction``.
+    batch_size : int
+        Batch size.
 
     Raises
     ------
     ValueError
-        If the fraction is outside (0, 1] or gives a fractional count; the
-        message gives the nearest fraction that does not.
+        If the fraction is outside (0, 1] or gives a fractional
+        count; the message gives the nearest fraction that does not.
     """
     if not 0 < signal_fraction <= 1:
         raise ValueError(f"train.signal_fraction {signal_fraction} must be in (0, 1]")
@@ -167,8 +184,8 @@ def check_delta_tc_window(delta_tc_min: float, delta_tc_max: float, sample_lengt
     """
     Check that the delta_tc prior lies inside the analysed window.
 
-    delta_tc is measured from the end of the leading padding, so the analysed
-    window is ``[0, sample_length_in_s]``.
+    delta_tc is measured from the end of the leading padding, so the
+    analysed window is ``[0, sample_length_in_s]``.
 
     Parameters
     ----------

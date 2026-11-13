@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Argument normalisation: values as tuples and as one-dimensional
+arrays.
+
 Filename        : utils.py
 Description     : Short description of the file
 
@@ -23,16 +26,27 @@ Documentation: NULL
 
 """
 
-# Packages
 import numpy as np
 
 
 def to_sequence(x):
-    """Wrap scalars into a tuple so everything becomes iterable."""
+    """
+    ``x`` as a tuple; a scalar, string or bytes value becomes a 1-tuple.
+
+    Parameters
+    ----------
+    x : scalar, str, bytes, iterable or None
+        Value to wrap.
+
+    Returns
+    -------
+    tuple or None
+        ``None`` when ``x`` is ``None``.
+    """
     if x is None:
         return x
     if isinstance(x, (str, bytes)):
-        return (x,)  # single string as a tuple
+        return (x,)
     if isinstance(x, (int, float)):
         return (x,)
     if isinstance(x, (bool)):
@@ -42,7 +56,7 @@ def to_sequence(x):
 
 def ensure_1d(x):
     """
-    Convert ``x`` to a NumPy array and assert it is one-dimensional.
+    ``x`` as a NumPy array, which must be one-dimensional.
 
     Parameters
     ----------
@@ -52,12 +66,12 @@ def ensure_1d(x):
     Returns
     -------
     numpy.ndarray, shape ``(N,)``
-        One-dimensional view of ``x``.
+        ``x`` as an array.
 
     Raises
     ------
     ValueError
-        If the resulting array has more than one dimension.
+        If the array is not one-dimensional.
     """
     x = np.asarray(x)
     if x.ndim != 1:
