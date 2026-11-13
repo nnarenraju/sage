@@ -1,4 +1,4 @@
-"""Tests for sage.data.asd.lines: the F-test, line detection and excision."""
+"""Tests for sage.data.asd.lines: the F-test, line finding, excision."""
 
 import numpy as np
 import torch
@@ -18,11 +18,12 @@ def test_ftest_matches_package():
 
 
 def test_finds_a_sinusoid():
-    """A sinusoid in white noise is a line bin; no line bin lies away from it."""
+    """A sinusoid is a line bin; every line bin lies within 4 of it."""
     npts, k = 1024, 100
     rng = np.random.default_rng(1)
 
     def sample(n):
+        """White noise plus a sinusoid at bin k with random phase."""
         phase = rng.uniform(0, 2 * np.pi)
         line = 0.5 * np.sin(2 * np.pi * k * np.arange(n) / n + phase)
         return rng.standard_normal(n) + line
@@ -33,7 +34,7 @@ def test_finds_a_sinusoid():
 
 
 def test_excision_weight():
-    """Zero within half of a line, a rising Hann edge over the next half, one beyond."""
+    """Zero within half bins of a line, a Hann edge, then one."""
     weight = excision_weight(np.array([50]), 100, 4)
     assert (weight[46:55] == 0).all()
     assert (weight[:41] == 1).all() and (weight[60:] == 1).all()
@@ -43,7 +44,7 @@ def test_excision_weight():
 
 
 def test_excised_bins_get_no_weight():
-    """An infinite ASD bin: zero whitening weight, and no SNR from it."""
+    """An infinite ASD bin has zero whitening weight and no SNR."""
     window = window_from_data(
         {"sample_rate_in_hz": 256, "sample_length_in_s": 4, "padding_length_in_s": 2}
     )

@@ -1,13 +1,5 @@
-"""CPU tests for the pyribs CMA-MAE hard-noise miner (no model, no GPU, no data).
-
-A trivial multi-modal ``evaluate_fn`` (three well-separated "hard" bumps in
-start-time space, with an embedding that encodes position) stands in for the
-read-noise -> model -> embedding pipeline.  We check the pyribs ask/tell loop
-runs end-to-end, that the file-backed bank only stores above-threshold windows,
-that mining covers more than one bump (QD diversity, no collapse), that the
-(run, segment, start) codec round-trips including the run id (multi-run), and
-that a bank creation cut short leaves no bank behind.
-"""
+"""CPU tests for the pyribs CMA-MAE hard-noise miner: the start-time
+codec, the file-backed bank and the diversity of mined windows."""
 import os
 
 import h5py
@@ -37,8 +29,7 @@ def _seg(run=0):
 
 
 def _seg_pooled():
-    """One detector's POOLED table over two runs (segment ids collide across
-    runs; only (run, idx) is unique)."""
+    """One detector's segment table pooled over two runs."""
     return np.concatenate([_seg(run=0), _seg(run=1)])
 
 
@@ -48,11 +39,13 @@ def _probs(seg):
 
 
 def _make_eval(seed=0):
+    """Toy evaluate_fn: three score bumps and a position embedding."""
     rng = np.random.default_rng(seed)
     bumps = np.array([0.2, 0.5, 0.8])
     sigma = 0.05
 
     def evaluate_fn(starts, segs, runs):
+        """Score and embed each start by its position in the data."""
         p = starts[:, 0].astype(float) / TOTAL                       # position in [0,1)
         peaks = np.stack([np.exp(-((p - b) ** 2) / (2 * sigma ** 2)) for b in bumps])
         scores = peaks.max(0) * 10.0 + 0.01 * rng.standard_normal(len(p))
@@ -66,6 +59,7 @@ def _make_eval(seed=0):
 
 
 def _bank(tmp, runs=("O3b",)):
+    """A two-detector HardMiningBank in tmp."""
     return HardMiningBank(
         os.path.join(tmp, "bank.h5"), detectors=["H1", "L1"], runs=list(runs),
         seq_len=SEQ, sample_rate=2048.0, bin_files=["/x/H1.bin", "/x/L1.bin"],
@@ -74,6 +68,7 @@ def _bank(tmp, runs=("O3b",)):
 
 
 def _miner(tmp, seg_index=None, **kw):
+    """A CMAMAEMiner on toy segments; kw overrides the defaults."""
     defaults = dict(
         detectors=["H1", "L1"], seg_index=seg_index or [_seg(), _seg()],
         segment_probs=[_probs(s) for s in seg_index or [_seg(), _seg()]], seq_len=SEQ,
@@ -85,19 +80,17 @@ def _miner(tmp, seg_index=None, **kw):
     return CMAMAEMiner(**defaults)
 
 
-# ── codec ──────────────────────────────────────────────────────────────────
 def test_codec_decode_encode_stable():
+    """decode -> encode -> decode is a fixpoint, run id included."""
     codec = _StartTimeCodec([_seg(), _seg()], SEQ, [_probs(_seg())] * 2)
     g = np.random.default_rng(0).random((64, 2))
     s, sg, rn = codec.decode(g)
-    # decode∘encode∘decode is a fixpoint (carries run too)
     s2, sg2, rn2 = codec.decode(codec.encode(s, sg, rn))
     assert np.array_equal(s, s2) and np.array_equal(sg, sg2) and np.array_equal(rn, rn2)
 
 
 def test_codec_roundtrips_run_for_pooled_runs():
-    """A pooled two-run table: decode must report the correct run, and
-    encode/decode must round-trip the (run, segment, start) identity."""
+    """Pooled runs: decode reaches both runs and round-trips."""
     codec = _StartTimeCodec(
         [_seg_pooled(), _seg_pooled()], SEQ, [_probs(_seg_pooled())] * 2
     )
@@ -109,10 +102,10 @@ def test_codec_roundtrips_run_for_pooled_runs():
 
 
 def test_decode_respects_segment_bounds():
+    """Every decoded window lies inside its segment."""
     codec = _StartTimeCodec([_seg()], SEQ, [_probs(_seg())])
     g = np.linspace(0, 1, 200)[:, None]
     s, sg, rn = codec.decode(g)
-    # every window must fit fully inside its segment
     seg = _seg()
     for i in range(len(s)):
         base = seg["start"][sg[i, 0]]
@@ -120,20 +113,19 @@ def test_decode_respects_segment_bounds():
 
 
 def test_decode_skips_undrawn_segments():
-    """A segment the noise sampler never draws (bad time) is never decoded."""
+    """A segment with zero draw probability is never decoded."""
     probs = np.array([0.0, 1.0])
     codec = _StartTimeCodec([_seg()], SEQ, [probs])
     s, sg, _ = codec.decode(np.linspace(0, 1, 500)[:, None])
     assert set(sg[:, 0].tolist()) == {1} and (s[:, 0] >= NSAMP).all()
 
 
-# ── mining (file-backed bank) ──────────────────────────────────────────────
 def test_mine_keeps_only_hard_windows(tmp_path):
+    """Only windows at or above the keep threshold are banked."""
     m = _miner(str(tmp_path))
     ev, _ = _make_eval(0)
     stats = m.mine(ev, n_iters=20, epoch=0)
     assert stats["kept_starts"] > 0 and m.bank.n_starts > 0
-    # every banked window cleared the keep threshold
     _, _, _ = m.bank.read_starts(np.arange(m.bank.n_starts))
     with h5py.File(m.bank.path, "r") as f:
         assert (f["start_found_score"][:] >= 5.0).all()
@@ -141,6 +133,7 @@ def test_mine_keeps_only_hard_windows(tmp_path):
 
 
 def test_mine_is_diverse_not_collapsed(tmp_path):
+    """Mined windows cover at least two of the three bumps."""
     m = _miner(str(tmp_path))
     ev, bumps = _make_eval(0)
     m.mine(ev, n_iters=30, epoch=0)
@@ -152,6 +145,7 @@ def test_mine_is_diverse_not_collapsed(tmp_path):
 
 
 def test_mine_empty_when_nothing_passes_threshold(tmp_path):
+    """An unreachable keep threshold banks nothing."""
     m = _miner(str(tmp_path), keep_threshold=1e6)          # impossibly high bar
     ev, _ = _make_eval(0)
     stats = m.mine(ev, n_iters=5, epoch=0)
@@ -159,9 +153,11 @@ def test_mine_empty_when_nothing_passes_threshold(tmp_path):
 
 
 def test_bank_creation_cut_short(tmp_path, monkeypatch):
+    """A bank creation cut short leaves no file behind."""
     create = h5py.Group.create_dataset
 
     def killed(group, name, *args, **kwargs):
+        """Fail at start_runs, as a kill mid-creation would."""
         if name == "start_runs":  # after start_times and start_segments
             raise OSError("killed")
         return create(group, name, *args, **kwargs)

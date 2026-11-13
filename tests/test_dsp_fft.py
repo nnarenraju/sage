@@ -13,24 +13,28 @@ _DELTA_T = 1.0 / _SR
 
 @pytest.fixture
 def bfd():
+    """A BatchToFrequencyDomain at 4096 Hz."""
     return BatchToFrequencyDomain(delta_t=_DELTA_T)
 
 
 class TestBatchToFrequencyDomain:
+    """Tests of BatchToFrequencyDomain."""
 
 
     def test_dimension_error_2d_input(self, bfd):
+        """A 2-D input is refused."""
         x = torch.randn(4, 512)
         with pytest.raises(ValueError, match="Expected"):
             bfd(x)
 
     def test_dimension_error_4d_input(self, bfd):
+        """A 4-D input is refused."""
         x = torch.randn(2, 2, 2, 512)
         with pytest.raises(ValueError, match="Expected"):
             bfd(x)
 
     def test_dc_of_constant_signal(self, bfd):
-        # A constant signal of value A has DC component = A * T (with 'forward' norm)
+        """A constant A has a DC bin of A."""
         B, D, T = 1, 1, 256
         A = 3.0
         x = torch.full((B, D, T), A)
@@ -41,7 +45,7 @@ class TestBatchToFrequencyDomain:
         assert abs(dc.imag) < 1e-5
 
     def test_known_sinusoid_peak_at_correct_bin(self, bfd):
-        # x(t) = sin(2π f₀ t) at f₀ = k₀ * df should peak at bin k₀
+        """A sinusoid at bin k0 peaks at bin k0."""
         T = 1024
         k0 = 10  # target frequency bin
         t = torch.arange(T, dtype=torch.float32) / _SR

@@ -1,4 +1,4 @@
-"""MLGWSC-1 benchmark search: slicing and clustering."""
+"""Tests for the MLGWSC-1 benchmark search: slicing and clustering."""
 
 import h5py
 import numpy as np
@@ -18,7 +18,7 @@ WINDOW = window_from_data(
 
 
 def data_file(path, detectors=("H1", "L1")):
-    """Two segments in MLGWSC-1's layout; sample i of a segment holds i."""
+    """Two segments in MLGWSC-1's layout; sample i holds the value i."""
     with h5py.File(path, "w") as file:
         file.attrs["detectors"] = list(detectors)
         for detector in detectors:
@@ -30,6 +30,7 @@ def data_file(path, detectors=("H1", "L1")):
 
 
 def test_slicer_windows(tmp_path):
+    """Windows step 0.1 s per segment; other detectors are refused."""
     slicer = Slicer(data_file(tmp_path / "data.hdf"), ["H1", "L1"], WINDOW, 1.3)
     step = 204  # int(0.1 s * 2048 Hz)
     assert len(slicer) == (5000 - 4096) // step + (4400 - 4096) // step == 5
@@ -44,6 +45,7 @@ def test_slicer_windows(tmp_path):
 
 
 def test_clusters():
+    """Triggers within CLUSTER_IN_S keep only the loudest."""
     apart = 0.5 + CLUSTER_IN_S + 0.01
     found = np.array([[0.0, 1.0], [0.2, 3.0], [0.5, 2.0], [apart, 5.0]])
     time, stat, var = clusters(found)

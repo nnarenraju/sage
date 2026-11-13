@@ -9,6 +9,7 @@ from sage.plotting import plot_pp_calibration
 
 
 def _data(scale, n=20000, seed=0):
+    """Means, widths and truths scattered by scale times the width."""
     rng = np.random.default_rng(seed)
     mu = rng.normal(0, 1, (n, 2))
     sigma = np.abs(rng.normal(1, 0.2, (n, 2))) + 0.5
@@ -17,6 +18,7 @@ def _data(scale, n=20000, seed=0):
 
 
 def test_calibrated_is_near_diagonal():
+    """Correct widths give a near-diagonal P-P curve and coverage."""
     m = plot_pp_calibration(*_data(1.0), param_names=["delta_tc", "mchirp"], save=True)
     for v in m.values():
         assert v["ks"] < 0.02
@@ -25,6 +27,7 @@ def test_calibrated_is_near_diagonal():
 
 
 def test_overconfident_has_low_coverage_and_large_ks():
+    """Too-small widths give low coverage and a large KS distance."""
     m = plot_pp_calibration(*_data(2.0), param_names=["delta_tc", "mchirp"], save=True)
     for v in m.values():
         assert v["ks"] > 0.1
@@ -32,6 +35,7 @@ def test_overconfident_has_low_coverage_and_large_ks():
 
 
 def test_underconfident_has_high_coverage():
+    """Too-large widths give high coverage."""
     m = plot_pp_calibration(*_data(0.5), param_names=["delta_tc", "mchirp"], save=True)
     for v in m.values():
         assert v["ks"] > 0.1

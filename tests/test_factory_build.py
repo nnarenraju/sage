@@ -45,11 +45,13 @@ def data(detectors: list, dtype: str) -> dict:
 
 
 def test_duplicate_detector():
+    """A detector listed twice is refused."""
     with pytest.raises(ValueError, match="more than once: H1"):
         build_data(data(["H1", "H1"], "float32"))
 
 
 def test_float64_warns(caplog):
+    """float64 data is accepted with a warning about waveforms."""
     with caplog.at_level(logging.WARNING):
         _, _, dtype = build_data(data(["H1", "L1"], "float64"))
     assert dtype is torch.float64
@@ -79,32 +81,39 @@ def build(section: dict):
 
 
 def test_signal_ignores_global_generator():
+    """Signal draws do not depend on the global torch seed."""
     def draw(global_seed):
+        """Draw a batch after seeding the global generator."""
         torch.manual_seed(global_seed)
         return build(signal())(return_theta=True)
 
-    assert all(torch.equal(a, b) for a, b in zip(draw(0), draw(1)))  # prior, SNR and GMST have their own streams
+    # Prior, SNR and GMST each have their own stream.
+    assert all(torch.equal(a, b) for a, b in zip(draw(0), draw(1)))
 
 
 def test_targets_scaled_from_bounds():
+    """Targets scale to [-1, 1] from the prior bounds and back."""
     sampler = build(signal()).param_sampler
-    assert sampler.scale_targets(sampler(10_000)).abs().max() <= 1.0 + 1e-5  # float32 rounding at the bounds
+    # Allows for float32 rounding at the bounds.
+    assert sampler.scale_targets(sampler(10_000)).abs().max() <= 1.0 + 1e-5
     ends = sampler.unscale_targets(torch.tensor([[-1.0, -1.0], [1.0, 1.0]])).T.tolist()
     assert ends == [pytest.approx(sampler.bounds[target], rel=1e-6) for target in ("delta_tc", "mchirp")]
 
 
 def test_signal_off_grid():
+    """A cutoff off the frequency grid is refused."""
     with pytest.raises(ValueError, match="20.03 Hz is not on the 1/16 Hz grid"):
         build(signal(low_frequency_cutoff_in_hz=20.03))
 
 
 def test_signal_unknown_target():
+    """A target that is not a prior parameter is refused."""
     with pytest.raises(ValueError, match="'mchrip' is not a prior parameter; did you mean 'mchirp'"):
         build(signal(targets=["delta_tc", "mchrip"]))
 
 
 def test_non_astrophysical():
-    """A real pool on its own streams: half the noise windows of a batch become class 2, the signal draws unchanged."""
+    """Noise windows become class 2 from a pool on its own streams."""
     window, detectors, dtype = build_data(data(["H1", "L1"], "float32"))
     asds, prior = torch.ones(2, window.n_frequency_bins), load_prior("bbh_narrow", Path("."))
     shares = {"noise_share": 1.0, "signal_noise_share": 0.75, "in_band_share": 0.75}
@@ -117,18 +126,21 @@ def test_non_astrophysical():
     assert targets[:, -1].tolist() == [1, 2, 1, 2] and torch.isfinite(torch.view_as_real(x)).all()
     assert (x[1::2].abs().sum(-1) > 0).any(dim=1).all() and (x[0::2] == 0).all()
     fresh = build_non_astrophysical(signal(non_astrophysical=shares), prior, window, detectors, asds, 2, 2, 1, 0, "cpu", dtype)
-    assert not torch.equal(fresh.pool(return_theta=True)[2], build(signal())(return_theta=True)[2])  # own streams
+    # The pool draws on its own streams.
+    assert not torch.equal(fresh.pool(return_theta=True)[2], build(signal())(return_theta=True)[2])
     with pytest.raises(ValueError, match="noise_share must be in"):
         build_non_astrophysical(signal(non_astrophysical={**shares, "noise_share": 1.2}), prior, window, detectors,
                                 asds, 2, 2, 1, 0, "cpu", dtype)
 
 
 def test_signal_unknown_waveform():
+    """An unknown waveform is refused with the closest name."""
     with pytest.raises(ValueError, match="unknown 'IMRPhenomPV2'; did you mean 'IMRPhenomPv2'"):
         build(signal(waveform={"name": "IMRPhenomPV2"}))
 
 
 def test_recolour_synthetic(tmp_path):
+    """Recolouring synthetic training noise is refused."""
     window, detectors, dtype = build_data(data(["H1", "L1"], "float32"))
     synthetic = {
         "name": "synthetic",
@@ -162,6 +174,7 @@ def preprocess(post_merger_leeway_in_s: float) -> list:
 
 
 def test_preprocess_leeway():
+    """Post-merger leeway extends the full-rate bin's end."""
     window, _, dtype = build_data(data(["H1", "L1"], "float32"))
     bounds = prior_sampler(load_prior("bbh_narrow", Path(".")), 1, "cpu", dtype).bounds
     asds = torch.ones(2, window.n_frequency_bins)
@@ -178,6 +191,7 @@ def test_preprocess_leeway():
 
 
 def test_model_defaults():
+    """The model resolves to its defaults; options override them."""
     production = resolve_model({"name": "MSCNN1Datt_2DResNetCBAM"})
     assert production == {
         "name": "MSCNN1Datt_2DResNetCBAM",
@@ -194,11 +208,13 @@ def test_model_defaults():
 
 
 def test_model_counts_from_builder():
+    """The detector count comes from the builder, not the run file."""
     with pytest.raises(ValueError, match="model: unknown parameter 'num_detectors'"):
         resolve_model({"name": "MSCNN1Datt_2DResNetCBAM", "num_detectors": "3"})
 
 
 def test_loss_defaults():
+    """The loss resolves to its default parameters."""
     assert resolve_loss({"name": "BCE_PE_Sigma"}) == {
         "name": "BCE_PE_Sigma",
         "regression_weight": 0.005,
@@ -211,6 +227,7 @@ def test_loss_defaults():
 
 
 def test_heads_mismatch():
+    """A loss needing widths with a model without them is refused."""
     message = (
         r"model MSCNN1D_2DResNetCBAM gives one estimate per target, but loss BCE_PE_Sigma needs an "
         r"estimate and a width per target; use a loss from \['BCE_PE_Huber', 'BCE_PE_MSE'\] or a "
@@ -222,6 +239,7 @@ def test_heads_mismatch():
 
 
 def test_optimiser_defaults():
+    """Optimiser defaults resolve; params and fused are left out."""
     adamw = resolve_optimiser({"name": "AdamW"})
     assert (adamw["lr"], adamw["weight_decay"]) == (2e-4, 1e-4)
     assert "params" not in adamw and "fused" not in adamw
@@ -230,6 +248,7 @@ def test_optimiser_defaults():
 
 
 def test_optimiser_groups():
+    """Weight decay applies to matrices only; AdamW is fused."""
     model = torch.nn.Sequential(torch.nn.Linear(4, 3), torch.nn.LayerNorm(3))
     decay, no_decay = build_optimiser({"name": "AdamW"}, model).param_groups
     assert [p.ndim for p in decay["params"]] == [2] and decay["weight_decay"] == 1e-4
@@ -238,7 +257,7 @@ def test_optimiser_groups():
 
 
 def schedule_factors(**settings) -> list:
-    """Factors of a 5-epoch, 4-batch run (lr 2e-4, floor 1e-6 -> 0.005)."""
+    """LR factors of a 5-epoch, 4-batch run; floor 1e-6 / 2e-4."""
     optimiser = torch.optim.AdamW([torch.nn.Parameter(torch.zeros(1))], lr=2e-4)
     section = {"name": "WarmupPolynomialDecayFlatTail", **{k: str(v) for k, v in settings.items()}}
     factor = build_schedule(section, optimiser, 5, 4)[0].lr_lambdas[0]
@@ -246,14 +265,16 @@ def schedule_factors(**settings) -> list:
 
 
 def test_schedule_shape():
+    """Warmup to the peak, polynomial decay, then a flat tail."""
     factors = schedule_factors(warmup_steps=4, flat_tail_epochs=1)
-    assert factors[0] == 1e-3 and factors[4] == 1.0              # warmup to the peak
+    assert factors[0] == 1e-3 and factors[4] == 1.0            # warmup to the peak
     decay = factors[4:16]
-    assert all(a > b for a, b in zip(decay, decay[1:]))           # polynomial decay
-    assert factors[16:] == [1e-6 / 2e-4] * 5                      # flat tail at the floor
+    assert all(a > b for a, b in zip(decay, decay[1:]))         # polynomial decay
+    assert factors[16:] == [1e-6 / 2e-4] * 5                    # flat tail at the floor
 
 
 def test_schedule_refusals():
+    """Too long a warmup, or warmup plus tail, is refused."""
     with pytest.raises(ValueError, match="warmup_steps: 11 is more than half the run .20 batches.; use at most 10"):
         schedule_factors(warmup_steps=11)
     with pytest.raises(ValueError, match="warmup .8 batches. and flat tail .16 batches. are longer than the run"):
@@ -261,12 +282,14 @@ def test_schedule_refusals():
 
 
 def test_mining_epochs():
+    """Mining runs every n epochs from start until mining stops."""
     mining = {"start_epoch": 3, "every_n_epochs": 4}
     assert mining_epochs(mining, {"name": "WarmupPolynomialDecayFlatTail"}, 128) == list(range(3, 124, 4))
     assert mining_epochs(mining, {"name": "StepLR", "step_size": "1", "step_every": "epoch"}, 12) == [3, 7, 11]
 
 
 def test_mining_checks():
+    """Mining on synthetic noise or with no round left is refused."""
     mining, model = {"start_epoch": 124, "every_n_epochs": 4}, {"name": "MSCNN1Datt_2DResNetCBAM"}
     schedule = {"name": "WarmupPolynomialDecayFlatTail"}
     with pytest.raises(ValueError, match="mining needs real training noise; noise.training is synthetic"):
@@ -286,6 +309,7 @@ def train(**overrides) -> dict:
 
 
 def test_train_checks():
+    """Partial batches and fractional signal counts are refused."""
     check_train(train())
     with pytest.raises(ValueError, match="samples_per_epoch 10 is not a whole number of batches of 4; nearest is 8"):
         check_train(train(samples_per_epoch=10))
@@ -294,6 +318,7 @@ def test_train_checks():
 
 
 def test_compile_settings():
+    """compile settings convert, need mode and refuse unknown keys."""
     assert compile_arguments(False) is None
     settings = {"mode": "max-autotune", "fullgraph": "true", "dynamic": "true"}
     assert compile_arguments(settings) == {"mode": "max-autotune", "fullgraph": True, "dynamic": True}
@@ -304,12 +329,14 @@ def test_compile_settings():
 
 
 def test_precision():
+    """fp32 uses no autocast; fp16 uses a GradScaler."""
     assert precision_setup(train(precision="fp32")) == (None, None)
     dtype, scaler = precision_setup(train(precision="fp16"))
     assert dtype is torch.float16 and isinstance(scaler, torch.amp.GradScaler)
 
 
 def test_schedule_step_every():
+    """step_every is required, or refused, per schedule."""
     with pytest.raises(ValueError, match="step_every: required for CosineAnnealingWarmRestarts"):
         resolve_schedule({"name": "CosineAnnealingWarmRestarts", "T_0": "5"})
     with pytest.raises(ValueError, match="WarmupPolynomialDecayFlatTail steps every batch"):

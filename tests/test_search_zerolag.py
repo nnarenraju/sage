@@ -1,4 +1,4 @@
-"""Zero-lag scoring: output columns, resume after a stop, fixed settings."""
+"""Tests for zero-lag scoring: columns, resume and fixed settings."""
 
 import json
 
@@ -83,6 +83,7 @@ def test_resume(tmp_path):
     windows = analysis_windows(segments, NETWORK["window_samples"], 4)
 
     def run(attrs):
+        """Score the zero-lag pass with the given attributes."""
         score_zerolag(NETWORK, tmp_path, "O3a", windows, directory, 4, 5, "cpu", attrs)
 
     run({"seed": 1})

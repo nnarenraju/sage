@@ -1,8 +1,5 @@
-"""Unit tests for sage.data.noise.lowfar_noise, on CPU.
-
-A FakeNoiseSampler and FixedScoreModel exercise StartTimeDataset and
-_MiningReader end to end with tiny parameters.
-"""
+"""Unit tests for sage.data.noise.lowfar_noise: StartTimeDataset and
+_MiningReader on a fake two-detector sampler, on CPU."""
 
 import json
 import sys
@@ -13,22 +10,14 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Environment guards
-# ---------------------------------------------------------------------------
-
 pytest.importorskip("h5py", reason="sage.core.logger requires h5py")
 pytest.importorskip("tqdm", reason="lowfar_noise requires tqdm")
 
 from sage.data.noise.lowfar_noise import StartTimeDataset, _MiningReader
 
-# ---------------------------------------------------------------------------
-# Shared constants
-# ---------------------------------------------------------------------------
-
 _SR = 4096.0
 _SEQ_LEN = 64         # short window keeps tests fast
-_N_SAMPLES = 512      # 2× largest safe start index + seq_len
+_N_SAMPLES = 512      # 2x largest safe start index + seq_len
 _DETECTORS = ["H1", "L1"]
 _D = len(_DETECTORS)
 _ENDIAN = "<" if sys.byteorder == "little" else ">"
@@ -41,12 +30,9 @@ _SEG_DTYPE = np.dtype([
     ("nsamples", np.int64),
 ])
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _sidecar(gps_start=1_234_567_890.0):
+    """A one-segment sidecar record list starting at gps_start."""
     return [{
         "segment_index": 0,
         "gps_start": gps_start,
@@ -58,12 +44,12 @@ def _sidecar(gps_start=1_234_567_890.0):
 
 
 def _seg_arr():
-    # (run, idx, start, end, nsamples) -- single run 0
+    """The segment table: one segment of run 0."""
     return np.array([(0, 0, 0, _N_SAMPLES, _N_SAMPLES)], dtype=_SEG_DTYPE)
 
 
 class _FakeSampler:
-    """Minimal stand-in for MemmapNoiseSampler, borrowable by _MiningReader."""
+    """Minimal MemmapNoiseSampler stand-in for _MiningReader."""
 
     def __init__(self, bin_files):
         self.bin_files = [Path(p) for p in bin_files]
@@ -74,7 +60,7 @@ class _FakeSampler:
         seg = _seg_arr()
         self.seg_index = [seg] * self.n_detectors
         self.segment_probs = [np.array([1.0])] * self.n_detectors
-        # mmaps are nested [detector][run] (5a); this stub is single-run.
+        # mmaps are nested [detector][run]; this stub has one run.
         self.mmaps = [
             [np.memmap(str(p), dtype=np.dtype(f"{_ENDIAN}f4"), mode="r")]
             for p in self.bin_files
@@ -82,24 +68,21 @@ class _FakeSampler:
 
 
 class _FixedModel(nn.Module):
-    """Always returns the same ranking statistic, regardless of input."""
+    """Returns the same ranking statistic for every input."""
 
     def __init__(self, score: float = 5.0):
         super().__init__()
         self._score = score
 
     def forward(self, x):
+        """A constant score per sample."""
         return (torch.full((x.shape[0], 1), self._score),)
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def fake_env(tmp_path):
-    """Write a minimal .bin + _segments.json sidecar for each detector."""
+    """Write a .bin file and segment sidecar per detector."""
     rng = np.random.default_rng(0)
     bin_files = []
     for i, det in enumerate(_DETECTORS):
@@ -113,21 +96,22 @@ def fake_env(tmp_path):
 
 @pytest.fixture
 def sampler(fake_env):
+    """A _FakeSampler over the fake files."""
     return _FakeSampler(fake_env)
 
 
 @pytest.fixture
 def reader(sampler):
+    """A seeded _MiningReader on the fake sampler."""
     return _MiningReader(sampler, seed=0)
 
 
-# ---------------------------------------------------------------------------
-# TestStartTimeDataset
-# ---------------------------------------------------------------------------
-
 
 class TestStartTimeDataset:
+    """Tests of StartTimeDataset."""
+
     def _make(self, n=10):
+        """A dataset of n windows with scores 0 to n - 1."""
         return StartTimeDataset(
             detectors=_DETECTORS,
             start_indices=np.arange(n * _D, dtype=np.int64).reshape(n, _D),
@@ -141,6 +125,7 @@ class TestStartTimeDataset:
 
 
     def test_save_load_roundtrip(self, tmp_path):
+        """save then load returns the same dataset."""
         ds = self._make(8)
         ds.save(str(tmp_path / "ds.npz"))
         ds2 = StartTimeDataset.load(str(tmp_path / "ds.npz"))
@@ -152,6 +137,7 @@ class TestStartTimeDataset:
 
 
     def test_filter_keeps_correct_subset(self):
+        """filter keeps windows scoring at or above the threshold."""
         ds = self._make(10)      # scores 0..9
         filtered = ds.filter(5.0)
         assert len(filtered) == 5
@@ -159,6 +145,7 @@ class TestStartTimeDataset:
 
 
     def test_merge_detector_mismatch_raises(self):
+        """Merging datasets with different detectors is refused."""
         ds1 = self._make(3)
         ds2 = StartTimeDataset(
             detectors=["V1"],
@@ -174,6 +161,7 @@ class TestStartTimeDataset:
             ds1.merge(ds2)
 
     def _dup_ds(self, rows, scores):
+        """A dataset with the given start rows and scores."""
         rows = np.asarray(rows, dtype=np.int64)
         return StartTimeDataset(
             detectors=_DETECTORS,
@@ -187,7 +175,8 @@ class TestStartTimeDataset:
         )
 
     def test_dedup_keeps_unique_start_rows(self):
-        # rows 0 and 2 are identical (same window); 1 and 3 are distinct.
+        """dedup drops repeated start rows."""
+        # Rows 0 and 2 are the same window; 1 and 3 are distinct.
         ds = self._dup_ds(
             rows=[[10, 20], [30, 40], [10, 20], [50, 60]],
             scores=[1.0, 2.0, 5.0, 3.0],
@@ -198,6 +187,7 @@ class TestStartTimeDataset:
         assert uniq == {(10, 20), (30, 40), (50, 60)}
 
     def test_dedup_keeps_highest_score_of_duplicates(self):
+        """dedup keeps the highest score of a repeated window."""
         ds = self._dup_ds(
             rows=[[10, 20], [10, 20], [10, 20]],
             scores=[1.0, 9.0, 4.0],
@@ -207,7 +197,7 @@ class TestStartTimeDataset:
         assert out.scores[0] == 9.0                       # strongest occurrence kept
 
     def test_dedup_accumulation_does_not_grow_on_repeat(self):
-        # Re-mining the same tail windows every epoch must not grow the set.
+        """Repeated merge plus dedup of one set keeps its size."""
         ds = self._dup_ds(rows=[[1, 2], [3, 4]], scores=[7.0, 8.0])
         acc = ds
         for _ in range(5):
@@ -215,15 +205,13 @@ class TestStartTimeDataset:
         assert len(acc) == 2
 
 
-# ---------------------------------------------------------------------------
-# TestMiningReader
-# ---------------------------------------------------------------------------
-
 
 class TestMiningReader:
+    """Tests of _MiningReader."""
 
 
     def test_random_starts_in_memmap_bounds(self, reader):
+        """Random starts keep each window inside the memmap."""
         starts, segs = reader.random_starts(50)
         for d in range(_D):
             assert np.all(starts[:, d] >= 0)
@@ -231,6 +219,7 @@ class TestMiningReader:
 
 
     def test_mutate_starts_in_bounds(self, reader):
+        """Mutated starts keep each window inside the memmap."""
         starts, segs = reader.random_starts(10)
         new_starts, _ = reader.mutate_starts(starts, segs, sigma_samples=200)
         for d in range(_D):

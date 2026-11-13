@@ -10,7 +10,7 @@ from sage.factory.training import SageVanillaTraining
 
 
 class Recorder(nn.Module):
-    """Two-head network that records whether CPU autocast was on in forward."""
+    """Two-head network that records the CPU autocast state per call."""
 
     def __init__(self):
         super().__init__()
@@ -18,12 +18,14 @@ class Recorder(nn.Module):
         self.autocast = []
 
     def forward(self, x):
+        """Record autocast; return rank, estimates, empty embedding."""
         self.autocast.append(torch.is_autocast_enabled("cpu"))
         h = x.flatten(1)
         return self.rank(h), self.estimates(h), h.new_zeros(len(h), 0)
 
 
 def test_autocast_follows_device():
+    """A bf16 autocast dtype on CPU enables CPU autocast in forward."""
     g = torch.Generator().manual_seed(0)
     signals = lambda: (torch.randn(2, 2, 4, dtype=torch.complex64, generator=g),
                        torch.cat([torch.randn(2, 2, generator=g), torch.ones(2, 1)], dim=1))

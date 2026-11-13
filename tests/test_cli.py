@@ -1,4 +1,5 @@
-"""The sage command line: journey, errors, machine commands and executables."""
+"""Tests for the sage command line: journey, errors, machine commands
+and executables."""
 
 import re
 import shutil
@@ -32,6 +33,7 @@ ema: {enabled: true}
 
 
 def test_journey(capsys, tmp_path, monkeypatch):
+    """With no command, sage prints the journey ending at sage setup."""
     monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "machine.yaml")
     assert main([]) == 0
     out = capsys.readouterr().out
@@ -39,11 +41,13 @@ def test_journey(capsys, tmp_path, monkeypatch):
 
 
 def test_unknown_command(capsys):
+    """An unknown command is refused with the closest known one."""
     assert main(["machin"]) == 1
     assert capsys.readouterr().err == "error: unknown command 'machin'; did you mean 'machine'?\nfix: sage machine\n"
 
 
 def test_machine_file(capsys, tmp_path, monkeypatch):
+    """sage setup writes the machine file and validates data_dir."""
     monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "config" / "machine.yaml")
     assert main(["machine"]) == 1 and capsys.readouterr().err.endswith("fix: sage setup\n")
     assert main(["setup"]) == 0
@@ -58,6 +62,7 @@ def test_machine_file(capsys, tmp_path, monkeypatch):
 
 
 def test_run_directory(capsys, tmp_path, monkeypatch):
+    """init, copy-prior, prepare, stop and check on a new run."""
     presets = tmp_path / "presets"
     (presets / "runs").mkdir(parents=True)
     (presets / "priors").mkdir()
@@ -70,7 +75,8 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     assert main(["list", "presets"]) == 0 and "tiny" in capsys.readouterr().out
     assert main(["init", str(run_dir), "--preset", "tiny"]) == 0
     assert "extends: tiny" in (run_dir / "run.yaml").read_text()
-    assert main(["init", str(run_dir), "--preset", "tiny"]) == 1  # never overwrites a run file
+    # A second init does not overwrite the run file.
+    assert main(["init", str(run_dir), "--preset", "tiny"]) == 1
     assert main(["copy-prior", "bbh_narrow", str(run_dir)]) == 0
     assert (run_dir / "prior.yaml").read_bytes() == (presets / "priors" / "bbh_narrow.yaml").read_bytes()
     capsys.readouterr()
@@ -94,6 +100,7 @@ def test_run_dir_from_inside(capsys, tmp_path, monkeypatch):
 
 
 def test_run_presets(tmp_path):
+    """Every run preset initialises and its prior loads."""
     for name in loader.preset_names("runs"):
         assert main(["init", str(tmp_path / name), "--preset", name]) == 0
         settings = resolve_settings(loader.load_run(tmp_path / name / "run.yaml"))
@@ -101,17 +108,20 @@ def test_run_presets(tmp_path):
 
 
 def test_epoch_seconds(tmp_path):
+    """Epoch duration excludes the time between jobs."""
     log = tmp_path / "run.log"
     lines = [("00:00", "Run /r from epoch 0, seed 1"), ("00:01", "Epoch 0 | training: 2"),
              ("00:11", "Epoch 1 | training: 2"), ("00:31", "Epoch 2 | training: 2"),
              ("09:00", "Run /r from epoch 2, seed 1"), ("09:01", "Epoch 2 | training: 2"),
              ("09:41", "Epoch 3 | training: 2")]
     log.write_text("".join(f"2026-11-04 {at}:00 | INFO    | sage.x:1 | {text}\n" for at, text in lines))
-    assert epoch_seconds(log, 3) == (10 + 20 + 40) * 60 / 3  # the 8.5 h between jobs left out
+    # The 8.5 h between jobs is excluded.
+    assert epoch_seconds(log, 3) == (10 + 20 + 40) * 60 / 3
     assert epoch_seconds(log, 1) == 40 * 60
 
 
 def test_executables():
+    """pyproject lists sage, sgw, sage-help and one per command."""
     pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text()
     scripts = set(re.findall(r'^(\S+) = "sage\.cli:main"$', pyproject, flags=re.M))
     assert scripts == {"sage", "sgw", "sage-help", *(f"sage-{name}" for name in COMMANDS)}

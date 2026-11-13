@@ -1,4 +1,5 @@
-"""End-to-end tests of sage.factory.train_run and ``sage check`` / ``train`` / ``status`` / ``log`` / ``clone`` / ``validate`` / ``compare`` on synthetic noise (tiny epochs)."""
+"""End-to-end tests of sage.factory.train_run and the sage check, train,
+status, log, clone, validate and compare commands on synthetic noise."""
 
 import json
 import os
@@ -79,7 +80,7 @@ ema: {enabled: true, calibration_batches: 2}
 
 
 def fake_data_dir(root):
-    """A data directory holding a flat fiducial for H1 and L1 on the run's grid."""
+    """Data directory with flat H1 and L1 fiducials on the run grid."""
     fiducial = root / "asds" / "o3a" / "fiducial"
     fiducial.mkdir(parents=True)
     bins = 16 * 2048 // 2 + 1
@@ -92,7 +93,7 @@ def fake_data_dir(root):
 
 
 def use_machine(tmp_path, monkeypatch):
-    """A machine file pointing at a fake data directory; the checkout may hold edits."""
+    """Point sage at a fake data directory; ignore local code edits."""
     data_dir = fake_data_dir(tmp_path / "data")
     machine_file = tmp_path / "machine.yaml"
     machine_file.write_text(f"data_dir: {data_dir}\n")
@@ -101,6 +102,7 @@ def use_machine(tmp_path, monkeypatch):
 
 
 def test_train_run(tmp_path, monkeypatch, capsys):
+    """prepare, check, train and validate a run, and its outputs."""
     use_machine(tmp_path, monkeypatch)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -111,18 +113,22 @@ def test_train_run(tmp_path, monkeypatch, capsys):
         assert capsys.readouterr().err.endswith(f"fix: sage prepare {run_dir}\n")
         assert main(["prepare", str(run_dir)]) == 0
         prepared = files()
-        assert "amsgrad: false" in (run_dir / "resolved" / "run.yaml").read_text()  # defaults filled in
+        # Defaults are filled in.
+        assert "amsgrad: false" in (run_dir / "resolved" / "run.yaml").read_text()
         checked = run_dir / "flags" / "checked"
-        assert main(["check", str(run_dir)]) == 0 and set(files()) == set(prepared) | {checked}  # only the flag
+        # check writes only its flag.
+        assert main(["check", str(run_dir)]) == 0 and set(files()) == set(prepared) | {checked}
         (run_dir / "run.yaml").write_text(RUN.replace("epochs: 1", "epochs: 2"))
         assert main(["train", str(run_dir)]) == 1  # run.yaml changed since sage prepare
         assert capsys.readouterr().err.endswith(f"fix: sage prepare {run_dir}\n")
         (run_dir / "run.yaml").write_text(RUN)
-        assert main(["train", str(run_dir), "--stop-after", "0s"]) == 0  # stops before epoch 0
+        # Stops before epoch 0.
+        assert main(["train", str(run_dir), "--stop-after", "0s"]) == 0
         assert not (run_dir / "checkpoints" / "progress.json").exists()
         train_run(run_dir)
         before = files()
-        assert main(["train", str(run_dir)]) == 0 and files() == before  # trained to the end: returns at once
+        # Trained to the end: returns at once.
+        assert main(["train", str(run_dir)]) == 0 and files() == before
         assert main(["check", str(run_dir)]) == 0  # a started run, from its checkpoint
         assert {path: time for path, time in files().items() if path != checked} == {
             path: time for path, time in before.items() if path != checked
@@ -146,7 +152,8 @@ def test_train_run(tmp_path, monkeypatch, capsys):
             assert np.isfinite(file[split]["loss"][0]).all() and file[split]["loss"][0][0] > 0
     with h5py.File(results / "validation.h5", "r") as file:
         assert sorted(file) == ["epoch_0000", "final_best", "final_ema"]
-        for name in ("signal_params", "signal_idx", "network_target"):  # one final set for both
+        # One final set serves both checkpoints.
+        for name in ("signal_params", "signal_idx", "network_target"):
             assert np.array_equal(file["final_best"][name][:], file["final_ema"][name][:], equal_nan=True)
     final = json.loads((results / "final_check.json").read_text())
     assert final["samples"] == 16 and final["best.pt"]["epoch"] == 0 and set(final["best.pt"]["loss"]) >= {"total"}
@@ -158,6 +165,7 @@ def test_train_run(tmp_path, monkeypatch, capsys):
     assert "1 of 1 epochs trained" in out and "Final check, ema_calibrated.pt (epoch 0)" in out
 
     def group(name, file_name="validate.h5"):
+        """Datasets of one group in a results file."""
         with h5py.File(results / file_name, "r") as file:
             return {key: file[name][key][:] for key in file[name]}
 
@@ -166,8 +174,10 @@ def test_train_run(tmp_path, monkeypatch, capsys):
         assert "Validated best.pt (epoch 0) on 16 validation samples" in capsys.readouterr().out
         first = group("validate_best")
         final = group("final_best", "validation.h5")
-        assert all(np.array_equal(first[key], final[key], equal_nan=True) for key in final)  # the final check's pass
-        assert main(["validate", str(run_dir)]) == 0  # the same checkpoint, the same result
+        # The same as the final check's pass.
+        assert all(np.array_equal(first[key], final[key], equal_nan=True) for key in final)
+        # The same checkpoint gives the same result.
+        assert main(["validate", str(run_dir)]) == 0
         assert all(np.array_equal(first[key], value, equal_nan=True) for key, value in group("validate_best").items())
         assert main(["validate", str(run_dir), "--ema-calibrated"]) == 0
         assert np.array_equal(group("validate_ema_calibrated")["signal_idx"], first["signal_idx"])
@@ -178,7 +188,7 @@ def test_train_run(tmp_path, monkeypatch, capsys):
 
 
 def same(a, b) -> bool:
-    """Whether two checkpoint entries are identical, tensors and arrays bit for bit."""
+    """Whether two checkpoint entries are identical, bit for bit."""
     if isinstance(a, torch.Tensor):
         return torch.equal(a, b)
     if isinstance(a, np.ndarray):
@@ -191,6 +201,7 @@ def same(a, b) -> bool:
 
 
 def test_clone(tmp_path, monkeypatch, capsys):
+    """Full-state clones resume exactly; weights-only start fresh."""
     use_machine(tmp_path, monkeypatch)
     old = tmp_path / "old"
     old.mkdir()
@@ -198,6 +209,7 @@ def test_clone(tmp_path, monkeypatch, capsys):
     save = CheckpointManager.save
 
     def save_then_stop(self, epoch, validation_loss):
+        """Save, then raise the stop flag."""
         save(self, epoch, validation_loss)
         flag(old, STOP_FLAG).touch()
 
@@ -224,6 +236,7 @@ def test_clone(tmp_path, monkeypatch, capsys):
     initial = []
 
     class Spy(EMACallback):  # built from the network's weights as training starts
+        """EMACallback that records the weights it starts from."""
         def __init__(self, model, decay):
             initial.append({key: value.clone() for key, value in model.state_dict().items()})
             super().__init__(model, decay)
@@ -253,7 +266,8 @@ def test_clone(tmp_path, monkeypatch, capsys):
     assert final[0] == final[1]
 
     last = tmp_path / "last"
-    assert main(["clone", str(old), str(last), "--full-state"]) == 0  # the last epoch: only the final check is left
+    # At the last epoch only the final check is left.
+    assert main(["clone", str(old), str(last), "--full-state"]) == 0
     prepare_run(last)
     try:
         train_run(last)
@@ -274,6 +288,7 @@ def test_clone(tmp_path, monkeypatch, capsys):
 
 
 def test_flags(tmp_path, monkeypatch, capsys):
+    """The running flag blocks a second job and is cleared on exit."""
     use_machine(tmp_path, monkeypatch)
     run = tmp_path / "run"
     run.mkdir()
@@ -285,10 +300,12 @@ def test_flags(tmp_path, monkeypatch, capsys):
     flag(run, RUNNING_FLAG).unlink()
 
     def held(run_dir, end):
+        """Check the running flag is held, then end the run."""
         assert flag(run_dir, RUNNING_FLAG).exists()
         end()
 
     def fail():
+        """End the run with an error."""
         raise ValueError("failed")
 
     previous = signal.getsignal(signal.SIGTERM)
@@ -304,7 +321,7 @@ def test_flags(tmp_path, monkeypatch, capsys):
 
 
 def test_non_astrophysical(tmp_path, monkeypatch):
-    """Half the noise windows non-astrophysical: training, validation, EMA calibration and the final check."""
+    """Non-astrophysical noise through training and every validation."""
     use_machine(tmp_path, monkeypatch)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -326,12 +343,15 @@ def test_non_astrophysical(tmp_path, monkeypatch):
 
 
 def test_recovered_fractions():
+    """Recovered fractions at fixed false-alarm probabilities."""
     background, foreground = np.arange(1000.0), np.array([998.5, 999.5, 990.0, 1.0])
     rows = recovered_fractions(background, foreground, (1e-3, 2e-3, 1e-4))
-    assert rows == [(1e-3, 1, 999.0, 0.25), (2e-3, 2, 998.0, 0.5), (1e-4, 0, 999.0, 0.25)]  # count 0: the loudest
+    # Count 0: the threshold is the loudest background.
+    assert rows == [(1e-3, 1, 999.0, 0.25), (2e-3, 2, 998.0, 0.5), (1e-4, 0, 999.0, 0.25)]
 
 
 def test_compare(tmp_path, monkeypatch, capsys):
+    """compare scores every run on the same windows; reuse refused."""
     use_machine(tmp_path, monkeypatch)
     run = tmp_path / "run"
     run.mkdir()
@@ -345,13 +365,16 @@ def test_compare(tmp_path, monkeypatch, capsys):
         assert main(["compare", str(run), str(twin), "--output", str(tmp_path / "both"), *windows]) == 0
         assert "Recovered fraction at fixed noise false-alarm probability per window" in capsys.readouterr().out
         assert main(["compare", str(run), "--output", str(tmp_path / "alone"), *windows]) == 0
-        assert main(["compare", str(run), "--output", str(tmp_path / "alone"), *windows]) == 1  # never overwritten
+        # An output is never overwritten.
+        assert main(["compare", str(run), "--output", str(tmp_path / "alone"), *windows]) == 1
         (tmp_path / "empty").mkdir()
-        assert main(["compare", str(run), "--output", str(tmp_path / "empty"), *windows]) == 1  # always a new directory
+        # The output must be a new directory.
+        assert main(["compare", str(run), "--output", str(tmp_path / "empty"), *windows]) == 1
         assert main(["compare", str(run), str(run), "--output", str(tmp_path / "same"), *windows]) == 1
         assert "these repeat: run, run" in capsys.readouterr().err
 
         def stop(run, x):
+            """Stop the comparison with an error."""
             raise RuntimeError("stopped")
 
         monkeypatch.setattr("sage.factory.compare.scores", stop)
@@ -369,11 +392,14 @@ def test_compare(tmp_path, monkeypatch, capsys):
         assert list(both["foreground/run"].attrs["columns"]) == ["rank", "mu_delta_tc", "mu_mchirp", "sigma_delta_tc", "sigma_mchirp"]
         assert both["foreground/target_snr"].shape == (8, 1) and both["foreground/signal_params"].attrs["names"][0]
         for group in ("foreground", "background"):
-            assert np.array_equal(both[group]["run"][:], both[group]["twin"][:])  # one network, the same windows
-            assert np.array_equal(both[group]["run"][:], alone[group]["run"][:])  # windows: first run and seed only
+            # One network on the same windows.
+            assert np.array_equal(both[group]["run"][:], both[group]["twin"][:])
+            # Windows depend only on the first run and the seed.
+            assert np.array_equal(both[group]["run"][:], alone[group]["run"][:])
     assert (tmp_path / "both" / "report.txt").read_text().startswith("background windows 8, foreground signals 8")
     assert not (tmp_path / "both" / "incomplete").exists()
-    with h5py.File(run / "results" / "validation.h5", "r") as file:  # every pass on the same windows
+    # Every pass uses the same windows.
+    with h5py.File(run / "results" / "validation.h5", "r") as file:
         passes = [file[group] for group in ("epoch_0000", "epoch_0001", "final_best")]
         for key in ("signal_params", "signal_idx"):
             first = passes[0][key][:]
@@ -381,17 +407,20 @@ def test_compare(tmp_path, monkeypatch, capsys):
 
 
 def test_final_check_seconds():
+    """Final-check time is two validations plus EMA calibration."""
     settings = {"validation": {"final_samples": 20_000_000, "samples": 200_000},
                 "ema": {"enabled": True, "calibration_batches": 500}}
     assert final_check_seconds(settings, 180.0, 3125.0, 31250) == 2 * 100 * 180.0 + 500 / 31250 * 3125.0
 
 
 def test_final_check_waits(tmp_path, monkeypatch, capsys):
+    """A final check longer than the job waits for the next job."""
     use_machine(tmp_path, monkeypatch)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "run.yaml").write_text(RUN)
-    monkeypatch.setattr("sage.factory.train_run.final_check_seconds", lambda *args: 1e6)  # longer than the job
+    # Longer than the job.
+    monkeypatch.setattr("sage.factory.train_run.final_check_seconds", lambda *args: 1e6)
     prepare_run(run_dir)
     try:
         assert main(["train", str(run_dir), "--stop-after", "2h"]) == 0

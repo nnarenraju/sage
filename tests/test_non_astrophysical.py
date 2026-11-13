@@ -1,4 +1,5 @@
-"""Tests for the non-astrophysical (decoherent) sample masker and injector (CPU, no data)."""
+"""Tests for the non-astrophysical (decoherent) sample masker and
+injector, on CPU."""
 
 import torch
 
@@ -12,11 +13,7 @@ MARGIN = 0.1
 
 
 def _pool(seed=0, detectors=D):
-    """A pool of coherent injections: complex FD strain, per-det tc, per-det mc.
-
-    ``mc`` is broadcast across detectors (identical per row) — exactly what the
-    signal sampler hands over for a coherent injection.
-    """
+    """Coherent injections: FD strain, per-detector tc and shared mc."""
     g = torch.Generator().manual_seed(seed)
     re = torch.randn(N, detectors, F, generator=g)
     im = torch.randn(N, detectors, F, generator=g)
@@ -28,22 +25,25 @@ def _pool(seed=0, detectors=D):
 
 
 def _masker(signal_noise_share=0.5, in_band_share=0.5, seed=0):
+    """A seeded NonAstrophysicalMasker with the given shares."""
     return NonAstrophysicalMasker(
         DELTA_F, TC_BOUNDS, LEN_S, signal_noise_share, in_band_share, torch.Generator().manual_seed(seed)
     )
 
 
 def test_tc_within_window_and_favours_band():
+    """New tc stays inside the window and favours the tc band."""
     data, tc, mc = _pool(1)
     _, na_tc, _, _ = _masker(seed=1)(data, tc, mc)
     assert (na_tc >= MARGIN - 1e-6).all()
     assert (na_tc <= LEN_S - MARGIN + 1e-6).all()
     in_band = ((na_tc >= TC_BOUNDS[0]) & (na_tc <= TC_BOUNDS[1])).float().mean()
-    # ~0.2s band out of ~11.8s window — only the in-band weighting lifts this.
+    # A 0.2 s band in an 11.8 s window; in-band weighting lifts this.
     assert float(in_band) > 0.3
 
 
 def test_signal_noise_drops_one_detector():
+    """Signal+noise keeps one detector; the other is zeroed."""
     data, tc, mc = _pool(2)
     d, _, _, mask = _masker(signal_noise_share=1.0, seed=2)(data, tc, mc)
     assert (mask.sum(1) == 1).all()                      # exactly one supervised
@@ -53,19 +53,19 @@ def test_signal_noise_drops_one_detector():
 
 
 def test_signal_signal_keeps_both_and_mc_differs():
+    """Signal+signal keeps both detectors with different events."""
     data, tc, mc = _pool(3)
     d, _, na_mc, mask = _masker(signal_noise_share=0.0, seed=3)(data, tc, mc)
     assert (mask == 1).all()                             # both detectors supervised
     assert (d.abs().sum(-1) > 0).all()                   # neither detector zeroed
-    # each detector's chirp mass comes from a *different* event -> they disagree.
+    # Each detector's chirp mass comes from a different event.
     differ = (na_mc[:, 0] != na_mc[:, 1]).float().mean()
     assert float(differ) > 0.9
 
 
 def test_retiming_zeros_wraparound():
-    # The re-time is a LINEAR shift (cut at the edge), not circular: the band that
-    # would have wrapped must be exactly zero in the time domain. Detector 0 keeps
-    # its own event (src index = identity), so its shift is dt = na_tc - tc.
+    """Re-timing is a linear shift: wrapped samples are zero."""
+    # Detector 0 keeps its own event, so its shift is na_tc - tc.
     data, tc, mc = _pool(4)
     d, na_tc, _, _ = _masker(signal_noise_share=0.0, seed=4)(data, tc, mc)
     nsamples = 2 * (F - 1)
@@ -89,9 +89,10 @@ if __name__ == "__main__":
 
 
 def test_injector_labels_noise_windows():
-    """Every noise window turns non-astrophysical at share 1; signal windows and estimate targets are untouched."""
+    """Share 1 turns every noise window class 2, and nothing else."""
     data, tc, mc = _pool(5)
-    pool = lambda: (data[:4], torch.cat([torch.zeros(4, 3), tc[:4], mc[:4]], dim=1))  # 2 estimates, class
+    # Columns: 2 estimates, class, then tc and mc per detector.
+    pool = lambda: (data[:4], torch.cat([torch.zeros(4, 3), tc[:4], mc[:4]], dim=1))
     injector = NonAstrophysicalInjector(pool, _masker(seed=5), 1.0, 2, torch.Generator().manual_seed(5))
     x, targets = torch.zeros(8, D, F, dtype=torch.complex64), torch.zeros(8, 3)
     signal_idx = torch.tensor([0, 2, 4, 6])
@@ -103,10 +104,11 @@ def test_injector_labels_noise_windows():
 
 
 def test_injector_draws_only_what_it_uses():
-    """The pool is called only when the pairs left run out, and every pair drawn goes to one chosen window, in order."""
+    """The pool is called only when pairs run out; each used once."""
     calls = []
 
     def pool():
+        """The next 4 pairs, valued by their running index."""
         start = 4 * len(calls)
         calls.append(start)
         data = torch.arange(start, start + 4, dtype=torch.float32).view(4, 1, 1).expand(4, D, F).to(torch.complex64)
@@ -122,7 +124,7 @@ def test_injector_draws_only_what_it_uses():
 
 
 def test_three_detectors():
-    """H1, L1, V1: signal+noise keeps one detector; signal+signal' one event each."""
+    """Three detectors: signal+noise keeps one; signal+signal differ."""
     data, tc, mc = _pool(7, detectors=3)
     d, _, _, mask = _masker(signal_noise_share=1.0, seed=7)(data, tc, mc)
     assert (mask.sum(1) == 1).all() and set(mask.argmax(1).tolist()) == {0, 1, 2}

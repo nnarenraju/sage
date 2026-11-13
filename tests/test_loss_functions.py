@@ -1,9 +1,5 @@
-"""Tests for the classification + parameter-estimation losses.
-
-The point of ``BCE_PE_Sigma`` is NaN-proofing: softplus widths floored at
-``sigma_min`` and capped at ``sigma_max`` (no exp), so extreme head outputs
-cannot blow up ``1/sigma^2``. Components are named per target.
-"""
+"""Tests for the classification and parameter-estimation losses,
+including the NaN-proof widths of BCE_PE_Sigma."""
 
 import pytest
 import torch
@@ -14,6 +10,7 @@ TARGETS = ["delta_tc", "mchirp"]
 
 
 def batch(widths=True, labels=None, seed=0):
+    """Random network outputs and targets for 8 samples."""
     g = torch.Generator().manual_seed(seed)
     rank = torch.randn(8, 1, generator=g)
     estimates = torch.randn(8, 4 if widths else 2, generator=g)
@@ -28,6 +25,7 @@ def batch(widths=True, labels=None, seed=0):
     [(BCE_PE_Sigma(TARGETS), True), (BCE_PE_Huber(TARGETS), False), (BCE_PE_MSE(TARGETS), False)],
 )
 def test_components(loss, widths):
+    """The total is the weighted sum of the named components."""
     out = loss(*batch(widths))
     names = loss.component_names
     assert len(out) == loss.num_components == len(names)
@@ -38,11 +36,13 @@ def test_components(loss, widths):
 
 
 def test_noise_only_regression_is_zero():
+    """Noise-only batches give zero regression loss."""
     out = BCE_PE_Sigma(TARGETS)(*batch(labels=torch.zeros(8)))
     assert (out[2:4] == 0.0).all()
 
 
 def test_confidence_weighting():
+    """Confidence weighting scales only the regression terms down."""
     outputs, targets = batch(widths=False)
     plain = BCE_PE_MSE(TARGETS, confidence_weighting=False)(outputs, targets)
     weighted = BCE_PE_MSE(TARGETS, confidence_weighting=True)(outputs, targets)
@@ -51,7 +51,7 @@ def test_confidence_weighting():
 
 
 def test_non_astrophysical_class():
-    """Multinomial cross-entropy over the logits (0, r, a); class-2 samples get no regression, like noise."""
+    """Cross-entropy over logits (0, r, a); class 2 is not regressed."""
     (rank, estimates, _), targets = batch(labels=torch.tensor([0.0, 1.0, 2.0, 1.0, 0.0, 2.0, 1.0, 2.0]))
     logit = torch.randn(8, 1, generator=torch.Generator().manual_seed(1))
     out = BCE_PE_Sigma(TARGETS)((rank, estimates, logit), targets)
@@ -63,6 +63,7 @@ def test_non_astrophysical_class():
 
 
 def test_sigma_bounds():
+    """Widths map to sigma within [sigma_min, sigma_max]."""
     s = width_to_sigma(torch.tensor([-1e6, -20.0, 0.0, 20.0, 1e6]), 1e-3, 10.0)
     assert torch.isfinite(s).all()
     assert torch.isclose(s[0], torch.tensor(1e-3), atol=1e-6)   # floored
@@ -71,6 +72,7 @@ def test_sigma_bounds():
 
 @pytest.mark.parametrize("raw_width", [-1e6, -50.0, 50.0, 1e6])
 def test_nan_proof_extreme_width(raw_width):
+    """Extreme raw widths give a finite loss."""
     rank = torch.randn(6, 1)
     estimates = torch.empty(6, 4)
     estimates[:, :2] = 1e3                              # large means too

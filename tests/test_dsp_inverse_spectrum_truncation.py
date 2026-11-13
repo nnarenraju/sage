@@ -14,6 +14,7 @@ from sage.dsp.inverse_spectrum_truncation import (
 
 @pytest.mark.parametrize("cutoff", [None, 20.0])
 def test_matches_pycbc(cutoff):
+    """Single and batched truncation match PyCBC to 1e-12."""
     delta_f = 0.5
     freqs = np.arange(513) * delta_f
     psd = 1e-46 * (1.0 + (30.0 / np.maximum(freqs, 1.0)) ** 4 + (freqs / 150.0) ** 2)

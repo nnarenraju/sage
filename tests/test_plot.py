@@ -1,4 +1,5 @@
-"""``sage plot`` on a small results directory written by the run's own writers."""
+"""Tests for sage plot on a small results directory written by the
+run's own writers."""
 
 import numpy as np
 import torch
@@ -14,7 +15,7 @@ TARGETS = ["delta_tc", "mchirp"]
 
 
 def write_pass(path, group, generator, iterations=50, batch_size=8, signals=4, non_astrophysical=False):
-    """One validation pass whose ranking statistic separates signals from noise; half the noise class 2 if asked."""
+    """A separable validation pass; half the noise class 2 if asked."""
     params = torch.rand(iterations * signals, len(NAMES), generator=generator, dtype=torch.float64) + 1
     columns = [NAMES.index(target) for target in TARGETS]
     output = torch.randn(iterations * batch_size, 1 + 2 * len(TARGETS), generator=generator) - 2
@@ -36,6 +37,7 @@ def write_pass(path, group, generator, iterations=50, batch_size=8, signals=4, n
 
 
 def test_plot(tmp_path, capsys):
+    """sage plot draws the lowest-loss epoch, or a named group."""
     run = tmp_path / "run"
     (run / "results").mkdir(parents=True)
     (run / "run.yaml").write_text("extends: hl\n")
@@ -61,7 +63,7 @@ def test_plot(tmp_path, capsys):
 
 
 def test_non_astrophysical(tmp_path):
-    """Class-2 windows in a pass: every plot draws, ROC and calibration on signal vs noise."""
+    """Plots draw with class-2 windows in the pass."""
     run = tmp_path / "run"
     (run / "results").mkdir(parents=True)
     (run / "run.yaml").write_text("extends: hl\n")
@@ -74,7 +76,7 @@ def test_non_astrophysical(tmp_path):
 
 
 def test_almost_constant_output(tmp_path):
-    """An untrained network's output varies only in its last float32 bits; both prediction plots still draw."""
+    """Outputs differing only in the last float32 bit still plot."""
     one = np.float32(0.5)
     output = np.array([one, one, np.nextafter(one, np.float32(1))] * 4, dtype=np.float32)
     labels = np.array([1.0, 0.0] * 6)  # each class holds both values

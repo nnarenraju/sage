@@ -26,7 +26,7 @@ def test_settings_round_trip(tmp_path):
 
 
 def test_check_search_data(tmp_path):
-    """Missing files, then a release conditioned otherwise, are refused."""
+    """Missing files and a release conditioned otherwise are refused."""
     with pytest.raises(machine.MissingData, match="data_H1_O3a.h5"):
         check_search_data(tmp_path, "o3a", RUN, DATASET)
     strain = machine.search_strain_file(tmp_path, "o3a", "H1")

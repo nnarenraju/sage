@@ -1,11 +1,13 @@
-"""SLURM helpers: parsing the read-only queries, and chaining against a stand-in sbatch."""
+"""Tests for the SLURM helpers: parsing the read-only queries, and
+chaining against a stand-in sbatch."""
 
 import os
 
 from sage.utils.slurm import query
 from sage.utils.slurm.chain import chain
 
-# sinfo -o "%P|%a|%l|%L|%D|%c|%m|%G|%C" on a cluster with two GPU node types in one partition.
+# sinfo -o "%P|%a|%l|%L|%D|%c|%m|%G|%C" on a cluster with two GPU
+# node types in one partition.
 PARTITIONS = """cpu*|up|30-00:00:00|1-00:00:00|42|384|773300|(null)|5376/9984/768/16128
 gpu|up|10-00:00:00|1-00:00:00|1|192|773300|gpu:h100_80gb:2,gpu:h200_143gb:2|4/188/0/192
 gpu|up|10-00:00:00|1-00:00:00|1|192|773300|gpu:h100_94gb:2,gpu:h200_143gb:2|4/188/0/192
@@ -16,6 +18,7 @@ cpu*   (null)                              (null)
 
 
 def test_queries():
+    """sinfo outputs parse into partitions, node types and GPU use."""
     partitions = query.parse_partitions(PARTITIONS)
     assert partitions["cpu"]["default"] and not partitions["gpu"]["default"]
     assert partitions["gpu"]["cpus"] == [8, 376, 0, 384]
@@ -27,6 +30,7 @@ def test_queries():
 
 
 def test_chain(tmp_path, monkeypatch):
+    """chain submits jobs that each depend on the previous one."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     sbatch = bin_dir / "sbatch"

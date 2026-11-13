@@ -1,4 +1,5 @@
-"""Tests for sage.data.noise.white_noise: curve checks and the batch sampler."""
+"""Tests for sage.data.noise.white_noise: ASD curve checks and the
+batch sampler."""
 
 import pytest
 import torch
@@ -11,12 +12,14 @@ VIRGO = "AdVDesignSensitivityP1200087"
 
 
 def test_asd_choice():
+    """Curves are ordered by detector; missing or extra ones refused."""
     assert check_detector_asds({"L1": LIGO, "H1": LIGO}, ["H1", "L1"]) == [LIGO, LIGO]
     with pytest.raises(ValueError, match=r"missing \['L1'\], extra \['V1'\]"):
         check_detector_asds({"H1": LIGO, "V1": VIRGO}, ["H1", "L1"])
 
 
 def test_asd_wrong_curve():
+    """Unknown curves, or another detector's, are refused."""
     with pytest.raises(ValueError, match="did you mean 'aLIGODesignSensitivityP1200087'"):
         check_detector_asds({"H1": "aLIGODesignSensitivityP120087"}, ["H1"])
     with pytest.raises(ValueError, match="H1: 'AdVDesignSensitivityP1200087' is a Virgo curve, H1 is LIGO"):
@@ -24,11 +27,13 @@ def test_asd_wrong_curve():
 
 
 def test_sampler_reproducible():
+    """Batches are reproducible from the seed and step."""
     window = window_from_data(
         {"sample_rate_in_hz": 256.0, "sample_length_in_s": 1.0, "padding_length_in_s": 0.5}
     )
 
     def sampler():
+        """A seeded H1-V1 white-noise sampler."""
         return WhiteGaussianNoiseSampler(
             [LIGO, VIRGO], ["H1", "V1"], window, 3, 7, 20.0, 1.0, "cpu", torch.float32
         )

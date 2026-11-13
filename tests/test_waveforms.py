@@ -1,8 +1,5 @@
-"""Every waveform model vs lalsimulation.SimInspiralChooseFDWaveform (multibanding off) on the production grids.
-
-Where LAL is non-zero, each model holds its measured agreement rounded up to the next decade (2026-10-29); where
-LAL is zero, every model is zero. IMRPhenomXHM and IMRPhenomXPHM carry their known, unresolved gap.
-"""
+"""Tests of every waveform model against LAL's ChooseFDWaveform
+(multibanding off): agreement where LAL is non-zero, zeros elsewhere."""
 
 from pathlib import Path
 
@@ -37,7 +34,7 @@ BNS = [dict(mass1=1.6, mass2=1.3, spin1z=0.03, spin2z=-0.02, lambda1=400.0, lamb
 
 
 def theta_of(signals):
-    """Signals in the WAVEFORM_PARAMETERS layout (absent spins 0, absent tides NaN)."""
+    """WAVEFORM_PARAMETERS rows; absent spins 0, absent tides NaN."""
     names = waveform_utils.WAVEFORM_PARAMETERS
     theta = torch.full((len(signals), len(names)), float("nan"), dtype=torch.float64)
     for row, s in enumerate(signals):
@@ -48,6 +45,7 @@ def theta_of(signals):
 
 
 def lal_hphc(s, approximant, delta_f):
+    """LAL's plus and cross polarisations for one signal."""
     s = {**COMMON, **s}
     p = lal.CreateDict()
     ls.SimInspiralWaveformParamsInsertPhenomXHMThresholdMband(p, 0)
@@ -63,6 +61,7 @@ def lal_hphc(s, approximant, delta_f):
 
 
 def check(hp, hc, signals, approximant, delta_f, tolerance):
+    """Compare with LAL: within tolerance in band, zero outside it."""
     for row, s in enumerate(signals):
         for ours, theirs in zip((hp[row].numpy(), hc[row].numpy()), lal_hphc(s, approximant, delta_f)):
             assert len(ours) == len(theirs)
@@ -72,22 +71,26 @@ def check(hp, hc, signals, approximant, delta_f, tolerance):
 
 
 def grid(batch):
+    """Frequencies and reference frequencies for a batch."""
     return (waveform_utils.get_freqs(F_LOW, RATE / 2, T, batch, "cpu", torch.float64),
             waveform_utils.reference_frequencies(F_LOW, batch, "cpu"))
 
 
 @pytest.mark.parametrize("model, tolerance", [(IMRPhenomD, 1e-12), (IMRPhenomXAS, 1e-12)])
 def test_aligned(model, tolerance):
+    """IMRPhenomD and IMRPhenomXAS match LAL to 1e-12."""
     hp, hc = model(*grid(len(ALIGNED)), 2.0).get_hphc(theta_of(ALIGNED), reproduce_lal=True)
     check(hp, hc, ALIGNED, model.__name__, 1 / T, tolerance)
 
 
 def test_xhm():
+    """IMRPhenomXHM matches LAL to 1e-5."""
     hp, hc = IMRPhenomXHM(*grid(len(ALIGNED)), padding_length_in_s=2.0).get_hphc(theta_of(ALIGNED), reproduce_lal=True)
     check(hp, hc, ALIGNED, "IMRPhenomXHM", 1 / T, 1e-5)
 
 
 def test_xphm():
+    """IMRPhenomXPHM matches LAL to 1e-5."""
     model = IMRPhenomXPHM.from_grid(*grid(len(PRECESSING)), padding_length_in_s=2.0)
     hp, hc = model.get_hphc(theta_of(PRECESSING), reproduce_lal=True)
     check(hp, hc, PRECESSING, "IMRPhenomXPHM", 1 / T, 1e-5)
@@ -107,7 +110,7 @@ def test_xphm_gradients():
 
 
 def test_pv2():
-    """The production training model, built as a run builds it."""
+    """IMRPhenomPv2, built as a run builds it, matches LAL to 1e-12."""
     window, detectors, dtype = build_data({"detectors": ["H1", "L1"], "sample_rate_in_hz": RATE,
                                            "sample_length_in_s": 12.0, "padding_length_in_s": 2.0, "dtype": "float32"})
     section = {"prior": "bbh_narrow", "low_frequency_cutoff_in_hz": F_LOW, "reference_frequency_in_hz": F_LOW,
@@ -120,6 +123,7 @@ def test_pv2():
 
 
 def test_nrtidalv3():
+    """IMRPhenomXAS_NRTidalv3 matches LAL to 1e-10."""
     model = IMRPhenomXAS_NRTidalv3.from_band(1 / 256, F_LOW, RATE / 2, F_LOW, len(BNS), "cpu")
     hp, hc = model.get_hphc(theta_of(BNS), reproduce_lal=True)
     check(hp, hc, BNS, "IMRPhenomXAS_NRTidalv3", 1 / 256, 1e-10)

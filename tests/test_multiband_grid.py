@@ -6,8 +6,9 @@ import pytest
 from sage.core.constants import GM
 from sage.data.waveform import multiband_grid as mb
 
-# 22-mode arguments (zero spins, 1024 Hz, 1/16 Hz) and the sub-grids XLALSimIMRPhenomXMultibandingGrid
-# returns for them in LAL's binary, as (intdfRatio, Length, xStart, deltax).
+# 22-mode arguments (zero spins, 1024 Hz, 1/16 Hz) and the sub-grids
+# XLALSimIMRPhenomXMultibandingGrid returns for them in LAL's binary,
+# as (intdfRatio, Length, xStart, deltax).
 MODE22 = (0.021497332614512636, 0.11528197698673585)  # fMECO, fRING + 2 fDAMP
 SPACING = (1.8333333333333333, 0.1798507193740161, 0.0007341551132675033, 0.0009240704180787725)
 CASES = {
@@ -35,13 +36,16 @@ CASES = {
 
 @pytest.mark.parametrize("arguments, expected", CASES.values(), ids=CASES)
 def test_grid_matches_lal(arguments, expected):
+    """Sub-grids equal LAL's for each case."""
     grids = mb.multibanding_grid(*arguments[:5], *SPACING)
     assert [(g["int_df_ratio"], g["length"], g["x_start"], g["deltax"]) for g in grids] == expected
 
 
 def test_coarse_frequencies():
+    """Coarse frequencies of the sub-grids; no sub-grids is refused."""
     grids = [{**mb.grid_comp(0.0, 1.0, 0.25), "int_df_ratio": 5}]
-    used, points, freqs = mb.coarse_frequencies(grids, 0.1, 1.05, 10.0)  # ends within one step of mf_max
+    # Ends within one step of mf_max.
+    used, points, freqs = mb.coarse_frequencies(grids, 0.1, 1.05, 10.0)
     assert used[0]["length"] == 6 and points.tolist() == [0.0, 0.25, 0.5, 0.75, 1.0, 1.25]
     assert np.array_equal(freqs, points * (1.0 / (10.0 * GM)))
     with pytest.raises(ValueError, match="0 multibanding sub-grids"):
@@ -49,6 +53,7 @@ def test_coarse_frequencies():
 
 
 def test_int4_overflow():
+    """A length that overflows LAL's INT4 conversion is refused."""
     with pytest.raises(ValueError, match="overflows LAL's INT4 conversion"):
         mb.multibanding_grid(0.013985028791545114, 4.274830115023252, 0.1307953941733732, 0.19570734231051892,
                              1.8676842519656006e-07, 11 / 6, 35.31845994636517, 5.135628861561841e-05, 0.0036534469958082196)

@@ -1,4 +1,4 @@
-"""Tests for sage.core.geometry: the window computed from data settings."""
+"""Tests for sage.core.geometry: the window from the data settings."""
 
 import pytest
 
@@ -17,6 +17,7 @@ def data(sample_length: float, padding: float, rate: float) -> dict:
 
 
 def test_production_window():
+    """Sizes of the production window: 12 s, 2 s padding, 2048 Hz."""
     window = window_from_data(data(12.0, 2.0, 2048.0))
     assert window.sample_length_in_samples == 24576
     assert window.padding_in_samples == 4096
@@ -27,10 +28,12 @@ def test_production_window():
 
 
 def test_exact_padded_length():
+    """The padded length is exact, free of float rounding."""
     assert 0.1 + 2 * 0.1 != 0.3
     assert window_from_data(data(0.1, 0.1, 10.0)).padded_length_in_s == 0.3
 
 
 def test_partial_sample():
+    """A padding that is not a whole number of samples is refused."""
     with pytest.raises(ValueError, match="padding_length_in_s 0.05 s is 102.4 samples"):
         window_from_data(data(12.0, 0.05, 2048.0))

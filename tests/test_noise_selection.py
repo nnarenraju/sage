@@ -23,10 +23,12 @@ RECORDS = {
 
 
 def spans(selected: dict) -> dict:
+    """The (start, end) span of each selected record, per detector."""
     return {det: [(r["gps_start"], r["gps_end"]) for r in recs] for det, recs in selected.items()}
 
 
 def test_portion_cuts():
+    """A portion keeps the records within that fraction of the data."""
     assert spans(selection.select_portion(RECORDS, [0.0, 0.5])) == {
         "H1": [(0, 10)], "L1": [(0, 10)]
     }
@@ -36,6 +38,7 @@ def test_portion_cuts():
 
 
 def test_portion_drops_straddler():
+    """A record straddling the cut goes to neither side."""
     early = spans(selection.select_portion(RECORDS, [0.0, 0.6]))
     late = spans(selection.select_portion(RECORDS, [0.6, 1.0]))
     assert (20, 30) not in early["H1"] + late["H1"]
@@ -43,6 +46,7 @@ def test_portion_drops_straddler():
 
 
 def test_gps_range_trims():
+    """gps_range trims an overlapping record and drops outside ones."""
     records = {"H1": [record(100, 40, rate=4.0, index=1000), record(120, 8, rate=4.0), record(300, 8, rate=4.0)]}
     kept = selection.select_gps_range(records, [102.25, 200.0])["H1"]
     assert (kept[0]["sample_start_idx"], kept[0]["nsamples"], kept[0]["gps_start"]) == (1009, 31, 102.25)
@@ -51,6 +55,7 @@ def test_gps_range_trims():
 
 
 def test_disjoint():
+    """Selections sharing data are refused."""
     late = selection.select_portion(RECORDS, [0.5, 1.0])
     selection.check_disjoint(selection.select_portion(RECORDS, [0.0, 0.5]), late, "o3a")
     with pytest.raises(ValueError, match="share o3a H1 data"):
@@ -58,6 +63,7 @@ def test_disjoint():
 
 
 def test_source_errors():
+    """Conflicting, inverted or empty selections are refused."""
     with pytest.raises(ValueError, match="portion or gps_range, not both"):
         selection.select_records(RECORDS, {"portion": [0, 1], "gps_range": [0, 1]})
     with pytest.raises(ValueError, match="0 <= low < high <= 1"):

@@ -1,4 +1,5 @@
-"""sage.utils.atomic_io.append_h5: a damaged file is moved aside, a file held by another process is not."""
+"""Tests for sage.utils.atomic_io.append_h5: a damaged file is moved
+aside, a file held by another process is not."""
 
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from sage.utils.atomic_io import append_h5
 
 
 def test_append_h5(tmp_path):
+    """A held file is refused; a truncated one is moved aside."""
     path = tmp_path / "results.h5"
     with append_h5(path) as file:
         file["x"] = [1, 2, 3]

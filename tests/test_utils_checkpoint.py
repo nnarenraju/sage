@@ -1,4 +1,4 @@
-"""Tests for sage.utils.checkpoint: the self-contained checkpoint format."""
+"""Tests for sage.utils.checkpoint: self-contained checkpoints."""
 
 import h5py
 import torch
@@ -20,6 +20,7 @@ def run_dir(tmp_path):
 
 
 def parts(seed):
+    """A seeded model, optimiser, schedule and EMA."""
     torch.manual_seed(seed)
     model = nn.Linear(3, 2)
     optimiser = torch.optim.AdamW(model.parameters(), lr=0.1)
@@ -29,6 +30,7 @@ def parts(seed):
 
 
 def step(model, optimiser, schedule, ema):
+    """One training step, schedule step and EMA update."""
     model(torch.randn(4, 3)).square().mean().backward()
     optimiser.step()
     schedule.step()
@@ -36,6 +38,7 @@ def step(model, optimiser, schedule, ema):
 
 
 def test_checkpoint_files(tmp_path):
+    """Saved files, best by loss, the run record and next_epoch."""
     directory = run_dir(tmp_path)
     model, optimiser, schedule, ema = parts(0)
     manager = CheckpointManager(directory, model, optimiser, schedule, None, ema, keep=1)
@@ -53,6 +56,7 @@ def test_checkpoint_files(tmp_path):
 
 
 def test_resume_exact(tmp_path):
+    """Resuming restores weights, EMA, schedule, best loss and RNG."""
     directory = run_dir(tmp_path)
     model, optimiser, schedule, ema = parts(0)
     manager = CheckpointManager(directory, model, optimiser, schedule, None, ema, keep="all")
@@ -71,6 +75,7 @@ def test_resume_exact(tmp_path):
 
 
 def test_loss_components_named(tmp_path):
+    """Loss rows keep component names and survive a resume."""
     path = tmp_path / "results" / "losses.h5"
     HDF5LossLogger(path, 4, ["total", "classification"]).log(torch.ones(4, 2), 0, "training")
     HDF5LossLogger(path, 4, ["total", "classification"])  # resume keeps the rows

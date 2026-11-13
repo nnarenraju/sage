@@ -1,5 +1,5 @@
-"""sage download without the network: strain on disk adopted, its ASDs, bank and fiducial built; GWOSC's answers
-recorded and read back offline; damage or other flags refused; GWOSC unreachable."""
+"""Tests for sage download, offline: adopting strain on disk, its ASDs,
+bank and fiducial; GWOSC records; damage refused; GWOSC unreachable."""
 
 import json
 from functools import partial
@@ -24,6 +24,7 @@ from sage.dsp.welch import TorchWelch
 
 
 def write_strain(data_dir, lengths):
+    """Write H1 strain segments of the given lengths, with metadata."""
     path = machine.strain_file(data_dir, "o3b", "H1")
     path.parent.mkdir(parents=True)
     records, offset = [], 0
@@ -44,6 +45,7 @@ def write_strain(data_dir, lengths):
 
 
 def test_zero_runs(tmp_path, monkeypatch):
+    """Zero samples are marked bad time and refused by the estimator."""
     path = write_strain(tmp_path, [40960, 45056])
     machine.bad_time_file(path).write_text(json.dumps({"flags": list(FLAGS), "intervals": []}))
     samples = np.memmap(path, dtype="<f4", mode="r+")
@@ -56,16 +58,18 @@ def test_zero_runs(tmp_path, monkeypatch):
     ]
     assert read_bad_time(path) == [(start + 100 / 2048, start + 110 / 2048)]
     sampler = MemmapSingleNoiseSampler(path, read_bad_time(path))
-    assert list(sampler.segments["start"]) == [0]  # the bank never draws the second segment
+    # The second segment is never drawn.
+    assert list(sampler.segments["start"]) == [0]
     monkeypatch.setitem(download.ASDS, "bank_size", 1)
-    with pytest.raises(ValueError, match="zero or non-finite samples"):  # before the ASD is estimated
+    # Refused before the ASD is estimated.
+    with pytest.raises(ValueError, match="zero or non-finite samples"):
         download.estimator("H1", tmp_path / "asds").write_raw_asds(
             noise_sampler=lambda n: torch.zeros(n), duration=32768
         )
 
 
 def test_no_interpolation(tmp_path):
-    """EstimateASD on Welch's own grid (interpolate_asd=False): the per-segment ASDs, NaN in bad time, and a bank."""
+    """interpolate_asd=False: segment ASDs, NaN in bad time, bank."""
     path = write_strain(tmp_path, [40960, 45056])
     asd_dir = tmp_path / "asds"
     estimator = EstimateASD(
@@ -84,7 +88,7 @@ def test_no_interpolation(tmp_path):
 
 
 def test_one_worker(tmp_path, monkeypatch):
-    """The single-worker download path, offline: GWOSC's strain replaced by white noise."""
+    """Single-worker download, offline, with white noise as strain."""
     noise = lambda det, start, end, cache: TimeSeries(
         np.random.default_rng(0).standard_normal(int((end - start) * 4096)), sample_rate=4096, t0=start
     )
@@ -100,10 +104,12 @@ def test_one_worker(tmp_path, monkeypatch):
 
 
 def unreachable(*args, **kwargs):
+    """Raise the ConnectionError of an unreachable GWOSC."""
     raise requests.exceptions.ConnectionError("proxy 503")
 
 
 def test_adopt_strain(tmp_path, monkeypatch):
+    """Adopted strain gets ASDs and a fiducial; damage is refused."""
     monkeypatch.setitem(download.ASDS, "bank_size", 3)
     monkeypatch.setitem(download.FIDUCIAL, "line_stretches_per_run", 2)
     path = write_strain(tmp_path, [40960, 45056])
@@ -113,7 +119,8 @@ def test_adopt_strain(tmp_path, monkeypatch):
     record = yaml.safe_load(machine.asds_file(tmp_path, "o3b").read_text())
     assert record["detectors"]["H1"] == {"segment_asds": 2, "bank_seed": download.BANK_SEED}
     rows = np.fromfile(machine.segment_asd_file(machine.asd_dir(tmp_path, "o3b"), "H1"), dtype="<f4").reshape(2, -1)
-    assert np.isnan(rows[0]).all() and np.isfinite(rows[1]).all()  # segment 0 touches the bad time
+    # Segment 0 overlaps the bad time.
+    assert np.isnan(rows[0]).all() and np.isfinite(rows[1]).all()
     records = [machine.dataset_file(tmp_path, "o3b"), machine.asds_file(tmp_path, "o3b")]
     for record in records:
         record.chmod(0o444)
@@ -128,7 +135,8 @@ def test_adopt_strain(tmp_path, monkeypatch):
     assert gwosc == {"name": "O3B", "detectors": ["H1"]}
     monkeypatch.setattr(download, "gwosc_run", unreachable)
     monkeypatch.setattr(download, "find_datasets", unreachable)
-    download.build_fiducials(tmp_path, ["o3b"], ["H1"], 1)  # checked from the record, offline
+    # Checked against the record, offline.
+    download.build_fiducials(tmp_path, ["o3b"], ["H1"], 1)
     fiducial = machine.fiducial_file(machine.fiducial_dir(tmp_path, ["o3b"]), "H1")
     asd = np.fromfile(fiducial, dtype="<f4")
     asd[100] = np.inf  # an excised bin
@@ -147,7 +155,7 @@ def test_adopt_strain(tmp_path, monkeypatch):
 
 
 def test_line_workers(tmp_path, monkeypatch):
-    """The fiducial's line detections do not depend on the number of worker processes."""
+    """Fiducial line detections do not depend on the worker count."""
     monkeypatch.setitem(download.FIDUCIAL, "line_stretches_per_run", 4)
     monkeypatch.setitem(download.FIDUCIAL, "line_chunk", 2)
     strain = write_strain(tmp_path, [40960, 45056])
@@ -157,6 +165,7 @@ def test_line_workers(tmp_path, monkeypatch):
 
 
 def test_unreachable(tmp_path, monkeypatch, capsys):
+    """An unreachable GWOSC is reported with the command to rerun."""
     machine_file = tmp_path / "machine.yaml"
     machine_file.write_text(f"data_dir: {tmp_path}\n")
     monkeypatch.setattr(machine, "MACHINE_FILE", machine_file)

@@ -1,4 +1,5 @@
-"""Statmap: triggers of one stream, NA removal orders, hierarchical removal."""
+"""Tests for sage.search.statmap: stream triggers, NA removal and
+hierarchical removal."""
 
 import numpy as np
 from pycbc.conversions import sec_to_year
@@ -22,7 +23,7 @@ def rows() -> np.ndarray:
 
 
 def windows(remove_na: str, shift: int = 0, l1_bad: int = None) -> tuple:
-    """Kept windows and live time of one stream; H1 window 4 is bad time."""
+    """Kept windows and live time of a stream; H1 window 4 is bad."""
     clear = {"H1": np.ones(6, dtype=bool), "L1": np.ones(6, dtype=bool)}
     clear["H1"][4] = False
     if l1_bad is not None:
@@ -33,7 +34,7 @@ def windows(remove_na: str, shift: int = 0, l1_bad: int = None) -> tuple:
 
 
 def test_stream_triggers():
-    """Bad time dropped; NA removed before or after clustering; pairs shifted."""
+    """Bad time dropped, NA removed around clustering, pairs shifted."""
     assert windows("off")[:2] == ([1, 2, 3, 5], 5.0)
     assert windows("before-clustering")[0] == [0, 2, 3, 5]  # window 0 now leads
     assert windows("after-clustering")[0] == [2, 3, 5]  # window 1 won, then went
@@ -44,7 +45,7 @@ def test_stream_triggers():
 
 
 def test_hierarchical_rates():
-    """The loudest trigger beats all background, keeps its rate, takes its data."""
+    """Loudest beats all background: keeps its rate, takes its data."""
     year = 1 / sec_to_year(1.0)
     foreground = {"ranking_statistic": np.array([10.0, 7.0, 4.0]),
                   "H1_tc": np.array([0.0, 100.0, 200.0]),

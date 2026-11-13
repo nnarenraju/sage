@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Pytest configuration: keeps pytest's temporary files off /tmp.
+
 Filename      : conftest.py
 Description   : Keeps pytest's temporary files off /tmp.
 
@@ -20,10 +22,10 @@ import os
 from pathlib import Path
 
 
-# Nothing this project runs may write to /tmp, and pytest's tmp_path lands there by
-# default. Redirected before any fixture asks for a temporary directory, since the temp
-# root is resolved lazily on first use. Set here rather than in addopts so it can still be
-# overridden per machine, and so a stale basetemp is not wiped from under a parallel run.
+# pytest's tmp_path defaults to /tmp. The temp root is resolved on first
+# use, so setting it here precedes every fixture. It is set here rather
+# than in addopts so it can be overridden per machine and a stale
+# basetemp is not wiped from under a parallel run.
 _TEMPROOT = Path(
     os.environ.get("SAGE_PYTEST_TEMPROOT", Path.home() / ".cache" / "sage-pytest")
 )

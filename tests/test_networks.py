@@ -1,4 +1,4 @@
-"""Contract of every named network: outputs, mining tap and the search's split."""
+"""Contract of every named network: outputs, mining tap and split."""
 
 import pytest
 import torch
@@ -16,11 +16,13 @@ def network(name: str, non_astrophysical: bool = False, **settings) -> torch.nn.
 
 
 def strain() -> torch.Tensor:
+    """Two-detector random strain for a batch of 2."""
     return torch.randn(2, 2, 1024, generator=torch.Generator().manual_seed(1))
 
 
 @pytest.mark.parametrize("name", sorted(MODELS))
 def test_contract(name):
+    """Output shapes, unit embeddings and the split check, per model."""
     model = network(name)
     x = strain()
     with torch.no_grad():
@@ -40,5 +42,6 @@ def test_contract(name):
 
 
 def test_groupnorm_not_separable():
+    """GroupNorm mixes detectors, so the split is refused."""
     with pytest.raises(ValueError, match="detector 1 depends on detector 0"):
         check_split(network("MSCNN1Datt_2DResNetCBAM", norm_type="groupnorm"), strain())

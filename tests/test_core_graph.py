@@ -1,4 +1,4 @@
-"""Tests for sage.core.graph: the preprocessing chain and its order check."""
+"""Tests for sage.core.graph: preprocessing chain and order check."""
 
 import numpy as np
 import pytest
@@ -18,16 +18,19 @@ FD = ProcessingState(Grid.FD_UNIFORM)
 
 
 def steps():
+    """Whitening, min-max normalisation and multirate steps."""
     whiten = FiducialWhitening(torch.ones(1, WINDOW.n_frequency_bins), WINDOW, "cpu")
     bins = np.array([[0, WINDOW.sample_length_in_samples, 256]])
     return whiten, MinMaxNormalise(), MultirateSampler(bins, WINDOW, "cpu", torch.float32)
 
 
 def fd_batch(state):
+    """A zero frequency-domain batch in the given state."""
     return GWBatch(torch.zeros(2, 1, WINDOW.n_frequency_bins, dtype=torch.complex64), state)
 
 
 def test_chain_output_state():
+    """A valid chain reports and produces its output state."""
     chain = Preprocessor(list(steps()), FD)
     assert chain.output_state == ProcessingState(Grid.TD_MULTIRATE, whitened=True)
     batch = chain(fd_batch(FD))
@@ -45,12 +48,14 @@ def test_chain_output_state():
     ],
 )
 def test_chain_order(order, state, message):
+    """Steps in an invalid order are refused when the chain is built."""
     available = steps()
     with pytest.raises(PipelineError, match=message):
         Preprocessor([available[i] for i in order], state)
 
 
 def test_batch_state():
+    """A batch not in the chain's input state is refused."""
     whiten, _, multirate = steps()
     chain = Preprocessor([whiten, multirate], FD)
     with pytest.raises(PipelineError, match="built for"):

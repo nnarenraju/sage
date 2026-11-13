@@ -1,4 +1,4 @@
-"""Roll background: the plan of rolls and files, and scoring one file."""
+"""Tests for the roll background: planning rolls and scoring a file."""
 
 import json
 
@@ -19,7 +19,7 @@ STRIDE = 256
 
 
 def test_plan_rolls():
-    """Live time counts pairs clear in both detectors; files close at a year."""
+    """Live time counts pairs clear in both; files close at a year."""
     clear = {"H1": np.ones(8, dtype=bool), "L1": np.ones(8, dtype=bool)}
     clear["H1"][0] = clear["L1"][3] = False
     rate = 1 / (sec_to_year(1.0) ** -1 / 6)  # one window is 1/6 year
@@ -41,7 +41,7 @@ class InverseFFT:
 
 
 def tiny_network() -> dict:
-    """A small separable two-detector network with the non-astrophysical class."""
+    """Small separable H1-L1 network with a non-astrophysical logit."""
     torch.manual_seed(0)
     settings = {"name": "MSCNN1Datt_2DResNetCBAM", "backend_resnet_size": "18",
                 "frontend_filters": "16"}
@@ -69,7 +69,7 @@ def write_release(release_dir):
 
 
 def test_roll_file(tmp_path):
-    """Every pair equals the full network on its windows; a stop resumes exactly."""
+    """Scores match the full network; a stopped file resumes exactly."""
     write_release(tmp_path)
     network = tiny_network()
     segments = {detector: load_segments(tmp_path, "O3a", detector) for detector in ["H1", "L1"]}
@@ -78,6 +78,7 @@ def test_roll_file(tmp_path):
     shifts = [[3], [6]]
 
     def run():
+        """Score the roll file, resuming from its progress record."""
         score_roll_file(network, tmp_path, "O3a", windows, tmp_path / "background",
                         "year_01", shifts, STRIDE, 5, "cpu", {"shifts": shifts})
 
@@ -87,6 +88,7 @@ def test_roll_file(tmp_path):
 
     with h5py.File(tmp_path / "data_H1_O3a.h5") as h1, h5py.File(tmp_path / "data_L1_O3a.h5") as l1:
         def window(handle, detector, index):
+            """Strain of one detector in one analysis window."""
             segment = windows[f"{detector}_segment"][index]
             sample = windows[f"{detector}_sample"][index]
             return handle[f"segments/{segment:06d}"][sample : sample + WINDOW]

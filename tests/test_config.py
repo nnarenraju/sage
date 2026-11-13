@@ -1,4 +1,4 @@
-"""Tests for sage.config: run-file reading, extends and value checking."""
+"""Tests for sage.config: run files, extends and value checking."""
 
 from pathlib import Path
 
@@ -112,6 +112,7 @@ def presets(tmp_path, monkeypatch):
 
 
 def test_types(tmp_path):
+    """Run-file values are converted to their declared types."""
     settings = load_run(write(tmp_path, "run.yaml", RUN))
     assert settings["data"] == {
         "detectors": ["H1", "L1"],
@@ -125,6 +126,7 @@ def test_types(tmp_path):
 
 
 def test_component_parameters(tmp_path):
+    """Component options stay strings; a missing name is refused."""
     snr = load_run(write(tmp_path, "run.yaml", RUN))["signal"]["snr"]
     assert snr == {"name": "halfnorm", "scale": "4.0", "loc": "5.0"}
     with pytest.raises(ValueError, match="signal.projection: missing setting 'name'"):
@@ -132,7 +134,7 @@ def test_component_parameters(tmp_path):
 
 
 def test_plain_name(tmp_path):
-    """A plain name stands for a component with that name and no options."""
+    """A plain name is a component with that name and no options."""
     text = RUN.replace("projection:\n    name: constant", "projection: constant").replace("- name: whiten", "- whiten")
     settings = load_run(write(tmp_path, "run.yaml", text))
     assert settings["signal"]["projection"] == {"name": "constant"}
@@ -140,6 +142,7 @@ def test_plain_name(tmp_path):
 
 
 def test_noise_section(tmp_path):
+    """The noise section reads its groups and plain settings."""
     noise = load_run(write(tmp_path, "run.yaml", RUN))["noise"]
     assert noise["training"] == {"name": "real", "runs": ["o3b"]}
     assert noise["recolour"]["validation"] is False
@@ -147,6 +150,7 @@ def test_noise_section(tmp_path):
 
 
 def test_optional_group(tmp_path):
+    """An optional group may be left out."""
     start = RUN.index("  recolour:")
     end = RUN.index("  fiducial:")
     noise = load_run(write(tmp_path, "run.yaml", RUN[:start] + RUN[end:]))["noise"]
@@ -154,12 +158,14 @@ def test_optional_group(tmp_path):
 
 
 def test_unknown_variant(tmp_path):
+    """An unknown variant name is refused with the closest one."""
     text = RUN.replace("    name: real\n    runs: [o3a]", "    name: rael\n    runs: [o3a]")
     with pytest.raises(ValueError, match="noise.validation.name: unknown 'rael'; did you mean 'real'"):
         load_run(write(tmp_path, "run.yaml", text))
 
 
 def test_preprocess_steps(tmp_path):
+    """Preprocess steps are checked one by one, by index."""
     steps = load_run(write(tmp_path, "run.yaml", RUN))["preprocess"]
     assert [step["name"] for step in steps] == ["whiten", "multirate"]
     assert steps[1]["min_bin_length_in_s"] == 0.05
@@ -170,41 +176,48 @@ def test_preprocess_steps(tmp_path):
 
 
 def test_exponent_without_dot(tmp_path):
+    """A float written as 2e3 parses as a number."""
     text = RUN.replace("sample_rate_in_hz: 2048", "sample_rate_in_hz: 2e3")
     assert load_run(write(tmp_path, "run.yaml", text))["data"]["sample_rate_in_hz"] == 2000.0
 
 
 def test_not_a_number(tmp_path):
+    """A non-numeric float setting is refused."""
     text = RUN.replace("sample_rate_in_hz: 2048", "sample_rate_in_hz: fast")
     with pytest.raises(ValueError, match=r"data.sample_rate_in_hz: expected float"):
         load_run(write(tmp_path, "run.yaml", text))
 
 
 def test_unknown_setting(tmp_path):
+    """An unknown setting is refused with the closest name."""
     text = RUN.replace("sample_rate_in_hz", "sample_rate")
     with pytest.raises(ValueError, match="did you mean 'sample_rate_in_hz'"):
         load_run(write(tmp_path, "run.yaml", text))
 
 
 def test_missing_setting(tmp_path):
+    """A missing setting is refused."""
     text = RUN.replace("  dtype: float32\n", "")
     with pytest.raises(ValueError, match="data: missing setting 'dtype'"):
         load_run(write(tmp_path, "run.yaml", text))
 
 
 def test_bad_choice(tmp_path):
+    """A value outside the allowed choices is refused."""
     text = RUN.replace("dtype: float32", "dtype: float16")
     with pytest.raises(ValueError, match=r"data.dtype: 'float16' is not one of"):
         load_run(write(tmp_path, "run.yaml", text))
 
 
 def test_bad_detector(tmp_path):
+    """An unknown detector is refused, by list index."""
     text = RUN.replace("[H1, L1]", "[H1, X1]")
     with pytest.raises(ValueError, match=r"data.detectors\[1\]: 'X1' is not one of"):
         load_run(write(tmp_path, "run.yaml", text))
 
 
 def test_extends(tmp_path, presets):
+    """A run file extending a preset overrides only what it sets."""
     write(presets / "runs", "base.yaml", RUN)
     run = write(tmp_path, "run.yaml", "extends: base\ndata:\n  detectors: [H1]\n")
     data = load_run(run)["data"]
@@ -213,6 +226,7 @@ def test_extends(tmp_path, presets):
 
 
 def test_unknown_preset(tmp_path, presets):
+    """An unknown preset is refused with the closest one."""
     write(presets / "runs", "base.yaml", RUN)
     run = write(tmp_path, "run.yaml", "extends: bse\n")
     with pytest.raises(ValueError, match="unknown run preset 'bse'; did you mean 'base'"):
@@ -220,6 +234,7 @@ def test_unknown_preset(tmp_path, presets):
 
 
 def test_preset_chain(tmp_path, presets):
+    """A preset that extends another preset is refused."""
     write(presets / "runs", "base.yaml", RUN)
     write(presets / "runs", "child.yaml", "extends: base\n")
     run = write(tmp_path, "run.yaml", "extends: child\n")
@@ -228,6 +243,7 @@ def test_preset_chain(tmp_path, presets):
 
 
 def test_merge_replaces_lists():
+    """merge replaces lists and merges nested dicts."""
     merged = loader.merge({"a": {"b": [1, 2], "c": 1}}, {"a": {"b": [3]}})
     assert merged == {"a": {"b": [3], "c": 1}}
 
@@ -240,6 +256,7 @@ def record(run_dir, text, prior=PRIOR):
 
 
 def test_resolved_round_trip(tmp_path):
+    """The resolved run file and prior read back unchanged."""
     settings = record(tmp_path, RUN)
     path = tmp_path / "resolved" / "run.yaml"
     text = path.read_text()
@@ -250,18 +267,21 @@ def test_resolved_round_trip(tmp_path):
 
 
 def test_rewrite_before_training(tmp_path):
+    """Without checkpoints, a changed run file is recorded again."""
     record(tmp_path, RUN)
     changed = record(tmp_path, RUN.replace("2048", "4096"))
     assert resolve_settings(load_run(tmp_path / "resolved" / "run.yaml")) == changed
 
 
 def test_resume_unchanged(tmp_path):
+    """With checkpoints, an unchanged run file is accepted."""
     record(tmp_path, RUN)
     write(tmp_path / "checkpoints", "latest.pt", "")
     record(tmp_path, RUN)
 
 
 def test_resume_changed(tmp_path):
+    """With checkpoints, a changed setting is refused."""
     record(tmp_path, RUN)
     write(tmp_path / "checkpoints", "latest.pt", "")
     with pytest.raises(ValueError, match=r"data.sample_rate_in_hz: 2048.0 -> 4096.0"):
@@ -269,6 +289,7 @@ def test_resume_changed(tmp_path):
 
 
 def test_resume_prior_changed(tmp_path):
+    """With checkpoints, a changed prior is refused."""
     record(tmp_path, RUN)
     write(tmp_path / "checkpoints", "latest.pt", "")
     changed = {**PRIOR, "priors": {**PRIOR["priors"], "delta_tc": {**PRIOR["priors"]["delta_tc"], "max": 11.3}}}
@@ -277,12 +298,14 @@ def test_resume_prior_changed(tmp_path):
 
 
 def test_checkpoints_without_record(tmp_path):
+    """Checkpoints without a resolved run file are refused."""
     write(tmp_path / "checkpoints", "latest.pt", "")
     with pytest.raises(ValueError, match="resolved/run.yaml is missing"):
         record(tmp_path, RUN)
 
 
 def test_derived_changed(tmp_path):
+    """With checkpoints, changed derived values are refused."""
     record_derived(tmp_path, {"bins": [[0, 10, 64]]})
     write(tmp_path / "checkpoints", "latest.pt", "")
     record_derived(tmp_path, {"bins": [[0, 10, 64]]})
@@ -291,6 +314,7 @@ def test_derived_changed(tmp_path):
 
 
 def test_code_change_recorded(tmp_path, monkeypatch):
+    """A resumed run on changed code goes on and records the change."""
     differs = {"now": False}
     monkeypatch.setattr("sage.config.run_dir.code_differs", lambda commit: differs["now"])
     record_versions(tmp_path, 0, "cpu")
@@ -303,13 +327,14 @@ def test_code_change_recorded(tmp_path, monkeypatch):
 
 
 class Component:
-    """Component with typed parameters, a default, and an untyped one."""
+    """Component with typed, defaulted and untyped parameters."""
 
     def __init__(self, scale: float, enabled: bool, device, label: str = "x", raw=0):
         pass
 
 
 def test_component_arguments():
+    """Options are converted by the parameters' type hints."""
     arguments = loader.component_arguments(
         Component, {"scale": "2e-1", "enabled": "false"}, {"device", "raw"}, "c"
     )
@@ -317,6 +342,7 @@ def test_component_arguments():
 
 
 def test_component_unknown_and_missing():
+    """Unknown and missing parameters are refused."""
     with pytest.raises(ValueError, match="c: unknown parameter 'scal'; did you mean 'scale'"):
         loader.component_arguments(Component, {"scal": "1"}, {"device", "raw"}, "c")
     with pytest.raises(ValueError, match="c: missing parameter 'enabled'"):
@@ -324,6 +350,7 @@ def test_component_unknown_and_missing():
 
 
 def test_component_bool_strict():
+    """A bool accepts only true or false."""
     with pytest.raises(ValueError, match="c.enabled: expected true or false, got 'yes'"):
         loader.component_arguments(
             Component, {"scale": "1", "enabled": "yes"}, {"device", "raw"}, "c"
@@ -331,6 +358,7 @@ def test_component_bool_strict():
 
 
 def test_component_untyped():
+    """A parameter without a type hint cannot be set."""
     with pytest.raises(ValueError, match="Component.raw has no type hint"):
         loader.component_arguments(
             Component, {"scale": "1", "enabled": "true", "raw": "1"}, {"device"}, "c"
@@ -338,6 +366,7 @@ def test_component_untyped():
 
 
 def test_torch_hints():
+    """torch's own type hints convert optimiser and schedule options."""
     adamw = {"lr": "3e-4", "betas": ["0.8", "0.99"], "foreach": "false"}
     assert loader.component_arguments(torch.optim.AdamW, adamw, {"params"}, "optimiser") == {
         "lr": 3e-4, "betas": [0.8, 0.99], "foreach": False,
@@ -351,11 +380,13 @@ def test_torch_hints():
 
 
 def test_torch_hint_without_yaml_form():
+    """A Callable parameter cannot be set from a run file."""
     with pytest.raises(ValueError, match="schedule.lr_lambda: takes .*Callable.*cannot be written in a run file"):
         loader.component_arguments(lr_scheduler.LambdaLR, {"lr_lambda": "f"}, {"optimizer"}, "schedule")
 
 
 def test_setting_default(tmp_path):
+    """An omitted setting with a default takes that default."""
     synthetic = (
         "    name: synthetic\n"
         "    asd:\n      H1: aLIGODesignSensitivityP1200087\n"
