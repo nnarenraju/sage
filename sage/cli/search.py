@@ -9,6 +9,7 @@ from sage.cli.registry import CommandError, closest, command
 from sage.config import machine
 from sage.config.loader import load_run_record
 from sage.config.run_dir import SettingsChanged, find_run_dir
+from sage.core.progress import print_steps
 
 
 @command(
@@ -94,7 +95,7 @@ def search(arguments: list) -> None:
     import torch
 
     from sage.data.download import DATASET
-    from sage.search.manager import run_search
+    from sage.search.manager import STEPS, run_search
     from sage.search.settings import check_search_data, read_settings, search_dir
 
     parser = argparse.ArgumentParser(
@@ -148,6 +149,9 @@ def search(arguments: list) -> None:
             "sage slurm-chain <job script> --jobs <n>",
         )
 
+    checkpoint = f"checkpoints/{settings['checkpoint']}.pt"
+    print(f"Searching {machine.gwosc_label(run)} with {checkpoint}, into {path}:")
+    print_steps(STEPS, "Every step resumes where a stopped job left off.")
     try:
         scored = run_search(directory, options.name, data_dir)
     except SettingsChanged as error:
@@ -156,5 +160,69 @@ def search(arguments: list) -> None:
             f"restore {path / 'search.yaml'}, or make another search with "
             "sage search-init",
         ) from None
+    print()
     print(f"Zero-lag and background scored: {scored}")
+
+
+@command("statmap", "False-alarm rates of a search's triggers, from its finished rows")
+def statmap(arguments: list) -> None:
+    """Rank the finished zero-lag triggers against the background."""
+    # Deferred: imports torch and pycbc.
+    from sage.search.statmap import CLUSTERING, REMOVE_NA, STEPS, run_statmap
+
+    parser = argparse.ArgumentParser(
+        prog="sage statmap",
+        description="False-alarm rates of a search's triggers, from its finished rows.",
+    )
+    parser.add_argument("name", help="search name, e.g. o3a_ema_calibrated")
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="run directory, or a directory inside it (default: here)",
+    )
+    parser.add_argument(
+        "--clustering",
+        choices=list(CLUSTERING),
+        default="greedy",
+        help="greedy: loudest first, its neighbours dropped; pycbc: kept if no "
+        "louder trigger within the window (default: greedy)",
+    )
+    parser.add_argument(
+        "--remove-na",
+        choices=REMOVE_NA,
+        default="off",
+        help="drop triggers whose NA output is above their ranking statistic, "
+        "before or after clustering (default: off)",
+    )
+    options = parser.parse_args(arguments)
+
+    directory = find_run_dir(options.directory)
+    path = directory / "search" / options.name
+    if not (path / "zerolag" / "scores.json").exists():
+        raise CommandError(
+            f"no scores of a search {options.name!r} in {path.parent}",
+            f"sage search {options.name}",
+        )
+    try:
+        data_dir = machine.read_data_dir()
+    except (FileNotFoundError, ValueError) as error:
+        raise CommandError(str(error), "sage setup --data-dir <directory>") from None
+
+    print(
+        f"False-alarm rates of {options.name}, {options.clustering} clustering, "
+        f"NA removal {options.remove_na}:"
+    )
+    print_steps(
+        STEPS, "Only finished rows are read, so this runs while the search scores."
+    )
+    try:
+        written = run_statmap(
+            directory, options.name, data_dir, options.clustering, options.remove_na
+        )
+    except ValueError as error:
+        fix = f"sage statmap {options.name} --remove-na off"
+        raise CommandError(str(error), fix) from None
+    print()
+    print(f"Wrote {written}")
 

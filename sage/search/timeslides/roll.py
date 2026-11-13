@@ -7,7 +7,6 @@ a year of live time; a file's rolls share each window's frontend.
 """
 
 import math
-import time
 from fractions import Fraction
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -16,6 +15,7 @@ import numpy as np
 import torch
 from pycbc.conversions import sec_to_year
 
+from sage.core.progress import bar
 from sage.search.dataprep.strain import batch_bounds, window_batches
 from sage.search.model.score import (
     backend_outputs,
@@ -287,12 +287,9 @@ def score_roll_file(
         )
         followers.append({"batches": batches, "chunks": [], "end": start})
 
-    print(
-        f"Background {name}: {done:,} of {n_windows:,} windows scored before",
-        flush=True,
-    )
-    started, reported, checked = time.monotonic(), done, False
-    with open(stream_files(directory, name)[0], "r+b") as handle:
+    checked = False
+    progress = bar(total=n_windows, initial=done, unit="window")
+    with progress, open(stream_files(directory, name)[0], "r+b") as handle:
         for batch, strain in window_batches(
             release_dir,
             run,
@@ -306,6 +303,7 @@ def score_roll_file(
             spectra = window_spectra(strain, window_samples, stride_samples, device)
             if not checked:
                 check_separable(network, spectra)
+                progress.write("  split network checked: exact, detectors separate")
                 checked = True
             reference = frontend_features(network, spectra, [0])
 
@@ -335,11 +333,4 @@ def score_roll_file(
                     for first, features in follower["chunks"]
                     if first + len(features) > batch.stop
                 ]
-            if batch.stop - reported >= n_windows // 100 or batch.stop == n_windows:
-                rate = len(shifts) * (batch.stop - done) / (time.monotonic() - started)
-                print(
-                    f"Background {name}: {batch.stop:,} of {n_windows:,} windows "
-                    f"({100 * batch.stop / n_windows:.1f}%), {rate:,.0f} pairs/s",
-                    flush=True,
-                )
-                reported = batch.stop
+            progress.update(batch.stop - batch.start)

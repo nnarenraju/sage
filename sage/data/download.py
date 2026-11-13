@@ -38,6 +38,7 @@ from sage.config.machine import (
     zero_runs_file,
 )
 from sage.core.hardcode import _DETECTORS
+from sage.core.progress import bar, step
 from sage.data.asd.lines import line_detections
 from sage.data.asd.get_asds import EstimateASD
 from sage.data.asd.smoothing import LogSplineSmoothing
@@ -99,6 +100,30 @@ FIDUCIAL = {
     "line_chunk": 1_000,
     "excision": "NW bins each side, Hann edge over the next NW bins",
 }
+TRAINING_STEPS = (
+    f"Download the strain from GWOSC in {DATASET['piece_in_s']:g} s pieces, cutting "
+    f"out {DATASET['event_cut_in_s']:g} s around every GWOSC event; failed pieces "
+    "are retried",
+    "Check the strain against its segment list",
+    "Fetch the bad time from GWOSC: CBC Category 2 and hardware injections",
+    "Find the spans of exactly-zero strain",
+)
+SEGMENT_STEPS = (
+    "Estimate the ASD of every strain piece, NaN where it touches bad time",
+    "Check the ASDs against the strain pieces",
+)
+BANK_STEPS = (
+    f"Estimate the ASDs of {ASDS['bank_size']:,} random {ASDS['length_in_s']:g} s "
+    f"stretches clear of bad time (seed {BANK_SEED})",
+    "Check the recolour bank",
+)
+FIDUCIAL_STEPS = (
+    "Check the pooled runs' recolour banks",
+    f"Test {FIDUCIAL['line_stretches_per_run']:,} random stretches of each run's "
+    "strain for lines (Thomson's multitaper F-test)",
+    "Take the median of the pooled recolour banks and excise the lines",
+    "Write the fiducial",
+)
 RETRIES = 15
 RETRY_DELAY = 5.0
 PROXY_RESET_EVERY = 50
@@ -493,40 +518,49 @@ def strain_detections(strains: list, workers: int) -> np.ndarray:
         for size, seed in zip(sizes, seeds)
     ]
     if workers == 1:
-        return sum(chunk_detections(*task) for task in tasks)
+        return sum(chunk_detections(*task) for task in bar(tasks, unit="chunk"))
     with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
-        return sum(pool.map(chunk_detections, *zip(*tasks)))
+        done = pool.map(chunk_detections, *zip(*tasks))
+        return sum(bar(done, total=len(tasks), unit="chunk"))
 
 
 def build_fiducial(data_dir: Path, runs: list, detector: str, workers: int) -> None:
     """Build one detector's fiducial from the pooled recolour banks and strain into ``<fiducial>.part``, then move it."""
     pooled = fiducial_runs(data_dir, runs, detector)
     record = fiducial_record(data_dir, detector, pooled)
-    for run in pooled:
-        check_bank(data_dir, run, detector)
+    with step(1, FIDUCIAL_STEPS):
+        for run in pooled:
+            check_bank(data_dir, run, detector)
     banks = [
         np.memmap(recolour_bank_file(asd_dir(data_dir, run), detector), dtype="<f4", mode="r",
                   shape=(ASDS["bank_size"], record["num_freq_bins"]))
         for run in pooled
     ]
-    detections = strain_detections([strain_file(data_dir, run, detector) for run in pooled], workers)
+    with step(2, FIDUCIAL_STEPS):
+        strains = [strain_file(data_dir, run, detector) for run in pooled]
+        detections = strain_detections(strains, workers)
     stretches = FIDUCIAL["line_stretches_per_run"] * len(pooled)
-    asd, lines = EstimateASD.pooled_fiducial(banks, detections, stretches, FIDUCIAL["line_nw"])
+    with step(3, FIDUCIAL_STEPS):
+        asd, lines = EstimateASD.pooled_fiducial(
+            banks, detections, stretches, FIDUCIAL["line_nw"]
+        )
 
-    directory = fiducial_dir(data_dir, runs)
-    part = directory.with_name(f"{directory.name}.part")
-    part.mkdir(parents=True, exist_ok=True)
-    built = fiducial_file(part, detector)
-    asd.tofile(built)
-    freqs = np.arange(record["num_freq_bins"], dtype=np.float64) * record["delta_f"]
-    band = (freqs >= 15.0) & (freqs <= 1024.0)
-    built.with_suffix(".json").write_text(json.dumps(
-        {**record, "num_line_bins": int(len(lines)), "num_excised_bins": int(np.isinf(asd).sum()),
-         "line_frac_inband": float(band[lines].sum() / max(1, int(band.sum())))},
-        indent=2,
-    ))
-    path = fiducial_file(directory, detector)
-    move_built(part, [(built, path), (built.with_suffix(".json"), path.with_suffix(".json"))])
+    with step(4, FIDUCIAL_STEPS):
+        directory = fiducial_dir(data_dir, runs)
+        part = directory.with_name(f"{directory.name}.part")
+        part.mkdir(parents=True, exist_ok=True)
+        built = fiducial_file(part, detector)
+        asd.tofile(built)
+        freqs = np.arange(record["num_freq_bins"], dtype=np.float64) * record["delta_f"]
+        band = (freqs >= 15.0) & (freqs <= 1024.0)
+        built.with_suffix(".json").write_text(json.dumps(
+            {**record, "num_line_bins": int(len(lines)), "num_excised_bins": int(np.isinf(asd).sum()),
+             "line_frac_inband": float(band[lines].sum() / max(1, int(band.sum())))},
+            indent=2,
+        ))
+        path = fiducial_file(directory, detector)
+        pairs = [(built, path), (built.with_suffix(".json"), path.with_suffix(".json"))]
+        move_built(part, pairs)
 
 
 def check_fiducial(data_dir: Path, runs: list, detector: str) -> None:
@@ -602,9 +636,14 @@ def build_fiducials(data_dir: Path, runs: list, detectors: list, workers: int) -
         raise MissingASDs(f"recolour banks are missing:\n{listed}")
 
     for detector in detectors:
-        if not fiducial_file(fiducial_dir(data_dir, runs), detector).exists():
+        print(f"{'+'.join(sorted(runs))} {detector}", flush=True)
+        path = fiducial_file(fiducial_dir(data_dir, runs), detector)
+        if not path.exists():
             build_fiducial(data_dir, runs, detector, workers)
+        else:
+            print(f"  already built: {path}")
         check_fiducial(data_dir, runs, detector)
+        print(flush=True)
     return fiducial_dir(data_dir, runs)
 
 
@@ -700,25 +739,48 @@ def download_run(data_dir: Path, run: str, detectors: list, workers: int) -> dic
     -------
     dict of str to dict
         ``check_strain`` summary per detector.
-    """
-    fetched = set()
-    for detector in detectors:
-        path = strain_file(data_dir, run, detector)
-        if not path.exists():
-            fetch_detector(data_dir, run, detector, workers)
-            fetched.add(detector)
-        elif json.loads(failed_file(path).read_text()):
-            retry_pieces(data_dir, run, detector, workers)
-            fetched.add(detector)
 
-    summaries = {detector: check_strain(data_dir, run, detector) for detector in detectors}
+    Raises
+    ------
+    MissingData
+        If pieces of any detector failed to download, once every detector
+        has been tried.
+    """
+    summaries, failures = {}, []
     for detector in detectors:
+        print(f"{run} {detector}", flush=True)
         path = strain_file(data_dir, run, detector)
-        if not bad_time_file(path).exists():
-            write_bad_time(path, gwosc_name(data_dir, run), detector)
-        if detector in fetched or not zero_runs_file(path).exists():
-            write_zero_runs(path)
+        with step(1, TRAINING_STEPS):
+            fetched = True
+            if not path.exists():
+                fetch_detector(data_dir, run, detector, workers)
+            elif json.loads(failed_file(path).read_text()):
+                retry_pieces(data_dir, run, detector, workers)
+            else:
+                fetched = False
+                print(f"  already downloaded: {path}")
+        with step(2, TRAINING_STEPS):
+            try:
+                summaries[detector] = check_strain(data_dir, run, detector)
+            except MissingData as error:
+                failures.append(str(error))
+                print(f"  {error}\n", flush=True)
+                continue
+        with step(3, TRAINING_STEPS):
+            if not bad_time_file(path).exists():
+                write_bad_time(path, gwosc_name(data_dir, run), detector)
+            else:
+                print(f"  already saved in {bad_time_file(path)}")
+        with step(4, TRAINING_STEPS):
+            if fetched or not zero_runs_file(path).exists():
+                write_zero_runs(path)
+            else:
+                print(f"  already saved in {zero_runs_file(path)}")
         read_bad_time(path)
+        print(flush=True)
+
+    if failures:
+        raise MissingData("\n".join(failures))
     write_record(dataset_file(data_dir, run), DATASET, summaries)
     return summaries
 
@@ -769,16 +831,31 @@ def build_asds(
     record = asds_file(data_dir, run)
     recorded = yaml.safe_load(record.read_text())["detectors"] if record.exists() else {}
     entries = {detector: {} for detector in detectors}
+    steps = (SEGMENT_STEPS if segments else ()) + (BANK_STEPS if bank else ())
     for detector in detectors:
+        print(f"{run} {detector}", flush=True)
         if segments:
-            if not segment_asd_file(asd_dir(data_dir, run), detector).exists():
-                build_segment_asds(data_dir, run, detector)
-            entries[detector]["segment_asds"] = check_segment_asds(data_dir, run, detector)
+            path = segment_asd_file(asd_dir(data_dir, run), detector)
+            with step(1, steps):
+                if not path.exists():
+                    build_segment_asds(data_dir, run, detector)
+                else:
+                    print(f"  already built: {path}")
+            with step(2, steps):
+                count = check_segment_asds(data_dir, run, detector)
+                entries[detector]["segment_asds"] = count
         if bank:
+            first = len(steps) - 1
+            path = recolour_bank_file(asd_dir(data_dir, run), detector)
             seed = recorded.get(detector, {}).get("bank_seed")
-            if not recolour_bank_file(asd_dir(data_dir, run), detector).exists():
-                build_bank(data_dir, run, detector)
-                seed = BANK_SEED
-            check_bank(data_dir, run, detector)
+            with step(first, steps):
+                if not path.exists():
+                    build_bank(data_dir, run, detector)
+                    seed = BANK_SEED
+                else:
+                    print(f"  already built: {path}")
+            with step(first + 1, steps):
+                check_bank(data_dir, run, detector)
             entries[detector]["bank_seed"] = seed
+        print(flush=True)
     return write_record(record, ASDS, entries)

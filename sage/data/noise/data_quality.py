@@ -17,6 +17,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from sage.config.machine import bad_time_file, segments_file, zero_runs_file
+from sage.core.progress import bar
 from sage.core.hardcode import _GWOSC_TIMELINE_URL
 
 Interval = Tuple[float, float]
@@ -199,7 +200,7 @@ def zero_runs(path: Path) -> List[Interval]:
         any of them holds a zero.
     """
     found = []
-    for record in json.loads(segments_file(path).read_text()):
+    for record in bar(json.loads(segments_file(path).read_text()), unit="piece"):
         dtype = np.dtype(record["dtype"]).newbyteorder(record["endianness"])
         samples = np.memmap(path, dtype=dtype, mode="r", offset=record["byte_offset"], shape=(record["nsamples"],))
         zero = samples == 0

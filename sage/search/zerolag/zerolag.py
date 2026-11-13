@@ -5,12 +5,12 @@ background.
 """
 
 import os
-import time
 from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
 
+from sage.core.progress import bar
 from sage.search.dataprep.strain import window_batches
 from sage.search.model.score import network_outputs, score_strain, window_spectra
 from sage.search.records import record_done, start_stream, stream_files, write_rows
@@ -173,9 +173,8 @@ def score_zerolag(
     save_window_table(directory / WINDOW_TABLE, window_table(windows, detectors))
 
     done = start_stream(directory, SCORES, network["columns"], total, attrs)
-    print(f"Zero-lag: {done:,} of {total:,} windows scored before", flush=True)
-    started, reported = time.monotonic(), done
-    with open(stream_files(directory, SCORES)[0], "r+b") as handle:
+    progress = bar(total=total, initial=done, unit="window")
+    with progress, open(stream_files(directory, SCORES)[0], "r+b") as handle:
         for batch, strain in window_batches(
             release_dir,
             run,
@@ -189,12 +188,4 @@ def score_zerolag(
             spectra = window_spectra(strain, window_samples, stride_samples, device)
             write_rows(handle, batch.start, network_outputs(network, spectra))
             record_done(handle, directory, SCORES, batch.stop)
-
-            if batch.stop - reported >= total // 100 or batch.stop == total:
-                rate = (batch.stop - done) / (time.monotonic() - started)
-                print(
-                    f"Zero-lag: {batch.stop:,} of {total:,} windows "
-                    f"({100 * batch.stop / total:.1f}%), {rate:,.0f} windows/s",
-                    flush=True,
-                )
-                reported = batch.stop
+            progress.update(batch.stop - batch.start)

@@ -74,6 +74,31 @@ def start_stream(
     return done
 
 
+def read_stream(directory: Path, name: str) -> tuple:
+    """
+    Rows and progress of a stream, for reading while it is written.
+
+    Parameters
+    ----------
+    directory : Path
+        Directory of the stream.
+    name : str
+        Stream name.
+
+    Returns
+    -------
+    rows : numpy.memmap
+        Float32 ``(rows, columns)``, read only; rows of windows past
+        ``done`` are not finished.
+    progress : dict
+        Columns, rows, settings and windows done.
+    """
+    data, progress = stream_files(directory, name)
+    recorded = json.loads(progress.read_text())
+    shape = (recorded["rows"], len(recorded["columns"]))
+    return np.memmap(data, dtype="<f4", mode="r", shape=shape), recorded
+
+
 def write_rows(handle: BinaryIO, first_row: int, rows: np.ndarray) -> None:
     """
     Write float32 rows into an open stream, starting at ``first_row``.

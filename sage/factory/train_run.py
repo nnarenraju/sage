@@ -636,12 +636,12 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
 
 # What sage check does, in order
 CHECK_STEPS = (
-    "settings, prior and the record from sage prepare",
-    "data files",
-    "build the samplers, preprocessing and network",
-    "derived values against resolved/derived.yaml",
-    "one training step",
-    "build the validation streams",
+    "Check the settings, prior and the record from sage prepare",
+    "Check the data files",
+    "Build the samplers, preprocessing and network",
+    "Check the derived values against resolved/derived.yaml",
+    "Take one training step",
+    "Build the validation streams",
 )
 
 # Read workers and prefetched batches of a check

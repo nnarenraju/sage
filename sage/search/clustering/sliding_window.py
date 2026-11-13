@@ -28,7 +28,9 @@ def cluster_triggers(
     dict of str to numpy.ndarray
         Columns of the kept triggers, in time order.
     """
-    keep = cluster_over_time(columns["stat"], columns["tc"], window_s)
+    keep = cluster_over_time(
+        columns["stat"], columns["tc"], window_s, method="cython"
+    )
     return {name: values[keep] for name, values in columns.items()}
 
 

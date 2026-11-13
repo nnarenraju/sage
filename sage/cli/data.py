@@ -8,6 +8,7 @@ from sage.cli.registry import CommandError, closest, command
 from sage.cli.training import on
 from sage.config import machine
 from sage.config.run_dir import find_run_dir
+from sage.core.progress import print_steps
 
 # Source: runs/<run>/dataset.py.
 WORKERS = 16
@@ -101,7 +102,7 @@ def download(arguments: list) -> None:
 
 def fetch(options: argparse.Namespace, data_dir: Path, again: str) -> None:
     """Download or adopt the strain ``options.target`` needs; print summaries."""
-    from sage.data.download import download_run
+    from sage.data.download import TRAINING_STEPS, download_run
 
     target = Path(options.target)
     if target.is_dir():
@@ -133,6 +134,13 @@ def fetch(options: argparse.Namespace, data_dir: Path, again: str) -> None:
             f"sage download {options.target} --train",
         )
 
+    reads = ", ".join(f"{run} ({' '.join(found)})" for run, found in needs.items())
+    print(f"Downloading the training strain of {reads} into {data_dir}. For each run "
+          "and detector:")
+    print_steps(
+        TRAINING_STEPS, "Then write each run's record. A stopped download resumes."
+    )
+
     for run, detectors in needs.items():
         try:
             summaries = download_run(data_dir, run, detectors, options.workers)
@@ -142,12 +150,14 @@ def fetch(options: argparse.Namespace, data_dir: Path, again: str) -> None:
             first, last = summary["gps"]
             print(f"{run} {detector}: {summary['pieces']} pieces, {summary['days']:.2f} days, GPS {first:.0f}-{last:.0f}")
         print(f"Recorded in {machine.dataset_file(data_dir, run)}")
+        print()
     print(f"Next: {following}")
 
 
 def fetch_search(options: argparse.Namespace, data_dir: Path) -> None:
     """Download or resume an observing run's search strain; print its summary."""
     from sage.data.download import download_search, gwosc_detectors, gwosc_runs
+    from sage.search.dataprep.release import DOWNLOAD_STEPS
 
     names = gwosc_runs()
     run = options.target.lower()
@@ -167,6 +177,11 @@ def fetch_search(options: argparse.Namespace, data_dir: Path) -> None:
             f"sage download {run} --search --detectors {' '.join(listed)}",
         )
 
+    release = machine.observing_run_dir(data_dir, run, "search")
+    print(f"Downloading the {names[run]} search strain of {', '.join(detectors)} "
+          f"into {release}. For each detector:")
+    print_steps(DOWNLOAD_STEPS, "Then write the record. A stopped download resumes.")
+
     summaries = download_search(data_dir, run, detectors, options.workers)
     for detector, summary in summaries.items():
         first, last = summary["gps"]
@@ -174,6 +189,7 @@ def fetch_search(options: argparse.Namespace, data_dir: Path) -> None:
               f"{summary['days']:.2f} days, GPS {first:.0f}-{last:.0f}")
     print(f"Recorded in {machine.search_dataset_file(data_dir, run)}; bad time "
           "and zero spans saved beside the strain")
+    print()
     print(f"Next: cd <run directory> && sage search-init {run} "
           "--checkpoint <checkpoint>")
 
@@ -259,21 +275,43 @@ def build_directory(
         )
 
     needs, fiducial = directory_needs(directory, data_dir, "build-asds")
+    parts = []
+    for run, (detectors, segments, bank) in needs.items():
+        kinds = [kind for kind, wanted in (("per-segment ASDs", segments),
+                                           ("recolour bank", bank)) if wanted]
+        if kinds:
+            parts.append(
+                f"Build the {' and '.join(kinds)} of {run} ({' '.join(detectors)})"
+            )
+    fiducial_runs, fiducial_detectors = fiducial
+    parts.append(f"Build the fiducial pooled over {', '.join(fiducial_runs)} "
+                 f"({' '.join(fiducial_detectors)})")
+    print(f"Building every ASD {directory} reads, into {data_dir / 'asds'}:")
+    print_steps(parts, "A part already built is checked, not built again.")
+
     try:
         for run, (detectors, segments, bank) in needs.items():
             if segments or bank:
                 record = build(data_dir, run, detectors, segments, bank)
-                print(f"{run}: ASDs checked; recorded in {record}")
+                print(f"{run}: ASDs checked; recorded in {record}\n")
         fiducial_dir = build_fiducials(data_dir, *fiducial, options.workers)
     except machine.MissingData as error:
         raise CommandError(str(error), on("download", str(directory))) from None
     print(f"Fiducial ASDs checked: {fiducial_dir}")
+    print()
     print(f"Next: {on('prepare', str(directory))}")
 
 
 def build_runs(options: argparse.Namespace, data_dir: Path) -> None:
     """Build or adopt one kind of ASD for the observing runs; print each record."""
-    from sage.data.download import build_asds as build, build_fiducials, run_detectors
+    from sage.data.download import (
+        BANK_STEPS,
+        FIDUCIAL_STEPS,
+        SEGMENT_STEPS,
+        build_asds as build,
+        build_fiducials,
+        run_detectors,
+    )
 
     runs = [target.lower() for target in options.targets]
     named = " ".join(runs)
@@ -292,6 +330,12 @@ def build_runs(options: argparse.Namespace, data_dir: Path) -> None:
     if options.fiducial:
         listed = {detector for run in runs for detector in run_detectors(data_dir, run)}
         detectors = options.detectors or sorted(listed)
+        print(f"Building the fiducial pooled over {', '.join(runs)} for "
+              f"{' '.join(detectors)}, into {machine.fiducial_dir(data_dir, runs)}. "
+              "For each detector:")
+        print_steps(
+            FIDUCIAL_STEPS, "A fiducial already built is checked, not built again."
+        )
         try:
             fiducial = build_fiducials(data_dir, runs, detectors, options.workers)
         except machine.MissingASDs as error:
@@ -301,19 +345,26 @@ def build_runs(options: argparse.Namespace, data_dir: Path) -> None:
             fix = " && ".join(f"sage download {run} --train" for run in runs)
             raise CommandError(str(error), fix) from None
         print(f"Fiducial ASDs checked: {fiducial}")
+        print()
         print("Next: sage prepare <run directory>")
         return
 
+    kind = "per-segment ASDs" if options.segments else "recolour bank"
+    detectors = {run: options.detectors or run_detectors(data_dir, run) for run in runs}
+    reads = ", ".join(f"{run} ({' '.join(found)})" for run, found in detectors.items())
+    print(f"Building the {kind} of {reads}, into {data_dir / 'asds'}. For each run and "
+          "detector:")
+    print_steps(SEGMENT_STEPS if options.segments else BANK_STEPS,
+                "Then write each run's record. Parts already built are checked, not "
+                "built again.")
     for run in runs:
-        detectors = options.detectors or run_detectors(data_dir, run)
         try:
             record = build(
-                data_dir, run, detectors, options.segments, options.recolour_bank
+                data_dir, run, detectors[run], options.segments, options.recolour_bank
             )
         except machine.MissingData as error:
             raise CommandError(str(error), f"sage download {run} --train") from None
-        kind = "per-segment ASDs" if options.segments else "recolour bank"
-        print(f"{run}: {kind} checked; recorded in {record}")
+        print(f"{run}: {kind} checked; recorded in {record}\n")
     following = "--recolour-bank" if options.segments else "--fiducial"
     print(f"Next: sage build-asds {named} {following}")
 

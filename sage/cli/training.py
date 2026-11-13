@@ -17,6 +17,7 @@ import yaml
 from sage.cli.registry import CommandError, command
 from sage.config import machine
 from sage.config.run_dir import NotPrepared, SettingsChanged, StateMismatch, find_run_dir, training_started
+from sage.core.progress import print_steps
 
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 TIMEZONES = {  # sage status --timezone: name -> IANA time zone
@@ -142,21 +143,22 @@ def checked_step(name: str, directory: str) -> None:
     arguments = compile_arguments(small["train"]["compile"])
     compiled = "uncompiled" if arguments is None else f"compiled ({arguments['mode']}, minutes on the first step)"
     print(f"Checking on {where}, {compiled}, with a batch of {small['train']['batch_size']} and "
-          f"{small['noise']['read_workers']} read workers")
-    print("Steps:\n" + "\n".join(f"  {index}. {step}" for index, step in enumerate(CHECK_STEPS, 1)), flush=True)
+          f"{small['noise']['read_workers']} read workers:")
+    print_steps(CHECK_STEPS)
     started = []
 
     def progress(index: int) -> None:
         """Print the time the previous step took, then the step starting."""
         if started:
-            print(f"   done in {time.monotonic() - started[-1]:.1f} s", flush=True)
+            print(f"  done in {time.monotonic() - started[-1]:.1f} s", flush=True)
         print(f"[{index + 1}/{len(CHECK_STEPS)}] {CHECK_STEPS[index]}", flush=True)
         started.append(time.monotonic())
 
     setup_logging(None)
     loss = explained(name, directory, check_training, Path(directory), cpu, progress)
-    print(f"   done in {time.monotonic() - started[-1]:.1f} s")
+    print(f"  done in {time.monotonic() - started[-1]:.1f} s")
     device = "the CPU" if cpu else settings["train"]["device"]
+    print()
     print(f"All checks passed; one training step on {device}: loss {loss:.5f}. Wrote flags/checked")
 
 
@@ -189,6 +191,7 @@ def check(arguments: list) -> None:
     """Check the run as ``sage train`` would start it and take one training step: on a GPU if one is visible."""
     options = parse("check", "Run every start-up check and one real training step; marks the run checked", arguments)
     checked_step("check", options.directory)
+    print()
     print(f"Next: {on('train', options.directory)}")
 
 

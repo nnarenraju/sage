@@ -20,6 +20,7 @@ import requests
 from pycbc import DYN_RANGE_FAC
 
 from sage.config.machine import bad_time_file, segments_file, zero_runs_file
+from sage.core.progress import bar, step
 from sage.data.noise.data_quality import merge, write_bad_time
 from sage.dsp.filters import pycbc_downsample
 from sage.search.dataprep.download import (
@@ -29,6 +30,13 @@ from sage.search.dataprep.download import (
     file_url,
     files_spanning,
     make_session,
+)
+
+DOWNLOAD_STEPS = (
+    "Fetch the segment list from GWOSC",
+    "Download and condition the strain, segment by segment",
+    "Find the spans of exactly-zero strain",
+    "Fetch the bad time from GWOSC: CBC Category 2 and hardware injections",
 )
 
 
@@ -174,7 +182,7 @@ def write_zero_runs(strain_path: Path, records: List[dict]) -> None:
     """
     spans = []
     with h5py.File(strain_path, "r") as handle:
-        for record in records:
+        for record in bar(records, unit="segment"):
             if "zero_spans" in record:
                 spans += [tuple(span) for span in record["zero_spans"]]
             else:
@@ -348,7 +356,7 @@ def build_detector(
     sidecar = release_dir / f"data_{detector}_{run}_segments.json"
     records = load_records(sidecar, segments, sample_rate, trim_samples)
     n_done = len(records)
-    print(f"{detector}: {len(segments) - n_done} segments to write", flush=True)
+    print(f"  {len(segments) - n_done} of {len(segments)} segments to write")
 
     needed = [files_spanning(start, end) for start, end in segments]
     order = sorted({file_start for files in needed[n_done:] for file_start in files})
@@ -365,7 +373,12 @@ def build_detector(
                 if f"segments/{name}" not in indexed:
                     del group[name]
 
-            for index in range(n_done, len(segments)):
+            for index in bar(
+                range(n_done, len(segments)),
+                total=len(segments),
+                initial=n_done,
+                unit="segment",
+            ):
                 while queued < len(order) and (
                     order[queued] <= needed[index][-1] or len(downloads) < files_ahead
                 ):
@@ -418,7 +431,6 @@ def build_detector(
                 for file_start in list(downloads):
                     if file_start < still_needed:
                         downloads.pop(file_start).result().unlink(missing_ok=True)
-                print(f"  [{index + 1}/{len(segments)}] {segments[index]}", flush=True)
     finally:
         pool.shutdown(cancel_futures=True)
 
@@ -487,31 +499,42 @@ def download_search_data(
     release_dir.mkdir(parents=True, exist_ok=True)
     session = make_session(workers)
     for detector in detectors:
-        segments = fetch_segments(session, run, detector, dq_flag)
-        segments = select_segments(
-            segments, minimum_samples / sample_rate, sample_rate, gps_range
-        )
-        written = build_detector(
-            session,
-            run,
-            detector,
-            segments,
-            release_dir,
-            scratch_dir,
-            sample_rate,
-            low_frequency_cutoff,
-            trim_samples,
-            workers,
-            files_ahead,
-            download_attempts,
-        )
+        print(detector, flush=True)
+        with step(1, DOWNLOAD_STEPS):
+            segments = fetch_segments(session, run, detector, dq_flag)
+            segments = select_segments(
+                segments, minimum_samples / sample_rate, sample_rate, gps_range
+            )
+            print(f"  {len(segments)} segments of at least {minimum_segment_s} s")
+        with step(2, DOWNLOAD_STEPS):
+            written = build_detector(
+                session,
+                run,
+                detector,
+                segments,
+                release_dir,
+                scratch_dir,
+                sample_rate,
+                low_frequency_cutoff,
+                trim_samples,
+                workers,
+                files_ahead,
+                download_attempts,
+            )
 
         strain_path = release_dir / f"data_{detector}_{run}.h5"
-        if written or not zero_runs_file(strain_path).exists():
-            records = json.loads(segments_file(strain_path).read_text())
-            write_zero_runs(strain_path, records)
-        if not bad_time_file(strain_path).exists():
-            write_bad_time(strain_path, run, detector)
+        with step(3, DOWNLOAD_STEPS):
+            if written or not zero_runs_file(strain_path).exists():
+                records = json.loads(segments_file(strain_path).read_text())
+                write_zero_runs(strain_path, records)
+            else:
+                print(f"  already saved in {zero_runs_file(strain_path)}")
+        with step(4, DOWNLOAD_STEPS):
+            if not bad_time_file(strain_path).exists():
+                write_bad_time(strain_path, run, detector)
+            else:
+                print(f"  already saved in {bad_time_file(strain_path)}")
+        print(flush=True)
     # Kept if another build is still staging files here.
     with contextlib.suppress(OSError):
         scratch_dir.rmdir()
