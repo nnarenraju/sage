@@ -85,7 +85,7 @@ class ValidationPlotManager:
         Validation output files; their groups are read together.
     losses_h5 : str
         Epoch loss file written by
-        :class:`~sage.utils.checkpoint.HDF5LossLogger`.
+        :class:`~sage.core.logger.HDF5LossLogger`.
     export_dir : str or None
         Directory of the plots; subdirectories are made per plot type.
     params : iterable of str or None
