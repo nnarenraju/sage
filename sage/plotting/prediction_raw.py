@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Histograms of the ranking statistic per class, and the fraction of
+signals above each noise ranking statistic.
+
 Filename        : prediction.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,8 +34,7 @@ from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 def recovered_fraction(raw_tp, raw_tn):
     """
-    Every noise statistic as a threshold, loudest first, and the fraction of
-    signals strictly above it.
+    Fraction of signals strictly above each noise ranking statistic.
 
     Parameters
     ----------
@@ -42,7 +43,10 @@ def recovered_fraction(raw_tp, raw_tn):
 
     Returns
     -------
-    thresholds, fraction : numpy.ndarray
+    thresholds : numpy.ndarray
+        The noise ranking statistics, highest first.
+    fraction : numpy.ndarray
+        Fraction of signals above each threshold.
     """
     thresholds = np.sort(raw_tn)[::-1]
     above = len(raw_tp) - np.searchsorted(np.sort(raw_tp), thresholds, side="right")
@@ -51,25 +55,25 @@ def recovered_fraction(raw_tp, raw_tn):
 
 def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True):
     """
-    Plot raw ranking-statistic distributions and a FAR-efficiency sweep.
+    Plot ranking-statistic histograms per class and the fraction of
+    signals above each noise ranking statistic.
 
-    Produces two panels: (1) overlapping histograms of the raw ranking
-    statistic for signal, noise and non-astrophysical events, and (2) a detection-efficiency-
-    vs-threshold curve that shows the signal fraction recovered as a function
-    of the noise false-alarm rate.
+    Left panel: log-count histograms of signals, noise and, when
+    present, non-astrophysical events. Right panel:
+    :func:`recovered_fraction`, with a secondary axis in signal counts.
 
     Parameters
     ----------
     epoch : int or str
         Epoch identifier for the title and filename.
     ranking_stat : array-like, shape ``(N,)``
-        Network ranking statistics for all validation events.
+        Ranking statistic of every event.
     labels : array-like, shape ``(N,)``
-        Class labels (0 = noise, 1 = signal, 2 = non-astrophysical).
+        Class labels (0 noise, 1 signal, 2 non-astrophysical).
     export_dir : str or None
-        Output directory (saved under ``PRED_RAW/``).
+        Saves the plot under ``PRED_RAW/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figure.
     """
 
     save_dir = None
@@ -77,28 +81,18 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
         save_dir = os.path.join(export_dir, "PRED_RAW")
         os.makedirs(save_dir, exist_ok=True)
 
-    # --------------------------------------------
-    # Split signal / noise
-    # --------------------------------------------
     signal_mask = labels == 1.0
     noise_mask = labels == 0.0
 
     raw_tp = ranking_stat[signal_mask]
     raw_tn = ranking_stat[noise_mask]
 
-    # --------------------------------------------
-    # FAR sweep curve (efficiency vs noise threshold)
-    # --------------------------------------------
     frac_detected = np.column_stack(recovered_fraction(raw_tp, raw_tn))
 
-    # --------------------------------------------
-    # Plot
-    # --------------------------------------------
     fig, ax = plt.subplots(1, 2, figsize=(16, 6))
     fig.suptitle(f"Raw Output at {_etitle(epoch)}")
 
-    # Histogram panel
-    # float64: an output varying only in its last float32 bits still splits into 100 finite bins
+    # float64: 100 finite bins even for values a float32 ulp apart
     ax[0].hist(np.asarray(raw_tp, dtype=np.float64), bins=100, histtype="step", label="Signals")
     ax[0].hist(np.asarray(raw_tn, dtype=np.float64), bins=100, histtype="step", label="Noise")
     if np.any(labels == 2.0):
@@ -110,7 +104,6 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
     ax[0].legend()
     ax[0].grid(True, ls=":")
 
-    # Efficiency panel
     ax[1].plot(
         frac_detected[:, 0],
         frac_detected[:, 1],
@@ -124,7 +117,7 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
     ax[1].grid(True, ls=":")
     ax[1].legend()
 
-    # Secondary axis → number of signals
+    # Secondary axis in number of signals
     convert = lambda frac: frac * len(raw_tp)
     inverse = lambda num: num / len(raw_tp)
 
@@ -147,20 +140,27 @@ def plot_prediction_raw(epoch, ranking_stat, labels, export_dir=None, save=True)
 
 def plot_prediction_raw_comparison(sources, name, export_dir=None, save=True):
     """
-    ``plot_prediction_raw`` for several sources on the same two panels: one
-    line style per source, one colour per class.
+    :func:`plot_prediction_raw` for several sources on the same panels.
+
+    One line style per source, one colour per class. The secondary axis
+    is drawn only when all sources have the same number of signals.
 
     Parameters
     ----------
     sources : dict
         Source label -> ``(ranking_stat, labels)``, labels as in
-        ``plot_prediction_raw``.
+        :func:`plot_prediction_raw`.
     name : str
         Title and filename tag.
     export_dir : str or None
-        Output directory (saved under ``PRED_RAW/``).
+        Saves ``PRED_RAW/log_raw_output_{name}.png`` under it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figure.
+
+    Raises
+    ------
+    ValueError
+        If there are more than 4 sources.
     """
     classes = [(1.0, "Signals", "C0"), (0.0, "Noise", "C1"), (2.0, "Non-astrophysical", "C2")]
     styles = ["-", "--", ":", "-."]

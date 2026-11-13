@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Ranking statistic of the signals under fractional perturbations of
+one source parameter.
+
 Filename        : perturbation_sensitivity.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
@@ -41,60 +43,55 @@ def plot_perturbation_sensitivity(
     epoch=None,
 ):
     """
-    Plot network output change when a source parameter is perturbed.
+    Plot the signals' ranking statistic against a fractional
+    perturbation of one source parameter.
 
-    For each signal event, increases and decreases ``param_name`` by
-    ``perturb_frac × value``, runs inference, and bins the output change by
-    the original parameter value.  Reveals how sensitively the network
-    responds to small changes in each physical parameter.
+    ``param_name`` is scaled by ``1 + frac`` for ``nbins`` values of
+    ``frac`` evenly spaced in ``[-perturb_frac, perturb_frac]``.
 
     Parameters
     ----------
-    model : object with ``predict`` method
-        Trained model.
+    model : object
+        Its ``predict(params)`` returns an array whose column 0 is the
+        ranking statistic.
     ranking_stat : array-like, shape ``(N,)``
-        Baseline network ranking statistics.
+        Ranking statistic of every event; not drawn.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels; signals are ``1``.
     source_params : dict[str, array-like]
         Per-event parameter arrays.
     param_name : str
         Key of the parameter to perturb.
     export_dir : str or None
-        Output directory.
+        Saves the plot under ``PERTURBATION_SENSITIVITY/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     perturb_frac : float
-        Fractional perturbation size (default ``0.05``).
+        Largest fractional perturbation.
     nbins : int
-        Number of parameter bins for the sensitivity curve (default ``20``).
+        Number of perturbation values.
     epoch : int or str or None
-        Epoch identifier for the filename.
+        Epoch identifier for the title and filename.
     """
     import numpy as np
     import matplotlib.pyplot as plt
 
-    # Only signals
     signal_mask = labels == 1.0
     base_param = source_params[param_name][signal_mask]
 
-    # Original network output
     base_output = ranking_stat[signal_mask]
 
-    # Perturb the parameter +/- fraction
     perturb_outputs = []
     perturb_values = []
     for frac in np.linspace(-perturb_frac, perturb_frac, nbins):
         new_param = np.copy(base_param)
         new_param *= 1 + frac
 
-        # Construct modified input dict
         input_dict = {k: v[signal_mask] for k, v in source_params.items()}
         input_dict[param_name] = new_param
 
-        # Run model inference
-        model_output = model.predict(input_dict)  # adjust depending on your model API
-        # assume model_output[:,0] is ranking_stat
+        model_output = model.predict(input_dict)
+        # Column 0 is the ranking statistic
         perturb_outputs.append(model_output[:, 0])
         perturb_values.append(np.full_like(base_param, frac))
 

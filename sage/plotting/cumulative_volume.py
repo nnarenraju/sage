@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Cumulative fraction of the signals' distance-cubed volume against
+the ranking statistic.
+
 Filename        : cumulative_volume.py
 Description     : Short description of the file
 
@@ -24,7 +27,6 @@ Documentation: NULL
 """
 
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,11 +44,10 @@ def plot_cumulative_volume(
     bins=50,
 ):
     """
-    Plot cumulative detectable volume as a function of ranking-statistic threshold.
+    Plot the cumulative volume fraction against the ranking statistic.
 
-    For each threshold value, counts the number of signals above threshold and
-    weights each signal by the volume element ``(distance/d_min)^3`` to
-    approximate a cumulative sensitive volume curve.  Higher is better.
+    Signals are sorted by ranking statistic, highest first; each adds
+    ``distance**3``, and the sum is normalised to 1.
 
     Parameters
     ----------
@@ -55,35 +56,31 @@ def plot_cumulative_volume(
     ranking_stat : array-like, shape ``(N,)``
         Network ranking statistics.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels; signals are ``1``.
     source_params : dict[str, array-like]
         Per-event parameter arrays; must contain ``distance_param``.
     distance_param : str
-        Key for the luminosity distance array (default ``"distance"``).
+        Key of the distance array.
     export_dir : str or None
-        Output directory.
+        Saves ``CUMULATIVE_VOLUME/cumulative_volume_epoch_NNNN.png``
+        under it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     bins : int
-        Number of threshold bins (default ``50``).
+        Not used.
     """
-
-    # Only signals
     signal_mask = labels == 1.0
     output_sig = ranking_stat[signal_mask]
     distances = source_params[distance_param][signal_mask]
 
-    # Compute volume weights
-    volumes = distances**3  # proxy for volume
+    volumes = distances**3
 
-    # Sort by network output descending
     sort_idx = np.argsort(output_sig)[::-1]
     output_sorted = output_sig[sort_idx]
     vol_sorted = volumes[sort_idx]
 
-    # cumulative sum
     cum_vol = np.cumsum(vol_sorted)
-    cum_vol /= cum_vol[-1]  # normalize to 1
+    cum_vol /= cum_vol[-1]
 
     plt.figure(figsize=(7, 6))
     plt.plot(output_sorted, cum_vol, c="blue", lw=2)

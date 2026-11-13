@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Source parameter histograms of the signals within ranges of the
+ranking statistic.
+
 Filename        : param_distribution.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -40,26 +42,28 @@ def plot_outputbin_param_distribution(
     save=True,
 ):
     """
-    Distribution of source parameters within ranking-statistic output bins.
+    Plot histograms of each source parameter of the signals within
+    seven ranges of the ranking statistic.
 
-    Bins all events by their ranking statistic and plots the parameter
-    distribution (histogram) within each bin.  Highlights whether certain
-    parameter values cluster at low or high confidence scores.
+    The ranges are bounded by 0 and the signal and noise extremes. Per
+    non-empty range: the parameter histograms (in range against all
+    signals) and the signal ranking statistic with the range marked.
 
     Parameters
     ----------
     epoch : int or str
-        Epoch identifier used in the output subdirectory.
+        Epoch identifier for the output directory.
     ranking_stat : array-like, shape ``(N,)``
-        Network ranking statistics.
+        Ranking statistic of every event.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels (1 signal, 0 noise); nothing is drawn without both.
     sample_params : dict[str, array-like]
-        Per-event source parameter arrays.
+        Parameter name to the value of every event.
     export_dir : str or None
-        Parent directory; plots saved under ``OUTBIN_PARAM_DISTR/epoch_{epoch}/``.
+        Saves the plots under ``OUTBIN_PARAM_DISTR/epoch_NNNN/`` in it,
+        one ``bin_range_{n}`` directory per range.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figures.
     """
 
     if save and export_dir is not None:
@@ -69,9 +73,6 @@ def plot_outputbin_param_distribution(
     else:
         base_dir = None
 
-    # --------------------------------------------
-    # split signal / noise
-    # --------------------------------------------
     signal_mask = labels == 1.0
     noise_mask = labels == 0.0
 
@@ -81,9 +82,6 @@ def plot_outputbin_param_distribution(
     if len(signal_stats) == 0 or len(noise_stats) == 0:
         return
 
-    # --------------------------------------------
-    # define experimental bin ranges
-    # --------------------------------------------
     min_sig = np.min(signal_stats)
     max_sig = np.max(signal_stats)
     max_noise = np.max(noise_stats)
@@ -115,12 +113,8 @@ def plot_outputbin_param_distribution(
         "0 → max_signal",
     ]
 
-    # histogram style
     hist_kwargs = dict(histtype="stepfilled", alpha=0.5, bins=100)
 
-    # --------------------------------------------
-    # loop bins
-    # --------------------------------------------
     for n, (lo, hi) in enumerate(bin_ranges):
 
         idxs = np.where((signal_stats > lo) & (signal_stats < hi))[0]
@@ -134,9 +128,6 @@ def plot_outputbin_param_distribution(
         else:
             outdir = None
 
-        # --------------------------------------------
-        # parameter distribution panel
-        # --------------------------------------------
         params = list(sample_params.keys())
         ncols = 3
         nrows = int(np.ceil(len(params) / ncols))
@@ -157,7 +148,6 @@ def plot_outputbin_param_distribution(
             ax[i, j].grid(True, ls=":")
             ax[i, j].legend()
 
-        # hide empty panels
         for i, j in grid_positions[len(params) :]:
             ax[i, j].set_visible(False)
 
@@ -174,9 +164,6 @@ def plot_outputbin_param_distribution(
             plt.show()
             plt.close(fig)
 
-        # --------------------------------------------
-        # ranking stat histogram with bin highlight
-        # --------------------------------------------
         plt.figure(figsize=(7, 6))
 
         plt.hist(signal_stats, bins=100, histtype="step", label="Signals")

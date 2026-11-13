@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Ranking statistic of the signals against the model's predicted
+uncertainty.
+
 Filename        : output_uncertainty.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import matplotlib.pyplot as plt
 from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
@@ -38,33 +40,28 @@ def plot_output_vs_uncertainty(
     epoch=None,
 ):
     """
-    Scatter plot of network ranking statistic vs model-predicted uncertainty.
-
-    Calls ``model.predict`` with ``return_uncertainty=True`` and plots the
-    joint distribution of confidence and uncertainty for signal events.  A
-    well-calibrated model should show low uncertainty for high-confidence
-    detections.
+    Plot the predicted uncertainty against the ranking statistic of the
+    signals.
 
     Parameters
     ----------
-    model : object with ``predict`` method
-        Model that returns ``(ranking_stat, uncertainty)`` when called with
-        ``return_uncertainty=True``.
+    model : object
+        Its ``predict(params, return_uncertainty=True)`` returns
+        ``(ranking_stat, uncertainty)``.
     source_params : dict[str, array-like]
         Per-event parameter arrays passed to the model.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels; signals are ``1``.
     export_dir : str or None
-        Output directory.
+        Saves the plot under ``OUTPUT_VS_UNCERTAINTY/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     epoch : int or str or None
-        Epoch identifier for the filename.
+        Epoch identifier for the title and filename.
     """
     signal_mask = labels == 1.0
     input_dict = {k: v for k, v in source_params.items()}
 
-    # Inference
     ranking_stat, uncertainty = model.predict(input_dict, return_uncertainty=True)
     ranking_stat = ranking_stat[signal_mask]
     uncertainty = uncertainty[signal_mask]

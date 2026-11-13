@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Predicted against true value of each estimated parameter of the
+signals.
+
 Filename        : diagonal_compare.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -41,28 +43,27 @@ def plot_diagonal_compare(
     save=True,
 ):
     """
-    True-vs-predicted scatter plots for each estimated parameter, coloured by SNR.
+    Plot predicted against true value of each estimated parameter.
 
-    Produces two scatter plots per parameter: the full signal set and a
-    high-SNR (> 8) subset.  Points are coloured by network optimal SNR.
-    A dashed diagonal reference line marks perfect recovery.
+    With SNRs, a scatter of all signals and one of SNR > 8, coloured by
+    SNR; without, a log-count hexbin. The ``"gw"`` key is skipped.
 
     Parameters
     ----------
     epoch : int or str
-        Epoch identifier used in the output subdirectory name.
+        Epoch identifier for the titles and file names.
     pred_params : dict[str, array-like]
         Network point estimates per parameter.
     true_params : dict[str, array-like]
         Ground-truth parameter values in the same layout.
-    network_snrs : array-like, shape ``(N,)``
-        Optimal network SNR for all validation events.
+    network_snrs : array-like, shape ``(N,)``, or None
+        Network SNR of every event; None when not recorded.
     labels : array-like, shape ``(N,)``
-        Binary labels; signals selected with ``label == 1``.
+        Class labels; signals are ``1``.
     export_dir : str or None
-        Parent directory; plots saved under ``DIAGONAL/epoch_{epoch}/``.
+        Saves the plots under ``DIAGONAL/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figures.
     """
 
     if save and export_dir is not None:
@@ -71,16 +72,8 @@ def plot_diagonal_compare(
     else:
         base_dir = None
 
-    # --------------------------------------------
-    # signals only
-    # --------------------------------------------
     signal_mask = labels == 1.0
 
-    # Colour-by-SNR is optional: the optimal SNR is computed during signal
-    # generation but is not currently recorded in the validation output, so on
-    # most runs there is nothing to colour by. Fall back to uncoloured points
-    # rather than substituting a different quantity (chirp distance was
-    # previously standing in, on an axis labelled SNR).
     has_snr = network_snrs is not None
     snr_sig = np.asarray(network_snrs)[signal_mask] if has_snr else None
 
@@ -94,9 +87,7 @@ def plot_diagonal_compare(
         pred = pred_params[param][signal_mask]
         true = true_params[param][signal_mask]
 
-        # --------------------------------------------
-        # order by SNR (nice visual layering)
-        # --------------------------------------------
+        # Loudest signals drawn last, on top
         if has_snr:
             order = np.argsort(snr_sig)
             snr = snr_sig[order]
@@ -108,9 +99,6 @@ def plot_diagonal_compare(
         pred = pred[order]
         true = true[order]
 
-        # --------------------------------------------
-        # FULL scatter
-        # --------------------------------------------
         fig, ax = plt.subplots(figsize=(7, 6))
 
         if has_snr:
@@ -118,9 +106,7 @@ def plot_diagonal_compare(
             cbar = fig.colorbar(sc)
             cbar.set_label("Network SNR")
         else:
-            # With ~100k signals and nothing to colour by, a scatter saturates
-            # into a solid block and hides all density structure. A hexbin
-            # shows where the samples actually are.
+            # Uncoloured points saturate; a hexbin shows the density
             hb = ax.hexbin(pred, true, gridsize=60, bins="log", mincnt=1,
                            cmap="viridis")
             cbar = fig.colorbar(hb)
@@ -131,7 +117,6 @@ def plot_diagonal_compare(
         ax.set_title(f"Diagonal Plot of {param} at {_etitle(epoch)}")
         ax.grid(True, ls=":")
 
-        # diagonal reference
         if param not in ("norm_dist", "norm_dchirp"):
             mn = min(pred.min(), true.min())
             mx = max(pred.max(), true.max())
@@ -149,10 +134,6 @@ def plot_diagonal_compare(
             plt.show()
             plt.close(fig)
 
-        # --------------------------------------------
-        # HIGH SNR scatter
-        # --------------------------------------------
-        # The high-SNR panel needs a real SNR; skip it when none was recorded.
         if not has_snr or np.sum(high) == 0:
             continue
 

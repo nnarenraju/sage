@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Training and validation loss curves, and the validated epochs of a
+run's ``losses.h5``.
+
 Filename        : loss_curves.py
 Description     : Short description of the file
 
@@ -23,43 +26,45 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 
 
 def validated_epochs(validation_loss):
-    """Indices of epochs where validation actually ran.
+    """
+    Indices of the epochs whose losses were written.
 
-    ``losses.h5`` is pre-allocated ``(num_epochs, num_components)`` and filled
-    in as the run proceeds, but validation typically runs only every Nth epoch.
-    The rows in between keep their initial **zero**, which is not a loss value.
-
-    Plotting those zeros draws the validation curve as a comb dropping to the
-    axis between validation points, and ``argmin`` over the raw column returns
-    the first unwritten row rather than the best epoch. Both were happening.
-
-    A total loss of exactly 0.0 is not attainable for the losses used here, so
-    an exact zero is an unambiguous "not written yet" sentinel.
+    ``losses.h5`` is pre-allocated with zeros, so a row whose total loss
+    (column 0) is exactly 0.0 has not been written.
 
     Parameters
     ----------
     validation_loss : numpy.ndarray, shape ``(E, L)``
+        Losses per epoch; column 0 is the total loss.
 
     Returns
     -------
     numpy.ndarray
-        Integer indices of the epochs that were validated.
+        Integer indices of the written rows.
     """
     validation_loss = np.asarray(validation_loss)
     return np.flatnonzero(validation_loss[:, 0] != 0.0)
 
 
 def best_validated_epoch(validation_loss):
-    """Index of the lowest-total-loss epoch, ignoring un-validated rows.
+    """
+    Index of the validated epoch with the lowest total loss.
 
-    Returns ``None`` when nothing has been validated yet.
+    Parameters
+    ----------
+    validation_loss : numpy.ndarray, shape ``(E, L)``
+        Validation losses per epoch; column 0 is the total loss.
+
+    Returns
+    -------
+    int or None
+        ``None`` when no epoch has been validated.
     """
     idx = validated_epochs(validation_loss)
     if idx.size == 0:
@@ -76,52 +81,38 @@ def plot_loss_curves(
     component_names=None,
 ):
     """
-    Plot training and validation loss curves with optional best-epoch markers.
+    Plot training and validation loss curves; stars mark the best epoch.
 
-    Generates two figures when ``training_loss`` has more than one column:
-
-    1. **Total loss** — column 0 of both arrays.
-    2. **Per-parameter PE losses** — remaining columns.
+    Draws the total loss (column 0) and, when there are more columns,
+    the PE component losses. Only written rows are drawn; see
+    :func:`validated_epochs`.
 
     Parameters
     ----------
     training_loss : numpy.ndarray, shape ``(E, L)``
-        Training losses per epoch; column 0 is the total loss, subsequent
-        columns are individual PE component losses.
+        Training losses per epoch; column 0 is the total loss, the
+        others the PE component losses.
     validation_loss : numpy.ndarray, shape ``(E, L)``
         Validation losses in the same layout.
     export_dir : str or None
-        Directory to save figures (``loss_curves.png``,
-        ``pe_loss_curves.png``).
+        Saves ``loss_curves.png`` and ``pe_loss_curves.png`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figures.
     best_epoch : int or None
-        Zero-based epoch index to mark with a star on all curves. Use
-        :func:`best_validated_epoch`, which ignores un-validated rows.
+        Zero-based epoch index to mark with a star, as from
+        :func:`best_validated_epoch`.
     component_names : list[str] or None
-        Names for the PE loss components (columns 1..L-1). Falls back to
-        ``component {i}`` when not supplied.
-
-    Notes
-    -----
-    Only epochs where validation actually ran are drawn for the validation
-    curves, and only epochs trained for the training curves -- see
-    :func:`validated_epochs`. Epochs are numbered from 0, as the checkpoints.
+        Name of each loss column, indexed by column; columns without one
+        are labelled ``component {i}``.
     """
 
     training_loss = np.asarray(training_loss)
     validation_loss = np.asarray(validation_loss)
 
     epochs = np.arange(len(training_loss))
-    # Validation usually runs every Nth epoch, and a run stopped early has not
-    # written its later rows: those are still zero from pre-allocation and
-    # must not be drawn. See validated_epochs.
     val_idx = validated_epochs(validation_loss)
     train_idx = validated_epochs(training_loss)
 
-    # --------------------------------------------
-    # TOTAL LOSS CURVE
-    # --------------------------------------------
     plt.figure(figsize=(7, 6))
 
     plt.plot(epochs[train_idx], training_loss[train_idx, 0], label="Training Loss")
@@ -157,9 +148,6 @@ def plot_loss_curves(
         plt.show()
         plt.close()
 
-    # --------------------------------------------
-    # PARAMETER ESTIMATION LOSS CURVES (optional)
-    # --------------------------------------------
     if training_loss.shape[1] == 1:
         return
 
@@ -172,7 +160,7 @@ def plot_loss_curves(
             if component_names is not None and lidx < len(component_names)
             else f"component {lidx}"
         )
-        # Share a colour between the train/val pair so they read together.
+        # One colour for the training and validation pair
         line, = plt.plot(epochs[train_idx], training_loss[train_idx, lidx], label=f"{name} (train)")
         plt.plot(
             epochs[val_idx],

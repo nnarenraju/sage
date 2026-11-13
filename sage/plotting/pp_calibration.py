@@ -2,22 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-P-P (probability-integral-transform) calibration plot for the heteroscedastic
-parameter heads.
+P-P calibration plot of the Gaussian point estimates ``N(mu, sigma)``.
 
-For a well-calibrated Gaussian prediction ``N(mu, sigma)`` the PIT value
-``z = Phi((y - mu) / sigma)`` of the true target ``y`` is uniformly distributed
-on ``[0, 1]``. Plotting the empirical CDF of the PIT values against the diagonal
-therefore reveals miscalibration of the predicted uncertainties:
-
-  - curve on the diagonal           -> calibrated
-  - curve shallower than diagonal   -> over-confident (sigma too small)
-  - curve steeper than diagonal     -> under-confident (sigma too large)
-
-This validates the sigma mechanism of the heteroscedastic parameter heads:
-trustworthy predicted sigmas are what make the per-PE uncertainties usable
-downstream. It complements ``plot_calibration_curve`` (which calibrates the
-*classifier*).
+For calibrated predictions the probability integral transform (PIT)
+``Phi((y - mu) / sigma)`` of the true value ``y`` is uniform on
+``[0, 1]``, so its empirical CDF lies on the diagonal.
 """
 
 import os
@@ -30,7 +19,21 @@ from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 
 def _pit(mu, sigma, y, eps=1e-12):
-    """Probability integral transform ``Phi((y - mu) / sigma)``."""
+    """
+    Probability integral transform ``Phi((y - mu) / (|sigma| + eps))``.
+
+    Parameters
+    ----------
+    mu, sigma, y : numpy.ndarray
+        Predicted means, predicted standard deviations, true values.
+    eps : float
+        Added to ``|sigma|`` to avoid division by zero.
+
+    Returns
+    -------
+    numpy.ndarray
+        PIT values in ``[0, 1]``.
+    """
     return ndtr((y - mu) / (np.abs(sigma) + eps))
 
 
@@ -44,31 +47,35 @@ def plot_pp_calibration(
     save=True,
     title=None,
 ):
-    """P-P calibration plot of heteroscedastic predictions.
+    """
+    Plot the empirical CDF of the PIT of each parameter against the
+    diagonal.
+
+    Rows with a non-finite value are dropped per parameter.
 
     Parameters
     ----------
     mu, sigma, y : array-like, shape ``(N,)`` or ``(N, P)``
-        Predicted means, predicted standard deviations (NOT log-variances), and
-        the true targets, for ``N`` samples and optionally ``P`` parameters.
-        Pass only the supervised samples (e.g. signals); mask out noise first.
+        Predicted means, predicted standard deviations (not
+        log-variances) and true values, for signals only.
     param_names : list[str] or None
-        Names for the ``P`` parameters (used in the legend).
+        Legend names of the ``P`` parameters; ``param {i}`` when None.
     epoch : int or str or None
-        Epoch identifier for the title / filename.
+        Epoch identifier for the title and filename.
     export_dir : str or None
-        If given (and ``save``), writes ``calibration/pp_calibration_{epoch}.png``.
+        Saves ``calibration/pp_calibration_epoch_NNNN.png`` under it.
     save : bool
-        Save to disk if True, else show interactively.
+        Save when ``export_dir`` is set (close unshown when it is not);
+        otherwise show the figure.
     title : str or None
-        Override the default title.
+        Plot title; None uses the default title.
 
     Returns
     -------
     dict
-        Per-parameter calibration metrics: ``{name: {"ks": float,
-        "cov1sigma": float, "cov2sigma": float}}`` where ``ks`` is the
-        Kolmogorov-Smirnov distance of the PIT from uniform (0 = perfect).
+        ``{name: {"ks": ks, "cov1sigma": c1, "cov2sigma": c2}}``: the
+        Kolmogorov-Smirnov distance of the PIT from uniform, and the
+        fractions with ``|y - mu| / sigma`` below 1 and 2.
     """
     mu = np.asarray(mu, dtype=np.float64)
     sigma = np.asarray(sigma, dtype=np.float64)

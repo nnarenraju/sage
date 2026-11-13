@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Gradient of the binned median ranking statistic of the signals in
+one source parameter.
+
 Filename        : output_gradient.py
 Description     : Short description of the file
 
@@ -24,7 +27,6 @@ Documentation: NULL
 """
 
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -43,12 +45,12 @@ def plot_output_gradient(
     bins=100,
 ):
     """
-    Plot the empirical gradient of network output with respect to a source parameter.
+    Plot the gradient of the signals' median ranking statistic in one
+    source parameter.
 
-    Sorts signal events by ``param_name`` and estimates the finite-difference
-    gradient of the ranking statistic with a rolling window.  A rising
-    gradient indicates the network exploits this parameter; a flat curve
-    indicates insensitivity.
+    The median per parameter bin is boxcar-smoothed, then differentiated
+    with ``numpy.gradient``. Nothing is drawn when fewer than 3 bins are
+    populated or the parameter has no spread.
 
     Parameters
     ----------
@@ -57,28 +59,19 @@ def plot_output_gradient(
     ranking_stat : array-like, shape ``(N,)``
         Network ranking statistics.
     labels : array-like, shape ``(N,)``
-        Binary labels.
+        Class labels; signals are ``1``.
     source_params : dict[str, array-like]
         Per-event parameter arrays.
     param_name : str
         Key of the parameter to differentiate against.
     export_dir : str or None
-        Output directory.
+        Saves the plot under ``OUTPUT_GRADIENT/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     window : int
-        Boxcar width used to smooth the binned trend before differentiating.
-        Set to ``0`` or ``1`` to differentiate the raw binned trend.
+        Boxcar width in bins; 0 or 1 leaves the medians unsmoothed.
     bins : int
-        Number of parameter bins used to build the median trend (default 100).
-
-    Notes
-    -----
-    The gradient is taken of the **binned median trend**, not of the raw
-    per-sample values. Differentiating the samples directly divides the
-    sample-to-sample scatter of the ranking statistic by the (vanishingly
-    small) spacing between neighbouring parameter values, which produced
-    values of order 1e4 and NaN wherever two samples shared a value.
+        Number of equal-width parameter bins.
     """
 
     signal_mask = labels == 1.0
@@ -90,17 +83,8 @@ def plot_output_gradient(
     if x.size < 2 or np.ptp(x) == 0:
         return
 
-    # Differentiate the BINNED TREND, not the raw samples.
-    #
-    # The previous implementation did np.gradient(y_sorted, x_sorted) over every
-    # signal. With 100k samples the spacing between neighbours is ~2e-4 while
-    # the ranking statistic scatters by ~6 between them, so the result was
-    # ~3e4 -- and outright NaN wherever two samples shared a parameter value
-    # and dx was exactly 0. It measured sample noise divided by sample spacing,
-    # not any gradient of the underlying relationship.
-    #
-    # Binning to a median trend first gives d<stat>/d<param> in units that mean
-    # something (~0.5 per solar mass of chirp mass, here).
+    # Median per bin; differentiating raw samples divides scatter by
+    # the spacing of neighbouring values
     edges = np.linspace(x.min(), x.max(), bins + 1)
     centres = 0.5 * (edges[:-1] + edges[1:])
     which = np.clip(np.digitize(x, edges) - 1, 0, bins - 1)
@@ -116,12 +100,11 @@ def plot_output_gradient(
         return
     centres, trend = centres[populated], trend[populated]
 
-    # Optional smoothing of the trend before differentiating.
     if window and window > 1:
         k = int(window)
         kernel = np.ones(k) / k
         trend = np.convolve(trend, kernel, mode="same")
-        # convolve tapers the ends; drop the affected edge points
+        # Drop the edge points tapered by the convolution
         edge = k // 2
         if len(trend) > 2 * edge + 2 and edge > 0:
             centres, trend = centres[edge:-edge], trend[edge:-edge]

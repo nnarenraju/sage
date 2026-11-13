@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Signal and noise densities of the ranking statistic across training
+epochs.
+
 Filename        : epoch_separation.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -39,24 +41,24 @@ def plot_separation_over_epochs(
     save=True,
 ):
     """
-    Track signal/noise ranking-statistic separation across training epochs.
+    Plot the Gaussian KDE of the ranking statistic of signals and noise
+    at each epoch.
 
-    Plots KDE curves of the ranking statistic for signal and noise samples
-    for each epoch, coloured by epoch so convergence trends are visible over
-    training.
+    Colour gives the epoch; solid lines are signals, dashed lines noise.
 
     Parameters
     ----------
     all_network_outputs : dict[epoch, array-like]
-        Mapping from epoch to network output arrays.
+        Ranking statistics of each epoch.
     all_labels : dict[epoch, array-like]
-        Mapping from epoch to binary label arrays.
+        Class labels of each epoch (1 signal, 0 noise).
     epochs : list
-        Ordered list of epoch keys to include in the plot.
+        Epoch keys to plot, in order.
     export_dir : str or None
-        Output directory for the saved figure.
+        Saves ``signal_noise_separation_over_epochs.png`` under
+        ``SEPARATION_OVER_EPOCHS/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figure.
     """
     import numpy as np
     from scipy.stats import gaussian_kde
@@ -71,16 +73,13 @@ def plot_separation_over_epochs(
         sig   = output[labels == 1.0]
         noise = output[labels == 0.0]
 
-        # KDEs via scipy
         xs = np.linspace(output.min(), output.max(), 400)
         kde_sig   = gaussian_kde(sig,   bw_method="scott")
         kde_noise = gaussian_kde(noise, bw_method="scott")
         ax.plot(xs, kde_sig(xs),   color=colors[i], ls="-")
         ax.plot(xs, kde_noise(xs), color=colors[i], ls="--")
 
-    # Epoch is encoded as colour, shown on a colourbar. Labelling every curve
-    # instead produced a 2N-entry legend (54 for a 27-epoch run) that covered
-    # half the axes and was impossible to read.
+    # Epoch on a colour bar; the legend shows only the line styles
     epoch_numbers = _epoch_numbers(epochs)
     sm = plt.cm.ScalarMappable(
         cmap=plt.cm.viridis,
@@ -89,7 +88,6 @@ def plot_separation_over_epochs(
     cbar = fig.colorbar(sm, ax=ax)
     cbar.set_label("Epoch")
 
-    # Line style carries signal-vs-noise; two entries is enough.
     style_handles = [
         Line2D([], [], color="0.3", ls="-",  label="Signals"),
         Line2D([], [], color="0.3", ls="--", label="Noise"),

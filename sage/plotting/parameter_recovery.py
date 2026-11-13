@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Median residual of a point-estimate parameter in bins of its true
+value across epochs.
+
 Filename        : parameter_recovery.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,9 +41,27 @@ def plot_param_recovery_heatmap(
     bins=30,
 ):
     """
-    Heatmap of median residual for a parameter across epochs
+    Plot the median residual of one parameter in bins of its true value
+    against epoch.
+
+    Parameters
+    ----------
+    all_network_outputs : dict
+        Epoch to a dict of parameter name to predicted values.
+    all_labels : dict
+        Epoch to a dict of parameter name to true values.
+    param_name : str
+        Parameter to plot.
+    epochs : list
+        Epoch keys, in order; the first and last set the y-axis extent.
+    export_dir : str or None
+        Saves ``{param_name}_recovery_heatmap.png`` under
+        ``PARAM_RECOVERY_HEATMAP/`` in it.
+    save : bool
+        Save when ``export_dir`` is set; otherwise show the figure.
+    bins : int
+        Number of equal-width bins of the true value over all epochs.
     """
-    # Collect true values
     true_vals = np.concatenate([all_labels[epoch][param_name] for epoch in epochs])
     min_val, max_val = np.min(true_vals), np.max(true_vals)
     bin_edges = np.linspace(min_val, max_val, bins + 1)
@@ -54,7 +74,6 @@ def plot_param_recovery_heatmap(
         true = all_labels[epoch][param_name]
         residuals = pred - true
 
-        # Compute median residual per bin
         med_res = []
         for i in range(len(bin_edges) - 1):
             idxs = np.where((true >= bin_edges[i]) & (true < bin_edges[i + 1]))[0]

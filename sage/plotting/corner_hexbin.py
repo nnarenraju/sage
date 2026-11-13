@@ -1,4 +1,7 @@
-"""Corner plot of hexbins coloured by a value per point, with histograms on the diagonal."""
+"""
+Corner plot of hexbins coloured by a value per point, with histograms
+on the diagonal.
+"""
 
 import matplotlib as mpl
 from matplotlib.lines import Line2D
@@ -12,20 +15,8 @@ def plot_corner_hexbin(points, values, *, reduce=np.mean, labels=None, histogram
                        cmap="viridis", vmin=None, vmax=None, gridsize=32, bins=40, panel_size=4.0,
                        save_path=None):
     """
-    Corner plot: hexbins coloured by the values of the points in each cell, histograms on the diagonal.
-
-    Examples
-    --------
-    Worst mismatch per cell::
-
-        plot_corner_hexbin({"mass1": m1, "mass2": m2, "lambda1": l1}, np.log10(mismatch),
-                           reduce=np.max, colorbar_label="log10 mismatch")
-
-    Two sets of detections, coloured by the difference in counts::
-
-        plot_corner_hexbin(params, found_by_sage.astype(float),
-                           reduce=lambda z: np.sum(z == 1) - np.sum(z == 0),
-                           histograms={"PyCBC": ~found_by_sage, "Sage": found_by_sage})
+    Corner plot of hexbins coloured by the values of the points in each
+    cell, with histograms on the diagonal.
 
     Parameters
     ----------
@@ -38,7 +29,8 @@ def plot_corner_hexbin(points, values, *, reduce=np.mean, labels=None, histogram
     labels : dict of str to str or None
         Axis label of each parameter; its name when absent.
     histograms : dict of str to bool array, shape (N,), or None
-        Points of each diagonal histogram, by legend label; None draws one histogram of all points.
+        Points of each diagonal histogram, by legend label; None draws
+        one histogram of all points.
     colorbar_label : str or None
         Label of the colour bar.
     cmap : str or Colormap
@@ -57,6 +49,24 @@ def plot_corner_hexbin(points, values, *, reduce=np.mean, labels=None, histogram
     Returns
     -------
     matplotlib.figure.Figure
+        The corner plot; not closed.
+
+    Examples
+    --------
+    Worst mismatch per cell::
+
+        plot_corner_hexbin(
+            {"mass1": m1, "mass2": m2, "lambda1": l1},
+            np.log10(mismatch), reduce=np.max,
+            colorbar_label="log10 mismatch")
+
+    Two sets of detections, coloured by the difference in counts::
+
+        plot_corner_hexbin(
+            params, found_by_sage.astype(float),
+            reduce=lambda z: np.sum(z == 1) - np.sum(z == 0),
+            histograms={"PyCBC": ~found_by_sage,
+                        "Sage": found_by_sage})
     """
     names = list(points)
     k = len(names)
@@ -77,7 +87,7 @@ def plot_corner_hexbin(points, values, *, reduce=np.mean, labels=None, histogram
             for col, x in enumerate(names[:row + 1]):
                 ax = fig.add_subplot(grid[row, col])
                 ax.tick_params(which="both", direction="in", top=True, right=True, labelsize=14)
-                # Pruned ticks keep labels of neighbouring panels apart where the panels meet
+                # Pruned ticks keep labels of adjacent panels apart
                 ax.xaxis.set_major_locator(MaxNLocator(nbins=4, prune="both"))
                 ax.set_xlim(limits[x])
                 if row == col:

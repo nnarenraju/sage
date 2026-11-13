@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Calibration curve: observed signal fraction per bin of the ranking
+statistic.
+
 Filename        : calibration_curve.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,11 +41,10 @@ def plot_calibration_curve(
     nbins=20,
 ):
     """
-    Plot model calibration: predicted ranking-statistic bins vs signal fraction.
+    Plot the fraction of signals in each bin of the ranking statistic.
 
-    Bins the ranking statistic and plots the mean predicted score against the
-    actual fraction of signals in each bin.  A well-calibrated model should
-    follow the diagonal.
+    Markers sit at the bin centres, sized and coloured by the bin count,
+    against a line from (min, 0) to (max, 1).
 
     Parameters
     ----------
@@ -52,26 +53,19 @@ def plot_calibration_curve(
     ranking_stat : array-like, shape ``(N,)``
         Predicted ranking statistics.
     labels : array-like, shape ``(N,)``
-        Class labels (1 = signal, 0 = noise); other classes are left out.
+        Class labels (1 signal, 0 noise); other classes are left out.
     export_dir : str or None
-        Output directory (saves under root as ``calibration_curve_{epoch}.png``).
+        Saves ``calibration/calibration_epoch_NNNN.png`` under it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figure.
     nbins : int
-        Number of bins for the calibration curve (default ``20``).
+        Number of equal-width bins between the extremes.
     """
-
-    # --------------------------------------------
-    # masks
-    # --------------------------------------------
     keep = (labels == 0.0) | (labels == 1.0)
     ranking_stat, labels = ranking_stat[keep], labels[keep]
     signal_mask = labels == 1.0
     signal_stats = ranking_stat[signal_mask]
 
-    # --------------------------------------------
-    # define bins
-    # --------------------------------------------
     bin_edges = np.linspace(np.min(ranking_stat), np.max(ranking_stat), nbins + 1)
     bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
     frac_observed = []
@@ -88,9 +82,6 @@ def plot_calibration_curve(
     frac_observed = np.array(frac_observed)
     bin_counts = np.array(bin_counts)
 
-    # --------------------------------------------
-    # plot
-    # --------------------------------------------
     plt.figure(figsize=(7, 6))
     plt.plot(
         [np.min(ranking_stat), np.max(ranking_stat)],

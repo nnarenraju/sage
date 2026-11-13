@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Mean ranking statistic of the signals in bins of network SNR.
+
 Filename        : snr_confidence.py
 Description     : Short description of the file
 
@@ -23,7 +25,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -34,13 +35,30 @@ def plot_confidence_vs_snr(
     epoch, ranking_stat, labels, network_snrs, export_dir=None, save=True, snr_bins=20
 ):
     """
-    Plot average network output (confidence) in bins of SNR for signals
+    Plot the mean and standard deviation of the signals' ranking
+    statistic in bins of network SNR.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Ranking statistic of every event.
+    labels : array-like, shape ``(N,)``
+        Class labels; signals are ``1``.
+    network_snrs : array-like, shape ``(N,)``
+        Network SNR of every event.
+    export_dir : str or None
+        Saves the plot under ``CONFIDENCE_VS_SNR/`` in it.
+    save : bool
+        Save when ``export_dir`` is set; otherwise show the figure.
+    snr_bins : int
+        Number of equal-width SNR bins.
     """
     signal_mask = labels == 1.0
     snrs = network_snrs[signal_mask]
     stats = ranking_stat[signal_mask]
 
-    # Bin edges
     bins = np.linspace(np.min(snrs), np.max(snrs), snr_bins + 1)
     bin_centers = 0.5 * (bins[:-1] + bins[1:])
     avg_conf = np.zeros_like(bin_centers)

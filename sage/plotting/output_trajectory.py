@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Percentiles of the ranking statistic of signals and noise across
+epochs.
+
 Filename        : output_trajectory.py
 Description     : Evolution of the ranking-statistic distribution over epochs.
 
@@ -11,7 +14,6 @@ __license__       = GPL-3.0-or-later
 __maintainer__    = Narenraju Nagarajan
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -27,43 +29,32 @@ def plot_output_trajectory_over_epochs(
     percentiles=(10, 25, 50, 75, 90),
 ):
     """
-    Ranking-statistic distribution for signals and noise as a function of epoch.
+    Plot percentiles of the ranking statistic of signals and noise
+    against epoch.
 
-    Why this is distributional rather than per-sample
-    -------------------------------------------------
-    This plot used to draw one line per sample, following ``ranking_stat[i]``
-    across epochs for twenty randomly chosen ``i``. That cannot work for this
-    data.
-
-    Validation batches are generated on the fly and the sampler's RNG is not
-    reset between epochs, so every epoch validates on a fresh draw. Row ``i``
-    in epoch 0 and row ``i`` in epoch 127 are unrelated events -- the measured
-    correlation between their chirp masses is ``+0.004``, and even the
-    signal/noise labels differ. The old plot joined unrelated points with
-    lines, which is where the messy appearance came from.
-
-    What the data does support is how the *distribution* moves, which is the
-    more useful question anyway: are signals separating from noise, and is the
-    spread tightening?
+    Each epoch's events are a separate draw, so the plot follows the
+    distribution rather than individual events. Nothing is drawn when
+    there are no epochs.
 
     Parameters
     ----------
     all_ranking_stats : list[array-like]
-        One ranking-statistic array per epoch, ordered as ``epoch_list``.
+        One ranking-statistic array per epoch, in ``epoch_list`` order.
     labels : array-like or list[array-like]
-        Binary labels. A single array is applied to every epoch; pass a list of
-        per-epoch label arrays, which is correct here since the draw changes.
+        Class labels (1 signal, 0 noise): a list or tuple of one array
+        per epoch, or one array used for every epoch.
     epoch_list : list[int]
         Epoch numbers for the x-axis.
     export_dir : str or None
-        Output directory.
+        Saves ``OUTPUT_TRAJECTORY/output_trajectory_distribution.png``
+        under it.
     save : bool
-        Save to disk, else display.
-    signal_idx : ignored
-        Accepted for backwards compatibility. Per-sample tracking is not
-        meaningful for this data; see above.
+        Save when ``export_dir`` is set; otherwise show the figure.
+    signal_idx : object
+        Not used.
     percentiles : tuple[float]
-        Percentiles to draw: median as a line, the rest as symmetric bands.
+        The middle one is drawn as a line; the others pair from the
+        outside in as bands.
     """
     n_epochs = len(all_ranking_stats)
     if n_epochs == 0:
@@ -74,6 +65,7 @@ def plot_output_trajectory_over_epochs(
     )
 
     def band_stats(select_signal):
+        """Percentiles per epoch, shape ``(E, len(percentiles))``."""
         rows = []
         for stats, lab in zip(all_ranking_stats, per_epoch_labels):
             stats = np.asarray(stats)

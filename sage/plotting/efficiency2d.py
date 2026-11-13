@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Detection efficiency of the signals in 2D bins of two source
+parameters.
+
 Filename        : efficiency2d.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -45,12 +47,10 @@ def plot_2d_efficiency(
     bins_y=20,
 ):
     """
-    Plot a 2D heatmap of detection efficiency as a function of two parameters.
+    Plot the fraction of signals above ``threshold`` in 2D bins of two
+    source parameters.
 
-    Computes the fraction of signals above ``threshold`` in each
-    (``param_x``, ``param_y``) bin and displays the result as a colour-coded
-    grid.  Useful for identifying regions of parameter space where sensitivity
-    drops.
+    Nothing is drawn when either parameter is absent.
 
     Parameters
     ----------
@@ -59,7 +59,7 @@ def plot_2d_efficiency(
     ranking_stat : array-like, shape ``(N,)``
         Predicted ranking statistics.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels; signals are ``1``.
     source_params : dict[str, array-like]
         Per-signal parameter arrays.
     param_x : str
@@ -69,13 +69,16 @@ def plot_2d_efficiency(
     threshold : float
         Detection threshold on the ranking statistic.
     export_dir : str or None
-        Output directory.
+        Saves ``{param_x}_{param_y}_efficiency_epoch_NNNN.png`` under
+        ``2D_EFFICIENCY/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
+    min_count : int
+        Bins with fewer signals are left blank.
     bins_x : int
-        Number of x-axis bins (default ``20``).
+        Number of x-axis bins.
     bins_y : int
-        Number of y-axis bins (default ``20``).
+        Number of y-axis bins.
     """
     if param_x not in source_params or param_y not in source_params:
         return
@@ -84,7 +87,6 @@ def plot_2d_efficiency(
     y = source_params[param_y][labels == 1.0]
     stat = ranking_stat[labels == 1.0]
 
-    # 2D bins
     x_edges = np.linspace(np.min(x), np.max(x), bins_x + 1)
     y_edges = np.linspace(np.min(y), np.max(y), bins_y + 1)
     efficiency = np.zeros((bins_x, bins_y))
@@ -97,11 +99,6 @@ def plot_2d_efficiency(
                 & (y >= y_edges[j])
                 & (y < y_edges[j + 1])
             )[0]
-            # Bins with only a handful of signals produce fractions of
-            # exactly 0.0 or 1.0, which render identically to a genuine
-            # extreme on the colour scale. On a typical run ~27% of occupied
-            # bins hold fewer than 20 samples, so those cells were reporting
-            # counting noise as certainty. Leave them blank instead.
             if len(idxs) < min_count:
                 efficiency[i, j] = np.nan
             else:

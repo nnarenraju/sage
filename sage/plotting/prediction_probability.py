@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Histograms of the predicted probability of signals and noise.
+
 Filename        : prediction_probability.py
 Description     : Short description of the file
 
@@ -23,7 +25,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,24 +33,23 @@ from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 def plot_prediction_probability(epoch, pred_prob, labels, export_dir=None, save=True):
     """
-    Plot overlapping histograms of predicted ranking statistic for signal and noise.
+    Plot log-count histograms of the predicted probability of signals
+    and noise.
 
-    Visualises how well the network separates the two classes by plotting
-    the distribution of ``pred_prob`` for label=1 (signal) and label=0 (noise)
-    on the same axes.
+    The legend gives the gap: highest signal minus highest noise value.
 
     Parameters
     ----------
     epoch : int or str
         Epoch identifier for the title and filename.
     pred_prob : array-like, shape ``(N,)``
-        Predicted ranking statistics (raw logits or probabilities).
+        Sigmoid of the ranking statistic of every event.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels (1 = signal, 0 = noise).
+        Class labels (1 signal, 0 noise).
     export_dir : str or None
-        Directory to save the figure (under ``PRED_PROB/``).
+        Saves the plot under ``PRED_PROB/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figure.
     """
 
     save_dir = None
@@ -57,22 +57,15 @@ def plot_prediction_probability(epoch, pred_prob, labels, export_dir=None, save=
         save_dir = os.path.join(export_dir, "PRED_PROB")
         os.makedirs(save_dir, exist_ok=True)
 
-    # --------------------------------------------
-    # Split signal / noise
-    # --------------------------------------------
     signal_mask = labels == 1.0
     noise_mask = labels == 0.0
 
-    # float64: an output varying only in its last float32 bits still splits into 100 finite bins
+    # float64: 100 finite bins even for values a float32 ulp apart
     pred_prob_tp = np.asarray(pred_prob[signal_mask], dtype=np.float64)
     pred_prob_tn = np.asarray(pred_prob[noise_mask], dtype=np.float64)
 
-    # Diagnostic separation metric (not returned)
     boundary_diff = np.round(np.max(pred_prob_tp) - np.max(pred_prob_tn), 8)
 
-    # --------------------------------------------
-    # Plot
-    # --------------------------------------------
     plt.figure(figsize=(8, 6))
 
     plt.hist(

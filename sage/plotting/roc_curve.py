@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Log-log ROC curve of signals against noise.
+
 Filename        : roc_curve.py
 Description     : Short description of the file
 
@@ -23,7 +25,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import matplotlib.pyplot as plt
 from sklearn import metrics
@@ -32,7 +33,7 @@ from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
     """
-    Plot and optionally save a log-log ROC curve for one validation epoch.
+    Plot the log-log ROC curve and its AUC for one validation epoch.
 
     Parameters
     ----------
@@ -41,12 +42,11 @@ def plot_roc_curve(epoch, ranking_stat, labels, export_dir=None, save=True):
     ranking_stat : array-like, shape ``(N,)``
         Network ranking statistic (higher = more signal-like).
     labels : array-like, shape ``(N,)``
-        Class labels (1 = signal, 0 = noise); other classes are left out.
+        Class labels (1 signal, 0 noise); other classes are left out.
     export_dir : str or None
-        Directory to save the figure.  A ``ROC/`` subdirectory is created
-        automatically.  Required when ``save=True``.
+        Saves the plot under ``ROC/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figure.
     """
 
     keep = (labels == 0.0) | (labels == 1.0)

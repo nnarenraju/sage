@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Running mean and percentiles of the ranking statistic of the signals
+against each source parameter.
+
 Filename        : learning_parameter_prior.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -44,34 +46,36 @@ def plot_learning_parameter_prior(
     params=None,
 ):
     """
-    Overlay learned detection efficiency on the source-parameter prior distribution.
+    Plot sliding-window statistics of the signals' ranking statistic
+    against each source parameter.
 
-    For each source parameter, shows the prior histogram alongside the
-    detection fraction curve — highlighting where the prior is dense versus
-    where the network actually achieves high detection efficiency.  Useful
-    for diagnosing whether efficiency follows the prior or is biased toward
-    high-probability regions.
+    Per window of signals sorted by the parameter: the mean, the 5-95
+    percentile band and the band between median and mean. A parameter
+    with fewer signals than one window is skipped.
 
     Parameters
     ----------
     epoch : int or str
-        Epoch identifier used in the output subdirectory name.
+        Epoch identifier for the titles and file names.
     source_params : dict[str, array-like]
-        Per-signal parameter arrays.
-    pred_stat : array-like, shape ``(N_signal,)``
-        Predicted ranking statistic for signal events.
+        Parameter name to the value of every event, shape ``(N,)``.
+    pred_stat : array-like, shape ``(N,)``
+        Ranking statistic of every event.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels for the full validation set.
+        Class labels; signals are ``1``.
     export_dir : str or None
-        Parent directory; plots saved under ``LEARN_PARAMS/epoch_{epoch}/``.
+        Saves the plots under ``LEARN_PARAMS/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figures.
     save_name : str
-        Prefix for saved filenames (default ``"stat"``).
+        y-axis label and file name tag.
     bin_width : int
-        Number of events per parameter bin (default ``500``).
-    step : float
-        Step size for threshold sweep (default ``10``).
+        Signals per window.
+    step : int
+        Stride between windows.
+    params : iterable[str] or None
+        Source parameters to plot; see
+        :func:`~sage.plotting._params.select_params`.
     """
 
     if save and export_dir is not None:
@@ -80,9 +84,6 @@ def plot_learning_parameter_prior(
     else:
         base_dir = None
 
-    # --------------------------------------------
-    # signals only
-    # --------------------------------------------
     signal_mask = labels == 1.0
     data_tp = pred_stat[signal_mask]
 
@@ -93,9 +94,6 @@ def plot_learning_parameter_prior(
         if len(source_data) < bin_width:
             continue
 
-        # --------------------------------------------
-        # sort by parameter
-        # --------------------------------------------
         order = np.argsort(source_data)
         p_sorted = source_data[order]
         s_sorted = data_tp[order]
@@ -106,9 +104,6 @@ def plot_learning_parameter_prior(
         p50 = []
         p95 = []
 
-        # --------------------------------------------
-        # sliding window statistics
-        # --------------------------------------------
         for start in range(0, len(p_sorted) - bin_width, step):
 
             end = start + bin_width
@@ -128,9 +123,6 @@ def plot_learning_parameter_prior(
         p50 = np.array(p50)
         p95 = np.array(p95)
 
-        # --------------------------------------------
-        # plot
-        # --------------------------------------------
         plt.figure(figsize=(7, 6))
 
         plt.plot(

@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Running median of the ranking statistic of the signals against each
+source parameter.
+
 Filename        : efficiency_curves.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -44,40 +46,36 @@ def plot_efficiency_curves(
     params=None,
 ):
     """
-    Plot detection efficiency as a function of each source parameter.
+    Plot the running median of the signals' ranking statistic against
+    each source parameter.
 
-    For each continuous source parameter (chirp mass, distance, SNR, etc.)
-    bins the detected fraction (``pred_stat > threshold``) as a function of
-    the parameter value and overlays curves for a sweep of thresholds.
+    Signals are sorted by the parameter; each sliding window gives one
+    point (median parameter, median statistic). A parameter with fewer
+    signals than one window is skipped.
 
     Parameters
     ----------
     epoch : int or str
-        Epoch identifier used in the output directory name.
+        Epoch identifier for the titles and file names.
     source_params : dict[str, array-like]
-        Dictionary mapping parameter name to per-signal values.
-    pred_stat : array-like, shape ``(N_signal,)``
-        Predicted ranking statistic for signal events only.
+        Parameter name to the value of every event, shape ``(N,)``.
+    pred_stat : array-like, shape ``(N,)``
+        Ranking statistic of every event.
     labels : array-like, shape ``(N,)``
-        Binary labels (1 = signal) for the full validation set.
+        Class labels; signals are ``1``.
     export_dir : str or None
-        Parent directory; plots are saved under
-        ``EFFICIENCY/epoch_{epoch}/``.
+        Saves the plots under ``EFFICIENCY/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save figures to disk; otherwise display interactively.
+        Save when ``export_dir`` is set; otherwise show the figures.
     save_name : str
-        Prefix for saved filenames (default ``"stat"``).
+        y-axis label and file name tag.
     bin_width : int or None
-        Samples per sliding window. ``None`` scales it to the sample count
-        (``N/50``, floor 500), which keeps the curve readable instead of
-        dominated by per-window scatter.
+        Signals per window; ``None`` uses ``max(500, N_signal // 50)``.
     step : int or None
-        Stride between windows. ``None`` uses ``bin_width // 4``.
+        Stride between windows; ``None`` uses ``bin_width // 4``.
     params : iterable[str] or None
-        Which source parameters to plot. ``None`` selects
-        :data:`~sage.plotting._params.INFORMATIVE_PARAMS`; pass
-        ``ALL_PARAMS`` for every column, including the isotropic ones that
-        are flat by construction.
+        Source parameters to plot; see
+        :func:`~sage.plotting._params.select_params`.
     """
 
     if save and export_dir is not None:
@@ -86,17 +84,9 @@ def plot_efficiency_curves(
     else:
         base_dir = None
 
-    # --------------------------------------------
-    # signals only
-    # --------------------------------------------
     signal_mask = labels == 1.0
     data_tp = pred_stat[signal_mask]
 
-    # Window size and stride scale with the sample count. The old fixed
-    # (500, 10) meant ~9,950 windows for 100k signals overlapping by 98%, so
-    # the curve was dominated by per-window scatter and the underlying trend
-    # was barely readable. ~200 windows of N/50 samples each resolves the
-    # trend without the noise; both remain overridable.
     n_sig = int(signal_mask.sum())
     if bin_width is None:
         bin_width = max(500, n_sig // 50)
@@ -108,18 +98,12 @@ def plot_efficiency_curves(
         source_data = param_array[signal_mask]
 
         if len(source_data) < bin_width:
-            continue  # skip pathological epochs
+            continue
 
-        # --------------------------------------------
-        # sort by parameter
-        # --------------------------------------------
         order = np.argsort(source_data)
         p_sorted = source_data[order]
         s_sorted = data_tp[order]
 
-        # --------------------------------------------
-        # sliding window efficiency proxy
-        # --------------------------------------------
         xvals = []
         yvals = []
 
@@ -136,9 +120,6 @@ def plot_efficiency_curves(
         xvals = np.array(xvals)
         yvals = np.array(yvals)
 
-        # --------------------------------------------
-        # plot
-        # --------------------------------------------
         plt.figure(figsize=(7, 6))
 
         plt.plot(

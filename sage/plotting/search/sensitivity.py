@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Sensitivity, injection recovery and pipeline comparison figures of
+the search; every function is a stub.
+
 Filename      : sensitivity.py
 Description   : Sensitivity, injection recovery and pipeline comparison figures.
 
@@ -20,12 +23,42 @@ from typing import Optional
 
 
 def plot_vt_versus_far(fd, axes=None):
-    """Sensitive volume-time against false-alarm-rate threshold, per population."""
+    """
+    Sensitive volume-time against false-alarm-rate threshold, per
+    population.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    axes : sequence of matplotlib.axes.Axes or None
+        Axes to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError
 
 
 def plot_vt_versus_parameter(fd, axes=None):
-    """Sensitivity binned in total mass, chirp mass, mass ratio and redshift."""
+    """
+    Sensitivity binned in total mass, chirp mass, mass ratio and
+    redshift.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    axes : sequence of matplotlib.axes.Axes or None
+        Axes to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError
 
 
@@ -33,37 +66,135 @@ def plot_pipeline_comparison(fd, ax=None):
     """
     Sensitivity against the reference pipelines.
 
-    Where the comparison could not be restricted to a common coincidence type, the axis
-    label states it rather than implying a like-for-like measurement.
+    Where the comparison could not be restricted to a common coincidence
+    type, the axis label states it rather than implying a like-for-like
+    measurement.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    ax : matplotlib.axes.Axes or None
+        Axis to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
     """
     raise NotImplementedError
 
 
 def plot_injection_recovery(fd, axes=None):
-    """Found and missed injections in the mass and distance planes."""
+    """
+    Found and missed injections in the mass and distance planes.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    axes : sequence of matplotlib.axes.Axes or None
+        Axes to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError
 
 
 def plot_efficiency(fd, ax=None):
-    """Recovery efficiency against signal amplitude, at fixed false-alarm rate."""
+    """
+    Recovery efficiency against signal amplitude, at fixed false-alarm
+    rate.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    ax : matplotlib.axes.Axes or None
+        Axis to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError
 
 
 def plot_sensitive_distance(fd, ax=None):
-    """Sensitive distance against mass."""
+    """
+    Sensitive distance against mass.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    ax : matplotlib.axes.Axes or None
+        Axis to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError
 
 
 def plot_range_over_time(fd, axes=None):
-    """Detector range across the run, with its distribution."""
+    """
+    Detector range across the run, with its distribution.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    axes : sequence of matplotlib.axes.Axes or None
+        Axes to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError
 
 
 def plot_surveyed_volume(fd, ax=None):
-    """Cumulative detections against surveyed time-volume."""
+    """
+    Cumulative detections against surveyed time-volume.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    ax : matplotlib.axes.Axes or None
+        Axis to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError
 
 
 def plot_pastro_reliability(fd, ax=None):
-    """Predicted against realised astrophysical fraction."""
+    """
+    Predicted against realised astrophysical fraction.
+
+    Parameters
+    ----------
+    fd : object
+        Figure data product.
+    ax : matplotlib.axes.Axes or None
+        Axis to draw on.
+
+    Raises
+    ------
+    NotImplementedError
+        Always; the figure is not implemented.
+    """
     raise NotImplementedError

@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Empirical CDFs of the ranking statistic of signals and noise.
+
 Filename        : joint_cdfs.py
 Description     : Short description of the file
 
@@ -23,7 +25,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,7 +33,21 @@ from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
 
 def plot_joint_cdfs(epoch, ranking_stat, labels, export_dir=None, save=True):
     """
-    Plot joint CDFs of network output for signals and noise
+    Plot the empirical CDFs of the ranking statistic of signals and
+    noise.
+
+    Parameters
+    ----------
+    epoch : int or str
+        Epoch identifier for the title and filename.
+    ranking_stat : array-like, shape ``(N,)``
+        Ranking statistic of every event.
+    labels : array-like, shape ``(N,)``
+        Class labels (1 signal, 0 noise).
+    export_dir : str or None
+        Saves ``JOINT_CDFS/joint_cdfs_epoch_NNNN.png`` under it.
+    save : bool
+        Save when ``export_dir`` is set; otherwise show the figure.
     """
     signal_mask = labels == 1.0
     noise_mask = labels == 0.0

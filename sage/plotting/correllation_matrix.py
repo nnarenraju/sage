@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Pearson correlation matrix of the source parameters and the ranking
+statistic of the signals.
+
 Filename        : correllation_matrix.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import matplotlib.pyplot as plt
 from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
@@ -33,12 +35,10 @@ def plot_correlation_matrix(
     ranking_stat, source_params, labels, export_dir=None, save=True, epoch=None
 ):
     """
-    Plot a Pearson correlation matrix between source parameters and ranking statistic.
+    Plot the Pearson correlation matrix of the source parameters and the
+    ranking statistic.
 
-    Computes pairwise correlations for all source parameters plus the ranking
-    statistic, restricting to signal events and dropping any rows containing
-    NaN values.  Useful for checking whether the network's output is driven
-    by a single parameter.
+    Uses signal rows only, dropping any row with a non-finite value.
 
     Parameters
     ----------
@@ -47,22 +47,21 @@ def plot_correlation_matrix(
     source_params : dict[str, array-like]
         Per-event source parameter arrays.
     labels : array-like, shape ``(N,)``
-        Binary labels; only signal rows (label == 1) are included.
+        Class labels; signals are ``1``.
     export_dir : str or None
-        Output directory.
+        Saves ``CORRELATION_MATRIX/correlation_matrix_epoch_NNNN.png``
+        under it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     epoch : int or str or None
-        Epoch identifier for the filename (optional).
+        Epoch identifier for the title and filename.
     """
     import numpy as np
 
-    # Only signals (drop NaN rows from unaligned noise entries)
     signal_mask = labels == 1.0
     keys = list(source_params.keys()) + ["ranking_stat"]
     cols = [source_params[k][signal_mask] for k in source_params] + [ranking_stat[signal_mask]]
 
-    # Stack and drop rows with NaN
     mat = np.column_stack(cols)
     valid = np.all(np.isfinite(mat), axis=1)
     mat = mat[valid]

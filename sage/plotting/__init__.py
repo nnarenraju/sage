@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Validation plots of a training run: one function per figure, and
+:class:`ValidationPlotManager`, which draws them from a run's outputs.
+
 Filename        : __init__.py
 Description     : Short description of the file
 
@@ -83,9 +86,8 @@ __all__ = [
     "plot_prediction_raw_comparison",
     "plot_roc_curve",
     "plot_confidence_vs_snr",
-    # was implemented and tested but never exported
     "plot_pp_calibration",
-    # helpers for the pre-allocated losses.h5 layout
+    # Readers of the pre-allocated losses.h5 layout
     "validated_epochs",
     "best_validated_epoch",
 ]

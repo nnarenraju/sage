@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Fraction of signals above each noise ranking statistic, per bin of
+each source parameter.
+
 Filename        : paramfrac_above_thresh.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,30 +44,33 @@ def plot_paramfrac_detected_above_thresh(
     params=None,
 ):
     """
-    Detection fraction above threshold in bins of each source parameter.
+    Plot the fraction of signals above each noise ranking statistic, per
+    bin of each source parameter.
 
-    For each parameter, divides signals into ``nbins`` equal-count bins and
-    plots the fraction detected (ranking statistic above a sweep of
-    thresholds) in each bin.  Reveals which parameter values the model
-    finds hardest to detect.
+    Each noise event's ranking statistic is a threshold. Left panel: the
+    parameter histogram with the bins shaded; right panel: one curve per
+    bin. Nothing is drawn without both signals and noise.
 
     Parameters
     ----------
     epoch : int or str
-        Epoch identifier used in the output subdirectory.
+        Epoch identifier for the titles and output directory.
     ranking_stat : array-like, shape ``(N,)``
-        Network ranking statistics.
+        Ranking statistic of every event.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels (1 signal, 0 noise).
     sample_params : dict[str, array-like]
-        Per-event parameter arrays.
+        Parameter name to the value of every event.
     export_dir : str or None
-        Parent directory; plots saved under
-        ``PARAMFRAC_ABOVE_THRESH/epoch_{epoch}/``.
+        Saves ``{param}/paramfrac_{param}.png`` under
+        ``PARAMFRAC_ABOVE_THRESH/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figures.
     nbins : int
-        Number of equal-count parameter bins (default ``4``).
+        Number of equal-width parameter bins.
+    params : iterable[str] or None
+        Source parameters to plot; see
+        :func:`~sage.plotting._params.select_params`.
     """
 
     if save and export_dir is not None:
@@ -75,9 +80,6 @@ def plot_paramfrac_detected_above_thresh(
     else:
         base_dir = None
 
-    # --------------------------------------------
-    # masks
-    # --------------------------------------------
     signal_mask = labels == 1.0
     noise_mask = labels == 0.0
 
@@ -91,9 +93,6 @@ def plot_paramfrac_detected_above_thresh(
 
     colours = ["gold", "forestgreen", "orchid", "royalblue", "orangered", "gray"]
 
-    # --------------------------------------------
-    # loop parameters
-    # --------------------------------------------
     for param, distr in _select_params(sample_params, params).items():
 
         masked_distr = distr[signal_mask]
@@ -101,7 +100,6 @@ def plot_paramfrac_detected_above_thresh(
         if len(masked_distr) < nbins:
             continue
 
-        # parameter bins
         _, bin_edges = np.histogram(masked_distr, bins=nbins)
 
         fig, ax = plt.subplots(1, 2, figsize=(14, 6))
@@ -109,7 +107,6 @@ def plot_paramfrac_detected_above_thresh(
             f"{_etitle(epoch)}: Fraction of binned {param} above noise thresholds"
         )
 
-        # overall signal distribution
         ax[0].hist(masked_distr, bins=100, histtype="step", label="Signals")
         ax[0].set_xlabel(param)
         ax[0].set_ylabel("Occurrences")
@@ -117,9 +114,6 @@ def plot_paramfrac_detected_above_thresh(
 
         y_max = ax[0].get_ylim()[1]
 
-        # --------------------------------------------
-        # per-bin efficiency curves
-        # --------------------------------------------
         for n in range(len(bin_edges) - 1):
 
             lo = bin_edges[n]
@@ -135,7 +129,6 @@ def plot_paramfrac_detected_above_thresh(
             above = len(bin_stats) - np.searchsorted(np.sort(bin_stats), sorted_noise_stats, side="right")
             frac_detected = np.column_stack([sorted_noise_stats, above / len(bin_stats)])
 
-            # shade parameter bin
             ax[0].fill_between(
                 [lo, hi],
                 [0, 0],
@@ -144,7 +137,6 @@ def plot_paramfrac_detected_above_thresh(
                 alpha=0.25,
             )
 
-            # efficiency curve
             ax[1].plot(
                 frac_detected[:, 0],
                 frac_detected[:, 1],

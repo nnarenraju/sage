@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Loader of a run's validation outputs and losses that draws every
+validation plot.
+
 Filename        : manager.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import re
 import h5py
@@ -31,7 +33,6 @@ import numpy as np
 
 from scipy.special import expit
 
-# LOCAL
 from sage.plotting import (
     plot_2d_efficiency,
     plot_2d_param_density,
@@ -67,31 +68,46 @@ from sage.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-EPOCH_GROUP = re.compile(r"epoch_\d+")  # a regular pass; final checks and sage validate use other names
+# A regular pass; final checks and sage validate use other names
+EPOCH_GROUP = re.compile(r"epoch_\d+")
 
 
 class ValidationPlotManager:
     """
-    Loads saved validation results from HDF5 and dispatches all diagnostic plots.
+    Validation outputs and losses of a run, and the plots of them.
 
-    Reads the validation HDF5 files (network outputs, targets, signal
-    parameters, signal injection indices) and the losses HDF5, then exposes
-    a single :meth:`make_all_plots` method that generates the full suite of
-    training-diagnostics plots (ROC, loss curves, efficiency, parameter
-    recovery, etc.) into ``export_dir``.
+    Reads every group of the validation files and the losses file on
+    construction; :meth:`make_all_plots` draws the plots.
 
     Parameters
     ----------
     validation_h5 : str or list of str
         Validation output files; their groups are read together.
     losses_h5 : str
-        Path to the epoch loss HDF5 file produced by
+        Epoch loss file written by
         :class:`~sage.utils.checkpoint.HDF5LossLogger`.
     export_dir : str or None
-        Directory to save plots.  Subdirectories are created per plot type.
+        Directory of the plots; subdirectories are made per plot type.
+    params : iterable of str or None
+        Source parameters of the per-parameter plots; see
+        :func:`~sage.plotting._params.select_params`.
+    param_pairs : iterable of (str, str) or None
+        Parameter pairs of the 2D plots; None uses
+        :attr:`DEFAULT_PARAM_PAIRS`.
+    efficiency_threshold : float
+        Ranking-statistic threshold of the 2D efficiency plots.
+    min_abs_correlation : float
+        Smallest ``|r|`` with the ranking statistic for a parameter to
+        enter the correlation matrix; 0 keeps every parameter.
     param_names : list of str or None
-        Column names of ``signal_params`` for files written before they were
-        recorded with it (2026-10-29); recorded names are always used.
+        Column names of ``signal_params`` for files that do not record
+        them; recorded names take precedence.
+
+    Raises
+    ------
+    ValueError
+        If a group is in more than one validation file, or a file
+        records no column names and ``param_names`` is None.
     """
 
     #: Parameter pairs used for the two-dimensional views.
@@ -119,7 +135,7 @@ class ValidationPlotManager:
         self.param_names = param_names
         self.losses_h5 = losses_h5
         self.export_dir = export_dir
-        #: Which source parameters to sweep over. None = all available.
+        #: Source parameters to sweep over; None keeps all available.
         self.params = params
         self.param_pairs = (
             self.DEFAULT_PARAM_PAIRS if param_pairs is None else tuple(param_pairs)
@@ -135,23 +151,36 @@ class ValidationPlotManager:
         self._load_losses()
         self._load_validation()
 
-    # -------------------------------------------------------
-    # DATA LOADING
-    # -------------------------------------------------------
-
     def _load_losses(self):
-        # Unlocked: a reader's lock would make a running training job's next write fail.
+        """Read the training and validation losses."""
+        # Unlocked, so a running training job can still write to it
         with h5py.File(self.losses_h5, "r", locking=False) as fp:
             self.training_loss = fp["training"]["loss"][:]
             self.validation_loss = fp["validation"]["loss"][:]
-            components = fp["training"]["loss"].attrs.get("components")  # recorded since 2026-10
+            # recorded since 2026-10
+            components = fp["training"]["loss"].attrs.get("components")
             self.loss_components = None if components is None else [str(name) for name in components]
 
     def _load_validation(self):
+        """Read every validation file into ``validation_data``."""
         for path in self.validation_h5:
             self._load_validation_file(path)
 
     def _load_validation_file(self, path):
+        """
+        Read each group of one validation file into ``validation_data``.
+
+        Parameters
+        ----------
+        path : str
+            Validation output file.
+
+        Raises
+        ------
+        ValueError
+            If a group is already loaded, or ``signal_params`` records
+            no column names and ``param_names`` is None.
+        """
         with h5py.File(path, "r", locking=False) as fp:
 
             for epoch_key in fp.keys():
@@ -163,24 +192,17 @@ class ValidationPlotManager:
                                      "pass param_names")
                 names = [str(name) for name in names]
 
-                network_output = fp[epoch_key]["network_output"][:]   # (N, 1 + 2 targets)
-                network_target = fp[epoch_key]["network_target"][:]   # (N, targets + 1)
+                network_output = fp[epoch_key]["network_output"][:]  # (N, 1 + 2 * P)
+                network_target = fp[epoch_key]["network_target"][:]  # (N, P + 1)
                 signal_params_raw = fp[epoch_key]["signal_params"][:] # (S_total, names)
 
                 ranking_stat = network_output[:, 0]
                 labels = network_target[:, -1]
                 signal_mask = labels == 1.0
 
-                # --------------------------------------------------
-                # Align signal_params with signal rows in network_output
-                # using saved signal_idx (batch placement indices).
-                #
-                # Within each iteration, theta[i] was placed at batch
-                # position idx[i].  When we later filter network_output
-                # for label==1 we get signals in ascending batch-position
-                # order.  argsort(idx) maps generation order → sorted
-                # batch-position order, giving the correct alignment.
-                # --------------------------------------------------
+                # signal_params is in generation order and signal_idx
+                # holds each signal's batch position; argsort per
+                # iteration gives the order of the label == 1 rows.
                 source_params = {}
                 if "signal_idx" in fp[epoch_key]:
                     signal_idx = fp[epoch_key]["signal_idx"][:]  # (num_iter, S)
@@ -193,7 +215,7 @@ class ValidationPlotManager:
                         aligned.append(batch_params[np.argsort(batch_idx)])
                     aligned_params = np.concatenate(aligned, axis=0)  # (S_total, names)
 
-                    # Embed into full-length array (NaN for noise rows)
+                    # NaN on noise rows
                     full_params = np.full((len(network_output), len(names)), np.nan)
                     full_params[signal_mask] = aligned_params
 
@@ -218,15 +240,27 @@ class ValidationPlotManager:
                 self.validation_data[epoch_key] = entry
 
     def _correlated_params(self, ranking_stat, source_params, labels):
-        """Keep only parameters the ranking statistic actually correlates with.
+        """
+        The source parameters correlated with the ranking statistic.
 
-        Showing all 25 columns makes the matrix unreadable and mostly reports
-        structural redundancy: the spin components are different
-        parameterisations of the same two spin vectors, and the isotropic
-        angles are uncorrelated with anything by construction.
+        A parameter is kept when its ``|r|`` with the ranking statistic
+        over the signals is >= ``min_abs_correlation``; parameters with
+        fewer than 10 finite values or zero spread are dropped.
 
-        A parameter is kept when ``|r|`` against the ranking statistic reaches
-        ``self.min_abs_correlation``. Set that to ``0`` to keep everything.
+        Parameters
+        ----------
+        ranking_stat : array-like, shape ``(N,)``
+            Ranking statistic of every event.
+        source_params : dict[str, array-like]
+            Parameter name to the value of every event.
+        labels : array-like, shape ``(N,)``
+            Class labels; signals are ``1``.
+
+        Returns
+        -------
+        dict[str, array-like]
+            The kept entries; ``source_params`` itself when
+            ``min_abs_correlation`` is 0.
         """
         if not self.min_abs_correlation:
             return source_params
@@ -243,36 +277,33 @@ class ValidationPlotManager:
                 kept[name] = values
         return kept
 
-    # -------------------------------------------------------
-    # POINT ESTIMATES
-    # -------------------------------------------------------
-
     @staticmethod
     def _resolve_point_estimates(network_output, network_target, labels, source_params):
-        """Put predictions and truth for the PE parameters on the same scale.
+        """
+        Point estimates, sigmas and true values in physical units.
 
-        ``network_output`` is ``[ranking, mu..., sigma...]`` where ``mu`` and
-        ``sigma`` have already been **unstandardised into physical units** by
-        the validation loop. ``network_target``, however, holds the
-        *standardised* regression targets the network was trained against.
+        ``network_output`` is ``[ranking, mu..., sigma...]`` in physical
+        units; ``network_target`` holds standardised targets. Each
+        target column is matched to the source parameter of largest
+        ``|r|``, when that is >= 0.999.
 
-        Differencing the two directly is a unit mismatch, and it silently
-        produces nonsense: chirp-mass "residuals" of ~20 against a "true
-        mchirp" axis running -2 to 2. Every plot that compares predictions to
-        truth (diagonal, P-P calibration, recovery heatmap) hit this.
-
-        The physical truth is already available in ``source_params``, so rather
-        than hardcode which columns are which, each target column is matched to
-        the source parameter it correlates with. The standardisation is affine,
-        so the correct match has ``|r| = 1`` to floating-point precision and
-        there is no ambiguity.
+        Parameters
+        ----------
+        network_output : numpy.ndarray, shape ``(N, 1 + 2 * P)``
+            Ranking statistic, then ``P`` means and ``P`` sigmas.
+        network_target : numpy.ndarray, shape ``(N, P + 1)``
+            Standardised targets, then the class label.
+        labels : numpy.ndarray, shape ``(N,)``
+            Class labels; signals are ``1``.
+        source_params : dict[str, array-like]
+            Parameter name to the value of every event.
 
         Returns
         -------
         dict
-            ``pe_names``, ``pe_pred``, ``pe_sigma``, ``pe_true`` -- all
-            physical, all restricted to signal rows. Empty lists/dicts when
-            there are no PE outputs or no source parameters to match against.
+            ``pe_names`` (list) and ``pe_pred``, ``pe_sigma``,
+            ``pe_true`` (dicts by name), over signal rows only; empty
+            when there are no point estimates, signals or parameters.
         """
         empty = {"pe_names": [], "pe_pred": {}, "pe_sigma": {}, "pe_true": {}}
 
@@ -299,7 +330,7 @@ class ValidationPlotManager:
                 if r > best_r:
                     best_name, best_r = pname, r
 
-            # An affine rescaling of the same quantity; anything less is not it.
+            # The target is an affine rescaling of its parameter
             if best_name is None or best_r < 0.999:
                 continue
 
@@ -310,17 +341,27 @@ class ValidationPlotManager:
 
         return {"pe_names": names, "pe_pred": pred, "pe_sigma": sigma, "pe_true": true}
 
-    # -------------------------------------------------------
-    # MASTER DRIVER
-    # -------------------------------------------------------
-
     def resolve_epochs(self, epochs=None):
-        """Normalise an epoch selection to keys present in the data.
+        """
+        Validation group names of an epoch selection.
 
-        Accepts epoch numbers (``127``), group names (``"epoch_0127"``,
-        ``"final_best"``), the string ``"best"``, or ``"all"`` (every regular
-        pass). ``None`` selects the best validated epoch, which is almost
-        always the one you want to look at.
+        Parameters
+        ----------
+        epochs : int, str, list of int or str, or None
+            Epoch numbers (``127``), group names (``"epoch_0127"``,
+            ``"final_best"``), ``"best"``, or ``"all"`` (every regular
+            pass); None selects the best validated epoch.
+
+        Returns
+        -------
+        list of str
+            Group names, regular passes first, without duplicates; empty
+            when there is no regular pass.
+
+        Raises
+        ------
+        KeyError
+            If an epoch, or the best validated epoch, has no group.
         """
         available = sorted(key for key in self.validation_data if EPOCH_GROUP.fullmatch(key))
         if not available:
@@ -346,40 +387,34 @@ class ValidationPlotManager:
                 out.append(by_number[epoch_number(e)])
             else:
                 raise KeyError(f"no validation group {e!r}; groups: {sorted(self.validation_data)}")
-        # preserve chronological order (regular passes first), drop duplicates
+        # Regular passes first, in order; duplicates dropped
         return [k for k in [*available, *sorted(set(self.validation_data) - set(available))] if k in set(out)]
 
     def make_all_plots(self, save=True, epochs=None):
         """
-        Dispatch the full suite of validation diagnostic plots.
+        Draw every validation plot into ``export_dir``.
 
-        Iterates over all saved epochs, generates per-epoch plots (ROC, loss
-        curves, efficiency, parameter recovery, etc.), and produces
-        cross-epoch summaries (separation trajectory, parameter evolution).
-        All figures are written to ``self.export_dir``.
+        Loss curves once, per-epoch plots for the selected epochs, and
+        cross-epoch plots over every regular pass.
 
         Parameters
         ----------
         save : bool
-            If ``True`` (default), save all plots to disk; otherwise display.
-        """
+            Save the plots; otherwise show them.
+        epochs : int, str, list of int or str, or None
+            Epochs of the per-epoch plots; see :meth:`resolve_epochs`.
 
-        # Per-epoch plots run only for the requested epochs (default: the best
-        # one). Cross-epoch plots further down deliberately ignore this and use
-        # every available epoch -- a "residual over epochs" heatmap built from
-        # a single epoch is a blank strip, which is exactly what happened.
+        Raises
+        ------
+        KeyError
+            If a selected epoch has no validation group.
+        """
         selected = self.resolve_epochs(epochs)
         all_epochs = self.resolve_epochs("all")
         if save:
             os.makedirs(self.export_dir, exist_ok=True)
-        # Ignore epochs where validation never ran: losses.h5 is pre-allocated
-        # and those rows are still zero, so a plain argmin returns the first
-        # unwritten row instead of the best epoch.
         best_epoch = best_validated_epoch(self.validation_loss)
 
-        # Loss curves depend only on the loss arrays, not on the per-epoch
-        # validation data -- drawing them once, rather than redundantly inside
-        # the per-epoch loop below.
         plot_loss_curves(
             training_loss=self.training_loss,
             validation_loss=self.validation_loss,
@@ -400,9 +435,7 @@ class ValidationPlotManager:
                 save=save,
             )
 
-        # -------------------------------------------------------
         # Per-epoch plots
-        # -------------------------------------------------------
         for epoch_key in selected:
             data = self.validation_data[epoch_key]
             sp = data["source_params"]  # {} if signal_idx not saved
@@ -448,7 +481,7 @@ class ValidationPlotManager:
                 save=save,
             )
 
-            # Source-params-dependent plots (require signal_idx saved during training)
+            # Plots of source parameters, which need signal_idx
             if sp:
                 plot_efficiency_curves(
                     epoch=epoch_key,
@@ -488,9 +521,6 @@ class ValidationPlotManager:
                     save=save,
                 )
 
-                # Heatmap and gradient for every parameter, not a hardcoded
-                # three: which parameter the ranking statistic leans on is
-                # exactly what these are for, so pre-selecting defeats them.
                 for param_name in _select_params(sp, self.params):
                     plot_output_vs_param_heatmap(
                         epoch=epoch_key,
@@ -511,7 +541,7 @@ class ValidationPlotManager:
                         save=save,
                     )
 
-                # Correlation matrix over all available parameters.
+                # Parameters with |r| >= min_abs_correlation only
                 plot_correlation_matrix(
                     ranking_stat=data["ranking_stat"],
                     source_params=self._correlated_params(
@@ -547,9 +577,7 @@ class ValidationPlotManager:
                             save=save,
                         )
 
-                # Confidence against the loudness proxy actually available.
-                # Only a real network SNR. Chirp distance was standing in for
-                # it, which put a distance on an axis labelled SNR.
+                # SNR plots only when signal_params records an SNR
                 snr_key = next((k for k in ("snr", "network_snr") if k in sp), None)
                 if snr_key is None and not self._warned_no_snr:
                     logger.info(
@@ -569,7 +597,7 @@ class ValidationPlotManager:
                         save=save,
                     )
 
-                # Point-estimate recovery, on physical scales for both sides.
+                # Point-estimate recovery, in physical units
                 if data["pe_names"]:
                     plot_diagonal_compare(
                         epoch=epoch_key,
@@ -603,9 +631,7 @@ class ValidationPlotManager:
                     save=save,
                 )
 
-        # -------------------------------------------------------
-        # Cross-epoch plots (run once using all epochs)
-        # -------------------------------------------------------
+        # Cross-epoch plots, over every regular pass
         all_stats = {ek: self.validation_data[ek]["ranking_stat"] for ek in all_epochs}
         all_labels = {ek: self.validation_data[ek]["labels"] for ek in all_epochs}
 
@@ -617,8 +643,6 @@ class ValidationPlotManager:
             save=save,
         )
 
-        # Trajectory: track a fixed set of samples over all epochs
-        # Use the last epoch's labels as the shared mask
         last_labels = self.validation_data[all_epochs[-1]]["labels"]
         plot_output_trajectory_over_epochs(
             all_ranking_stats=[self.validation_data[ek]["ranking_stat"] for ek in all_epochs],
@@ -628,8 +652,7 @@ class ValidationPlotManager:
             save=save,
         )
 
-        # Recovery of each point-estimate parameter across epochs, physical
-        # scale on both sides (see _resolve_point_estimates).
+        # Point-estimate recovery across epochs, in physical units
         pe_names = self.validation_data[all_epochs[-1]]["pe_names"]
         if pe_names:
             pe_pred = {ek: self.validation_data[ek]["pe_pred"] for ek in all_epochs}

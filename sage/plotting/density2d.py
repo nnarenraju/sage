@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+2D histogram of two source parameters of the signals, weighted by
+the ranking statistic.
+
 Filename        : density2d.py
 Description     : Short description of the file
 
@@ -24,7 +27,6 @@ Documentation: NULL
 """
 
 
-# Packages
 import os
 import matplotlib.pyplot as plt
 from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
@@ -42,11 +44,10 @@ def plot_2d_param_density(
     bins=50,
 ):
     """
-    Scatter/hexbin of two source parameters coloured by ranking statistic.
+    Plot the sum of the signals' ranking statistics in 2D bins of two
+    source parameters.
 
-    Visualises how the network's confidence is distributed across the 2D
-    parameter space spanned by ``param_x`` and ``param_y`` for signal events.
-    Reveals parameter degeneracies or sensitivity gradients.
+    Nothing is drawn when either parameter is absent.
 
     Parameters
     ----------
@@ -55,7 +56,7 @@ def plot_2d_param_density(
     ranking_stat : array-like, shape ``(N,)``
         Network ranking statistics.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels; signals are ``1``.
     source_params : dict[str, array-like]
         Per-event parameter arrays.
     param_x : str
@@ -63,11 +64,12 @@ def plot_2d_param_density(
     param_y : str
         Key for the y-axis parameter.
     export_dir : str or None
-        Output directory.
+        Saves ``{param_x}_{param_y}_ranking_density_epoch_NNNN.png``
+        under ``2D_PARAM_DENSITY/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     bins : int
-        Number of hexbin bins (default ``50``).
+        Bins per axis.
     """
     if param_x not in source_params or param_y not in source_params:
         return

@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+2D histogram of the ranking statistic of the signals against one
+source parameter.
+
 Filename        : output_param_heatmap.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,11 +44,10 @@ def plot_output_vs_param_heatmap(
     bins_y=30,
 ):
     """
-    2D histogram heatmap of network ranking statistic vs a source parameter.
+    Plot the 2D histogram of the signals' ranking statistic against one
+    source parameter.
 
-    Shows how the network output varies across the range of ``param_name``
-    for both signal and noise events.  A strong vertical gradient indicates
-    the parameter drives the detection score.
+    Nothing is drawn when the parameter is absent.
 
     Parameters
     ----------
@@ -55,19 +56,19 @@ def plot_output_vs_param_heatmap(
     ranking_stat : array-like, shape ``(N,)``
         Network ranking statistics.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels; signals are ``1``.
     source_params : dict[str, array-like]
         Per-event parameter arrays.
     param_name : str
-        Key of the parameter to use on one axis.
+        Key of the x-axis parameter.
     export_dir : str or None
-        Output directory.
+        Saves the plot under ``OUTPUT_PARAM_HEATMAP/epoch_NNNN/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     bins_x : int
-        Number of parameter bins (default ``30``).
+        Number of parameter bins.
     bins_y : int
-        Number of ranking-statistic bins (default ``30``).
+        Number of ranking-statistic bins.
     """
 
     if param_name not in source_params:
@@ -75,12 +76,10 @@ def plot_output_vs_param_heatmap(
 
     param_data = source_params[param_name]
 
-    # Only use signals
     signal_mask = labels == 1.0
     param_sig = param_data[signal_mask]
     output_sig = ranking_stat[signal_mask]
 
-    # 2D histogram
     heatmap, xedges, yedges = np.histogram2d(
         param_sig, output_sig, bins=[bins_x, bins_y]
     )

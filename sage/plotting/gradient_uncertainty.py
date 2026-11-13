@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Predicted uncertainty against the finite-difference gradient of the
+ranking statistic in one source parameter.
+
 Filename        : gradient_uncertainty.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import os
 import matplotlib.pyplot as plt
 from sage.plotting._epochs import epoch_tag as _etag, epoch_title as _etitle
@@ -40,43 +42,40 @@ def plot_uncertainty_vs_gradient(
     epoch=None,
 ):
     """
-    Scatter plot of model uncertainty vs finite-difference output gradient.
+    Plot the model's uncertainty against the gradient of the ranking
+    statistic in one source parameter, for the signals.
 
-    Perturbs ``param_name`` by ``delta_frac × value`` and computes the
-    numerical gradient of the ranking statistic.  Plots this against the
-    heteroscedastic uncertainty predicted by the model for signal events.
-    Ideally, high gradient should co-occur with high uncertainty.
+    The gradient is the forward difference with step
+    ``delta_frac * value``.
 
     Parameters
     ----------
-    model : object with ``predict`` method
-        Model that returns ``(ranking_stat, uncertainty)`` when called with
-        ``return_uncertainty=True``.
+    model : object
+        Its ``predict(params, return_uncertainty=True)`` returns
+        ``(ranking_stat, uncertainty)``.
     source_params : dict[str, array-like]
         Per-event parameter arrays.
     labels : array-like, shape ``(N,)``
-        Binary ground-truth labels.
+        Class labels; signals are ``1``.
     param_name : str
         Key of the parameter to perturb.
     export_dir : str or None
-        Output directory.
+        Saves the plot under ``UNCERTAINTY_VS_GRADIENT/`` in it.
     save : bool
-        If ``True``, save to disk; otherwise display.
+        Save when ``export_dir`` is set; otherwise show the figure.
     delta_frac : float
-        Fractional perturbation size for the gradient estimate (default ``0.01``).
+        Fractional step of the forward difference.
     epoch : int or str or None
-        Epoch identifier for the filename.
+        Epoch identifier for the title and filename.
     """
     import numpy as np
 
     signal_mask = labels == 1.0
     param_vals = source_params[param_name][signal_mask]
 
-    # Original outputs
     input_dict = {k: v[signal_mask] for k, v in source_params.items()}
     ranking_stat, uncertainty = model.predict(input_dict, return_uncertainty=True)
 
-    # Gradient approx
     param_perturb = param_vals * (1 + delta_frac)
     input_dict[param_name] = param_perturb
     ranking_stat_perturb, _ = model.predict(input_dict, return_uncertainty=True)
