@@ -1,8 +1,9 @@
-"""The part of an observing run's segments a noise source draws from.
+"""
+The part of an observing run's segments a noise source draws from.
 
 ``portion`` keeps a fraction of the data in time order, cut at whole
-segments (the volume method of ``split.py``); ``gps_range`` keeps all data
-inside a GPS range, trimming segments at its edges.
+segments (the volume method of ``split.py``); ``gps_range`` keeps all
+data inside a GPS range, trimming segments at its edges.
 """
 
 import math
@@ -15,11 +16,12 @@ from sage.data.noise.data_quality import overlaps
 
 def volume_cutoff(records_by_detector: dict, fraction: float) -> float:
     """
-    GPS time at which the data volume of all detectors reaches a fraction.
+    GPS time at which the data volume of all detectors reaches a
+    fraction.
 
-    Segments of every detector are ordered by start; the cut is the start
-    of the first segment at which the cumulative ``nsamples`` reaches
-    ``fraction`` of the total, so that segment opens the later part.
+    Segments of every detector are ordered by start; the cut is the
+    start of the first segment at which the cumulative ``nsamples``
+    reaches ``fraction`` of the total.
 
     Parameters
     ----------
@@ -32,6 +34,11 @@ def volume_cutoff(records_by_detector: dict, fraction: float) -> float:
     -------
     float
         GPS start of the cutting segment.
+
+    Raises
+    ------
+    ValueError
+        If the fraction is not reached.
     """
     segments = sorted(
         (
@@ -54,8 +61,9 @@ def select_portion(records_by_detector: dict, portion: list) -> dict:
     """
     Keep the segments between two volume fractions, in time order.
 
-    A segment straddling a cut is dropped, so parts of one run never share
-    data. ``[0.0, 0.9]`` and ``[0.9, 1.0]`` give ``split.py``'s two parts.
+    A segment straddling a cut is dropped, so parts of one run never
+    share data. ``[0.0, 0.9]`` and ``[0.9, 1.0]`` give ``split.py``'s
+    two parts.
 
     Parameters
     ----------
@@ -148,7 +156,7 @@ def select_records(records_by_detector: dict, source: dict) -> dict:
     records_by_detector : dict of str to list of dict
         Segment sidecar records per detector of one run.
     source : dict
-        Checked noise source; ``portion`` and ``gps_range`` are optional.
+        Noise source; ``portion`` and ``gps_range`` are optional.
 
     Returns
     -------

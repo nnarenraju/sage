@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Noise samplers: real detector noise, synthetic coloured noise,
+recolouring, glitch oversampling and mined low-FAR start times.
+
 Filename        : __init__.py
 Description     : Short description of the file
 
@@ -39,10 +42,8 @@ from .recolour import RecolourPostprocess
 from .glitch_sampler import GlitchOversampledNoiseSampler
 from .lowfar_noise import StartTimeDataset
 
-# NOTE: the hard-negative miner lives in ``sage.data.noise.cma_mae_mining`` and
-# is imported directly by the hard-mining trainer (it pulls in pyribs).  It is
-# deliberately NOT re-exported here so that importing this package — and the
-# default training path — never requires pyribs.
+# The miner in sage.data.noise.cma_mae_mining needs pyribs; it is not
+# re-exported so that importing this package does not require pyribs.
 
 __all__ = [
     "HDF5SingleNoiseSampler",

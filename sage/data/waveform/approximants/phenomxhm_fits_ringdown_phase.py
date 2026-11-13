@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+IMRPhenomXHM parameter-space fits of the ringdown phase
+quantities of the (2,2) and (3,2) modes.
+
 Filename      : phenomxhm_fits_ringdown_phase.py
 Description   : IMRPhenomXHM ringdown phase fits (version 122019),
                 ported from LALSimIMRPhenomXHM_ringdown.c.

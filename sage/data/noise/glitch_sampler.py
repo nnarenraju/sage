@@ -2,33 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-GlitchOversampledNoiseSampler
-
-Subclass of MemmapNoiseSampler that injects known high-SNR glitch windows
-into a controlled fraction of each training batch.
-
-Motivation
-----------
-The O3b noise training data is dominated by Scattered_Light glitches (~65 % of
-H1 triggers), leaving rare-but-dangerous classes like Repeating_Blips
-underrepresented.  When evaluating on O3a test data, these minority classes
-produce the loudest background triggers.
-
-Solution
---------
-Override _sample_starts_batch so that `glitch_frac` of each batch is drawn
-from a GPS-aligned pool of high-SNR O3b glitch windows (sourced from the
-GravitySpy CSV catalogs).  All downstream processing — DYN_RANGE_FAC
-normalisation, TD→FD conversion, and RecolourPostprocess — runs unchanged,
-so the injected glitch windows receive exactly the same treatment as regular
-noise windows.
-
-Class-balanced sampling
------------------------
-With `class_balanced=True` (default), a glitch class is chosen uniformly at
-random before selecting a specific event.  This gives equal weight to each
-morphological class regardless of how common it is in the catalogue, directly
-addressing the majority-class dominance problem.
+Noise sampler that replaces a fraction of each batch's windows with
+windows centred on GravitySpy glitches, optionally class-balanced.
 """
 
 import csv
@@ -44,23 +19,30 @@ from .real_noise import MemmapNoiseSampler
 
 class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
     """
-    MemmapNoiseSampler with class-balanced O3b glitch oversampling.
+    ``MemmapNoiseSampler`` that oversamples GravitySpy glitch windows.
+
+    Other positional and keyword arguments go to ``MemmapNoiseSampler``.
+    A glitch window is centred on the glitch peak and must lie inside
+    one segment.
 
     Parameters
     ----------
-    catalog_files : list of (det_idx, csv_path)
-        GravitySpy CSV files keyed by detector index (0=H1, 1=L1).
-        Example: [(0, '/path/H1_O3b.csv'), (1, '/path/L1_O3b.csv')]
+    catalog_files : list of tuple
+        ``(channel index, GravitySpy CSV path)`` pairs.
     min_snr : float
-        Only glitches with GravitySpy SNR >= min_snr are used.
+        Lowest GravitySpy SNR used.
     glitch_frac : float
-        Fraction of each batch replaced by glitch windows. 0.10 = 10 %.
+        Fraction of each batch replaced by glitch windows.
     class_balanced : bool
-        If True, sample uniformly over glitch classes before sampling an
-        event, giving equal representation to rare classes.  If False,
-        sample uniformly over all qualifying events.
-    exclude_classes : set of str, optional
-        GravitySpy class labels to exclude (e.g. {'No_Glitch'}).
+        Draw a class uniformly before a glitch; otherwise draw uniformly
+        over all glitches.
+    exclude_classes : set of str or None
+        GravitySpy labels left out; ``None`` is ``{"No_Glitch"}``.
+
+    Raises
+    ------
+    ValueError
+        If a channel index is out of range.
     """
 
     def __init__(
@@ -73,9 +55,8 @@ class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
         exclude_classes: set   = None,
         **kwargs,
     ):
-        # Parent __init__ starts the prefetch thread.  The overridden
-        # _sample_starts_batch is called from that thread, so we set
-        # _glitch_ready=False first and flip it only after our data is loaded.
+        # The parent starts the prefetch thread, which calls
+        # _sample_starts_batch; glitches are used once loaded
         self._glitch_ready  = False
         self.glitch_frac    = glitch_frac
         self.class_balanced = class_balanced
@@ -84,9 +65,9 @@ class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
 
         _exclude = exclude_classes or {'No_Glitch'}
 
-        # det_idx → {class_name → np.ndarray of sample_start_indices}
+        # det_idx -> {class name -> memmap start indices}
         self._glitch_by_class: dict[int, dict[str, np.ndarray]] = {}
-        # det_idx → flat np.ndarray (all classes concatenated)
+        # det_idx -> start indices of all classes
         self._glitch_flat:     dict[int, np.ndarray]            = {}
 
         for det_idx, csv_path in catalog_files:
@@ -117,12 +98,21 @@ class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
 
         self._glitch_ready = True
 
-    # ------------------------------------------------------------------
-    # GPS helpers
-    # ------------------------------------------------------------------
-
     def _reload_gps_segs(self, det_idx: int) -> np.ndarray:
-        """Re-read segments JSON for a detector to obtain GPS time ranges."""
+        """
+        GPS spans of a detector's segments, from its sidecar.
+
+        Parameters
+        ----------
+        det_idx : int
+            Index into ``bin_files``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Structured array (``t0``, ``t1``, ``sidx``, ``sr``) sorted
+            by ``t0``.
+        """
         p         = self.bin_files[det_idx]
         meta_path = p.parent / f"{p.stem}_segments.json"
         with open(meta_path) as f:
@@ -143,9 +133,19 @@ class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
         gps_time:  float,
     ):
         """
-        Map a glitch peak GPS time to a memmap start index for a window
-        of length self.seq_len centred on that time.  Returns None if the
-        window falls outside valid segment coverage.
+        Memmap start of the window centred on a GPS time.
+
+        Parameters
+        ----------
+        gps_segs : numpy.ndarray
+            Segment spans (:meth:`_reload_gps_segs`).
+        gps_time : float
+            Glitch peak GPS time.
+
+        Returns
+        -------
+        int or None
+            Start index, or ``None`` if the window leaves its segment.
         """
         i = np.searchsorted(gps_segs["t0"], gps_time, side="right") - 1
         if i < 0 or i >= len(gps_segs):
@@ -159,15 +159,10 @@ class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
         centre          = s["sidx"] + offset_samples
         start           = centre - self.seq_len // 2
 
-        # Segment bounds
         seg_end_sample  = s["sidx"] + int((s["t1"] - s["t0"]) * sr)
         if start < s["sidx"] or start + self.seq_len > seg_end_sample:
             return None
         return int(start)
-
-    # ------------------------------------------------------------------
-    # Catalogue loading
-    # ------------------------------------------------------------------
 
     def _csv_to_starts(
         self,
@@ -177,8 +172,25 @@ class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
         exclude_classes: set,
     ) -> dict[str, np.ndarray]:
         """
-        Parse a GravitySpy CSV, filter by SNR and class, map GPS to memmap
-        start indices.  Returns {class_label: np.array(start_indices)}.
+        Memmap starts of the glitches in a GravitySpy CSV.
+
+        Rows without a valid ``snr`` or ``ml_label`` are skipped.
+
+        Parameters
+        ----------
+        csv_path : str
+            GravitySpy CSV file.
+        gps_segs : numpy.ndarray
+            Segment spans (:meth:`_reload_gps_segs`).
+        min_snr : float
+            Lowest SNR used.
+        exclude_classes : set of str
+            Labels left out.
+
+        Returns
+        -------
+        dict of str to numpy.ndarray
+            Start indices per class label.
         """
         by_class: dict[str, list] = defaultdict(list)
 
@@ -203,11 +215,23 @@ class GlitchOversampledNoiseSampler(MemmapNoiseSampler):
 
         return {k: np.array(v, dtype=np.int64) for k, v in by_class.items()}
 
-    # ------------------------------------------------------------------
-    # Override: inject glitch start indices
-    # ------------------------------------------------------------------
-
     def _sample_starts_batch(self, batch_size: int):
+        """
+        Random starts with ``glitch_frac`` of the positions glitches.
+
+        The same positions are replaced in every detector with a
+        catalogue; segment ids are not changed.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of windows.
+
+        Returns
+        -------
+        start_indices, segment_indices : list of numpy.ndarray
+            Per-detector start indices and segment ids.
+        """
         start_indices, segment_indices = super()._sample_starts_batch(batch_size)
 
         if not self._glitch_ready or not self._glitch_by_class:

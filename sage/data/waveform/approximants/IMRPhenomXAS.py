@@ -2147,6 +2147,7 @@ class IMRPhenomXAS(PhenomConstants):
         f4_ins = 1.0 * dx_ins + fPhaseInsMin
 
         def _ins_row(fi):
+            """Row of the inspiral collocation matrix at fi."""
             fi13 = cbrt(fi)
             fi23 = fi13 * fi13
             return torch.cat([torch.ones_like(fi), fi13, fi23, fi], dim=-1)
@@ -2278,6 +2279,7 @@ class IMRPhenomXAS(PhenomConstants):
         #     + a_4 f^(-4) + ( aRD ) / ( (f_damp^2 + (f - f_ring)^2 ) )
         # Canonical ansatz sets a_3 to 0.
         def _rd_row(fi):
+            """Row of the ringdown collocation matrix at fi."""
             inv_fi   = 1.0 / fi
             fi_m1o3  = cbrt(inv_fi)  # f^{-1/3}
             fi_m2    = inv_fi * inv_fi
@@ -2419,6 +2421,7 @@ class IMRPhenomXAS(PhenomConstants):
         #     + (4 * a_RD) / ( (2 * f_fdamp)^2 + (f - f_ring)^2 )
         # ft = (f / f_ring)
         def _int_row(fi):
+            """Row of the intermediate collocation matrix at fi."""
             rt = fRING / fi
             rt2 = rt * rt
             rt3 = rt * rt2
@@ -2426,6 +2429,7 @@ class IMRPhenomXAS(PhenomConstants):
             return torch.cat([torch.ones_like(fi), rt, rt2, rt3, rt4], dim=-1)
 
         def _int_lorentz(fi):
+            """Lorentzian term of the intermediate ansatz at fi."""
             return 4.0 * cL / (4.0 * fDAMP*fDAMP + (fi - fRING)*(fi - fRING))
 
         A_int = torch.stack([

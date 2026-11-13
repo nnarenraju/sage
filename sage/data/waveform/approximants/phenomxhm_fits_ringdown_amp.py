@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+IMRPhenomXHM parameter-space fits of the ringdown amplitude
+coefficients and collocation points.
+
 Filename      : phenomxhm_fits_ringdown_amp.py
 Description   : IMRPhenomXHM ringdown amplitude fits (version 122022),
                 ported from LALSimIMRPhenomXHM_ringdown.c.

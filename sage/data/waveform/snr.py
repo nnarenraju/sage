@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
+Optimal SNR of detector-frame waveforms against fiducial ASDs, and
+rescalers of signals to target optimal, matched-filter or re-weighted
+SNRs.
+
 Filename        : snr.py
 Description     : Short description of the file
 
@@ -27,59 +31,45 @@ Documentation:
 
 """
 
-# Packages
 import torch
 
 from torch import Tensor
 from typing import Callable
 
-# LOCAL
 from sage.core.geometry import Window
 
 
 class OptimalSNREstimator(torch.nn.Module):
     """
-    Fast batched optimal matched-filter SNR estimator (equivalent to PyCBC ``sigmasq``).
+    Batched optimal SNR against fiducial ASDs, as PyCBC ``sigmasq``.
 
-    Computes the optimal (whitened) SNR for a batch of frequency-domain
-    detector-projected waveforms using fiducial ASDs loaded from disk.  The
-    integration is performed as:
+    ``rho^2 = 4 delta_f sum_f |h / delta_f|^2 / ASD^2`` per detector
+    over the band, summed over detectors for the network SNR.
 
-    .. math::
-
-        \\rho^2 = 4 \\Delta f \\sum_f \\frac{|h(f)|^2}{S_n(f)}
-
-    for each detector, summed over detectors for the network SNR.
+    Parameters
+    ----------
+    asds : torch.Tensor, shape ``(D, F)``
+        Fiducial ASD per detector.
+    window : Window
+        Window geometry; the waveforms live on its padded grid.
+    f_low : float
+        Lower edge of the band in Hz; the upper edge is the Nyquist
+        frequency.
+    device : str or torch.device
+        Device of the mask.
 
     Attributes
     ----------
     asds : torch.Tensor, shape ``(1, D, F)``
-        Amplitude spectral densities per detector, as stored on disk --
-        the strain is divided by them once, not by their square root.
-    mask : torch.Tensor or None, shape ``(1, 1, F)``
-        Pre-computed frequency mask for ``[f_low, f_high]`` integration band.
+        The fiducial ASDs; the strain is divided by them, not by their
+        square root.
+    mask : torch.Tensor, shape ``(1, 1, F)``
+        Mask of the band ``[f_low, f_high)``.
     delta_f : float
-        Frequency bin spacing in Hz.
-
-    Expected input shapes
-    ---------------------
-    h   : ``(B, D, F)`` complex tensor — detector-projected FD waveforms.
+        Frequency spacing in Hz.
     """
 
     def __init__(self, asds: Tensor, window: Window, f_low: float, device):
-        """
-        Parameters
-        ----------
-        asds : torch.Tensor, shape ``(D, F)``
-            Fiducial ASD per detector.
-        window : Window
-            Window geometry; the waveforms live on its padded grid.
-        f_low : float
-            Lower edge of the integration band in Hz; the upper edge is
-            the Nyquist frequency.
-        device : str or torch.device
-            Device of the mask.
-        """
 
         super().__init__()
 
@@ -91,6 +81,25 @@ class OptimalSNREstimator(torch.nn.Module):
         self.mask = self._make_frequency_mask(F, f_low, window.sample_rate_in_hz // 2)
 
     def _make_frequency_mask(self, F, f_low, f_high):
+        """
+        Mask of the bins ``ceil(f_low / df)`` to ``floor(f_high / df)``.
+
+        The upper bin is excluded.
+
+        Parameters
+        ----------
+        F : int
+            Number of frequency bins.
+        f_low : float
+            Lower edge in Hz.
+        f_high : float
+            Upper edge in Hz.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(1, 1, F)``, float64
+            1 in the band, 0 outside.
+        """
         k_low = int(torch.ceil(torch.tensor(f_low / self.delta_f)).item())
         k_high = int(torch.floor(torch.tensor(f_high / self.delta_f)).item())
 
@@ -100,32 +109,30 @@ class OptimalSNREstimator(torch.nn.Module):
 
     def forward(self, h, asds=None):
         """
-        Batched optimal SNR for multi-detector frequency-domain waveforms.
+        Optimal SNR of each waveform, per detector and over the network.
 
         Parameters
         ----------
-        h : complex tensor (B, D, F)
-            Detector-projected frequency-domain strain
-        asds : real tensor (B, D, F) or None
-            ASD to integrate against, per row. ``None`` uses the fiducial ASDs.
-            Given, it is the same integral against another spectrum -- e.g. the
-            ASD of the noise window each row is injected into.
+        h : torch.Tensor, shape ``(B, D, F)``, complex
+            Detector-frame frequency-domain strain.
+        asds : torch.Tensor, shape ``(B, D, F)``, or None
+            ASD to integrate against, per row; None uses the fiducial
+            ASDs.
 
         Returns
         -------
-        rho_net : (B, 1)
-            Network optimal SNR
-        rho_det : (B, D, 1)
-            Per-detector optimal SNR
+        rho_net : torch.Tensor, shape ``(B,)``
+            Network optimal SNR.
+        rho_det : torch.Tensor, shape ``(B, D)``
+            Optimal SNR per detector.
         """
 
-        # whiten waveform instead of squaring ASD (B,D,F)
+        # Divide by the ASD instead of squaring it, (B,D,F)
         h_white = (h / self.delta_f) / (self.asds if asds is None else asds)
 
         # |h|^2
         power = h_white.real * h_white.real + h_white.imag * h_white.imag
 
-        # apply mask if exists
         if self.mask is not None:
             power *= self.mask
 
@@ -134,9 +141,9 @@ class OptimalSNREstimator(torch.nn.Module):
         # network combine (B,1)
         rho2_net = rho2_det.sum(dim=1, keepdim=True)
 
-        # Shape (B,D,1)
+        # Shape (B,D)
         rho_det = torch.sqrt(rho2_det)
-        # Shape (B,1)
+        # Shape (B,)
         rho_net = torch.sqrt(rho2_net).squeeze(-1)
 
         return rho_net, rho_det
@@ -144,7 +151,7 @@ class OptimalSNREstimator(torch.nn.Module):
 
 class OptimalSNRRescaler(torch.nn.Module):
     """
-    Rescales a batch of signals to match target SNRs.
+    Rescale signals to target network optimal SNRs.
 
     Parameters
     ----------
@@ -169,86 +176,48 @@ class OptimalSNRRescaler(torch.nn.Module):
     @torch.no_grad()
     def forward(self, signal_batch: Tensor):
         """
-        Rescale signals to target SNR.
+        Rescale each signal to a sampled target SNR.
 
-        Args:
-            signal_batch: shape [B, L] or [B, C, L]
-        Returns:
-            rescaled_signal_batch: same shape as input, shape (B, ...)
-            scale: (B,) float tensor — per-sample amplitude scale factors
-                   (hf_new = hf_old * scale, so distance_new = distance_old / scale)
+        Parameters
+        ----------
+        signal_batch : torch.Tensor, shape ``(B, D, F)``, complex
+            Detector-frame frequency-domain strain.
+
+        Returns
+        -------
+        rescaled_signal_batch : torch.Tensor, shape ``(B, D, F)``
+            ``signal_batch * scale``.
+        scale : torch.Tensor, shape ``(B,)``
+            Amplitude scale of each signal; the distance scales by
+            ``1 / scale``.
         """
         B = signal_batch.size(0)
         device = signal_batch.device
 
-        # Compute current network-optimal SNR
         rho_net, _ = self.snr_estimator(signal_batch)  # [B]
 
-        # Sample target SNRs (already float tensor)
         target_rho = self.target_snr_sampler(B).to(device)
 
-        # Compute scaling factors safely
+        # 1e-12 guards a zero-SNR signal
         scale = target_rho.div(rho_net + 1e-12)  # [B]
 
         return signal_batch * scale[:, None, None], scale
 
 
 class MatchedFilterSNRRescaler(torch.nn.Module):
-    r"""
-    Rescale injected signals to a target *matched-filter* network SNR measured
-    against the actual noise realisation they are injected into.
+    """
+    Rescale injected signals to a target matched-filter network SNR.
 
-    Where :class:`OptimalSNRRescaler` rescales a waveform to a target *optimal*
-    SNR from the fiducial ASD alone (pre-noise, expected over noise), this
-    rescaler runs AFTER the signal has been paired with its noise window, so it
-    uses the real noise. For a signal injected with known parameters (the exact
-    template ``h`` at known coalescence time and phase), the coherent
-    matched-filter network SNR of ``d = a*h + n`` is
-
-    .. math::
-
-        \rho_\mathrm{mf} = a\,\rho_\mathrm{opt}(h)
-                           + \mathrm{Re}\langle n | \hat h \rangle ,
-        \qquad \hat h = h / \rho_\mathrm{opt}(h).
-
-    The noise projection :math:`\mathrm{Re}\langle n|\hat h\rangle` does not
-    depend on the amplitude ``a`` (``\hat h`` is unit-norm), so solving for the
-    amplitude that hits a sampled target :math:`\rho_\star` is a single
-    closed-form scale -- no re-injection and no iteration:
-
-    .. math::
-
-        a = \bigl(\rho_\star - \mathrm{Re}\langle n|\hat h\rangle\bigr)
-            / \rho_\mathrm{opt}(h).
-
-    :math:`\rho_\mathrm{opt}` and the noise projection are computed once from the
-    reference waveform and its paired noise; ``d = a*h + n`` is then formed a
-    single time downstream.
-
-    Rationale
-    ---------
-    Optimal SNR is the *expected* SNR over noise realisations; the realised
-    matched-filter SNR fluctuates by :math:`\mathrm{Re}\langle n|\hat h\rangle`
-    (unit-variance Gaussian for stationary noise whitened by its own PSD,
-    heavier-tailed for real, glitchy or mis-whitened noise). Rescaling to
-    optimal SNR therefore leaks a fraction of injected signals whose realised
-    SNR is below threshold (undetectable). Rescaling to matched-filter SNR
-    removes that leakage: every injected signal sits at (or, in adverse noise,
-    above) the target.
-
-    All inner products reuse :class:`OptimalSNREstimator` verbatim -- the same
-    fiducial ASD, padded ``delta_f``, DFT-convention ``/delta_f``, ``4 delta_f``
-    integration measure and ``[f_low, f_high)`` band -- so the auto-term
-    (``rho_opt``) and cross-term (``<n|h>``) are on identical footing. The
-    projection is the phase-*coherent* (known-phase) matched filter, which is
-    faithful to a known injection and is a lower bound on the phase-marginalised
-    ``|z|`` a blind search would report -- so rescaling it to >= target keeps the
-    search statistic at least as high.
+    Measured in the noise each signal is injected into, with the
+    known-phase inner products of :class:`OptimalSNREstimator`:
+    ``a = (target - Re<n|h_hat>) / rho_opt``, ``h_hat = h / rho_opt``.
 
     Parameters
     ----------
-    target_snr_sampler : callable(batch_size) -> Tensor, shape (batch_size,)
-        Samples target *matched-filter* network SNRs (e.g. :class:`HalfNorm`).
+    target_snr_sampler : callable
+        ``batch_size -> Tensor`` of target matched-filter network SNRs.
+    asds, window, f_low, device
+        Passed to :class:`OptimalSNREstimator`.
     """
 
     def __init__(
@@ -264,65 +233,72 @@ class MatchedFilterSNRRescaler(torch.nn.Module):
         self.target_snr_sampler = target_snr_sampler
 
     def _noise_projection(self, noise: Tensor, signal: Tensor) -> Tensor:
-        """Network noise--template inner product ``Re<n|h>`` (before ``/rho_opt``).
+        """
+        Network noise-template inner product ``Re<n|h>``.
 
-        Uses the estimator's fiducial whitening so the cross-term matches the
-        auto-term ``rho_opt^2 = <h|h>`` bin-for-bin. ``noise`` and ``signal`` are
-        FD ``(S, D, F)`` on the padded grid; returns a real ``(S,)`` tensor,
-        integrated over frequency then summed coherently over detectors.
+        Whitened, banded and integrated as :class:`OptimalSNREstimator`,
+        then summed over detectors.
+
+        Parameters
+        ----------
+        noise : torch.Tensor, shape ``(S, D, F)``, complex
+            Noise on the padded grid.
+        signal : torch.Tensor, shape ``(S, D, F)``, complex
+            Signals on the padded grid.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(S,)``
+            ``Re<n|h>``, before the division by ``rho_opt``.
         """
         est = self.snr_estimator
-        # Whiten both exactly as rho_opt does: (x/df)/asd recovers the physical
-        # continuous FT divided by the ASD (see OptimalSNREstimator.forward).
+        # Whitened as in OptimalSNREstimator.forward
         n_white = (noise / est.delta_f) / est.asds
         h_white = (signal / est.delta_f) / est.asds
-        # Re(n_white * conj(h_white)) -- the known-phase coherent projection.
+        # Re(n_white * conj(h_white)), the known-phase projection
         cross = n_white.real * h_white.real + n_white.imag * h_white.imag
         if est.mask is not None:
             cross = cross * est.mask.to(cross.dtype)
-        # 4 df integral over frequency, then coherent sum over detectors -> (S,)
+        # 4 df integral over frequency, then sum over detectors
         cross_det = 4.0 * est.delta_f * cross.sum(dim=-1)   # (S, D)
         return cross_det.sum(dim=1)                          # (S,)
 
     @torch.no_grad()
     def forward(self, signal_batch: Tensor, noise_batch: Tensor):
         """
-        Rescale each injected signal to a sampled target matched-filter SNR in
-        its own noise window.
+        Rescale each signal to a sampled target matched-filter SNR.
+
+        Where the noise alone reaches the target, the optimal SNR is set
+        to the target instead.
 
         Parameters
         ----------
-        signal_batch : complex tensor (S, D, F)
-            Reference detector-projected FD waveforms (physical amplitude).
-        noise_batch : complex tensor (S, D, F)
-            The FD noise realisations the signals are injected into, row-aligned
-            with ``signal_batch`` (``noise_data[idx]``). Already recoloured when
-            recolour is on -- the actual noise the network sees.
+        signal_batch : torch.Tensor, shape ``(S, D, F)``, complex
+            Detector-frame waveforms at physical amplitude.
+        noise_batch : torch.Tensor, shape ``(S, D, F)``, complex
+            Noise each signal is injected into, row-aligned with
+            ``signal_batch``.
 
         Returns
         -------
-        rescaled_signal_batch : complex tensor (S, D, F)
-            ``signal_batch * a`` on the same grid and dtype.
-        a : real tensor (S,)
-            Per-signal amplitude scale (``hf_new = hf_old * a``, so
-            ``distance_new = distance_old / a``).
+        rescaled_signal_batch : torch.Tensor, shape ``(S, D, F)``
+            ``signal_batch * a``.
+        a : torch.Tensor, shape ``(S,)``
+            Amplitude scale of each signal; the distance scales by
+            ``1 / a``.
         """
         S = signal_batch.size(0)
         device = signal_batch.device
 
         rho_opt, _ = self.snr_estimator(signal_batch)                  # (S,)
         proj = self._noise_projection(noise_batch, signal_batch)        # Re<n|h>
-        # Re<n|h_hat> = Re<n|h> / rho_opt (amplitude-independent noise term).
+        # Re<n|h_hat> = Re<n|h> / rho_opt, independent of the amplitude
         proj = proj / (rho_opt + 1e-12)                                 # (S,)
 
         target = self.target_snr_sampler(S).to(device=device, dtype=rho_opt.dtype)
 
-        # a = (target - Re<n|h_hat>) / rho_opt.
-        # Adverse-noise guard: if the noise already projects at/above the target
-        # along the template (numerator <= 0 -- possible for real glitchy or
-        # mis-whitened noise, a >5 sigma event for stationary Gaussian), fall
-        # back to optimal SNR = target so the injection stays a positive,
-        # detectable signal instead of vanishing or flipping sign.
+        # a = (target - Re<n|h_hat>) / rho_opt; where the numerator is
+        # <= 0, the optimal SNR is set to the target instead
         num = target - proj
         a = torch.where(num > 0, num, target) / (rho_opt + 1e-12)       # (S,)
         a = a.to(signal_batch.real.dtype)
@@ -331,52 +307,21 @@ class MatchedFilterSNRRescaler(torch.nn.Module):
 
 
 class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
-    r"""
-    Rescale injected signals to a target **PyCBC re-weighted "new SNR"** measured
-    in the real noise -- the χ²-discriminated statistic a real matched-filter
-    search actually ranks on. Faithful to PyCBC (``pycbc.vetoes.chisq.power_chisq``
-    + ``pycbc.events.ranking.newsnr`` + ``QuadratureSumStatistic``).
+    """
+    Rescale injected signals to a target network re-weighted SNR.
 
-    Raw matched-filter SNR is inflated by non-Gaussian transients: a glitch
-    aligned with the template lifts ρ, so a weak signal on a glitch looks loud
-    while a real search would down-weight it via the Allen χ² test and miss it.
-    Targeting the re-weighted SNR removes that leakage -- in glitchy windows the
-    signal must be injected louder to survive the χ² penalty, so the "signal"
-    class stays genuinely detectable.
-
-    Method (all per detector, evaluated at the known injection time; inner
-    products reuse :class:`OptimalSNREstimator` verbatim)
-    ------------------------------------------------------------------------
-    * Single-detector SNR ``|z_d| = |a·ρ_opt_d + ν_d|`` (PyCBC uses |z|), with
-      ``ν_d = <n_d|ĥ_d>`` the complex noise projection (amplitude-independent).
-    * Allen power-χ²: split the template into ``num_bins`` equal-power frequency
-      bins (PyCBC ``power_chisq_bins``: cumulative in-band power, split at
-      ``j·σ²/p``), then ``χ²_d = p·Σ_i|z_{d,i}|² − |z_d|²`` (PyCBC's exact
-      ``chisq·num_bins − |snr|²`` form), dof ``= 2p−2``, reduced ``χ²ᵣ = χ²/dof``.
-      Because the injected template is the χ² template, the signal distributes
-      equally across bins and CANCELS in ``z_{d,i} − z_d/p`` -- so **χ² depends
-      only on the noise**, computed here from ``ν`` alone and identical to PyCBC
-      ``power_chisq`` on ``a·h + n``.
-    * Re-weight (PyCBC ``newsnr``, q=6, n=2): ``ρ̂_d = |z_d| / g_d`` with
-      ``g_d = [½(1 + χ²ᵣ³)]^{1/6}`` if ``χ²ᵣ > 1`` else ``1``. ``g_d`` is
-      amplitude-independent (χ² is).
-    * Network (PyCBC ``QuadratureSumStatistic``): ``ρ̂_net² = Σ_d ρ̂_d²``.
-
-    Solve
-    -----
-    ``ρ̂_net²(a) = Σ_d |a·ρ_opt_d + ν_d|² / g_d² = A a² + B a + C``, set ``=
-    target²`` and take the positive root -- one closed-form quadratic, no
-    iteration (``g_d`` and ``ν_d`` are amplitude-independent). Adverse-noise
-    fallback: if there is no positive root (the re-weighted noise alone already
-    reaches the target), rescale to optimal network SNR = target so the injection
-    stays positive and detectable.
+    Per detector, PyCBC's newsnr (q=6, n=2) from the power chi^2 of
+    ``num_bins`` equal-power bins, summed in quadrature over detectors;
+    the scale is the positive root of a quadratic in the amplitude.
 
     Parameters
     ----------
-    target_snr_sampler : callable(batch_size) -> Tensor, shape (batch_size,)
-        Samples target *network re-weighted* SNRs (e.g. :class:`HalfNorm`).
+    target_snr_sampler : callable
+        ``batch_size -> Tensor`` of target network re-weighted SNRs.
+    asds, window, f_low, device
+        Passed to :class:`OptimalSNREstimator`.
     num_bins : int
-        Number of equal-power χ² bins ``p`` (PyCBC default region ~16).
+        Number of equal-power chi^2 bins ``p``.
     """
 
     def __init__(
@@ -394,10 +339,30 @@ class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
         self.num_bins = int(num_bins)
 
     def _perdet_stats(self, signal: Tensor, noise: Tensor):
-        """Per-detector (ρ_opt, ν=<n|ĥ> complex, g newsnr-weight, χ²), all at the
-        injection time. χ² is amplitude-independent (exact-template cancellation),
-        so it is computed from the noise projection alone. Shapes: (S,D) real,
-        (S,D) complex, (S,D) real, (S,D) real."""
+        """
+        Per-detector statistics at the injection time.
+
+        chi^2 depends only on the noise projection: the injected
+        template is the chi^2 template, so the signal cancels.
+
+        Parameters
+        ----------
+        signal : torch.Tensor, shape ``(S, D, F)``, complex
+            Signals on the padded grid.
+        noise : torch.Tensor, shape ``(S, D, F)``, complex
+            Noise on the padded grid.
+
+        Returns
+        -------
+        rho_det : torch.Tensor, shape ``(S, D)``
+            Optimal SNR.
+        nu : torch.Tensor, shape ``(S, D)``, complex
+            Noise projection ``<n|h_hat>``.
+        g : torch.Tensor, shape ``(S, D)``
+            newsnr down-weight, ``newsnr = |z| / g``.
+        chisq : torch.Tensor, shape ``(S, D)``
+            Power chi^2 with ``2 p - 2`` degrees of freedom.
+        """
         est = self.snr_estimator
         p = self.num_bins
         df = est.delta_f
@@ -405,20 +370,21 @@ class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
         n_w = (noise / df) / est.asds
         mask = est.mask                                     # (1,1,F) or None
 
-        # rho_opt per detector (the verified estimator, same whitening/band)
+        # rho_opt per detector
         _, rho_det = est(signal)                            # (S,D)
 
-        # equal-power chisq bins: PyCBC cumulative in-band power split at j*sig/p.
+        # Equal-power chisq bins: PyCBC's cumulative in-band power split
+        # at j*sig/p
         power = h_w.real * h_w.real + h_w.imag * h_w.imag   # |h_w|^2 (S,D,F)
         if mask is not None:
             power = power * mask.to(power.dtype)
         cumpow = torch.cumsum(power, dim=-1)                # (S,D,F) monotone
         total = cumpow[..., -1:].clamp_min(1e-30)           # (S,D,1) = in-band sigma^2
-        # per-frequency bin label (floor == PyCBC searchsorted edges up to ties);
-        # out-of-band bins get zero cross term below so their label is irrelevant.
+        # Bin of each frequency (floor, PyCBC's searchsorted edges up to
+        # ties); out-of-band frequencies carry no cross term
         binf = torch.floor(cumpow / total * p).clamp_(0, p - 1).to(torch.long)
 
-        # per-bin complex cross term c_i = 4 df sum_{f in bin i} n_w conj(h_w)
+        # Per-bin cross term c_i = 4 df sum_{f in bin i} n_w conj(h_w)
         cross = n_w * torch.conj(h_w)                       # (S,D,F) complex
         if mask is not None:
             cross = cross * mask.to(cross.real.dtype)
@@ -435,11 +401,11 @@ class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
         nu_i = c_i / rho.unsqueeze(-1)                      # (S,D,p) = <n|h_hat>_bin
         nu = c_tot / rho                                    # (S,D)   = <n|h_hat>
 
-        # chisq = p*sum_i|nu_i|^2 - |nu|^2  (PyCBC power_chisq form), dof = 2p-2
+        # chisq = p*sum_i|nu_i|^2 - |nu|^2 (PyCBC power_chisq), dof 2p-2
         chisq = (p * (nu_i.real * nu_i.real + nu_i.imag * nu_i.imag).sum(dim=2)
                  - (nu.real * nu.real + nu.imag * nu.imag)).clamp_min(0.0)
         rchisq = chisq / (2.0 * p - 2.0)
-        # PyCBC newsnr down-weight (q=6, n=2): g = [0.5(1+rchisq^3)]^(1/6) if >1
+        # PyCBC newsnr (q=6, n=2): g = [0.5(1+rchisq^3)]^(1/6) if > 1
         g = torch.where(
             rchisq > 1.0,
             (0.5 * (1.0 + rchisq * rchisq * rchisq)).pow(1.0 / 6.0),
@@ -450,22 +416,26 @@ class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
     @torch.no_grad()
     def forward(self, signal_batch: Tensor, noise_batch: Tensor):
         """
-        Rescale each injected signal to a sampled target network re-weighted SNR
-        in its own noise window.
+        Rescale each signal to a sampled target network re-weighted SNR.
+
+        Without a positive root, the optimal network SNR is set to the
+        target instead.
 
         Parameters
         ----------
-        signal_batch : complex tensor (S, D, F)
-            Reference detector-projected FD waveforms (physical amplitude).
-        noise_batch : complex tensor (S, D, F)
-            The FD noise realisations the signals are injected into, row-aligned
-            with ``signal_batch`` (``noise_data[idx]``), already recoloured when
-            recolour is on.
+        signal_batch : torch.Tensor, shape ``(S, D, F)``, complex
+            Detector-frame waveforms at physical amplitude.
+        noise_batch : torch.Tensor, shape ``(S, D, F)``, complex
+            Noise each signal is injected into, row-aligned with
+            ``signal_batch``.
 
         Returns
         -------
-        rescaled_signal_batch : complex tensor (S, D, F) -- ``signal_batch * a``.
-        a : real tensor (S,) -- per-signal amplitude scale (distance /= a).
+        rescaled_signal_batch : torch.Tensor, shape ``(S, D, F)``
+            ``signal_batch * a``.
+        a : torch.Tensor, shape ``(S,)``
+            Amplitude scale of each signal; the distance scales by
+            ``1 / a``.
         """
         device = signal_batch.device
         S = signal_batch.size(0)
@@ -473,8 +443,8 @@ class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
         rho, nu, g, _ = self._perdet_stats(signal_batch, noise_batch)   # (S,D)...
         g2 = g * g
 
-        # network re-weighted SNR^2(a) = sum_d |a rho_d + nu_d|^2 / g_d^2
-        #                              = A a^2 + B a + C  (quadratic in a)
+        # Network re-weighted SNR^2(a)
+        #   = sum_d |a rho_d + nu_d|^2 / g_d^2 = A a^2 + B a + C
         A = (rho * rho / g2).sum(dim=1)                     # (S,)
         B = (2.0 * rho * nu.real / g2).sum(dim=1)           # (S,)
         C = ((nu.real * nu.real + nu.imag * nu.imag) / g2).sum(dim=1)   # (S,)
@@ -483,9 +453,8 @@ class ChiSquaredReweightedSNRRescaler(torch.nn.Module):
         disc = B * B + 4.0 * A * (target * target - C)
         a_quad = (-B + torch.sqrt(disc.clamp_min(0.0))) / (2.0 * A + 1e-30)
 
-        # Adverse-noise fallback: no positive root (disc<0 or a<=0 -- the
-        # re-weighted noise alone already reaches target) -> rescale to optimal
-        # network SNR = target so the injection stays positive and detectable.
+        # Without a positive root (disc < 0 or a <= 0), the optimal
+        # network SNR is set to the target instead
         rho_net = torch.sqrt((rho * rho).sum(dim=1))
         a_fallback = target / (rho_net + 1e-12)
         bad = (disc < 0) | (a_quad <= 0) | torch.isnan(a_quad)

@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Half-normal distribution of target network SNRs.
+
 Filename        : snr_rescaling.py
 Description     : Short description of the file
 
@@ -23,21 +25,16 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 import torch.nn as nn
 
 
 class HalfNorm(nn.Module):
     """
-    Half-normal SNR sampler.
+    Target network SNRs drawn as ``loc + scale * |N(0, 1)|``.
 
-    Draws target network SNR values from a half-normal distribution
-    ``|N(loc, scale²)|``.  Used as the ``target_snr_sampler`` argument to
+    The ``target_snr_sampler`` of
     :class:`~sage.data.waveform.snr.OptimalSNRRescaler`.
-
-    The generator is seeded once at construction so SNR draws are
-    reproducible across runs with the same seed.
 
     Parameters
     ----------
@@ -57,7 +54,6 @@ class HalfNorm(nn.Module):
         self.register_buffer("scale", torch.tensor(scale).to(device=device))
         self.register_buffer("loc", torch.tensor(loc).to(device=device))
 
-        # Create a generator with a specific seed
         self.gen = torch.Generator(device=device)
         self.gen.manual_seed(seed)
 
@@ -65,6 +61,19 @@ class HalfNorm(nn.Module):
         self.last = None
 
     def forward(self, batch_size: int):
+        """
+        Draw ``batch_size`` target SNRs and keep them in ``last``.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of draws.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(batch_size,)``
+            Target SNRs.
+        """
         x = torch.randn(
             batch_size,
             device=self.scale.device,

@@ -1,7 +1,8 @@
-"""Read fiducial ASDs and check them against the run.
+"""
+Read fiducial ASDs and check them against the run.
 
-Files are ``fiducial_<det>_psd.bin`` (float32 ASDs, strain/sqrt(Hz)) with a
-JSON sidecar describing the grid they were built on. A checkpoint carries the
+Files are ``fiducial_<det>_psd.bin`` (float32 ASDs, strain/sqrt(Hz))
+with a JSON sidecar describing their grid. A checkpoint carries the
 same pairs in its record.
 """
 
@@ -35,8 +36,8 @@ def check_fiducial(meta: dict, asd: np.ndarray, detector: str, window: Window, w
     Raises
     ------
     ValueError
-        If the detector, sample rate, frequency spacing, bin count, dtype or
-        byte order does not match.
+        If the detector, sample rate, frequency spacing, bin count,
+        dtype or byte order does not match.
     """
     expected = {
         "dtype": "float32",

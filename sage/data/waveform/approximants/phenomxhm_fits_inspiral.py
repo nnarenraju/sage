@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
+IMRPhenomXHM parameter-space fits of the inspiral amplitude
+collocation points and phase differences, and the linear-in-f PN
+phase term.
+
 Filename      : phenomxhm_fits_inspiral.py
 Description   : IMRPhenomXHM inspiral amplitude fits (version 122022),
                 phase fits (version 122019) and linear-in-f PN phase

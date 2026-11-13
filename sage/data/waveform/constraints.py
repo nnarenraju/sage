@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Named constraints on prior samples, as boolean masks for the
+rejection sampling in :mod:`sage.data.waveform.sampler`.
+
 Filename        : constraints.py
 Description     : Short description of the file
 
@@ -23,30 +26,57 @@ Documentation: NULL
 
 """
 
-# Packages
 import sys
 import torch
 import inspect
 
 
 def mass_order(params, param_index, extra_params=None):
-    """Samples with ``mass1 >= mass2`` (PyCBC's constraint), as a boolean mask."""
+    """
+    Mask of the samples with ``mass1 >= mass2`` (PyCBC's constraint).
+
+    Parameters
+    ----------
+    params : torch.Tensor, shape ``(N, num_params)``
+        Prior samples.
+    param_index : dict[str, int]
+        Column of each parameter in ``params``.
+    extra_params : list or None
+        Unused; part of the constraint signature.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(N,)``
+        True where ``mass1 >= mass2``.
+    """
     return params[:, param_index["mass1"]] >= params[:, param_index["mass2"]]
 
 
 def lambda_order(params, param_index, extra_params=None):
     """
-    Samples with ``lambda1 <= lambda2``, as a boolean mask.
+    Mask of the samples with ``lambda1 <= lambda2``.
 
-    Astrophysically the more massive component (mass1, after
-    :func:`mass_order`) is more compact and has the SMALLER tidal
-    deformability, so lambda1 (paired with mass1) must be the smaller of
-    the two.
+    The more massive component (mass1, after :func:`mass_order`) is
+    the more compact one and has the smaller tidal deformability.
+
+    Parameters
+    ----------
+    params : torch.Tensor, shape ``(N, num_params)``
+        Prior samples.
+    param_index : dict[str, int]
+        Column of each parameter in ``params``.
+    extra_params : list or None
+        Unused; part of the constraint signature.
+
+    Returns
+    -------
+    torch.Tensor, shape ``(N,)``
+        True where ``lambda1 <= lambda2``.
     """
     return params[:, param_index["lambda1"]] <= params[:, param_index["lambda2"]]
 
 
-## For automatically adding all named constraints
+# Public functions of this module, the constraints selectable by name
 
 _current_module = sys.modules[__name__]
 

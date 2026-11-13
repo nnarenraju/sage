@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Frequency-domain Planck tapers: low-frequency roll-on, high-frequency
+roll-off and their band-pass product.
+
 Filename        : taper.py
 Description     : Short description of the file
 
@@ -23,22 +26,19 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 
 def _taper(x, width):
     """
-    Smooth sigmoid-like taper function for frequency-domain windowing.
+    Planck taper ``1 / (1 + exp(z))`` of the distance from a boundary.
 
-    Maps distance ``x`` from a boundary into a ``[0, 1]`` weight using the
-    Planck taper formula ``1 / (1 + exp(z))``.  Returns 0 at ``x=0`` and
-    approaches 1 as ``x → width-1``.
+    0 at ``x = 0``, rising to 1 as ``x`` approaches ``width - 1``.
 
     Parameters
     ----------
     x : torch.Tensor, shape ``(B, F)``
-        Distance from the boundary in frequency bins (must be ≥ 0).
+        Distance from the boundary in bins, clamped to >= 1e-12.
     width : float or torch.Tensor
         Taper width in frequency bins.
 
@@ -56,10 +56,10 @@ def _taper(x, width):
 
 def fd_low_freq_taper(f, f_min, df, width_bins):
     """
-    Smooth low-frequency roll-on taper in the frequency domain.
+    Low-frequency roll-on taper in the frequency domain.
 
-    Returns 0 below ``f_min``, smoothly rises to 1 over ``width_bins``
-    frequency bins, and stays 1 above that range.
+    0 up to ``f_min``, rising to 1 over ``width_bins`` frequency bins,
+    and 1 above.
 
     Parameters
     ----------
@@ -79,7 +79,7 @@ def fd_low_freq_taper(f, f_min, df, width_bins):
     """
     x = (f - f_min) / df
     w = width_bins - 1.0
-    # Apply formula only in (0, w), 0 below, 1 above
+    # Taper only in (0, w); 0 below, 1 above
     return torch.where(
         x <= 0,
         torch.zeros_like(x),
@@ -89,10 +89,10 @@ def fd_low_freq_taper(f, f_min, df, width_bins):
 
 def fd_high_freq_taper(f, f_cut, df, width_bins):
     """
-    Smooth high-frequency roll-off taper in the frequency domain.
+    High-frequency roll-off taper in the frequency domain.
 
-    Returns 1 below ``f_cut - width_bins*df``, smoothly falls to 0 over
-    ``width_bins`` bins, and stays 0 above ``f_cut``.
+    1 up to ``f_cut - (width_bins - 1) * df``, falling to 0 over
+    ``width_bins`` bins, and 0 from ``f_cut``.
 
     Parameters
     ----------
@@ -112,7 +112,7 @@ def fd_high_freq_taper(f, f_cut, df, width_bins):
     """
     x = (f_cut - f) / df
     w = width_bins - 1.0
-    # Apply formula only in (0, w), 0 beyond cut, 1 before taper start
+    # Taper only in (0, w); 0 beyond the cut, 1 before the taper
     return torch.where(
         x <= 0,
         torch.zeros_like(x),
@@ -129,11 +129,10 @@ def fd_taper(
     high_width=64,
 ):
     """
-    Combined low- and high-frequency band-pass taper.
+    Band-pass taper: the product of the low and high tapers.
 
-    Multiplies a low-frequency roll-on and a high-frequency roll-off to
-    produce a smooth band-pass window that is 0 outside ``[f_min, f_cut]``
-    and 1 in the interior of that band.
+    0 outside ``(f_min, f_cut)`` and 1 inside the band away from its
+    edges.
 
     Parameters
     ----------
@@ -146,9 +145,9 @@ def fd_taper(
     df : float
         Frequency bin spacing (Hz).
     low_width : int
-        Taper width at the low-frequency edge (default 64 bins).
+        Taper width at the low-frequency edge, in bins.
     high_width : int
-        Taper width at the high-frequency edge (default 64 bins).
+        Taper width at the high-frequency edge, in bins.
 
     Returns
     -------

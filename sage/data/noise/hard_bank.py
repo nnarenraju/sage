@@ -1,37 +1,7 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """
-HDF5-backed hard-mining bank -- the single, file-resident source of truth for
-the CMA-MAE hard-noise miner.
-
-Design goals (set by the project):
-  * Nothing persists in RAM between mining rounds.  Start-times, the diverse
-    embedding bank, the IncrementalPCA state, and the per-round re-evaluation
-    history all live in ONE HDF5 file under /work.
-  * Continuous learning: the file is appended to forever after a single cold
-    start; the miner is never rebuilt from scratch.
-  * Generic / config-agnostic: ``runs`` and ``detectors`` are passed in, never
-    hardcoded here.  The root attributes are derived from them.
-
-Layout (see ``_ensure_file``)::
-
-    attrs: detectors, runs, sample_rate, seq_len, descriptor_dim, cold_epoch
-    start_times       (N, D) int64   append-only, stable row index
-    start_segments    (N, D) int64
-    start_runs        (N, D) int64    which pooled run each window came from
-    start_found_epoch (N,)   int32
-    start_found_score (N,)   f32
-    embeddings        (M, P) f32      diverse subset (distance-gated, PCA-reduced)
-    emb_epoch         (M,)   int32
-    emb_score         (M,)   f32
-    pca/{components,mean,var,n_seen}  persisted IncrementalPCA state
-    eval_stats        (N, R) f32      re-eval ranking stat of every start per round
-    eval_model_epoch  (R,)   int32    model epoch that produced each eval column
-
-Concurrency: writes happen only during mining (between epochs); the sampler
-reads during epochs.  The two never overlap, so a single file accessed by one
-party at a time is safe -- no SWMR needed.
+HDF5 bank of the CMA-MAE hard-noise miner: mined start times, a diverse
+set of embeddings, the IncrementalPCA state and the re-evaluation
+history of every start, in one file.
 """
 
 import os
@@ -48,42 +18,77 @@ except Exception:                                   # pragma: no cover
 
 
 def detectors_tag(detectors):
-    """['H1','L1','V1'] -> 'HLV' (first letter of each)."""
+    """
+    First letter of each detector, e.g. ``["H1", "L1"] -> "HL"``.
+
+    Parameters
+    ----------
+    detectors : list of str
+        Detector names.
+
+    Returns
+    -------
+    str
+        The tag.
+    """
     return "".join(str(d)[0].upper() for d in detectors)
 
 
 def runs_tag(runs):
-    """'O3b' or ['O3a','O3b','O4a'] -> 'O3b' / 'O3aO3bO4a'."""
+    """
+    Observing runs joined, e.g. ``["O3a", "O3b"] -> "O3aO3b"``.
+
+    Parameters
+    ----------
+    runs : str or list of str
+        One run, returned as is, or several.
+
+    Returns
+    -------
+    str
+        The tag.
+    """
     if isinstance(runs, str):
         return runs
     return "".join(str(r) for r in runs)
 
 
 class HardMiningBank:
-    """File-resident bank for hard-noise mining (one HDF5 file).
+    """
+    Hard-noise mining bank held in one HDF5 file.
+
+    Every method opens the file, so nothing is held in memory between
+    rounds. On opening, a leftover ``<path>.tmp`` of an interrupted
+    round is removed, and an existing bank is checked against the run.
 
     Parameters
     ----------
     path : str
         HDF5 file path (a run keeps its bank at ``mining/bank.h5``).
-    detectors : list[str]
-        Detector names, ``D = len(detectors)``.
-    runs : str or list[str]
-        Observing run(s) the model trains on (e.g. ``"O3b"`` or
-        ``["O3a","O3b","O4a"]``).  Stored as metadata only.
-    seq_len, sample_rate, bin_files :
-        Window/length/source metadata, mirrored into emitted datasets.
+    detectors : list of str
+        Detector names.
+    runs : str or list of str
+        Observing runs the model trains on; stored as metadata.
+    seq_len : int
+        Window length in samples.
+    sample_rate : float
+        Sample rate (Hz).
+    bin_files : list of str
+        Noise ``.bin`` files the starts index into.
     descriptor_dim : int
-        Width ``P`` of the stored (PCA-reduced) embeddings.
+        Width ``P`` of the stored PCA-reduced embeddings.
     novelty_dist : float
-        Minimum distance a new embedding must have from every bank embedding to
-        be kept (diversity gate).  Cosine distance by default.
+        Minimum distance of a new embedding from every kept one.
     max_embeddings : int
-        Soft cap on the embedding bank; when exceeded, the lowest-score (least
-        hard) embeddings are dropped so the bank stays "diverse AND hard" and
-        novelty queries stay fast.
-    metric : {'cosine','euclidean'}
-        Distance used for the novelty gate.
+        Cap on the embeddings; the lowest-score ones above it are
+        dropped.
+    metric : {"cosine", "euclidean"}
+        Distance of the novelty gate.
+
+    Raises
+    ------
+    ValueError
+        If an existing bank was created with other settings.
     """
 
     def __init__(self, path, detectors, runs, seq_len, sample_rate, bin_files,
@@ -101,9 +106,7 @@ class HardMiningBank:
         self.max_embeddings = int(max_embeddings)
         self.metric = metric
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        # A leftover "<bank>.tmp" means a mine round was interrupted before its
-        # atomic commit (see atomic_round). The live bank is the last consistent
-        # state, so discard the aborted temp before anything reads/writes.
+        # A leftover "<bank>.tmp" is an interrupted round (atomic_round)
         _stale = self.path + ".tmp"
         if os.path.exists(_stale):
             try:
@@ -112,51 +115,53 @@ class HardMiningBank:
                 pass
         self._ensure_file()
 
-    # --------------------------------------------------------- crash-atomic io
     @contextmanager
     def atomic_round(self):
-        """Make a whole mine round's writes crash-atomic.
+        """
+        Context in which all bank I/O goes to a copy of the bank.
 
-        Every bank method opens ``self.path``; inside this context ``self.path``
-        is pointed at a private copy of the committed bank, so all reads and
-        writes of the round hit the copy. On clean exit the copy is
-        ``os.replace``-d over the live bank in ONE atomic filesystem step; on any
-        exception or hard kill the live bank is left exactly as it was (worst
-        case a stray ``.tmp``, removed on the next open). This closes the
-        multi-array-append corruption window: a SLURM TIMEOUT can no longer leave
-        the bank with mismatched dataset lengths or an unopenable HDF5 file.
+        On a clean exit the copy replaces the bank with ``os.replace``;
+        on an exception the copy is removed and the bank is unchanged.
         """
         real = self.path
         tmp = real + ".tmp"
         if os.path.exists(real):
-            shutil.copy2(real, tmp)              # snapshot committed state
-        self.path = tmp                          # redirect all round io to tmp
+            shutil.copy2(real, tmp)              # copy of the committed bank
+        self.path = tmp                          # all I/O goes to the copy
         committed = False
         try:
             yield
             os.replace(tmp, real)                # atomic commit
             committed = True
         finally:
-            self.path = real                     # always restore, commit or abort
+            self.path = real
             if not committed and os.path.exists(tmp):
                 try:
-                    os.remove(tmp)               # discard the partial round
+                    os.remove(tmp)               # discard the round
                 except OSError:
                     pass
 
-    # ------------------------------------------------------------------ setup
     def _ensure_file(self):
+        """
+        Create the bank file, or check an existing one.
+
+        An existing bank without ``start_runs`` gets them as run 0.
+
+        Raises
+        ------
+        ValueError
+            If an existing bank was created with other settings.
+        """
         if os.path.exists(self.path):
             with h5py.File(self.path, "r") as f:
                 if "start_times" in f:
-                    self._validate_existing(f)     # fail fast on incompatible reopen
+                    self._validate_existing(f)
                     if "start_runs" in f:
                         return
-        # Creation and the backfill write a copy swapped in whole, like a mine round.
+        # Creation and backfill are written atomically, like a round
         with self.atomic_round(), h5py.File(self.path, "a") as f:
             if "start_times" in f:
-                # Backfill start_runs on a pre-multi-run bank (all run 0) so an
-                # older single-run bank keeps working after the schema change.
+                # Bank without start_runs: all starts are run 0
                 n = f["start_times"].shape[0]
                 ds = f.create_dataset("start_runs", (n, self.D), dtype="i8",
                                       maxshape=(None, self.D), chunks=True)
@@ -180,16 +185,27 @@ class HardMiningBank:
             f.create_dataset("embeddings", (0, self.P), dtype="f4", **ck(None, self.P))
             f.create_dataset("emb_epoch", (0,), dtype="i4", **ck(None))
             f.create_dataset("emb_score", (0,), dtype="f4", **ck(None))
-            # eval_stats is appended one COLUMN per round and read by latest
-            # column; column-width-1 chunks avoid read/write amplification as N
-            # and the round count grow (the "append forever" design).
+            # eval_stats grows by one column per round and is read by
+            # its last column, so chunks are one column wide
             f.create_dataset("eval_stats", (0, 0), dtype="f4",
                              maxshape=(None, None), chunks=(8192, 1))
             f.create_dataset("eval_model_epoch", (0,), dtype="i4", **ck(None))
 
     def _validate_existing(self, f):
-        """Fail fast if a reopened bank is incompatible with this config (a
-        config typo must never silently append into a mismatched bank)."""
+        """
+        Check a reopened bank against this run's settings.
+
+        Parameters
+        ----------
+        f : h5py.File
+            The open bank.
+
+        Raises
+        ------
+        ValueError
+            If the descriptor width, window length, detectors or runs
+            differ.
+        """
         checks = {
             "descriptor_dim": (int(f.attrs["descriptor_dim"]), self.P),
             "seq_len": (int(f.attrs["seq_len"]), self.seq_len),
@@ -208,32 +224,44 @@ class HardMiningBank:
                 f"{int(f['embeddings'].shape[1])} != descriptor_dim {self.P}."
             )
 
-    # -------------------------------------------------------------- properties
     @property
     def n_starts(self):
+        """Number of banked start rows."""
         with h5py.File(self.path, "r") as f:
             return int(f["start_times"].shape[0])
 
     @property
     def n_embeddings(self):
+        """Number of banked embeddings."""
         with h5py.File(self.path, "r") as f:
             return int(f["embeddings"].shape[0])
 
     @property
     def n_eval_rounds(self):
+        """Number of re-evaluation rounds."""
         with h5py.File(self.path, "r") as f:
             return int(f["eval_model_epoch"].shape[0])
 
     @property
     def is_cold(self):
-        """True before the first mining round has written anything."""
+        """True while the bank holds no start."""
         return self.n_starts == 0
 
     def has_epoch(self, epoch):
-        """True if this epoch's mining round is already persisted (mined starts
-        tagged ``found_epoch == epoch`` or an eval column ``model_epoch ==
-        epoch``). Used to make a crash-resume that re-runs the epoch idempotent
-        instead of double-appending its hard windows + eval column."""
+        """
+        Whether the bank holds results of ``epoch``.
+
+        Parameters
+        ----------
+        epoch : int
+            Training epoch.
+
+        Returns
+        -------
+        bool
+            True if a start was found or a re-evaluation was made at
+            ``epoch``.
+        """
         e = int(epoch)
         with h5py.File(self.path, "r") as f:
             fe = f["start_found_epoch"]
@@ -244,20 +272,48 @@ class HardMiningBank:
                 return True
         return False
 
-    # ---------------------------------------------------------- start-times io
     @staticmethod
     def _append(ds, rows):
-        """Append ``rows`` along axis 0 of a resizable dataset; return start idx."""
+        """
+        Append rows along axis 0 of a resizable dataset.
+
+        Parameters
+        ----------
+        ds : h5py.Dataset
+            Resizable dataset.
+        rows : numpy.ndarray
+            Rows to append.
+
+        Returns
+        -------
+        int
+            Index of the first appended row.
+        """
         n0 = ds.shape[0]
         ds.resize(n0 + len(rows), axis=0)
         ds[n0:] = rows
         return n0
 
     def append_starts(self, starts, segs, runs, scores, epoch):
-        """Append newly-mined hard start-times (append-only, stable index).
+        """
+        Append mined windows; rows are never reordered.
 
-        ``runs`` (N, D) records which pooled run each window came from, so it is
-        later read from the correct file's mmap.
+        The first append sets the ``cold_epoch`` attribute.
+
+        Parameters
+        ----------
+        starts, segs, runs : array-like, shape ``(N, D)``
+            Absolute start indices, segment ids and pooled run ids.
+        scores : array-like, shape ``(N,)``
+            Ranking statistics when found.
+        epoch : int
+            Epoch of the mining round.
+
+        Returns
+        -------
+        int or None
+            Row index of the first appended window; ``None`` if there
+            are none.
         """
         starts = np.asarray(starts, dtype=np.int64).reshape(-1, self.D)
         segs = np.asarray(segs, dtype=np.int64).reshape(-1, self.D)
@@ -277,7 +333,21 @@ class HardMiningBank:
             return i0
 
     def sample_starts(self, n, rng):
-        """Random ``n`` (start, seg, run) rows from the bank for genotype seeding."""
+        """
+        Up to ``n`` distinct random rows, in bank order.
+
+        Parameters
+        ----------
+        n : int
+            Number of rows.
+        rng : numpy.random.Generator
+            Random generator.
+
+        Returns
+        -------
+        starts, segs, runs : numpy.ndarray, shape ``(min(n, N), D)``
+            Start indices, segment ids and run ids.
+        """
         with h5py.File(self.path, "r") as f:
             N = f["start_times"].shape[0]
             if N == 0:
@@ -287,7 +357,19 @@ class HardMiningBank:
             return f["start_times"][idx], f["start_segments"][idx], f["start_runs"][idx]
 
     def iter_starts(self, batch_size):
-        """Yield ``(sl, starts, segs, runs)`` over the whole bank for re-eval."""
+        """
+        Iterate over the whole bank in batches.
+
+        Parameters
+        ----------
+        batch_size : int
+            Rows per batch.
+
+        Yields
+        ------
+        tuple
+            ``(slice, starts, segs, runs)`` of each batch.
+        """
         with h5py.File(self.path, "r") as f:
             N = f["start_times"].shape[0]
             for i in range(0, N, batch_size):
@@ -295,12 +377,21 @@ class HardMiningBank:
                 yield sl, f["start_times"][sl], f["start_segments"][sl], f["start_runs"][sl]
 
     def read_starts(self, indices):
-        """Read specific rows (used by the sampler's hot path).
+        """
+        Read the given rows, in the given order.
 
-        Robust to unordered and duplicate indices: h5py point selection needs
-        strictly-increasing indices, so we read the sorted-unique set and map
-        back to the caller's order (preserving duplicates). Returns
-        ``(starts, segs, runs)``.
+        h5py needs increasing indices, so the unique sorted rows are
+        read and mapped back, duplicates included.
+
+        Parameters
+        ----------
+        indices : array-like of int
+            Bank rows.
+
+        Returns
+        -------
+        starts, segs, runs : numpy.ndarray, shape ``(K, D)``
+            Start indices, segment ids and run ids.
         """
         indices = np.asarray(indices, dtype=np.int64)
         uniq, inv = np.unique(indices, return_inverse=True)   # sorted, unique
@@ -310,14 +401,24 @@ class HardMiningBank:
             r = f["start_runs"][uniq]
         return s[inv], g[inv], r[inv]
 
-    # ----------------------------------------------------------- embeddings io
     def _distances_to_bank(self, cand, bank):
-        """Nearest-neighbour distance of each ``cand`` row to ``bank``.
+        """
+        Nearest-neighbour distance of each ``cand`` row to ``bank``.
 
-        For ``metric='cosine'`` returns true cosine distance ``1 - cos_sim`` (so
-        ``novelty_dist`` is on the cosine scale the docstrings advertise): on
-        L2-normalised vectors the chord distance ``d`` satisfies
-        ``1 - cos_sim = d**2 / 2``.
+        For the cosine metric this is ``1 - cos_sim``, from the chord
+        distance ``d`` of L2-normalised vectors as ``d**2 / 2``.
+
+        Parameters
+        ----------
+        cand : numpy.ndarray, shape ``(K, P)``
+            Candidate embeddings.
+        bank : numpy.ndarray, shape ``(M, P)``
+            Reference embeddings.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(K,)``
+            Distances.
         """
         cosine = self.metric == "cosine"
         if cosine:
@@ -331,14 +432,27 @@ class HardMiningBank:
         return (d * d / 2.0) if cosine else d
 
     def add_embeddings(self, emb, scores, epoch):
-        """Distance-gated, capped append of a diverse, hard embedding subset.
+        """
+        Append the embeddings far enough from all kept ones.
 
-        ``emb`` are PCA-reduced embeddings (already filtered to scores >=
-        threshold by the caller).  A candidate is kept only if it is at least
-        ``novelty_dist`` from every existing bank embedding AND from the others
-        accepted this round (greedy).  When the bank would exceed
-        ``max_embeddings`` the lowest-score rows are dropped.
-        Returns the number of embeddings added.
+        Candidates are taken hardest first; one is kept if it is at
+        least ``novelty_dist`` from the bank and from those kept before
+        it. Then the lowest-score rows above ``max_embeddings`` are
+        dropped.
+
+        Parameters
+        ----------
+        emb : array-like, shape ``(K, P)``
+            PCA-reduced embeddings.
+        scores : array-like, shape ``(K,)``
+            Their ranking statistics.
+        epoch : int
+            Epoch of the mining round.
+
+        Returns
+        -------
+        int
+            Number of embeddings appended.
         """
         emb = np.asarray(emb, dtype=np.float32).reshape(-1, self.P)
         scores = np.asarray(scores, dtype=np.float32).reshape(-1)
@@ -371,7 +485,14 @@ class HardMiningBank:
             return len(accepted)
 
     def _enforce_cap(self, f):
-        """Drop lowest-score embeddings if over the soft cap (keep hardest)."""
+        """
+        Drop the lowest-score embeddings above ``max_embeddings``.
+
+        Parameters
+        ----------
+        f : h5py.File
+            The open bank.
+        """
         M = f["embeddings"].shape[0]
         if M <= self.max_embeddings:
             return
@@ -382,19 +503,35 @@ class HardMiningBank:
             f[name][:] = data
 
     def read_embeddings(self):
-        """Return ``(embeddings (M,P), scores (M,), epochs (M,))``."""
+        """
+        All banked embeddings.
+
+        Returns
+        -------
+        embeddings : numpy.ndarray, shape ``(M, P)``
+            Embeddings.
+        scores : numpy.ndarray, shape ``(M,)``
+            Their ranking statistics.
+        epochs : numpy.ndarray, shape ``(M,)``
+            Epochs they were added.
+        """
         with h5py.File(self.path, "r") as f:
             return f["embeddings"][:], f["emb_score"][:], f["emb_epoch"][:]
 
-    # ------------------------------------------------------------------ PCA io
-    # Fitted IncrementalPCA attributes that must round-trip so a reloaded model
-    # can both .transform() and continue .partial_fit() (sklearn's incremental
-    # SVD update reads singular_values_/components_/mean_/var_/n_samples_seen_).
+    # IncrementalPCA attributes stored so that a reloaded model can
+    # transform and continue partial_fit
     _PCA_ARRAYS = ("components_", "mean_", "var_", "singular_values_",
                    "explained_variance_", "explained_variance_ratio_")
 
     def save_pca(self, ipca):
-        """Persist a fitted sklearn IncrementalPCA (continuous across rounds)."""
+        """
+        Store a fitted IncrementalPCA, replacing the stored one.
+
+        Parameters
+        ----------
+        ipca : sklearn.decomposition.IncrementalPCA
+            Fitted model.
+        """
         with h5py.File(self.path, "a") as f:
             g = f.require_group("pca")
             for k in self._PCA_ARRAYS:
@@ -410,7 +547,14 @@ class HardMiningBank:
             g.attrs["noise_variance"] = float(getattr(ipca, "noise_variance_", 0.0))
 
     def load_pca(self):
-        """Reconstruct the persisted IncrementalPCA, or None if not yet fitted."""
+        """
+        The stored IncrementalPCA.
+
+        Returns
+        -------
+        sklearn.decomposition.IncrementalPCA or None
+            The model, or ``None`` if none is stored.
+        """
         from sklearn.decomposition import IncrementalPCA
         with h5py.File(self.path, "r") as f:
             if "pca" not in f or "components_" not in f["pca"]:
@@ -427,13 +571,21 @@ class HardMiningBank:
             return ipca
 
     def active_start_indices(self, threshold):
-        """Indices whose LATEST re-eval ranking stat is >= ``threshold``.
+        """
+        Rows whose latest re-evaluation score is >= ``threshold``.
 
-        This is the set the sampler draws from: starts that are *currently* hard
-        under the latest model.  Nothing is removed from storage -- a start that
-        dropped below threshold is simply absent from this set, and reappears
-        automatically once a later re-eval lifts it back above threshold.
-        If no re-eval has run yet, every start is considered active.
+        Without a re-evaluation every row is active. Rows are never
+        removed; inactive rows can become active again.
+
+        Parameters
+        ----------
+        threshold : float
+            Lowest active score.
+
+        Returns
+        -------
+        numpy.ndarray of int64
+            Active row indices.
         """
         with h5py.File(self.path, "r") as f:
             N = f["start_times"].shape[0]
@@ -444,16 +596,24 @@ class HardMiningBank:
                 return np.arange(N, dtype=np.int64)
             latest = f["eval_stats"][:, R - 1]
         active = np.where(latest >= float(threshold))[0].astype(np.int64)
-        # NaN (start not yet scored in the latest round) fails >= -> excluded;
-        # that is correct: it has no current-model evidence of being hard.
+        # NaN (not scored in the latest round) fails >= and is excluded
         return active
 
     def latest_eval(self, indices=None):
-        """LATEST re-eval ranking stat, for ``indices`` (default: all starts).
+        """
+        Latest re-evaluation score of the given rows.
 
-        Returns NaN-free float32; rows never scored (or before any re-eval round)
-        come back as 0.0, which the focal replay weighting treats as the neutral
-        keep-threshold value rather than silently dropping them.
+        Non-finite scores, and all scores before a re-evaluation, are 0.
+
+        Parameters
+        ----------
+        indices : array-like of int or None
+            Bank rows; ``None`` is every row.
+
+        Returns
+        -------
+        numpy.ndarray of float32
+            Scores.
         """
         with h5py.File(self.path, "r") as f:
             N = f["start_times"].shape[0]
@@ -467,13 +627,24 @@ class HardMiningBank:
         latest = np.asarray(latest, dtype=np.float32)
         return np.nan_to_num(latest, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # ----------------------------------------------------- re-eval history io
     def append_eval(self, stats, model_epoch):
-        """Add one re-evaluation column: the current model's ranking stat for
-        EVERY start in the bank, tagged with the model epoch that produced it.
+        """
+        Append one re-evaluation column, tagged with the model epoch.
 
-        ``stats`` must have length == current ``n_starts``.  Rows that did not
-        exist in earlier rounds are back-filled with NaN.
+        Rows beyond the current ``eval_stats`` rows get NaN in earlier
+        columns.
+
+        Parameters
+        ----------
+        stats : array-like, shape ``(N,)``
+            Score of every banked start.
+        model_epoch : int
+            Epoch of the model that scored them.
+
+        Raises
+        ------
+        ValueError
+            If ``stats`` is shorter than ``eval_stats``.
         """
         stats = np.asarray(stats, dtype=np.float32).reshape(-1)
         with h5py.File(self.path, "a") as f:
@@ -482,7 +653,7 @@ class HardMiningBank:
             n = len(stats)
             if n < N:
                 raise ValueError(f"eval stats {n} < n_starts {N}")
-            # grow rows (new starts get NaN for past columns)
+            # New starts get NaN in the earlier columns
             if n > N:
                 es.resize(n, axis=0)
                 if R > 0:
@@ -492,20 +663,23 @@ class HardMiningBank:
             self._append(f["eval_model_epoch"], np.array([int(model_epoch)], np.int32))
 
     def hard_sample_ages(self, threshold):
-        """Per-start hardness *longevity*, derived from the persisted re-eval
-        history (``start_found_epoch`` + ``eval_stats`` + ``eval_model_epoch``).
+        """
+        How long each start has scored >= ``threshold``.
 
-        "Age" = how long a start has stayed at/above ``threshold``. Windows that
-        remain hard for a very long time (large ``streak_rounds``, or found long
-        ago yet ``currently_active``) are the interesting ones to study. Returns a
-        length-``n_starts`` structured array (empty if the bank is cold):
+        Parameters
+        ----------
+        threshold : float
+            Lowest score counted as hard.
 
-          found_epoch          : mine epoch the window was first found
-          first/last_active_epoch : model epoch it first/last scored >= threshold
-          n_active_rounds      : total re-eval rounds it was >= threshold
-          streak_rounds        : consecutive most-recent rounds it stayed hard
-          age_epochs           : last_active_epoch - found_epoch (span it stayed hard)
-          currently_active     : >= threshold in the latest round
+        Returns
+        -------
+        numpy.ndarray
+            Structured array of length ``n_starts`` with fields
+            ``found_epoch``, ``first_active_epoch``,
+            ``last_active_epoch`` (model epochs, -1 if never hard),
+            ``n_active_rounds``, ``streak_rounds`` (trailing hard
+            rounds), ``age_epochs`` (last active minus found, -1 if
+            never hard) and ``currently_active``.
         """
         dt = np.dtype([("found_epoch", "i4"), ("first_active_epoch", "i4"),
                        ("last_active_epoch", "i4"), ("n_active_rounds", "i4"),
@@ -522,9 +696,9 @@ class HardMiningBank:
                    else np.array([-1], np.int32))
         act = np.nan_to_num(es, nan=-np.inf) >= float(threshold)     # (N, R)
         anyact = act.any(1)
-        first_idx = np.argmax(act, axis=1)                            # first True col
-        last_idx = act.shape[1] - 1 - np.argmax(act[:, ::-1], axis=1)  # last True col
-        streak = np.cumprod(act[:, ::-1], axis=1).sum(1).astype(np.int32)  # trailing run
+        first_idx = np.argmax(act, axis=1)                            # first True
+        last_idx = act.shape[1] - 1 - np.argmax(act[:, ::-1], axis=1)  # last True
+        streak = np.cumprod(act[:, ::-1], axis=1).sum(1).astype(np.int32)  # trailing
         out = np.zeros(N, dtype=dt)
         out["found_epoch"] = found
         out["n_active_rounds"] = act.sum(1).astype(np.int32)

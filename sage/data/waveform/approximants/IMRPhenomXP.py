@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Batched IMRPhenomXP precessing-spin waveform: the IMRPhenomXPHM port
+restricted to the (2,2) co-precessing mode.
+
 Filename      : IMRPhenomXP.py
 Description   : Batched IMRPhenomXP precessing-spin waveform, the
                 IMRPhenomXPHM port restricted to the (2,2) mode
@@ -26,16 +29,8 @@ class IMRPhenomXP(IMRPhenomXPHM):
     Batched IMRPhenomXP precessing-spin waveform.
 
     IMRPhenomXPHM restricted to the (2,2) co-precessing mode; the l = 2
-    twist-up sums only the inertial m in [-2, 2].
-
-    Parameters
-    ----------
-    f : torch.Tensor, shape (B, F)
-        Frequency grid in Hz.
-    f_ref : torch.Tensor, shape (B, 1)
-        Reference frequency in Hz.
-    **kwargs
-        Forwarded to IMRPhenomXPHM.
+    twist-up sums only the inertial m in [-2, 2]. The constructor and
+    from_grid take the parameters of IMRPhenomXPHM.
     """
 
     # Only the (2,2) co-precessing mode is twisted up

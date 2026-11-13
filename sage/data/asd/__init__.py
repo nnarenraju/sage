@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Amplitude spectral density estimation, smoothing, line handling and
+reading of the fiducial ASDs.
+
 Filename        : __init__.py
 Description     : Amplitude spectral density estimation, smoothing and I/O.
 
@@ -24,11 +27,11 @@ Documentation: NULL
 
 Note on naming
 --------------
-Sage works in the ASD domain throughout.  The Welch estimator in
-:mod:`sage.dsp.welch` returns a PSD and :class:`~sage.data.primer.get_asds.EstimateASD`
-square-roots it once; from that point on every stored spectrum -- fiducial,
-recolour bank, per-segment bank -- is an amplitude spectral density in
-strain/sqrt(Hz).  The files on disk keep their historical ``*_psd*`` names so
+Sage works in the ASD domain throughout. The Welch estimator in
+:mod:`sage.dsp.welch` returns a PSD and
+:class:`~sage.data.asd.get_asds.EstimateASD` takes its square root once;
+every stored spectrum (fiducial, recolour bank, per-segment bank) is an
+ASD in strain/sqrt(Hz). Files on disk keep their ``*_psd*`` names so
 that existing data releases and run exports remain readable.
 """
 

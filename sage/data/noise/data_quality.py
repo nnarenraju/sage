@@ -1,8 +1,9 @@
-"""Time that noise must not be drawn from, per detector and observing run.
+"""
+Time that noise must not be drawn from, per detector and observing run.
 
-GWOSC time failing CBC Category 2 (and so Category 1) or holding hardware
-injections, and every span of exactly-zero strain (missing data written as
-zeros inside GWOSC's DATA segments).
+GWOSC time failing CBC Category 2 (and so Category 1) or holding
+hardware injections, and every span of exactly-zero strain (missing
+data written as zeros inside GWOSC's DATA segments).
 """
 
 import json
@@ -44,6 +45,11 @@ def get_segments(
     -------
     list of tuple of float
         Sorted segments.
+
+    Raises
+    ------
+    requests.HTTPError
+        If the request fails.
     """
     url = _GWOSC_TIMELINE_URL.format(run=run, flag=flag, start=start, duration=end - start)
     response = session.get(url, timeout=300)
@@ -84,10 +90,11 @@ def subtract(first: List[Interval], second: List[Interval]) -> List[Interval]:
 
 
 def bad_segments(run: str, detector: str) -> List[Interval]:
-    """Time of one detector failing CBC Category 2 or holding hardware injections.
+    """Time of a detector failing CBC CAT2 or with hardware injections.
 
-    Each GWOSC flag lists the time that passes, so the bad time is ``DATA``
-    minus it. Continuous-wave injections run throughout and are not counted.
+    Each GWOSC flag lists the time that passes, so the bad time is
+    ``DATA`` minus it. Continuous-wave injections run throughout and are
+    not counted.
 
     Parameters
     ----------
@@ -126,7 +133,18 @@ def bad_segments(run: str, detector: str) -> List[Interval]:
 
 
 def merge(intervals: List[Interval]) -> List[Interval]:
-    """Intervals sorted, with overlapping or touching ones joined."""
+    """Intervals sorted, with overlapping or touching ones joined.
+
+    Parameters
+    ----------
+    intervals : list of tuple of float
+        Intervals in any order.
+
+    Returns
+    -------
+    list of tuple of float
+        Sorted, non-overlapping intervals.
+    """
     merged = []
     for first, last in sorted(intervals):
         if merged and first <= merged[-1][1]:
@@ -137,7 +155,7 @@ def merge(intervals: List[Interval]) -> List[Interval]:
 
 
 def write_bad_time(path: Path, run: str, detector: str) -> None:
-    """Save ``bad_segments`` beside a strain file, with the flags they come from.
+    """Save ``bad_segments`` beside a strain file, with their flags.
 
     Parameters
     ----------
@@ -155,7 +173,9 @@ def write_bad_time(path: Path, run: str, detector: str) -> None:
 
 
 def read_bad_time(path: Path) -> List[Interval]:
-    """The bad time saved beside a strain file: ``write_bad_time`` and ``write_zero_runs`` joined.
+    """The bad time saved beside a strain file, zero runs included.
+
+    The intervals of ``write_bad_time`` and ``write_zero_runs`` merged.
 
     Parameters
     ----------
@@ -186,7 +206,9 @@ def read_bad_time(path: Path) -> List[Interval]:
 
 
 def zero_runs(path: Path) -> List[Interval]:
-    """GPS spans of exactly-zero samples in a strain file: missing data written as zeros.
+    """GPS spans of exactly-zero samples in a strain file.
+
+    Missing data is written as zeros.
 
     Parameters
     ----------
@@ -196,8 +218,8 @@ def zero_runs(path: Path) -> List[Interval]:
     Returns
     -------
     list of tuple of float
-        Sorted, non-overlapping ``[start, end)`` spans; a segment overlapping
-        any of them holds a zero.
+        Sorted, non-overlapping ``[start, end)`` spans; a segment
+        overlapping any of them holds a zero.
     """
     found = []
     for record in bar(json.loads(segments_file(path).read_text()), unit="piece"):
@@ -233,8 +255,8 @@ def noise_bad_segments(bins: List[str]) -> Dict[Tuple[str, str], List[Interval]]
     Parameters
     ----------
     bins : list of str
-        Noise ``.bin`` files, each with its ``_segments.json`` sidecar and
-        ``_bad_time.json``.
+        Noise ``.bin`` files, each with its ``_segments.json`` sidecar
+        and ``_bad_time.json``.
 
     Returns
     -------
@@ -251,14 +273,14 @@ def noise_bad_segments(bins: List[str]) -> Dict[Tuple[str, str], List[Interval]]
 def overlaps(
     starts: np.ndarray, ends: np.ndarray, bad: List[Interval]
 ) -> np.ndarray:
-    """Spans ``[start, end)`` that overlap any bad interval, even partly.
+    """Spans ``[start, end)`` overlapping any bad interval, even partly.
 
     Parameters
     ----------
     starts, ends : numpy.ndarray
         GPS start and end of each span.
     bad : list of tuple of float
-        Output of ``bad_segments``.
+        Sorted, non-overlapping bad intervals (``read_bad_time``).
 
     Returns
     -------
@@ -268,8 +290,8 @@ def overlaps(
     if not bad:
         return np.zeros(len(starts), dtype=bool)
 
-    # The first bad interval ending after a span starts overlaps it if it
-    # begins before the span ends.
+    # The first bad interval ending after a span starts overlaps it if
+    # it begins before the span ends
     bad_starts, bad_ends = np.array(bad, dtype=float).T
     first = np.searchsorted(bad_ends, starts, side="right")
     hit = first < len(bad)
@@ -286,7 +308,7 @@ def clean(records: List[dict], bad: List[Interval]) -> np.ndarray:
         Segment sidecar records with ``gps_start``, ``nsamples`` and
         ``sample_rate``.
     bad : list of tuple of float
-        Output of ``bad_segments``.
+        Sorted, non-overlapping bad intervals (``read_bad_time``).
 
     Returns
     -------

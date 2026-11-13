@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Normalising-flow generative model for detector ASDs in spline
+coefficient space.
+
 Filename        : generate_asd.py
 Description     : Normalising-flow generative model for detector ASDs.
 
@@ -38,30 +41,20 @@ logger = logging.getLogger(__name__)
 
 class ASDGenerator:
     """
-    Normalising-flow-based ASD generative model trained in log-spline space.
+    Normalising-flow generative model of ASD spline coefficients.
 
-    Fits a masked autoregressive flow (MAF, implemented via ``nflows``) to the
-    spline coefficients of real measured ASDs.  Once trained, the flow can
-    generate novel plausible ASD realisations by sampling from the latent
-    Gaussian and inverting through the learned transform.
-
-    The overall pipeline is:
-
-    1. Represent each real ASD as a set of log-spline coefficients (using
-       :class:`~sage.data.asd.smoothing.LogSplineSmoothing`).
-    2. Fit the MAF on those coefficients (:meth:`build_flow`,
-       :meth:`train_flow`).
-    3. Sample new coefficient vectors from the flow and reconstruct ASDs via
-       :meth:`spline_to_asd`.
+    A masked autoregressive flow (``nflows``) is fitted to spline
+    coefficients of measured ASDs; samples from the flow are mapped back
+    to ASDs by :meth:`spline_to_asd`.
 
     Parameters
     ----------
     spline_coeffs : numpy.ndarray, shape ``(N_asd, num_spline_coeffs)``
-        Matrix of spline coefficients from the training ASDs.
+        Spline coefficients of the training ASDs.
     num_layers : int
-        Number of autoregressive transform layers (default ``5``).
+        Number of autoregressive transform layers.
     hidden_features : int
-        Hidden-layer width in each MADE block (default ``64``).
+        Hidden-layer width of each autoregressive transform.
     """
 
     def __init__(
@@ -81,7 +74,7 @@ class ASDGenerator:
         self.num_coeffs = self.spline_coeffs.shape[1]
 
     def build_flow(self):
-        """Build normalising flow in spline coefficient space."""
+        """Build the flow over the spline coefficients."""
         transforms = []
         for _ in range(self.num_layers):
             transforms.append(
@@ -98,7 +91,7 @@ class ASDGenerator:
         )
 
     def train_flow(self):
-        """Train the flow on spline coefficients."""
+        """Train the flow by maximum likelihood with Adam."""
         optimizer = torch.optim.Adam(self.flow.parameters(), lr=self.learning_rate)
         dataset = TensorDataset(self.spline_coeffs)
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
@@ -124,13 +117,24 @@ class ASDGenerator:
         """
         Convert spline coefficients to ASD values.
 
-        Args:
-            coeffs: (num_spline_coeffs,) or (N_samples, num_spline_coeffs)
-            freqs: frequency array corresponding to the ASD
-            smoothing_spline: optional UnivariateSpline object to reconstruct the ASD
+        The log ASD is the spline evaluated at ``len(freqs)`` points
+        evenly spaced over the coefficient index range.
 
-        Returns:
-            asd: (len(freqs),) or (N_samples, len(freqs))
+        Parameters
+        ----------
+        coeffs : numpy.ndarray
+            Shape ``(num_spline_coeffs,)`` or
+            ``(N_samples, num_spline_coeffs)``.
+        freqs : numpy.ndarray
+            Frequencies of the ASD; only their number is used.
+        smoothing_spline : callable or None
+            Spline evaluated instead of an interpolating spline through
+            ``coeffs``.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(N_samples, len(freqs))``
+            ASDs; ``N_samples`` is 1 for a single coefficient vector.
         """
         from scipy.interpolate import UnivariateSpline
 
@@ -138,7 +142,6 @@ class ASDGenerator:
         asds = []
         for c in coeffs:
             if smoothing_spline is None:
-                # default: reconstruct spline from coefficients
                 spline = UnivariateSpline(range(len(c)), c, s=0)
             else:
                 spline = smoothing_spline
@@ -147,7 +150,21 @@ class ASDGenerator:
         return np.array(asds)
 
     def sample_asds(self, nsamples: int, freqs: np.ndarray) -> np.ndarray:
-        """Sample new ASDs from the trained flow."""
+        """
+        Sample new ASDs from the trained flow.
+
+        Parameters
+        ----------
+        nsamples : int
+            Number of ASDs.
+        freqs : numpy.ndarray
+            Frequencies of the ASD (see :meth:`spline_to_asd`).
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(nsamples, len(freqs))``
+            Sampled ASDs.
+        """
         self.flow.eval()
         with torch.no_grad():
             z = self.base_dist.sample((nsamples,))

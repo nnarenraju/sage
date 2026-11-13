@@ -1,22 +1,10 @@
 """
-IMRPhenomX multibanding grid, ported from ``LALSimIMRPhenomXHM_multiband.c``
-(LALSimulation 6.1.0; arXiv:2001.10897).
+IMRPhenomX multibanding grid, ported from
+``LALSimIMRPhenomXHM_multiband.c`` (LALSimulation 6.1.0).
 
-Each function reproduces its C counterpart operation for operation (same
-arithmetic, order and branches), so with LAL's inputs the results equal LAL's
-bit for bit:
-
-    grid_comp            XLALSimIMRPhenomXGridComp
-    multibanding_grid    XLALSimIMRPhenomXMultibandingGrid
-    merger_bin           deltaF_mergerBin
-    ringdown_bin         deltaF_ringdownBin
-    df_coefficient       dfcoefficient of IMRPhenomXHMMultiBandOneMode
-    grid_arguments_22    the 22-mode grid arguments of IMRPhenomXHMMultiBandOneMode
-    coarse_frequencies   its coarse frequency array
-
-A sub-grid is a dict with the fields of ``IMRPhenomXMultiBandingGridStruct``:
-``n_intervals``, ``length``, ``int_df_ratio``, ``x_start``, ``x_end_requested``,
-``x_end_from_x_start_dx``, ``x_max``, ``deltax``.
+Each function reproduces its C counterpart operation for operation, so
+with LAL's inputs the results equal LAL's bit for bit. A sub-grid is a
+dict with the fields of ``IMRPhenomXMultiBandingGridStruct``.
 """
 
 import math
@@ -31,19 +19,66 @@ INT4_MAX = 2**31 - 1
 
 
 def _int4(value: float) -> int:
-    """The C ``(int)`` cast of an already rounded value; outside INT4 it is undefined, so refuse."""
+    """
+    The C ``(int)`` cast of an already rounded value.
+
+    Parameters
+    ----------
+    value : float
+        Rounded value.
+
+    Returns
+    -------
+    int
+        ``value`` as an integer.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is outside INT4, where the C cast is undefined.
+    """
     if not -INT4_MAX - 1 <= value <= INT4_MAX:
         raise ValueError(f"{value!r} overflows LAL's INT4 conversion (undefined in the C)")
     return int(value)
 
 
 def hz_to_mf(f_hz: float, mtot: float) -> float:
-    """XLALSimIMRPhenomXUtilsHztoMf: ``f_hz`` in units of the total mass ``mtot`` (solar masses)."""
+    """
+    XLALSimIMRPhenomXUtilsHztoMf: frequency in units of the total mass.
+
+    Parameters
+    ----------
+    f_hz : float
+        Frequency in Hz.
+    mtot : float
+        Total mass in solar masses.
+
+    Returns
+    -------
+    float
+        Dimensionless frequency Mf.
+    """
     return f_hz * (GM * mtot)
 
 
 def grid_comp(f_start: float, f_end: float, mydf: float) -> dict:
-    """XLALSimIMRPhenomXGridComp: equally spaced sub-grid from ``f_start`` past ``f_end`` (Mf)."""
+    """
+    XLALSimIMRPhenomXGridComp: equally spaced sub-grid past ``f_end``.
+
+    Parameters
+    ----------
+    f_start : float
+        Start of the sub-grid (Mf).
+    f_end : float
+        Requested end of the sub-grid (Mf).
+    mydf : float
+        Spacing (Mf).
+
+    Returns
+    -------
+    dict
+        The sub-grid, without ``int_df_ratio``.
+    """
     delta_f = f_end - f_start
     n_coarse_intervals = _int4(math.ceil(delta_f / mydf))
     max_freq = f_start + mydf * n_coarse_intervals
@@ -59,7 +94,23 @@ def grid_comp(f_start: float, f_end: float, mydf: float) -> dict:
 
 
 def _spacing(df0_original: float, eval_dmf: float) -> tuple:
-    """The (mydf, intdfRatio) choice repeated in XLALSimIMRPhenomXMultibandingGrid."""
+    """
+    The (mydf, intdfRatio) choice of XLALSimIMRPhenomXMultibandingGrid.
+
+    Parameters
+    ----------
+    df0_original : float
+        Wanted spacing (Mf).
+    eval_dmf : float
+        Spacing of the uniform frequency grid (Mf).
+
+    Returns
+    -------
+    tuple
+        ``(mydf, int_df_ratio)``: ``eval_dmf`` and 1 if the wanted
+        spacing is finer, else the largest multiple of ``eval_dmf`` not
+        above it and that multiple.
+    """
     if df0_original < eval_dmf:
         return eval_dmf, 1
     int_df_ratio = _int4(math.floor(df0_original / eval_dmf))
@@ -78,7 +129,7 @@ def multibanding_grid(
     df_ringdown: float,
 ) -> list:
     """
-    XLALSimIMRPhenomXMultibandingGrid: the non-uniform coarse frequency grid.
+    XLALSimIMRPhenomXMultibandingGrid: the non-uniform coarse grid.
 
     Parameters
     ----------
@@ -102,7 +153,7 @@ def multibanding_grid(
     list of dict
         The sub-grids, in frequency order.
     """
-    # Before any sub-grid exists the C reads only these two fields of coarseGrid.
+    # Before any sub-grid exists the C reads only these two fields
     coarse_grid = {"x_max": fstart_in}
     df_ratio = df_coefficient * math.pow(fstart_in, df_power) / eval_dmf
     df0_original = df_ratio * eval_dmf
@@ -155,7 +206,8 @@ def multibanding_grid(
         f_end_insp = coarse_grid["x_max"]
 
     if n_merger_grid > 0:
-        # The Lorentzian's spacing, unless twice the spacing before the merger is finer.
+        # The Lorentzian's spacing, unless twice the spacing before the
+        # merger is finer
         df0_original = df_merger
         if 2 * coarse_grid["deltax"] < df_merger:
             df0_original = 2 * coarse_grid["deltax"]
@@ -186,13 +238,49 @@ def multibanding_grid(
 
 
 def merger_bin(fdamp: float, alpha4: float, abserror: float) -> float:
-    """deltaF_mergerBin: merger sub-grid spacing (eq. 2.27 of arXiv:2001.10897)."""
+    """
+    deltaF_mergerBin: merger sub-grid spacing.
+
+    Parameters
+    ----------
+    fdamp : float
+        Damping frequency (Mf).
+    alpha4 : float
+        Lorentzian phase coefficient.
+    abserror : float
+        Error threshold.
+
+    Returns
+    -------
+    float
+        Spacing (Mf).
+    """
     aux = math.sqrt(math.sqrt(3.0) * 3)
     return 4.0 * fdamp * math.sqrt(abserror / abs(alpha4)) / aux
 
 
 def ringdown_bin(fdamp: float, alpha4: float, lambda_: float, abserror: float) -> float:
-    """deltaF_ringdownBin: ringdown sub-grid spacing (eqs. 2.28, 2.31 of arXiv:2001.10897)."""
+    """
+    deltaF_ringdownBin: ringdown sub-grid spacing.
+
+    The smaller of the phase and amplitude spacings.
+
+    Parameters
+    ----------
+    fdamp : float
+        Damping frequency (Mf).
+    alpha4 : float
+        Lorentzian phase coefficient.
+    lambda_ : float
+        Ringdown amplitude decay coefficient.
+    abserror : float
+        Error threshold.
+
+    Returns
+    -------
+    float
+        Spacing (Mf).
+    """
     dfphase = 5 * fdamp * math.sqrt(abserror * 0.5 / abs(alpha4))
     dfamp = math.sqrt(2 * abserror) / abs(lambda_)
     if dfphase <= dfamp:
@@ -201,7 +289,23 @@ def ringdown_bin(fdamp: float, alpha4: float, lambda_: float, abserror: float) -
 
 
 def df_coefficient(emm: int, res_test: float, eta: float) -> float:
-    """dfcoefficient of IMRPhenomXHMMultiBandOneMode (eqs. 2.8, 2.9 of arXiv:2001.10897)."""
+    """
+    dfcoefficient of IMRPhenomXHMMultiBandOneMode.
+
+    Parameters
+    ----------
+    emm : int
+        Azimuthal index m of the mode.
+    res_test : float
+        Error threshold.
+    eta : float
+        Symmetric mass ratio.
+
+    Returns
+    -------
+    float
+        Coefficient of the inspiral spacing law.
+    """
     m_one_sixth = 1.0 / math.pow(math.pi, 1.0 / 6.0)  # powers_of_lalpi.m_one_sixth
     cbrt_emm = float(np.cbrt(float(emm)))
     return (
@@ -225,8 +329,9 @@ def grid_arguments_22(
     res_test: float,
 ) -> dict:
     """
-    Arguments of :func:`multibanding_grid` for the 22 mode, as
-    IMRPhenomXHMMultiBandOneMode sets them from the waveform struct.
+    Arguments of :func:`multibanding_grid` for the 22 mode.
+
+    As IMRPhenomXHMMultiBandOneMode sets them from the waveform struct.
 
     Parameters
     ----------
@@ -264,8 +369,10 @@ def grid_arguments_22(
 
 def coarse_frequencies(grids: list, eval_dmf: float, mf_max: float, mtot: float) -> tuple:
     """
-    The coarse frequency array of IMRPhenomXHMMultiBandOneMode: sub-grids up to
-    the first that reaches ``mf_max``, the last extended until it does.
+    The coarse frequency array of IMRPhenomXHMMultiBandOneMode.
+
+    Sub-grids up to the first that reaches ``mf_max``, the last extended
+    until it does.
 
     Parameters
     ----------
@@ -280,15 +387,16 @@ def coarse_frequencies(grids: list, eval_dmf: float, mf_max: float, mtot: float)
     -------
     used : list of dict
         The sub-grids used, the last one extended.
-    points : np.ndarray
+    points : numpy.ndarray
         Coarse frequencies in Mf (``IntLawpoints``).
-    freqs : np.ndarray
+    freqs : numpy.ndarray
         Coarse frequencies in Hz (``coarseFreqs``).
 
     Raises
     ------
     ValueError
-        If there is no sub-grid, or more than LAL allocates (both undefined in the C).
+        If there is no sub-grid, or more than LAL allocates (both
+        undefined in the C).
     """
     if not grids or len(grids) > MAX_GRIDS:
         raise ValueError(

@@ -2,6 +2,10 @@
 #!/usr/bin/env python
 
 """
+Reproducible coloured Gaussian noise of the MLGWSC-1 datasets, adapted
+from MLGWSC-1 ``generate_data.py`` and PyCBC
+``pycbc.noise.reproduceable``.
+
 Filename        = Foobar.py
 Description     = Lorem ipsum dolor sit amet
 
@@ -23,46 +27,45 @@ Documentation: NULL
 
 """
 
-# IN-BUILT
 import numpy as np
 from numpy.random import RandomState
 
-# PyCBC handling
 from pycbc.types import TimeSeries
 
 from sage.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# This constant need to be constant to be able to recover identical results.
+# This constant need to be constant to be able to recover identical
+# results (PyCBC).
 BLOCK_SAMPLES = 1638400
 
 class NoiseGenerator(object):
     """
-    Legacy MLGWSC-1 noise generator using PyCBC-coloured Gaussian noise.
+    MLGWSC-1 noise generator: Gaussian noise coloured by an ASD.
 
-    Generates noise coloured by amplitude spectral densities (ASDs) for a
-    given dataset type (D1–D4 of MLGWSC-1), reproducing the exact noise model
-    used in the challenge.  Noise is generated per-detector with seeded
-    reproducibility via NumPy's ``RandomState``.
+    Each detector has its own seed, drawn from ``seed`` with NumPy's
+    ``RandomState``; for datasets 2-4 each call draws an ASD per
+    detector from ``asds``.
 
     Parameters
     ----------
-    dataset : str
-        Dataset identifier (e.g. ``"D1"``, ``"D2"``, ``"D3"``, ``"D4"``).
+    dataset : int
+        MLGWSC-1 dataset, 1 to 4.
     seed : int
-        Master random seed (default ``42``).
+        Seed of the per-detector seeds and the ASD draws.
     delta_f : float
-        PSD frequency resolution in Hz (default ``0.04``).
+        Frequency resolution (Hz); the colouring filter lasts
+        ``1 / delta_f`` seconds.
     sample_rate : float
-        Sample rate in Hz (default ``2048.0``).
+        Sample rate (Hz).
     low_frequency_cutoff : float
-        High-pass cutoff; PSD bins below this are zeroed (default ``15``).
-    detectors : list[str]
-        Detector names (default ``['H1', 'L1']``).
+        Stored; not used.
+    detectors : list of str
+        Detector names.
     asds : dict or None
-        Pre-loaded ASD objects; if ``None`` they are computed from the
-        dataset type.
+        Per detector, the ASDs (``pycbc.types.FrequencySeries``) drawn
+        from for datasets 2-4.
     """
 
     def __init__(self, dataset, seed=42, delta_f=0.04,
@@ -87,21 +90,26 @@ class NoiseGenerator(object):
     
     def get(self, start, end, generate_duration=None):
         """
-        Generate coloured noise for all detectors for the requested GPS interval.
+        Coloured noise of every detector over a GPS interval.
 
         Parameters
         ----------
         start, end : float
-            GPS start and end times (seconds).
+            GPS start and end times (s).
         generate_duration : float or None
-            Unused override for duration (kept for interface compatibility).
+            Not used.
 
         Returns
         -------
-        dict[str, pycbc.TimeSeries]
-            Per-detector coloured-noise time-series.
+        dict of str to pycbc.types.TimeSeries
+            Noise per detector.
+
+        Raises
+        ------
+        RuntimeError
+            If the dataset is not 1 to 4.
         """
-        # Get noise PSD data for a given dataset type
+        # ASD of each detector for the dataset
         keys = {}
         
         if self.dataset == 1:
@@ -135,31 +143,33 @@ class NoiseGenerator(object):
                   seed=42, sample_rate=2048.,
                   filter_duration=128):
         
-        """ Create noise from a PSD
-    
-        Return noise from the chosen PSD. Note that if unique noise is desired
-        a unique seed should be provided.
-    
+        """
+        Gaussian noise coloured by an ASD (PyCBC ``colored_noise``).
+
+        White noise padded by ``filter_duration`` on each side is
+        multiplied by the ASD in the frequency domain, then cut to the
+        interval. Unique noise needs a unique seed.
+
         Parameters
         ----------
         asd : pycbc.types.FrequencySeries
-            ASD to color the noise
+            ASD that colours the noise.
         start_time : int
-            Start time in GPS seconds to generate noise
+            Start time in GPS seconds.
         end_time : int
-            End time in GPS seconds to generate noise
-        seed : {None, int}
-            The seed to generate the noise.
-        sample_rate: {16384, float}
-            The sample rate of the output data. Keep constant if you want to
-            ensure continuity between disjoint time spans.
-        filter_duration : {128, float}
-            The duration in seconds of the coloring filter
-    
+            End time in GPS seconds.
+        seed : int
+            Seed of the white noise.
+        sample_rate : float
+            Sample rate of the output. Keep constant to ensure
+            continuity between disjoint time spans.
+        filter_duration : float
+            Duration in seconds of the colouring filter.
+
         Returns
-        --------
-        noise : TimeSeries
-            A TimeSeries containing gaussian noise colored by the given psd.
+        -------
+        pycbc.types.TimeSeries
+            Gaussian noise coloured by the ASD.
         """
         
         white_noise = self.normal(start_time - filter_duration,
@@ -168,7 +178,8 @@ class NoiseGenerator(object):
                                   sample_rate=sample_rate)
         white_noise = white_noise.to_frequencyseries()
         
-        # Here we color. Do not want to duplicate memory here though so use '*='
+        # Here we color. Do not want to duplicate memory here though so
+        # use '*='
         white_noise *= asd
         del asd
         colored = white_noise.to_timeseries(delta_t=1.0/sample_rate)
@@ -177,27 +188,32 @@ class NoiseGenerator(object):
     
     
     def normal(self, start, end, sample_rate=2048., seed=0):
-        """ Generate data with a white Gaussian (normal) distribution
-    
+        """
+        White Gaussian noise over a GPS interval (PyCBC ``normal``).
+
+        Built from fixed-length blocks seeded from ``seed`` and the
+        block index, so the same interval always gives the same noise.
+
         Parameters
         ----------
-        start_time : int
-            Start time in GPS seconds to generate noise
-        end_time : int
-            End time in GPS seconds to generate noise
-        sample-rate: float
-            Sample rate to generate the data at. Keep constant if you want to
-            ensure continuity between disjoint time spans.
-        seed : {None, int}
-            The seed to generate the noise.
-    
+        start : int
+            Start time in GPS seconds.
+        end : int
+            End time in GPS seconds.
+        sample_rate : float
+            Sample rate. Keep constant to ensure continuity between
+            disjoint time spans.
+        seed : int
+            Seed of the noise.
+
         Returns
-        --------
-        noise : TimeSeries
-            A TimeSeries containing gaussian noise
+        -------
+        pycbc.types.TimeSeries
+            White Gaussian noise.
         """
         
-        # This is reproduceable because we used fixed seeds from known values
+        # This is reproduceable because we used fixed seeds from known
+        # values
         block_dur = BLOCK_SAMPLES / sample_rate
         s = int(np.floor(start / block_dur))
         e = int(np.floor(end / block_dur))
@@ -214,19 +230,20 @@ class NoiseGenerator(object):
     
     
     def block(self, seed, sample_rate):
-        """ Return block of normal random numbers
-    
+        """
+        One block of normal random numbers (PyCBC ``block``).
+
         Parameters
         ----------
-        seed : {None, int}
-            The seed to generate the noise.sd
-        sample_rate: float
-            Sets the variance of the white noise
-    
+        seed : int
+            Seed of the block, taken modulo ``2**32``.
+        sample_rate : float
+            Sets the variance, ``sample_rate / 2``.
+
         Returns
-        --------
-        noise : numpy.ndarray
-            Array of random numbers
+        -------
+        numpy.ndarray, shape ``(BLOCK_SAMPLES,)``
+            Normal random numbers.
         """
         num = BLOCK_SAMPLES
         rng = RandomState(seed % 2**32)

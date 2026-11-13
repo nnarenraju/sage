@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Mass conversion used as a waveform transform by the prior sampler.
+
 Filename        : conversions.py
 Description     : Short description of the file
 
@@ -23,7 +25,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 from sage.core.conversions import mchirp_from_mass1_mass2
@@ -36,14 +37,15 @@ def mass1_mass2_to_mchirp_q(m1, m2):
     Parameters
     ----------
     m1 : float or torch.Tensor
-        Primary mass (must be >= m2).
+        Primary mass.
     m2 : float or torch.Tensor
         Secondary mass.
 
     Returns
     -------
     mchirp : same type as input
-        Chirp mass ``eta^(3/5) (m1 + m2)``, as ``pycbc.conversions.mchirp_from_mass1_mass2``.
+        Chirp mass ``eta^(3/5) (m1 + m2)``, as
+        ``pycbc.conversions.mchirp_from_mass1_mass2``.
     q : same type as input
         Mass ratio ``m1 / m2`` (>= 1 when m1 >= m2).
     """

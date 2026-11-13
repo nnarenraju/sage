@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+GWOSC segment queries: run, detector and event lists, and a timeline
+of data segments per detector, pruned and split into mini-segments.
+
 Filename        : get_segments.py
 Description     : Short description of the file
 
@@ -23,13 +26,10 @@ Documentation: NULL
 
 """
 
-
-# GWOSC API
 from gwosc.timeline import get_segments
 from gwosc.datasets import run_segment, run_at_gps, find_datasets
 from gwosc.api import fetch_allevents_json as _fetch_allevents_json
 
-# General
 import time
 import numpy as np
 import requests
@@ -39,7 +39,6 @@ from urllib3.util.retry import Retry
 from itertools import product
 from typing import Union, List, Sequence
 
-# LOCAL
 from sage.core.hardcode import _GWOSC_HOST
 from sage.core.errors import safe_call
 from sage.core.utils import to_sequence
@@ -47,62 +46,81 @@ from sage.core.typing import SEGMENT_DTYPE
 from sage.core.logger import get_logger
 from sage.core.hardcode import _DETECTORS, _check_detector_prefixes
 
-# Importing a module must not configure logging for the whole process -- that
-# is the caller's decision. Whoever runs this calls sage.core.logger.setup_logging().
+# Logging is configured by the caller (sage.core.logger.setup_logging)
 logger = get_logger(__name__)
 
 
 def get_all_detnames():
-    """Return all detector names for reference"""
+    """
+    Detector prefixes known to Sage.
+
+    Returns
+    -------
+    sequence of str
+        ``_DETECTORS``.
+    """
     return _DETECTORS
 
 
 def get_all_runnames():
-    """Return all run names for reference"""
+    """
+    Observing-run names on GWOSC.
+
+    Returns
+    -------
+    list of str
+        ``gwosc.datasets.find_datasets(type="run")``.
+    """
     return find_datasets(type="run")
 
 
 def get_all_events():
-    """Return all events as JSON from GWOSC"""
+    """
+    GWOSC's full event list.
+
+    Returns
+    -------
+    dict
+        The allevents JSON, with every event under ``"events"``.
+    """
     return _fetch_allevents_json(full=True, host=_GWOSC_HOST)
 
 
 class TimelineQuery:
     """
-    GWOSC segment query engine with multi-case dispatch.
+    GWOSC data segments for given runs, times, flags and detectors.
 
-    Accepts any combination of detector names, observing-run labels, GPS
-    start/end, and data-quality (DQ) flags and routes to the appropriate GWOSC
-    API call via a ``match`` statement (14 supported input combinations).
-
-    Results are stored in :attr:`timeline` as a NumPy structured array with
-    dtype :data:`~sage.core.typing.SEGMENT_DTYPE`.  Use :meth:`download_segments`
-    to populate the timeline, then optionally :meth:`prune_segments` to remove
-    known events or short segments.
+    :meth:`download_segments` fills :attr:`timeline`;
+    :meth:`prune_segments` and :meth:`split_into_mini_segments` then
+    remove events or short segments and split the rest.
 
     Parameters
     ----------
-    detector : str or list[str] or None
-        Detector prefix(es) to query (e.g. ``"H1"``, ``["H1", "L1"]``).
-    observing_run : str or list[str] or None
-        LIGO observing-run label(s) (e.g. ``"O3a"``, ``"O3b"``).
-    start, end : float or list[float] or None
+    detector : str or list of str
+        Detector prefixes (e.g. ``"H1"``, ``["H1", "L1"]``).
+    observing_run : str or list of str or None
+        Observing-run labels (e.g. ``"O3a"``, ``"O3b"``).
+    start, end : float or None
         GPS start and end times bounding the query.
-    dq_flag : str or list[str] or None
-        Data-quality flag(s) to query (e.g. ``"H1_DATA"``).
+    dq_flag : str or list of str or None
+        Data-quality flags to query (e.g. ``"H1_DATA"``).
     auto_clean_empty_timelines : bool
-        If ``True``, automatically remove records with empty segment lists
-        after :meth:`download_segments` (default ``False``).
+        Remove records without segments after
+        :meth:`download_segments`.
 
     Attributes
     ----------
-    timeline : list or np.ndarray (SEGMENT_DTYPE)
-        Populated after :meth:`download_segments`; structured array of
-        (detector, flag, start_time, end_time, observing_run, segments) rows.
+    timeline : list or numpy.ndarray of SEGMENT_DTYPE
+        Records of (detector, flag, start_time, end_time, observing_run,
+        segments); a structured array after :meth:`download_segments`.
+
+    Raises
+    ------
+    AssertionError
+        If a detector prefix is unknown.
     """
 
-    ## Static methods from sage.core
-    # Make input variables iterable (if not already)
+    # Wraps a scalar input in a tuple
     _to_seq = staticmethod(to_sequence)
 
     def __init__(
@@ -114,45 +132,32 @@ class TimelineQuery:
         dq_flag: Union[str, Sequence[str], None] = None,
         auto_clean_empty_timelines: bool = False,
     ):
-        """Retrieve segment details from GWOSC
-
-        Args:
-            observing_run (Union[str, Sequence[str], None]): {O1, O2, O3, ..., ON}
-                label for observing run
-            start (Union[float, int, Sequence[float], Sequence[int], None])
-                segment start GPS time
-            end (Union[float, int, Sequence[float], Sequence[int], None])
-                segment end GPS time
-            dq_flag (Union[str, Sequence[str], None])
-                data quality flag;
-                if None <DET>_DATA from all available <DET> returned
-        """
-
-        # Parameters for GWOSC query
         self.observing_run = self._to_seq(observing_run)
         self.start = start
         self.end = end
 
-        # if dq flag provided; detector not required
         self.data_quality_flag = self._to_seq(dq_flag)
-        # if det provided; only <DET>_data retrieved
         self.detector = self._to_seq(detector)
-        # SANITY CHECK: self.detector must be subset of _DETECTORS
         _check_detector_prefixes(self.detector)
 
-        # Structured array of segments as output
         self.timeline = []
         self.auto_clean = auto_clean_empty_timelines
 
     def extract_det_from_flag(self, flag: str, detectors=_DETECTORS):
-        """Return the detector prefix if the flag contains one, else None
+        """
+        Detector prefix contained in a data-quality flag.
 
-        Args:
-            flag (str): _description_
-            detectors (_type_, optional): _description_. Defaults to _DETECTORS.
+        Parameters
+        ----------
+        flag : str
+            Data-quality flag, e.g. ``"H1_DATA"``.
+        detectors : sequence of str
+            Prefixes to look for.
 
-        Returns:
-            _type_: _description_
+        Returns
+        -------
+        str
+            The first prefix found in ``flag``, else ``"NULL"``.
         """
         for det in detectors:
             if det in flag:
@@ -160,8 +165,8 @@ class TimelineQuery:
         return "NULL"
 
     def clean_empty_timelines(self):
-        """Remove timelines with empty segments"""
-        SEG_FIELDS = list(SEGMENT_DTYPE.fields.keys())  # get fieldnames
+        """Remove the records without segments from ``timeline``."""
+        SEG_FIELDS = list(SEGMENT_DTYPE.fields.keys())
         segments_idx = SEG_FIELDS.index("segments")
         det_idx = SEG_FIELDS.index("detector")
         run_idx = SEG_FIELDS.index("observing_run")
@@ -177,31 +182,36 @@ class TimelineQuery:
                 continue
             cleaned.append(row)
 
-        # Save cleaned list of records
         self.timeline = cleaned
         self._save_as_structured()
 
     def _save_as_structured(self):
-        """Save list of records as structured array"""
+        """Convert ``timeline`` to a SEGMENT_DTYPE structured array."""
         self.timeline = np.array(self.timeline, dtype=SEGMENT_DTYPE)
 
     def _get_segment_runspan(self, start, end):
-        """Get the observing runs spanned by start and end GPS times
+        """
+        Observing runs spanned by a GPS interval.
 
-        Args:
-            start (_type_): _description_
-            end (_type_): _description_
+        A span under a day gives the run at ``start``; a longer span is
+        sampled once a day.
 
-        Returns:
-            _type_: _description_
+        Parameters
+        ----------
+        start, end : float
+            GPS bounds of the interval.
+
+        Returns
+        -------
+        tuple of str
+            The runs found.
         """
         runs = set()
 
-        # If requested segment is very small
         if end - start < 86400:
             return (run_at_gps(start),)
 
-        # Assuming that the time between two runs < 1 day
+        # A run shorter than a day can fall between two samples
         logger.warning("Assuming that the time between consecutive runs is > 1 day!")
         for t in np.arange(start, end, step=86400):
             runs.add(run_at_gps(t))
@@ -209,12 +219,20 @@ class TimelineQuery:
         return tuple(runs)
 
     def _make_session(self, connect_retries=5):
-        """Return a requests.Session with urllib3-level retry for connection errors.
+        """
+        A requests Session that retries connection errors in urllib3.
 
-        gwosc's tenacity retry only handles requests.Timeout; RemoteDisconnected
-        and other ConnectionError subclasses bypass it and surface immediately.
-        A urllib3 Retry on the HTTPAdapter catches those at the socket level,
-        before gwosc's tenacity layer even sees the call.
+        gwosc's own retry handles only ``requests.Timeout``.
+
+        Parameters
+        ----------
+        connect_retries : int
+            Retries of each request, with backoff factor 2.
+
+        Returns
+        -------
+        requests.Session
+            Session with the retrying adapter on http and https.
         """
         session = requests.Session()
         retry = Retry(
@@ -231,10 +249,25 @@ class TimelineQuery:
         return session
 
     def _get_segments(self, flag, start, end, max_retries=10, base_delay=15):
-        """Safe call get_segments method from GWOSC with retry on failure.
+        """
+        GWOSC segments of a flag, retried with exponential backoff.
 
-        Retries up to max_retries times with exponential backoff starting at
-        base_delay seconds. Returns an empty array only after all retries fail.
+        Parameters
+        ----------
+        flag : str
+            Data-quality flag.
+        start, end : float
+            GPS bounds of the query.
+        max_retries : int
+            Number of attempts.
+        base_delay : float
+            Wait in seconds after the first failure, doubled each time.
+
+        Returns
+        -------
+        numpy.ndarray
+            Segments as ``(N, 2)`` GPS pairs; empty if every attempt
+            failed.
         """
         for attempt in range(max_retries):
             result = safe_call(
@@ -256,44 +289,50 @@ class TimelineQuery:
     def _download_segment_metadata(
         self, runs=None, start=None, end=None, dets=None, flags=None
     ):
-        """Common function to download segment metadata from GWOSC
+        """
+        Unimplemented; does nothing.
 
-        Args:
-            runs (_type_): _description_
-            start (_type_): _description_
-            end (_type_): _description_
-            dets (_type_, optional): _description_. Defaults to None.
-            flags (_type_, optional): _description_. Defaults to None.
+        Parameters
+        ----------
+        runs, start, end, dets, flags
+            Unused.
         """
         pass
 
     def _case_0_handle(self, runs):
-        """Handle case 0: Only observing runs provided
+        """
+        Case 0, runs only: <DET>_DATA of every detector in the runs.
 
-        Args:
-            runs (_type_): _description_
+        Parameters
+        ----------
+        runs : sequence of str
+            Observing runs.
         """
 
         logger.info(f"Getting all segments for runs in {runs} and all detectors")
-        # Get all available detectors in observing runs
         self._case_4_handle(runs, dets=_DETECTORS)
 
     def _case_1_handle(self, start, end):
-        """Handle case 1: Only start and end provided
+        """
+        Case 1, times only: <DET>_DATA of every detector.
 
-        Args:
-            start (_type_): _description_
-            end (_type_): _description_
+        Parameters
+        ----------
+        start, end : float
+            GPS bounds of the query.
         """
 
         logger.info(f"Getting all segments from <DET>_DATA from all detectors")
         self._case_5_handle(start, end, _DETECTORS)
 
     def _case_2_handle(self, flags):
-        """Handle case 2: Only flags provided
+        """
+        Case 2, flags only: the flags over all GPS times.
 
-        Args:
-            flags (_type_): _description_
+        Parameters
+        ----------
+        flags : sequence of str
+            Data-quality flags.
         """
 
         logger.info(f"Getting all segments for flag(s) {flags}")
@@ -303,10 +342,15 @@ class TimelineQuery:
         self._case_5_handle(start, end, dets=None, flags=flags)
 
     def _case_3_handle(self, dets):
-        """Handle case 3: Only dets provided
+        """
+        Case 3, detectors only: <DET>_DATA over all GPS times.
 
-        Args:
-            dets (_type_): _description_
+        Queries every detector in ``_DETECTORS``; ``dets`` is not used.
+
+        Parameters
+        ----------
+        dets : sequence of str
+            Detector prefixes.
         """
         logger.info(f"Getting all segments from <DET>_DATA for requested detectors")
         logger.warning("Only dets provided; this will likely download a lot of data!")
@@ -315,11 +359,18 @@ class TimelineQuery:
         self._case_5_handle(start, end, dets=_DETECTORS, flags=None)
 
     def _case_4_handle(self, runs, dets=None, flags=None):
-        """Handle case 4: Observing run and dets provided
+        """
+        Case 4, runs and detectors: each flag over each run's span.
 
-        Args:
-            runs (_type_): _description_
-            dets (_type_): _description_
+        Parameters
+        ----------
+        runs : sequence of str
+            Observing runs.
+        dets : sequence of str or None
+            Detector prefixes; their <DET>_DATA flags are used when
+            ``flags`` is None.
+        flags : sequence of str or None
+            Data-quality flags.
         """
 
         logger.info(
@@ -330,8 +381,7 @@ class TimelineQuery:
             flags = [f"{det}_DATA" for det in dets]
         for run, flag in product(runs, flags):
             run_start, run_end = run_segment(run)
-            # Handling timeout errors or non-existent detector
-            # If failure, return empty list
+            # An empty array if every query attempt fails
             det = self.extract_det_from_flag(flag)
             segments = self._get_segments(flag, run_start, run_end)
 
@@ -340,12 +390,18 @@ class TimelineQuery:
             )
 
     def _case_5_handle(self, start, end, dets=None, flags=None):
-        """Handle case 5: Segment start & end, dets provided
+        """
+        Case 5, times and detectors: each flag within each spanned run.
 
-        Args:
-            start (_type_): _description_
-            end (_type_): _description_
-            dets (_type_): _description_
+        Parameters
+        ----------
+        start, end : float
+            GPS bounds of the query.
+        dets : sequence of str or None
+            Detector prefixes; their <DET>_DATA flags are used when
+            ``flags`` is None.
+        flags : sequence of str or None
+            Data-quality flags.
         """
 
         logger.info(
@@ -353,21 +409,19 @@ class TimelineQuery:
             "for all detectors in the correct observing run"
         )
 
-        # What if the start and end span multiple runs?
         runs = self._get_segment_runspan(start, end)
         if flags == None:
             flags = [f"{det}_DATA" for det in dets]
 
         for run, flag in product(runs, flags):
 
-            # Handling the case of multiple runs
             if len(runs) != 1:
                 logger.warning(
                     f"Warning: start/end span multiple runs {runs}. "
                     "Segments will be retrieved per run."
                 )
 
-                # 3 conditions: start run, middle run, end run
+                # First, last or middle run of the span
                 if run == runs[0]:
                     run_start = start
                     run_end = run_segment(run)[1]
@@ -387,11 +441,13 @@ class TimelineQuery:
             )
 
     def _case_6_handle(self, flags):
-        """Handle case 6: Flags and dets provided (dets ignored)
+        """
+        Case 6, flags and detectors: case 2, the detectors ignored.
 
-        Args:
-            flags (_type_): _description_
-            dets (_type_): _description_
+        Parameters
+        ----------
+        flags : sequence of str
+            Data-quality flags.
         """
 
         logger.info(f"Getting all segments for flag {flags} and <DET>")
@@ -399,50 +455,58 @@ class TimelineQuery:
         self._case_2_handle(flags)
 
     def _case_7_handle(self, start, end):
-        """Handle case 7: Runs, start and end provided
+        """
+        Case 7, runs and times: as case 1; the runs are ignored.
 
-        Args:
-            start (_type_): _description_
-            end (_type_): _description_
+        Parameters
+        ----------
+        start, end : float
+            GPS bounds of the query.
         """
         logger.warning("Run information ignored")
         logger.info(f"Getting all segments from <DET>_DATA from all detectors")
         self._case_5_handle(start, end, _DETECTORS)
 
     def _case_8_handle(self, runs, flags):
-        """Handle case 8: Runs and flags provided
+        """
+        Case 8, runs and flags: each flag over each run's span.
 
-        Args:
-            runs (_type_): _description_
-            flags (_type_): _description_
+        Parameters
+        ----------
+        runs : sequence of str
+            Observing runs.
+        flags : sequence of str
+            Data-quality flags.
         """
         self._case_4_handle(runs, dets=None, flags=flags)
 
     def _case_9_handle(self, start, end, flags):
-        """Handle case 9: Segment start, end and flags provided
+        """
+        Case 9, times and flags: each flag within each spanned run.
 
-        Args:
-            start (_type_): _description_
-            end (_type_): _description_
-            flags (_type_): _description_
+        Parameters
+        ----------
+        start, end : float
+            GPS bounds of the query.
+        flags : sequence of str
+            Data-quality flags.
         """
         self._case_5_handle(start, end, flags=flags)
 
     def _save_and_clean(self):
-        """Clean up empty slots and save structured array"""
-        # Auto cleanup if requested
+        """Remove empty records if requested, then store as an array."""
         if self.auto_clean:
             self.clean_empty_timelines()
-        # Save list of records as structured array
         self._save_as_structured()
 
     def download_segments(self):
-        """Match cases of all possible download scenarios
-        We can write this in a super modular way without any redundancy
-        but this reduces readability quite a bit.
+        """
+        Query GWOSC for the combination of inputs into ``timeline``.
 
-        Raises:
-            ValueError: _description_
+        Raises
+        ------
+        ValueError
+            If the combination of inputs matches no case.
         """
         match (
             self.observing_run,
@@ -452,7 +516,7 @@ class TimelineQuery:
             self.detector,
         ):
 
-            ## --- Single option Cases ---
+            # Single-input cases
 
             # Case 0: Only observing run
             case (runs, None, None, None, None):
@@ -470,7 +534,7 @@ class TimelineQuery:
             case (None, None, None, None, dets):
                 self._case_3_handle(dets)
 
-            ## --- Two option Cases ---
+            # Two-input cases
 
             # Case 4: Observing run and dets
             case (runs, None, None, None, dets):
@@ -484,7 +548,7 @@ class TimelineQuery:
             case (None, None, None, flags, dets):
                 self._case_6_handle(flags)
 
-            # Case 7: Segment start & end and observing run (ignore runs)
+            # Case 7: Segment start & end and run (runs ignored)
             case (runs, start, end, None, None) if start and end:
                 self._case_7_handle(start, end)
 
@@ -492,11 +556,11 @@ class TimelineQuery:
             case (runs, None, None, flags, None):
                 self._case_8_handle(runs, flags)
 
-            # Case 9: Segment start & end
+            # Case 9: Segment start & end and data-quality flag
             case (None, start, end, flags, None) if start and end:
                 self._case_9_handle(start, end, flags)
 
-            ## --- Three/four option Cases ---
+            # Three- and four-input cases
 
             # Case 10: (runs, start, end, None, dets) (runs ignored)
             case (runs, start, end, None, dets) if start and end:
@@ -514,7 +578,7 @@ class TimelineQuery:
             case (runs, start, end, flags, None):
                 self._case_9_handle(start, end, flags)
 
-            # Case 14: (runs, start, end, flags, dets) (runs and dets ignored)
+            # Case 14: all inputs (runs and dets ignored)
             case (runs, start, end, flags, dets):
                 self._case_9_handle(start, end, flags)
 
@@ -527,36 +591,36 @@ class TimelineQuery:
                 logger.critical(error)
                 raise ValueError(error)
 
-        # Save structured array of records + clean empty records
         self._save_and_clean()
 
     def _subtract_windows_from_segments(self, segments, rm_windows):
-        """Remove rm_windows from segments
+        """
+        Segments with the given windows cut out.
 
-        Args:
-            segments (_type_): np.array of shape (N,2)
-            rm_windows (_type_): iterable of [start,end] windows to remove
+        Parameters
+        ----------
+        segments : numpy.ndarray, shape ``(N, 2)``
+            GPS ``[start, end]`` segments.
+        rm_windows : iterable
+            GPS ``[start, end]`` windows to remove.
 
-        Returns:
-            np.ndarray: new array of shape (M,2)
+        Returns
+        -------
+        numpy.ndarray, shape ``(M, 2)``
+            The remaining pieces.
         """
 
-        # Nothing to do if no segments
         if segments.size == 0:
             return segments
 
         pruned_segments = []
 
         for seg_start, seg_end in segments:
-            # This will be pruned and split soon
             remaining = [(seg_start, seg_end)]
 
-            # Check and prune rmwindow from segment
             for rm_start, rm_end in rm_windows:
-                # TMP store updated segment
                 updated = []
 
-                # Look at all three cases of pruning
                 for pruned_start, pruned_end in remaining:
 
                     # 1. No overlap
@@ -582,22 +646,24 @@ class TimelineQuery:
         self,
         rm_length,
     ):
-        """Remove all events from GWOSC and return updated segments
+        """
+        Cut ``[gps - rm_length, gps + rm_length]`` around each event.
 
-        Args:
-            rm_length (_type_): _description_
+        The events are GWOSC's full event list.
+
+        Parameters
+        ----------
+        rm_length : float
+            Half-width of the cut window in seconds.
         """
         logger.info(f"Removing all events (obtained from GWOSC) from segments")
         logger.info(f"[event_gps - rm_length, event_gps + rm_length] will be removed")
 
         allevents = get_all_events()["events"]
-        # Iterate through all events, get GPS and get segments to remove
         allevents_gps = np.sort([allevents[key]["GPS"] for key in allevents.keys()])
 
-        # Get all windows that must be removed from segments
         rm_windows = [[inv - rm_length, inv + rm_length] for inv in allevents_gps]
 
-        # Iterate over segments from each record and prune from event list
         prune_timeline = self.timeline.copy()
         for record in prune_timeline:
             segs = record["segments"]
@@ -606,27 +672,28 @@ class TimelineQuery:
         self.timeline = prune_timeline
 
     def _remove_short_segments(self, rm_min_duration):
-        """Remove segments that do not pass the minimum duration threshold
+        """
+        Remove segments shorter than ``rm_min_duration``.
 
-        Args:
-            rm_min_duration (_type_): _description_
+        Parameters
+        ----------
+        rm_min_duration : float
+            Shortest segment kept, in seconds.
         """
         logger.info(f"Removing segments below the min duration of {rm_min_duration}")
 
-        # Safe to make copy first
         prune_timeline = self.timeline.copy()
 
         for i, record in enumerate(prune_timeline):
             segs = record["segments"]
 
             if segs.size == 0:
-                continue  # nothing to prune
+                continue
 
             durations = segs[:, 1] - segs[:, 0]
             keep_mask = durations >= rm_min_duration
             prune_timeline[i]["segments"] = segs[keep_mask]
 
-        # Update original timeline with pruned timeline
         self.timeline = prune_timeline
 
     def prune_segments(
@@ -636,16 +703,22 @@ class TimelineQuery:
         rm_allevents: bool = False,
         rm_window_length: float = 30,
     ):
-        """Prune segments of events/short-duration-segs and return updated timeline
+        """
+        Cut the GWOSC events out of ``timeline``, then short segments.
 
-        Args:
-            rmevents (bool, optional): _description_. Defaults to False.
-            rmwindow_length (float, optional): _description_. Defaults to 30.
-            min_segment_length (float, optional): _description_. Defaults to 20.
+        Parameters
+        ----------
+        rm_short_segments : bool
+            Remove segments shorter than ``rm_min_duration``.
+        rm_min_duration : float
+            Shortest segment kept, in seconds.
+        rm_allevents : bool
+            Cut a window around every GWOSC event.
+        rm_window_length : float
+            Half-width of the event window in seconds.
         """
 
-        # Any segments that may become too small will be handled next
-        # IF the short segment pruning is toggled
+        # Events first, so the pieces they leave are length-checked
         if rm_allevents:
             self._remove_allevents(rm_window_length)
 
@@ -659,24 +732,20 @@ class TimelineQuery:
         sample_rate=4096.0,
     ):
         """
-        Split segments in a structured array into mini-segments for training.
+        Split every segment of ``timeline`` into mini-segments.
 
-        Each mini-segment:
-        - Length mini_segment_length (seconds)
-        - Starts exactly 1 sample after previous mini-segment end
-        - Last mini-segment kept if >= minimum_segment_duration
+        Neighbours overlap by ``minimum_segment_duration`` less a
+        sample. A remainder that long gives a last mini-segment,
+        back-extended to full length within the segment.
 
-        Args:
-            struct_array: np.ndarray
-                Structured array of detectors and segments (same as your input)
-            mini_segment_length: float
-                Length of mini-segments in seconds
-            minimum_segment_duration: float
-                Minimum segment length to keep
-
-        Returns:
-            np.ndarray
-                Structured array in same format, with 'segments' replaced by mini-segments
+        Parameters
+        ----------
+        mini_segment_length : float
+            Length of a mini-segment in seconds.
+        minimum_segment_duration : float
+            Overlap plus one sample, and the shortest remainder kept.
+        sample_rate : float
+            Sample rate in Hz, for the one-sample offset.
         """
         output_records = []
         prune_timeline = self.timeline.copy()
@@ -694,34 +763,28 @@ class TimelineQuery:
                 seg_start, seg_end = seg
                 cursor = seg_start
 
-                # Slide through the segment
                 while True:
                     next_end = cursor + mini_segment_length
                     if next_end < seg_end:
                         mini_segments.append([cursor, next_end])
-                        # move cursor to 1 sample after previous mini-segment end
+                        # Overlap: minimum duration less a sample
                         cursor = (
                             next_end - minimum_segment_duration + (1.0 / sample_rate)
                         )
                     else:
-                        # Last partial segment: back-extend to a full mini_segment_length
-                        # by moving the start backwards (adding overlap with previous segment).
-                        # If the original segment itself is shorter than mini_segment_length,
-                        # keep whatever is available from seg_start.
+                        # Last mini-segment, back-extended to full
+                        # length but not before seg_start
                         remaining = seg_end - cursor
                         if remaining >= minimum_segment_duration:
                             new_start = max(seg_start, seg_end - mini_segment_length)
                             mini_segments.append([new_start, seg_end])
                         break
 
-            # Convert to numpy array
             mini_segments_arr = np.array(mini_segments, dtype=np.float64)
 
-            # Build new record
             new_record = (detector, flag, start_time, end_time, run, mini_segments_arr)
             output_records.append(new_record)
 
-        # Preserve dtype
         self.timeline = np.array(output_records, dtype=prune_timeline.dtype)
 
     def sanity_check_mini_segments(
@@ -732,20 +795,27 @@ class TimelineQuery:
         verbose=True,
     ):
         """
-        Check the integrity of mini-segments in a structured array.
+        Check the mini-segments of ``timeline``.
 
-        Args:
-            struct_array: np.ndarray
-                Structured array with 'segments' field containing mini-segments
-            mini_segment_length: float
-                Expected mini-segment length (for reference)
-            minimum_segment_duration: float
-                Minimum segment duration allowed
-            verbose: bool
-                Whether to print warnings
+        Prints a warning for a mini-segment longer than intended, a
+        back-extended overlap or a gap above 1 s.
 
-        Raises:
-            ValueError if any check fails
+        Parameters
+        ----------
+        mini_segment_length : float
+            Intended mini-segment length in seconds.
+        minimum_segment_duration : float
+            Shortest mini-segment allowed, in seconds.
+        sample_rate : float
+            Sample rate in Hz.
+        verbose : bool
+            Print the warnings.
+
+        Raises
+        ------
+        ValueError
+            If a mini-segment is too short, or overlaps the previous one
+            by more than ``mini_segment_length + 1`` s.
         """
         prune_timeline = self.timeline.copy()
         for rec in prune_timeline:
@@ -757,30 +827,28 @@ class TimelineQuery:
                 start, end = seg
                 duration = end - start
 
-                # Check minimum segment duration
                 if duration < minimum_segment_duration:
                     raise ValueError(
                         f"Mini-segment too short: Detector {detector}, segment {i}, duration {duration}"
                     )
 
-                # Check that no segment is longer than expected (optional)
+                # Longer than intended: a warning only
                 if duration > mini_segment_length + 1e-6:
                     if verbose:
                         print(
                             f"Warning: Mini-segment longer than intended: Detector {detector}, segment {i}, duration {duration}"
                         )
 
-                # Check gap from previous segment
                 if i > 0:
                     prev_end = original_segments[i - 1][1]
                     gap = start - prev_end
                     if gap < -(mini_segment_length + 1.0):
-                        # Truly impossible: overlap larger than one full mini-segment
+                        # Overlap longer than a full mini-segment
                         raise ValueError(
                             f"Mini-segment {i} overlaps previous segment for detector {detector}"
                         )
                     elif gap < -(minimum_segment_duration - (1.0 / sample_rate)) - 1e-6:
-                        # Back-extended last segment — expected, just warn
+                        # Back-extended last mini-segment
                         if verbose:
                             print(
                                 f"Warning: Back-extended overlap at segment {i} for {detector}: {-gap:.2f}s"

@@ -1,7 +1,7 @@
 """
-Observing-run data in the data directory: the dataset's fixed numbers, the
-training and search strain's download from GWOSC with resume, the ASDs
-estimated from it, and the records written beside them.
+Observing-run data in the data directory: the dataset's fixed numbers,
+the training and search strain's download from GWOSC with resume, the
+ASDs estimated from it, and the records written beside them.
 """
 
 import json
@@ -49,7 +49,7 @@ from sage.data.primer.retry import retry_detector
 from sage.dsp.welch import TorchWelch
 from sage.search.dataprep.release import download_search_data
 
-# Source: runs/<run>/dataset.py, the same for O3a, O3b, O4a and O4b.
+# The same for O3a, O3b, O4a and O4b.
 SAMPLE_RATE = 2048.0
 TRIM = math.ceil(0.2 * SAMPLE_RATE) / SAMPLE_RATE
 DATASET = {
@@ -77,7 +77,7 @@ SEARCH_DATASET = {
     "scale": float(DYN_RANGE_FAC),
     "dtype": "float32",
 }
-# Source: runs/<run>/dataset.py ``_make_asds``, the same for O3a, O3b, O4a and O4b.
+# The same for O3a, O3b, O4a and O4b.
 ASDS = {
     "welch_segment_in_s": 4.0,
     "welch_stride_in_s": 2.0,
@@ -88,7 +88,8 @@ ASDS = {
     "bank_size": 250_000,
 }
 BANK_SEED = 0
-# Source: user rulings 2026-11-02; Thomson's F-test, sage.data.asd.lines.
+# Source: user rulings 2026-11-02; Thomson's F-test,
+# sage.data.asd.lines.
 FIDUCIAL = {
     "psd_aggregation": "median",
     "lines": "multitaper F-test, excised",
@@ -131,13 +132,30 @@ PROXY_RESET_SLEEP = 90.0
 
 
 def gwosc_runs() -> dict:
-    """GWOSC's observing runs, by name in lower case."""
+    """
+    GWOSC's observing runs, by name in lower case.
+
+    Returns
+    -------
+    dict of str to str
+        Lower-case name to GWOSC's name.
+    """
     return {name.lower(): name for name in find_datasets(type="run")}
 
 
 def gwosc_run(run: str) -> str:
     """
     GWOSC's name of an observing run given in any case.
+
+    Parameters
+    ----------
+    run : str
+        Observing run.
+
+    Returns
+    -------
+    str
+        GWOSC's name.
 
     Raises
     ------
@@ -151,16 +169,48 @@ def gwosc_run(run: str) -> str:
 
 
 def recorded_gwosc(data_dir: Path, run: str) -> dict | None:
-    """GWOSC's name and detectors of an observing run as recorded in its dataset record, or None."""
+    """
+    GWOSC's name and detectors of a run, from its dataset record.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+
+    Returns
+    -------
+    dict or None
+        ``{"name", "detectors"}``, or ``None`` without a record.
+    """
     path = dataset_file(data_dir, run)
     return yaml.safe_load(path.read_text()).get("gwosc") if path.exists() else None
 
 
 def gwosc_record(data_dir: Path, run: str) -> dict:
     """
-    GWOSC's name of an observing run and the detectors it lists with strain.
+    GWOSC's name of an observing run and its detectors with strain.
 
-    Queried once and recorded in the run's dataset record, so later checks need no network.
+    Queried once and recorded in the run's dataset record, so later
+    checks need no network.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+
+    Returns
+    -------
+    dict
+        ``{"name", "detectors"}``.
+
+    Raises
+    ------
+    ValueError
+        If GWOSC lists no such run.
     """
     recorded = recorded_gwosc(data_dir, run)
     if recorded is not None:
@@ -176,7 +226,19 @@ def gwosc_record(data_dir: Path, run: str) -> dict:
 
 
 def gwosc_detectors(name: str) -> list:
-    """Detectors GWOSC lists with strain for a run, by GWOSC's name."""
+    """
+    Detectors GWOSC lists with strain for a run.
+
+    Parameters
+    ----------
+    name : str
+        GWOSC's name of the run.
+
+    Returns
+    -------
+    list of str
+        Detectors, sorted.
+    """
     return [
         detector
         for detector in sorted(_DETECTORS)
@@ -185,18 +247,60 @@ def gwosc_detectors(name: str) -> list:
 
 
 def run_detectors(data_dir: Path, run: str) -> list:
-    """Detectors with strain in an observing run, as GWOSC lists them (``gwosc_record``)."""
+    """
+    Detectors with strain in an observing run (:func:`gwosc_record`).
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+
+    Returns
+    -------
+    list of str
+        Detectors.
+    """
     return gwosc_record(data_dir, run)["detectors"]
 
 
 def gwosc_name(data_dir: Path, run: str) -> str:
-    """GWOSC's name of an observing run (``gwosc_record``)."""
+    """
+    GWOSC's name of an observing run (:func:`gwosc_record`).
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+
+    Returns
+    -------
+    str
+        GWOSC's name.
+    """
     return gwosc_record(data_dir, run)["name"]
 
 
 def fetch_detector(data_dir: Path, run: str, detector: str, workers: int) -> None:
     """
-    Download one detector's strain into ``training.part``, then move it into ``training``.
+    Download one detector's strain into ``training.part``, then move it.
+
+    The strain file, its sidecar and its failed list go to the run's
+    ``training`` directory.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
+    workers : int
+        Parallel downloads.
 
     Raises
     ------
@@ -246,7 +350,22 @@ def fetch_detector(data_dir: Path, run: str, detector: str, workers: int) -> Non
 
 
 def retry_pieces(data_dir: Path, run: str, detector: str, workers: int) -> None:
-    """Fetch a detector's failed pieces again; its failed list then holds those still missing."""
+    """
+    Fetch a detector's failed pieces again.
+
+    Its failed list then holds the pieces still missing.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
+    workers : int
+        Parallel downloads.
+    """
     path = strain_file(data_dir, run, detector)
     retry_detector(
         detector,
@@ -269,12 +388,22 @@ def retry_pieces(data_dir: Path, run: str, detector: str, workers: int) -> None:
 
 def check_strain(data_dir: Path, run: str, detector: str) -> dict:
     """
-    Check one detector's strain file against its sidecar and the dataset's numbers.
+    Check one detector's strain against its sidecar and the dataset.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
 
     Returns
     -------
     dict
-        ``pieces``, ``days`` and ``gps`` (first start, last end) of the file.
+        ``pieces``, ``days`` and ``gps`` (first start, last end) of the
+        file.
 
     Raises
     ------
@@ -318,7 +447,21 @@ def check_strain(data_dir: Path, run: str, detector: str) -> dict:
 
 
 def estimator(detector: str, directory: Path) -> EstimateASD:
-    """``EstimateASD`` with the dataset's ASD settings, writing under ``directory``."""
+    """
+    ``EstimateASD`` with the dataset's ASD settings.
+
+    Parameters
+    ----------
+    detector : str
+        Detector, e.g. ``"H1"``.
+    directory : Path
+        Directory the ASDs are written under.
+
+    Returns
+    -------
+    EstimateASD
+        The estimator.
+    """
     welch = TorchWelch(
         delta_t=1.0 / SAMPLE_RATE,
         seg_len=int(SAMPLE_RATE * ASDS["welch_segment_in_s"]),
@@ -347,7 +490,16 @@ def estimator(detector: str, directory: Path) -> EstimateASD:
 
 
 def move_built(part: Path, pairs: list) -> None:
-    """Move built files out of ``part`` to their places, then remove the directories left empty."""
+    """
+    Move built files to their places; remove directories left empty.
+
+    Parameters
+    ----------
+    part : Path
+        Build directory, removed if left empty.
+    pairs : list of tuple of Path
+        ``(source, target)`` pairs.
+    """
     for source, target in pairs:
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(source, target)
@@ -357,7 +509,20 @@ def move_built(part: Path, pairs: list) -> None:
 
 
 def build_segment_asds(data_dir: Path, run: str, detector: str) -> None:
-    """Estimate the ASD of every strain piece, NaN in bad time, into ``<run>.part``, then move it into the run's ASDs."""
+    """
+    Estimate the ASD of every strain piece, NaN in bad time.
+
+    Built into ``<run>.part``, then moved into the run's ASDs.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
+    """
     part = asd_dir(data_dir, run).with_suffix(".part")
     strain = strain_file(data_dir, run, detector)
     estimator(detector, part).estimate_segment_asds(noise_segments_file=strain, bad=read_bad_time(strain))
@@ -367,7 +532,21 @@ def build_segment_asds(data_dir: Path, run: str, detector: str) -> None:
 
 
 def build_bank(data_dir: Path, run: str, detector: str) -> None:
-    """Draw the recolour bank from the strain outside its bad time, seeded, into ``<run>.part``, then move it into the run's ASDs."""
+    """
+    Draw the recolour bank from the strain outside its bad time.
+
+    Seeded with ``BANK_SEED``; built into ``<run>.part``, then moved
+    into the run's ASDs.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
+    """
     part = asd_dir(data_dir, run).with_suffix(".part")
     strain = strain_file(data_dir, run, detector)
     sampler = MemmapSingleNoiseSampler(strain, read_bad_time(strain), return_tensor=True)
@@ -382,7 +561,18 @@ def build_bank(data_dir: Path, run: str, detector: str) -> None:
 
 def check_segment_asds(data_dir: Path, run: str, detector: str) -> int:
     """
-    Check one detector's per-segment ASDs against its strain pieces and the ASD settings.
+    Check one detector's per-segment ASDs against its strain pieces.
+
+    The sidecar records must match the pieces and the ASD settings.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
 
     Returns
     -------
@@ -428,7 +618,16 @@ def check_segment_asds(data_dir: Path, run: str, detector: str) -> int:
 
 def check_bank(data_dir: Path, run: str, detector: str) -> None:
     """
-    Check one detector's recolour bank against its sidecar and the ASD settings.
+    Check one detector's recolour bank against its sidecar and settings.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run, e.g. ``"o3b"``.
+    detector : str
+        Detector, e.g. ``"H1"``.
 
     Raises
     ------
@@ -463,12 +662,26 @@ def check_bank(data_dir: Path, run: str, detector: str) -> None:
 
 def fiducial_runs(data_dir: Path, runs: list, detector: str) -> list:
     """
-    The fiducial's observing runs with strain from ``detector``, as GWOSC lists them, sorted.
+    The fiducial's observing runs with strain from ``detector``, sorted.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    runs : list of str
+        Observing runs of the fiducial.
+    detector : str
+        Detector, e.g. ``"H1"``.
+
+    Returns
+    -------
+    list of str
+        Lower-case runs, as GWOSC lists them.
 
     Raises
     ------
     ValueError
-        If none has.
+        If none has strain from ``detector``.
     """
     pooled = [run for run in sorted({run.lower() for run in runs}) if detector in run_detectors(data_dir, run)]
     if not pooled:
@@ -477,7 +690,23 @@ def fiducial_runs(data_dir: Path, runs: list, detector: str) -> list:
 
 
 def fiducial_record(data_dir: Path, detector: str, pooled: list) -> dict:
-    """The fiducial sidecar's fixed fields."""
+    """
+    The fiducial sidecar's fixed fields.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    detector : str
+        Detector, e.g. ``"H1"``.
+    pooled : list of str
+        Runs pooled into the fiducial.
+
+    Returns
+    -------
+    dict
+        The fields.
+    """
     bins = int(SAMPLE_RATE * ASDS["length_in_s"]) // 2 + 1
     return {
         "detector": detector,
@@ -495,7 +724,30 @@ def fiducial_record(data_dir: Path, detector: str, pooled: list) -> dict:
 
 
 def chunk_detections(strain: Path, stretches: int, seed, nw: float, tapers: int) -> np.ndarray:
-    """F-test detections in ``stretches`` seeded stretches of a strain file outside its bad time."""
+    """
+    F-test detections in seeded stretches of a strain file.
+
+    Stretches are drawn outside the file's bad time.
+
+    Parameters
+    ----------
+    strain : Path
+        Strain ``.bin`` file.
+    stretches : int
+        Number of stretches.
+    seed : int or numpy.random.SeedSequence
+        Seed of the stretch draws.
+    nw : float
+        Time-bandwidth product NW.
+    tapers : int
+        Number of Slepian tapers.
+
+    Returns
+    -------
+    numpy.ndarray of int
+        Detections per frequency
+        (:func:`sage.data.asd.lines.line_detections`).
+    """
     sampler = MemmapSingleNoiseSampler(strain, read_bad_time(strain))
     sample = partial(sampler.sample, rng=np.random.default_rng(seed))
     npts = int(SAMPLE_RATE * ASDS["length_in_s"])
@@ -508,6 +760,18 @@ def strain_detections(strains: list, workers: int) -> np.ndarray:
 
     The stretches go in chunks of ``line_chunk``, each seeded from
     ``line_seed``, so the sum does not depend on ``workers``.
+
+    Parameters
+    ----------
+    strains : list of Path
+        Strain ``.bin`` files.
+    workers : int
+        Processes; 1 runs in this process.
+
+    Returns
+    -------
+    numpy.ndarray of int
+        Detections per frequency.
     """
     stretches, chunk = FIDUCIAL["line_stretches_per_run"], FIDUCIAL["line_chunk"]
     sizes = [chunk] * (stretches // chunk) + ([stretches % chunk] if stretches % chunk else [])
@@ -525,7 +789,23 @@ def strain_detections(strains: list, workers: int) -> np.ndarray:
 
 
 def build_fiducial(data_dir: Path, runs: list, detector: str, workers: int) -> None:
-    """Build one detector's fiducial from the pooled recolour banks and strain into ``<fiducial>.part``, then move it."""
+    """
+    Build one detector's fiducial from the pooled banks and strain.
+
+    The fiducial is the median of the pooled recolour banks with the
+    F-test lines excised; built into ``<fiducial>.part``, then moved.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    runs : list of str
+        Observing runs of the fiducial.
+    detector : str
+        Detector, e.g. ``"H1"``.
+    workers : int
+        Processes for the line tests.
+    """
     pooled = fiducial_runs(data_dir, runs, detector)
     record = fiducial_record(data_dir, detector, pooled)
     with step(1, FIDUCIAL_STEPS):
@@ -565,7 +845,16 @@ def build_fiducial(data_dir: Path, runs: list, detector: str, workers: int) -> N
 
 def check_fiducial(data_dir: Path, runs: list, detector: str) -> None:
     """
-    Check one detector's fiducial against its sidecar and the dataset's numbers.
+    Check one detector's fiducial against its sidecar and the dataset.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    runs : list of str
+        Observing runs of the fiducial.
+    detector : str
+        Detector, e.g. ``"H1"``.
 
     Raises
     ------
@@ -649,9 +938,24 @@ def build_fiducials(data_dir: Path, runs: list, detectors: list, workers: int) -
 
 def write_record(path: Path, numbers: dict, detectors: dict) -> Path:
     """
-    Write fixed numbers and each detector's summary to a record beside the data.
+    Write fixed numbers and each detector's summary to a record.
 
-    Detectors recorded earlier are kept; a record nothing changes is not rewritten.
+    Detectors recorded earlier are kept; a record nothing changes is not
+    rewritten.
+
+    Parameters
+    ----------
+    path : Path
+        The record.
+    numbers : dict
+        Fixed numbers of the dataset.
+    detectors : dict of str to dict
+        Summary per detector, merged into the recorded ones.
+
+    Returns
+    -------
+    Path
+        The record.
 
     Raises
     ------
@@ -743,8 +1047,8 @@ def download_run(data_dir: Path, run: str, detectors: list, workers: int) -> dic
     Raises
     ------
     MissingData
-        If pieces of any detector failed to download, once every detector
-        has been tried.
+        If pieces of any detector failed to download, once every
+        detector has been tried.
     """
     summaries, failures = {}, []
     for detector in detectors:
@@ -804,8 +1108,8 @@ def build_asds(
     segments : bool
         Build or adopt the per-segment ASDs.
     bank : bool
-        Build or adopt the recolour bank; an adopted bank's seed is
-        recorded as unknown.
+        Build or adopt the recolour bank; an adopted bank keeps the
+        seed recorded earlier, if any.
 
     Returns
     -------
@@ -815,7 +1119,10 @@ def build_asds(
     Raises
     ------
     MissingData
-        If a detector's strain, sidecar, bad time or zero runs are missing.
+        If a detector's strain, sidecar, bad time or zero runs are
+        missing.
+    ValueError
+        If a detector's strain does not match its sidecar.
     """
     missing = []
     for detector in detectors:

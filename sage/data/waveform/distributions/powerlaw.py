@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Power-law priors on a bounded interval, with the radius uniform in a
+3D volume.
+
 Filename        : powerlaw.py
 Description     : Short description of the file
 
@@ -23,18 +26,14 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 
 class UniformPowerLaw:
     """
-    GPU-friendly power-law sampler for 1D parameters.
+    Power law with PDF proportional to ``r^(dim-1)`` on ``[low, high]``.
 
-    Draws samples from the distribution whose PDF scales as
-    ``r^(dim-1)`` over the interval ``[low, high]``.  For ``dim=3``
-    this is uniform in volume (the standard astrophysical distance prior
-    assuming a uniform spatial number density).
+    ``dim=3`` is uniform in volume.
 
     Parameters
     ----------
@@ -54,7 +53,25 @@ class UniformPowerLaw:
         self.dim = dim
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
-        """Sample a batch; the inverse CDF runs in float64, so no draw passes ``high`` once cast to ``dtype``."""
+        """
+        Samples drawn by the inverse CDF, evaluated in float64.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Shape of the draw.
+        device : str or torch.device or None
+            Device of the draw.
+        dtype : torch.dtype
+            Dtype of the draw.
+        generator : torch.Generator or None
+            Generator of the draw.
+
+        Returns
+        -------
+        torch.Tensor
+            Samples of shape ``shape``, cast to ``dtype``.
+        """
         u = torch.rand(shape, device=device, dtype=dtype, generator=generator).double()
         n = self.dim - 1
         return ((
@@ -63,7 +80,16 @@ class UniformPowerLaw:
 
 
 class UniformRadius(UniformPowerLaw):
-    """Uniform in volume (3D sphere) radius sampler."""
+    """
+    Radius uniform in a 3D volume, PDF proportional to ``r^2``.
+
+    Parameters
+    ----------
+    low : float
+        Lower bound of the radius.
+    high : float
+        Upper bound of the radius.
+    """
 
     name = "uniform_radius"
 

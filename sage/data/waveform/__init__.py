@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Waveform approximants, the prior sampler, detector projection, target
+SNR draws and the FD waveform front door.
+
 Filename        : __init__.py
 Description     : Short description of the file
 

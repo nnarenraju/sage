@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Batched PyTorch port of LALSimulation's IMRPhenomD aligned-spin
+frequency-domain waveform; the base of the IMRPhenomPv2 port.
+
 Filename        : IMRPhenomD.py
 Description     : Batched PyTorch port of the IMRPhenomD aligned-spin
                   frequency-domain waveform (LALSimIMRPhenomD.c,
@@ -108,7 +111,7 @@ class IMRPhenomD(phenom.PhenomConstants):
         Raises
         ------
         ValueError
-            If any transverse spin is non-zero.
+            If a transverse spin or tidal parameter is non-zero.
         """
         # [m1, m2, chi1, chi2, distance, delta_tc, phic, inclination]
         theta = waveform_utils.aligned_layout(

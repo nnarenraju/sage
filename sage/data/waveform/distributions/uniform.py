@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Uniform prior on a bounded interval.
+
 Filename        : uniform.py
 Description     : Short description of the file
 
@@ -23,18 +25,12 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
 
 class Uniform:
     """
-    Uniform distribution sampler over ``[low, high]``.
-
-    GPU-friendly and generator-aware: passes the optional
-    :class:`torch.Generator` through to :func:`torch.rand` for reproducible
-    sampling.  Used by :class:`~sage.data.waveform.sampler.DistributionSampler`
-    as the ``"uniform"`` prior type.
+    Uniform distribution on ``[low, high)``.
 
     Parameters
     ----------
@@ -45,29 +41,29 @@ class Uniform:
     """
 
     def __init__(self, low, high):
-        # Python floats: a float64 draw uses the exact bounds (float32 tensors rounded them).
+        # Python floats, so a float64 draw uses the exact bounds
         self.low = float(low)
         self.scale = float(high) - float(low)
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         """
-        Draw samples from the uniform distribution.
+        Samples drawn uniformly from ``[low, high)``.
 
         Parameters
         ----------
-        shape : tuple[int, ...]
-            Output shape.
-        device : str or torch.device
-            Target device.
+        shape : tuple of int
+            Shape of the draw.
+        device : str or torch.device or None
+            Device of the draw.
         dtype : torch.dtype
-            Output dtype.
+            Dtype of the draw.
         generator : torch.Generator or None
-            Optional generator for reproducibility.
+            Generator of the draw.
 
         Returns
         -------
         torch.Tensor
-            Samples uniformly distributed in ``[low, high]``.
+            Samples of shape ``shape``.
         """
         return self.low + self.scale * torch.rand(
             shape,

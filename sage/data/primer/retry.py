@@ -2,22 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Utilities for retrying failed or missing GWOSC segment downloads.
-
-Three public functions are provided:
-
-``get_expected_segments``
-    Re-query GWOSC and split into mini-segments exactly as the original
-    download did, returning the full list of expected (b0, b1) GPS pairs.
-
-``find_missing_segments``
-    Compare that expected list against an already-downloaded segments.json
-    and return records for every segment that is absent.
-
-``retry_detector``
-    End-to-end retry for one detector: discover missing/failed segments
-    (from a failed_segments.json if present, otherwise via TimelineQuery)
-    and append them to the existing .bin and segments.json files.
+Retries of failed or missing GWOSC segment downloads: the expected
+mini-segments, those missing from a download, and their re-download
+appended to the existing binary file.
 """
 
 import json
@@ -30,7 +17,21 @@ from sage.data.primer.get_segments import TimelineQuery
 
 
 def _compute_buffer(sample_rate, corrupt_trim_fraction=0.2):
-    """Return integer-sample-aligned trim length (seconds)."""
+    """
+    Edge trim in seconds, rounded up to whole samples.
+
+    Parameters
+    ----------
+    sample_rate : float
+        Sample rate in Hz.
+    corrupt_trim_fraction : float
+        Trim in seconds before the rounding.
+
+    Returns
+    -------
+    float
+        The trim in seconds.
+    """
     return math.ceil(corrupt_trim_fraction * sample_rate) / sample_rate
 
 
@@ -45,8 +46,9 @@ def get_expected_segments(
     rm_window_length=30.0,
 ):
     """
-    Reconstruct the full list of expected mini-segments for a detector/run
-    via TimelineQuery, using the same parameters as the original download.
+    Expected mini-segments of a detector and run, from TimelineQuery.
+
+    With the original download's parameters, the segments match it.
 
     Parameters
     ----------
@@ -55,19 +57,18 @@ def get_expected_segments(
     run : str
         Observing run label, e.g. ``"O3a"`` or ``"O3b"``.
     sample_rate : float
-        Target sample rate in Hz (default 2048).
+        Sample rate after downsampling in Hz.
     corrupt_trim_fraction : float
-        Fraction of a second trimmed from each edge to remove downsampling
-        artefacts. Rounded up to the nearest integer sample count.
+        Seconds trimmed from each edge, rounded up to whole samples.
     mini_segment_duration : float
-        Body length of each mini-segment in seconds, *before* the buffer
-        is added to each edge (default 512.0).
+        Mini-segment length in seconds before the trim is added to each
+        edge.
     split_minimum_duration : float
-        Minimum duration passed to ``split_into_mini_segments`` (default 16.0).
+        ``minimum_segment_duration`` of ``split_into_mini_segments``.
     prune_minimum_duration : float
-        Minimum segment duration passed to ``prune_segments`` (default 22.0).
+        Shortest segment kept by ``prune_segments``, in seconds.
     rm_window_length : float
-        Half-window in seconds around known events to excise (default 30.0).
+        Half-width in seconds of the window cut around each GWOSC event.
 
     Returns
     -------
@@ -111,29 +112,30 @@ def find_missing_segments(
     rm_window_length=30.0,
 ):
     """
-    Find mini-segments expected by the GWOSC timeline but absent from
-    *existing_meta* (the loaded ``*_segments.json`` content).
+    Expected mini-segments absent from a download's segment list.
 
-    The comparison un-trims the stored GPS times by *corrupt_trim_fraction*
-    before matching against the pre-trim values returned by GWOSC, then
-    rounds to one decimal place to absorb floating-point drift.
+    The stored GPS times are un-trimmed, and both sides rounded to
+    0.1 s, before matching.
 
     Parameters
     ----------
     detector : str
+        Detector prefix.
     run : str
-    existing_meta : list[dict]
+        Observing run label.
+    existing_meta : list of dict
         Contents of the ``data_{det}_{run}_segments.json`` sidecar.
-    sample_rate, corrupt_trim_fraction, mini_segment_duration,
-    split_minimum_duration, prune_minimum_duration, rm_window_length :
-        Same meaning as in :func:`get_expected_segments`.
+    sample_rate, corrupt_trim_fraction, mini_segment_duration
+        As for :func:`get_expected_segments`.
+    split_minimum_duration, prune_minimum_duration, rm_window_length
+        As for :func:`get_expected_segments`.
 
     Returns
     -------
-    list[dict]
-        One record per missing segment with keys ``segment_index``,
-        ``detector``, ``observing_run``, ``gps_start``, ``gps_end``,
-        ``reason``.  Ready to pass directly to :func:`retry_detector`.
+    list of dict
+        One record per missing segment, with ``segment_index``,
+        ``detector``, ``observing_run``, ``gps_start``, ``gps_end`` and
+        ``reason``.
     """
     buffer = _compute_buffer(sample_rate, corrupt_trim_fraction)
     print(f"[{detector}] No failed_segments.json — reconstructing via TimelineQuery ...")
@@ -148,7 +150,7 @@ def find_missing_segments(
         rm_window_length=rm_window_length,
     )
 
-    # Un-trim stored GPS times to recover pre-trim (b0, b1) for matching
+    # Stored GPS times un-trimmed to the pre-trim (b0, b1)
     downloaded = set()
     for m in existing_meta:
         b0 = round(m["gps_start"] - buffer, 1)
@@ -192,19 +194,11 @@ def retry_detector(
     rm_window_length=30.0,
 ):
     """
-    Discover and re-download all missing or failed segments for one detector,
-    appending results to the existing ``.bin`` and ``segments.json`` files.
+    Re-download the missing or failed segments of one detector.
 
-    Missing segments are located in one of two ways:
-
-    1. If ``data_{det}_{run}_failed_segments.json`` exists in *data_dir*,
-       those GPS ranges are used directly (fast path — no GWOSC query).
-    2. Otherwise the GWOSC timeline is reconstructed via
-       :func:`find_missing_segments` and diffed against ``segments.json``.
-
-    On completion, ``segments.json`` is updated in-place and a
-    ``*_retry_failed.json`` is written for any segments that still could
-    not be fetched after *max_download_retries* attempts.
+    The segments come from ``data_{det}_{run}_failed_segments.json``
+    if it exists, else from :func:`find_missing_segments`; they are
+    appended with :meth:`DataReleaseDownloader.retry_and_append`.
 
     Parameters
     ----------
@@ -216,20 +210,21 @@ def retry_detector(
         Directory containing ``data_{det}_{run}.bin`` and
         ``data_{det}_{run}_segments.json``.
     num_workers : int
-        Number of parallel download threads (default 8).
+        Number of download threads.
     sample_rate : float
-        Target sample rate in Hz (default 2048).
+        Sample rate after downsampling in Hz.
     corrupt_trim_fraction : float
+        Seconds trimmed from each edge, rounded up to whole samples.
     noise_low_freq_cutoff : float
+        High-pass frequency of the downsampling in Hz.
     max_download_retries : int
-    retry_delay : float
-        Seconds to wait between retry attempts.
-    proxy_reset_every : int
-    proxy_reset_sleep : float
-    mini_segment_duration : float
-    split_minimum_duration : float
-    prune_minimum_duration : float
-    rm_window_length : float
+        Attempts at each GWOSC file download.
+    retry_delay, proxy_reset_every, proxy_reset_sleep
+        Passed to :class:`DataReleaseDownloader`.
+    mini_segment_duration, split_minimum_duration
+        As for :func:`get_expected_segments`.
+    prune_minimum_duration, rm_window_length
+        As for :func:`get_expected_segments`.
     """
     data_dir = Path(data_dir)
     bin_path = data_dir / f"data_{detector}_{run}.bin"

@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Device-resident constants shared by the IMRPhenom ports, with the
+IMRPhenomD QNM tables and coefficient table.
+
 Filename        : helper.py
 Description     : Device-resident constants of the IMRPhenom ports,
                   with the QNM tables of LALSimIMRPhenomD.h.
@@ -47,7 +50,8 @@ class PhenomConstants:
     batch_size : int or None
         Batch size of the ONES, ZEROS and PHI6LOG tensors.
     dtype : torch.dtype or None
-        Floating-point dtype of all tensors.
+        Floating-point dtype of the real tensors; ONE_J and TWO_J are
+        complex64.
     **kwargs
         Ignored.
     """

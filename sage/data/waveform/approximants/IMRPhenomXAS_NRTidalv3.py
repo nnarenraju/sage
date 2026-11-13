@@ -51,6 +51,12 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         Dtype of the data tensors.
     append_per_det_targets : bool
         Must be False: this model has no per-detector targets.
+
+    Raises
+    ------
+    ValueError
+        If append_per_det_targets is True or the prior lacks a
+        waveform parameter.
     """
 
     GRAPH_READY = True
@@ -509,6 +515,7 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
                           - 2.0 * pi * (s1 - 1.0) * s2 * exps2s3 / ((1.0 + exps2s3) * (1.0 + exps2s3)))
 
         def star(c_newt, kappa, n_1, n_3o2, n_2, n_5o2, n_3, d_1, d_3o2):
+            """Derivative of one star's tidal phase."""
             num = 1.0 + n_1 * x23 + n_3o2 * piMf + n_2 * x43 + n_5o2 * x53 + n_3 * x2
             den = 1.0 + d_1 * x23 + d_3o2 * piMf
             dphase1 = -(c_newt * kappa * dynk2bar_deriv * x53 * num) / den
@@ -891,8 +898,8 @@ class IMRPhenomXAS_NRTidalv3(IMRPhenomXAS, torch.nn.Module):
         theta : torch.Tensor, shape (B, 17)
             Parameters in the waveform_utils.WAVEFORM_PARAMETERS layout.
         reproduce_lal : bool
-            If True, skip FD tapering, delta_tc shift and df normalisation so
-            the output compares directly with LAL's.
+            If True, skip FD tapering, delta_tc shift and df
+            normalisation so the output compares directly with LAL's.
 
         Returns
         -------

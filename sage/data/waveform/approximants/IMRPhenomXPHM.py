@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Batched PyTorch port of LALSimulation's IMRPhenomXPHM precessing
+multimode frequency-domain waveform, built on the IMRPhenomXHM port.
+
 Filename      : IMRPhenomXPHM.py
 Description   : Batched PyTorch port of LALSimulation's IMRPhenomXPHM
                 precessing frequency-domain waveform with higher modes
@@ -114,6 +117,12 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         Dtype of the data tensors (the waveform interior is float64).
     append_per_det_targets : bool
         Append per-detector targets after the class column.
+
+    Raises
+    ------
+    ValueError
+        If targets lacks mchirp or the prior lacks a waveform
+        parameter.
     """
 
     # LAL default settings.
@@ -530,10 +539,12 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         Nz_Sf = torch.cos(inclination)
 
         def rot_z(ang, x, y, z):
+            """Rotate (x, y, z) about the z-axis by ang."""
             c, s = torch.cos(ang), torch.sin(ang)
             return x * c - y * s, x * s + y * c, z
 
         def rot_y(ang, x, y, z):
+            """Rotate (x, y, z) about the y-axis by ang."""
             c, s = torch.cos(ang), torch.sin(ang)
             return x * c + z * s, y, -x * s + z * c
 
@@ -1157,7 +1168,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
 
         delta = prec["delta_qq"]
         delta2 = delta * delta
-        # Zero gradient where q is 1: psi1 and psi2 are infinite and unused
+        # Zero gradient where q is 1 (psi1, psi2 infinite and unused)
         eta2_g, Seff_g, delta2_g = (
             detach_where(q_one, t) for t in (eta2, Seff, delta2)
         )
@@ -2330,6 +2341,7 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         omega_nnlo = math.pi * Mf * 2. / mprime
 
         def nnlo_angles(omega, prec):
+            """NNLO alpha, epsilon and cos(beta) at omega."""
             # The series subtract alpha_offset and epsilon_offset
             logomega = torch.log(omega)
             omega_cbrt = cbrt(omega)
@@ -2631,6 +2643,12 @@ class IMRPhenomXPHM(IMRPhenomXHM, torch.nn.Module):
         Returns
         -------
         hp, hc : torch.Tensor, shape (B, n_pad + F), complex
+
+        Raises
+        ------
+        ValueError
+            If a tidal parameter is non-zero, or LAL rejects the
+            parameters.
         """
         # [m1, m2, chi1x, chi1y, chi1z, chi2x, chi2y, chi2z, distance,
         #  delta_tc, phic, inclination]

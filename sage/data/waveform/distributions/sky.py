@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Sky-position prior uniform over the sphere.
+
 Filename        : sky.py
 Description     : Short description of the file
 
@@ -23,19 +25,28 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
-# LOCAL
 from .angular import UniformAngle, CosAngle
 
 
 class UniformSky:
     """
-    GPU-friendly uniform sky sampler.
+    Sky position uniform over the sphere.
 
-    - Polar angle = declination `dec` in [-pi/2, pi/2]
-    - Azimuthal angle = right ascension `ra` in [0, 2pi)
+    :class:`CosAngle` for the declination and :class:`UniformAngle` for
+    the right ascension.
+
+    Parameters
+    ----------
+    polar_name : str
+        Key of the declination in the draw.
+    azimuthal_name : str
+        Key of the right ascension in the draw.
+    polar_bounds : tuple[float, float]
+        Declination bounds in radians.
+    azimuthal_bounds : tuple[float, float]
+        Right-ascension bounds in radians.
     """
 
     def __init__(
@@ -48,18 +59,29 @@ class UniformSky:
         self.polar_name = polar_name
         self.azimuthal_name = azimuthal_name
 
-        # Reuse your fast samplers
         self.polar_sampler = CosAngle(*polar_bounds)
         self.azimuth_sampler = UniformAngle(*azimuthal_bounds)
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         """
-        Draw *shape* sky-position pairs and return them as a dict.
+        Declination and right ascension, keyed by their names.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Shape of the draw.
+        device : str or torch.device or None
+            Device of the draw.
+        dtype : torch.dtype
+            Dtype of the draw.
+        generator : torch.Generator or None
+            Generator of the draw.
 
         Returns
         -------
         dict[str, torch.Tensor]
-            ``{polar_name: dec, azimuthal_name: ra}`` each of shape *shape*.
+            ``{polar_name: dec, azimuthal_name: ra}``, each of shape
+            ``shape``.
         """
         dec = self.polar_sampler.sample(
             shape,

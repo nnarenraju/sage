@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Data primer: GWOSC segment timelines and downloads, run, detector and
+event lists, download retries, and the ASD blackout classes.
+
 Filename        : __init__.py
 Description     : Short description of the file
 

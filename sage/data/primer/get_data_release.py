@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+GWOSC strain download: segments downsampled and stored as HDF5 or as
+one binary file with a JSON segment index, and checksum validation.
+
 Filename        : real_noise.py
 Description     : Short description of the file
 
@@ -23,7 +26,6 @@ Documentation: NULL
 
 """
 
-# General
 import os
 import re
 import time
@@ -34,7 +36,6 @@ import warnings
 import tempfile
 import collections
 
-# Utilities
 import numpy as np
 import urllib.request
 import requests as _requests
@@ -43,23 +44,18 @@ from tqdm import tqdm
 from pathlib import Path
 from dataclasses import dataclass
 
-# Multiprocessing
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# GWOSC file URL resolution
 from gwosc.locate import get_urls as _gwosc_get_urls
 
-# Suppressing LAL warnings
+# Suppress LAL's stdio redirection warning
 warnings.filterwarnings("ignore", "Wswiglal-redir-stdio")
 
-# Signal processing (gwpy)
 from gwpy.timeseries import TimeSeries
 
-# Signal processing (pycbc)
 from pycbc import DYN_RANGE_FAC
 
-# LOCAL
 from sage.core.hardcode import _GWOSC_ARCHIVE_URL
 from sage.core.logger import get_logger
 from sage.dsp.filters import pycbc_downsample
@@ -70,21 +66,18 @@ logger = get_logger(__name__)
 @dataclass(frozen=True)
 class DownloadConfig:
     """
-    Immutable, multiprocessing-safe download configuration.
-
-    Frozen dataclass passed to worker processes via :mod:`multiprocessing`
-    ``Pool.starmap``; must be pickleable (no open file handles, no locks).
+    Frozen download settings shared with the download workers.
 
     Attributes
     ----------
     sample_rate : float
         Target sample rate (Hz) after downsampling.
     trim : float
-        Seconds of corrupt data to trim from each edge after download.
+        Seconds trimmed from each edge after downsampling.
     noise_low_freq_cutoff : float
-        Low-frequency cutoff (Hz) used during downsampling.
+        High-pass frequency (Hz) of the downsampling.
     max_retries : int
-        Maximum number of download attempts before giving up on a segment.
+        Attempts at a single-segment fetch.
     delay : float
         Seconds to wait between retry attempts.
     """
@@ -110,16 +103,20 @@ def validate_segment(
     bin_path : str or Path
         Path to the ``.bin`` file.
     seg_meta : dict
-        Segment metadata dict from the sidecar JSON (must contain
-        ``"checksum_algo"``, ``"byte_offset"``, ``"byte_length"``,
-        ``"checksum"``, and ``"segment_index"``).
+        Segment metadata with ``"checksum_algo"``, ``"byte_offset"``,
+        ``"byte_length"``, ``"checksum"`` and ``"segment_index"``.
     strict : bool
-        If ``True`` (default), raise :exc:`IOError` on mismatch.
+        Raise on a mismatch.
 
     Returns
     -------
     bool
-        ``True`` if the checksum matches, ``False`` otherwise.
+        True if the checksum matches.
+
+    Raises
+    ------
+    IOError
+        If the checksum does not match and ``strict`` is set.
     """
     algo = seg_meta["checksum_algo"]
 
@@ -147,14 +144,13 @@ def validate_all_segments(bin_path, metadata):
     ----------
     bin_path : str or Path
         Path to the ``.bin`` file.
-    metadata : list[dict]
-        List of segment metadata dicts as produced by the sidecar JSON.
+    metadata : list of dict
+        Segment metadata, as for :func:`validate_segment`.
 
     Returns
     -------
-    list[int]
-        Segment indices that failed the checksum.  An empty list means all
-        segments are intact.
+    list of int
+        Indices of the segments that fail the checksum.
     """
     failures = []
 
@@ -181,9 +177,9 @@ def file_checksum(path, algo="sha256", block=1 << 20):
     path : str or Path
         File to hash.
     algo : str
-        Hash algorithm name (default ``"sha256"``).
+        Hash algorithm name.
     block : int
-        Read block size in bytes (default 1 MiB).
+        Read block size in bytes.
 
     Returns
     -------
@@ -199,41 +195,49 @@ def file_checksum(path, algo="sha256", block=1 << 20):
 
 class DataReleaseDownloader:
     """
-    Parallel GWOSC data downloader that stores validated strain segments to HDF5.
+    Downloader of GWOSC strain segments to HDF5 or binary files.
 
-    Downloads LIGO/Virgo/KAGRA open-data strain segments from GWOSC for a
-    structured-array of (detector, observing-run, segment-list) records.
-    Supports both a monolithic HDF5 file and a raw binary output format,
-    with optional checksum validation per segment.
+    For each (detector, run, segments) record, the segments are
+    downsampled, high-passed, trimmed and scaled by PyCBC's
+    ``DYN_RANGE_FAC``.
 
     Parameters
     ----------
-    segments_metadata : np.ndarray (SEGMENT_DTYPE)
-        Structured array produced by :class:`~sage.data.primer.get_segments.TimelineQuery`.
+    segments_metadata : numpy.ndarray of SEGMENT_DTYPE
+        Records from
+        :class:`~sage.data.primer.get_segments.TimelineQuery`.
     save_parent_dir : str
-        Root directory under which the ``data_release/`` sub-folder is created.
+        Directory under which the release directory is created.
     noise_low_freq_cutoff : float
-        High-pass cutoff applied during downsampling (default ``15.0`` Hz).
+        High-pass frequency of the downsampling in Hz.
     minimum_segment_duration : float
-        Segments shorter than this (seconds, post-trim) are discarded
-        (default ``22.0``).
+        Shortest post-trim segment accepted by
+        :meth:`_validate_segments`, in seconds.
     corrupt_trim_length : float
-        Seconds trimmed from each edge to discard corrupted data (default
-        ``0.2``).
+        Seconds trimmed from each edge after downsampling.
     max_download_retries : int
-        Maximum number of GWOSC fetch retries per segment (default ``10``).
+        Attempts at each GWOSC download.
     retry_delay : float
-        Seconds between retries (default ``0.5``).
+        Seconds between attempts of a single-segment fetch.
     num_workers : int
-        Number of parallel worker processes (default ``4``).
+        Number of download threads; above 1, whole GWOSC files are
+        downloaded and sliced.
+    proxy_reset_every : int
+        With one worker and ``save_bin``, pause after this many
+        segments; 0 never pauses.
+    proxy_reset_sleep : float
+        Length of that pause in seconds.
     make_monolithic_file : bool
-        If ``True`` (default), all segments for a (detector, run) pair are
-        concatenated into a single HDF5; otherwise one file per chunk.
+        Store each (detector, run) in one file; otherwise one HDF5 file
+        per segment.
     save_bin : bool
-        If ``True``, write raw binary (``float32 LE``) instead of HDF5, with
-        a companion JSON segment index (default ``False``).
+        Write raw little-endian float32 samples with a JSON segment
+        index instead of HDF5.
     sample_rate : float
-        Target sample rate after downsampling (default ``2048.0`` Hz).
+        Sample rate after downsampling in Hz.
+    release_dirname : str
+        Name of the release directory under ``save_parent_dir``;
+        distinct names keep concurrent downloads apart.
     """
 
     def __init__(
@@ -254,39 +258,26 @@ class DataReleaseDownloader:
         release_dirname: str = "data_release",
     ):
 
-        # Timeseries params
         self.sample_rate = sample_rate
         self.noise_low_freq_cutoff = noise_low_freq_cutoff
         self.trim = corrupt_trim_length
         self.minimum_segment_duration = minimum_segment_duration
 
-        # Download params
         self.max_retries = max_download_retries
         self.delay = retry_delay
         self.num_workers = num_workers
         self.proxy_reset_every = proxy_reset_every
         self.proxy_reset_sleep = proxy_reset_sleep
 
-        # Save params
         self.save_parent_dir = save_parent_dir
-        # Name of the release sub-folder created under save_parent_dir. Override
-        # (e.g. "data_release_o3a") to keep concurrent runs in fully separate
-        # directories so they can never touch each other's files.
         self.release_dirname = release_dirname
         self.monolithic = make_monolithic_file
-        # if not self.monolithic:
-        #    logger.warning("N segment files not accepted for training Sage")
-        #    logger.warning("Please use make_monolithic_file=True if training")
-        #    logger.warning("Reason: Computational overhead")
 
-        # Segments structured array
         self.full_metadata = segments_metadata
 
-        # Save download config for safe MP
-        # This is immutable and pickleable
+        # Frozen copy of the settings for the download workers
         self.dcfg = self._return_download_config()
 
-        # Save data in binary format instead
         self.save_bin = save_bin
         self._bin_metadata = []
         self._bin_sample_cursor = 0
@@ -300,50 +291,71 @@ class DataReleaseDownloader:
 
     @staticmethod
     def _fetch_data(cfg, det, b0, b1):
-        """Fetch a small slice of data to check availability."""
+        """
+        Open data of a detector over ``[b0, b1]``, with retries.
+
+        Parameters
+        ----------
+        cfg : DownloadConfig
+            Settings; ``max_retries`` attempts, ``delay`` apart.
+        det : str
+            Detector prefix.
+        b0, b1 : float
+            GPS bounds.
+
+        Returns
+        -------
+        tuple
+            ``(TimeSeries, True)``, or ``(None, False)`` if every
+            attempt failed.
+        """
         last_exception = None
 
-        # TODO: Generalise sage.core.errors --> "safe_call" to accommodate this
+        # TODO: generalise sage.core.errors.safe_call to cover this
         for ntry in range(cfg.max_retries):
             try:
                 data = TimeSeries.fetch_open_data(det, b0, b1, cache=True)
                 return data, True
             except Exception as e:
-                # logger.warning(
-                #    f"Chunk {ntry} failed. Retrying ({ntry}/{cfg.max_retries})..."
-                # )
                 last_exception = e
                 time.sleep(cfg.delay)
 
-        # If we get here, all retries failed
+        # Every attempt failed
         if last_exception != None:
-            # logger.info(f"Tried {ntry}/{cfg.max_retries} times. Aborting.")
-            # bubble up the original error
-            # logger.error(f"Failed to fetch {det} {b0}-{b1}: {last_exception}")
             return None, False
 
     @staticmethod
     def _get_detector_data_unpacked(args):
+        """Call :meth:`_get_detector_data` on a tuple of arguments."""
         return DataReleaseDownloader._get_detector_data(*args)
 
     @staticmethod
     def _get_detector_data(cfg, n, b0, b1, det):
-        """Download detector data from GWOSC
+        """
+        Download, downsample and scale one segment.
 
-        Args:
-            args (_type_): _description_
+        Parameters
+        ----------
+        cfg : DownloadConfig
+            Download settings.
+        n : int
+            Segment index, returned as given.
+        b0, b1 : float
+            GPS bounds before the trim.
+        det : str
+            Detector prefix.
 
-        Returns:
-            _type_: _description_
+        Returns
+        -------
+        tuple
+            ``(n, data, metadata)``, or ``(n, None, {})`` if the
+            download failed.
         """
 
-        # Download data from GWOSC
         data, fetch_okay = DataReleaseDownloader._fetch_data(cfg, det, b0, b1)
-        # Handle error case
         if not fetch_okay:
             return n, None, {}
 
-        # Process only if fetch succeeded
         old_sample_rate = 1.0 / data.dt.value
         data = pycbc_downsample(
             data.value,
@@ -352,8 +364,7 @@ class DataReleaseDownloader:
             cfg.trim,
             cfg.noise_low_freq_cutoff,
         )
-        # Apply a dynamic range factor for storage
-        # NOTE: Remember to reverse this before passing to Sage
+        # Stored scaled by DYN_RANGE_FAC, to be divided out on reading
         data = data * DYN_RANGE_FAC
 
         metadata = {
@@ -368,25 +379,49 @@ class DataReleaseDownloader:
 
     def _checksum_array(self, data: np.ndarray, algo="sha256"):
         """
-        Compute checksum over raw bytes of a NumPy array.
+        Checksum of the raw bytes of an array.
+
+        Parameters
+        ----------
+        data : numpy.ndarray
+            Contiguous array.
+        algo : str
+            Hash algorithm name.
+
+        Returns
+        -------
+        str
+            Hex digest.
         """
         h = hashlib.new(algo)
         h.update(memoryview(data))
         return h.hexdigest()
 
     def _bin_open(self, filename):
+        """Open ``save_dir / filename`` for binary writing."""
         filepath = self.save_dir / filename
         return open(filepath, "wb")
 
     def _save_segment_bin(self, fh, data):
         """
-        Append raw samples to an open binary file.
-        Returns (nsamples, nbytes, written_dtype).
+        Append samples to an open binary file, little-endian.
+
+        Parameters
+        ----------
+        fh : file object
+            File open for binary writing.
+        data : numpy.ndarray or None
+            Samples.
+
+        Returns
+        -------
+        tuple
+            ``(nsamples, nbytes, dtype, sha256 hex digest)``, or
+            ``(0, 0, None)`` if ``data`` is not an array.
         """
         if data is None or not isinstance(data, np.ndarray):
             return 0, 0, None
 
-        # Force canonical little-endian dtype
         dt = np.dtype(data.dtype).newbyteorder("<")
         data = np.ascontiguousarray(data.astype(dt, copy=False))
 
@@ -398,7 +433,21 @@ class DataReleaseDownloader:
 
     @staticmethod
     def _file_gps_interval(url):
-        """Return (gps_start, gps_end) from a GWOSC HDF5 file URL, or (None, None)."""
+        """
+        GPS interval of a GWOSC file from its URL.
+
+        Parameters
+        ----------
+        url : str
+            URL ending in ``-{gps}-{duration}`` and ``.hdf5``,
+            ``.hdf`` or ``.gwf``.
+
+        Returns
+        -------
+        tuple
+            ``(gps_start, gps_end)``, or ``(None, None)`` if the URL
+            does not match.
+        """
         m = re.search(r"-(\d+)-(\d+)\.(hdf5?|gwf)$", url)
         if m:
             t0 = int(m.group(1))
@@ -407,10 +456,20 @@ class DataReleaseDownloader:
 
     @staticmethod
     def _make_retry_session(connect_retries=5, pool_size=32):
-        """Return a requests.Session with urllib3 retry and adequate pool size.
+        """
+        A requests Session that retries connection errors in urllib3.
 
-        pool_size must be >= num_workers to avoid "Connection pool is full"
-        discards. Default of 32 comfortably covers up to 32 parallel threads.
+        Parameters
+        ----------
+        connect_retries : int
+            Retries of each request, with backoff factor 2.
+        pool_size : int
+            Connection pool size; at least the number of threads.
+
+        Returns
+        -------
+        requests.Session
+            Session with the retrying adapter on http and https.
         """
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
@@ -434,19 +493,45 @@ class DataReleaseDownloader:
 
     @staticmethod
     def _gwosc_file_start(t):
-        """GPS start of the 4096s GWOSC file that contains time t.
+        """
+        GPS start of the 4096 s GWOSC file that contains ``t``.
 
-        GWOSC 4096s files start at GPS times that are exact multiples of 4096.
+        GWOSC 4096 s files start at multiples of 4096.
+
+        Parameters
+        ----------
+        t : float
+            GPS time.
+
+        Returns
+        -------
+        int
+            File start.
         """
         return (int(t) // 4096) * 4096
 
     @staticmethod
     def _construct_file_url(det, f0, observing_run="O3b"):
-        """Construct GWOSC 4KHz HDF5 URL from detector and GPS file start.
+        """
+        URL of a GWOSC 4 kHz HDF5 file; the pattern is verified for O3b.
 
-        URL pattern (verified for O3b):
-          https://gwosc.org/archive/data/{run}_4KHZ_R1/{parent}/{prefix}-{det}_GWOSC_{run}_4KHZ_R1-{gps}-4096.hdf5
-        where parent = (gps // 65536) * 65536 and prefix = det[0] (L for L1, V for V1).
+        ``{prefix}-{det}_GWOSC_{run}_4KHZ_R1-{f0}-4096.hdf5`` in the
+        archive directory ``{run}_4KHZ_R1/{parent}/``, with ``parent =
+        (f0 // 65536) * 65536`` and ``prefix = det[0]``.
+
+        Parameters
+        ----------
+        det : str
+            Detector prefix.
+        f0 : int
+            GPS start of the file.
+        observing_run : str
+            Observing run.
+
+        Returns
+        -------
+        str
+            The file URL.
         """
         prefix = det[0]
         parent = (int(f0) // 65536) * 65536
@@ -458,22 +543,26 @@ class DataReleaseDownloader:
 
     def _resolve_and_group(self, segments, det, run):
         """
-        Group mini-segments by GWOSC 4096s file.
+        Group segments by the GWOSC 4096 s file that holds them.
 
-        URLs are constructed mathematically — no API calls needed.
-        GWOSC 4KHz files follow a deterministic path pattern, so we can
-        skip the get_urls() round-trip entirely and go straight to grouping.
+        URLs are built from the GPS times, without API calls. A
+        segment crossing a file boundary gives a ``"first"`` task in
+        one file and a ``"second"`` task in the next.
 
-        Segments straddling a file boundary get 'first'/'second' partial tasks
-        in both adjacent files; the caller concatenates raw pieces before
-        downsampling (zero redundant HTTP requests).
+        Parameters
+        ----------
+        segments : array-like, shape ``(N, 2)``
+            GPS ``[start, end]`` of each segment.
+        det : str
+            Detector prefix.
+        run : str
+            Observing run.
 
         Returns
         -------
         file_tasks : dict
-            url → {'same': [(n,b0,b1),...],
-                   'first': [(n,b0,b1,f0_b),...],
-                   'second': [(n,b0,b1,f0_b),...]}
+            URL -> ``{"same": [(n, b0, b1)], "first": [(n, b0, b1,
+            f0_b)], "second": [(n, b0, b1, f0_b)]}``.
         n_cross : int
             Number of cross-file segments.
         """
@@ -502,7 +591,6 @@ class DataReleaseDownloader:
             f"({n_same} same-file, {n_cross} cross-file) — constructing URLs..."
         )
 
-        # No API calls: build all URLs from GPS times using the known GWOSC path pattern
         file_tasks = {
             DataReleaseDownloader._construct_file_url(det, f0, observing_run=run): tasks
             for f0, tasks in by_f0.items()
@@ -513,24 +601,31 @@ class DataReleaseDownloader:
     @staticmethod
     def _download_and_extract_file(url, task_groups, cfg, max_retries=5):
         """
-        Download one GWOSC 4096s HDF5 file and extract all requested slices.
+        Download one GWOSC 4096 s HDF5 file and extract its slices.
 
-        task_groups keys
-        ----------------
-        'same'   : [(n, b0, b1)]          — segment fully inside this file
-        'first'  : [(n, b0, b1, f0_b)]    — segment starts here, ends in next file
-        'second' : [(n, b0, b1, f0_b)]    — segment started in previous file, ends here
+        A segment inside the file is downsampled here; a cross-file
+        segment gives its raw piece in this file.
 
-        Return format
-        -------------
-        List of tagged tuples:
-          ('done',    n, data, meta)          — complete segment, ready to save
-          ('first',   n, raw, sr, b0, b1)    — first raw piece; await 'second'
-          ('second',  n, raw, sr, b0, b1)    — second raw piece; await 'first'
-        On file-level failure:
-          ('done',   n, None, {})            for same tasks
-          ('first',  n, None, sr, b0, b1)    for first tasks
-          ('second', n, None, sr, b0, b1)    for second tasks
+        Parameters
+        ----------
+        url : str
+            File URL.
+        task_groups : dict
+            ``"same"``: ``[(n, b0, b1)]`` inside this file; ``"first"``:
+            ``[(n, b0, b1, f0_b)]`` starting here; ``"second"``: the
+            same, ending here.
+        cfg : DownloadConfig
+            Download settings.
+        max_retries : int
+            Attempts at the file download.
+
+        Returns
+        -------
+        list of tuple
+            ``("done", n, data, meta)``,
+            ``("first", n, raw, sr, b0, b1)`` or
+            ``("second", n, raw, sr, b0, b1)``; ``data`` or ``raw`` is
+            None where the slice, or every download attempt, failed.
         """
         same_tasks   = task_groups.get("same",   [])
         first_tasks  = task_groups.get("first",  [])
@@ -556,7 +651,7 @@ class DataReleaseDownloader:
                     duration = float(hf["meta/Duration"][()])
                     sr = len(strain) / duration
 
-                    # --- same-file segments: extract + downsample now ---
+                    # Segments inside this file: extract and downsample
                     for n, b0, b1 in same_tasks:
                         try:
                             i0 = max(0, int(round((b0 - t_file) * sr)))
@@ -579,7 +674,7 @@ class DataReleaseDownloader:
                         except Exception:
                             results.append(("done", n, None, {}))
 
-                    # --- first half of cross-file segment: raw up to file end ---
+                    # First piece of a cross-file segment
                     for n, b0, b1, _f0_b in first_tasks:
                         try:
                             i0 = max(0, int(round((b0 - t_file) * sr)))
@@ -588,7 +683,7 @@ class DataReleaseDownloader:
                         except Exception:
                             results.append(("first", n, None, sr, b0, b1))
 
-                    # --- second half of cross-file segment: raw from file start ---
+                    # Second piece, from the file start
                     for n, b0, b1, _f0_b in second_tasks:
                         try:
                             i1 = min(len(strain), int(round((b1 - t_file) * sr)))
@@ -601,8 +696,8 @@ class DataReleaseDownloader:
 
             except Exception as exc:
                 if attempt < max_retries - 1:
-                    # Connection refused = server outage: wait up to 5 min before retrying.
-                    # Other errors: exponential backoff capped at 60 s.
+                    # Refused connection: 60 s per attempt, up to 300 s;
+                    # other errors: exponential backoff up to 60 s
                     if "Connection refused" in str(exc) or "Failed to establish" in str(exc):
                         wait = min(300, 60 * (attempt + 1))
                     else:
@@ -621,7 +716,14 @@ class DataReleaseDownloader:
                         pass
 
     def _return_download_config(self):
-        """Return download config dict for MP runs"""
+        """
+        The download settings as a frozen :class:`DownloadConfig`.
+
+        Returns
+        -------
+        DownloadConfig
+            Settings for the download workers.
+        """
         return DownloadConfig(
             sample_rate=self.sample_rate,
             trim=self.trim,
@@ -632,45 +734,44 @@ class DataReleaseDownloader:
 
     def _save_metadata(self, hf, group_name, metadata):
         """
-        Write a numpy structured array to an HDF5 file.
+        Write segment records to an HDF5 group.
 
-        This function explicitly converts arrays of fixed-length NumPy strings (S or U)
-        to lists of native Python strings (str) before writing, ensuring compatibility
-        with h5py's variable-length UTF-8 dtype for all records in the array.
+        String fields are written as variable-length UTF-8 datasets, the
+        segments of each record as a dataset of their own.
 
+        Parameters
+        ----------
+        hf : h5py.File
+            Open file.
+        group_name : str
+            Group to write into.
+        metadata : numpy.ndarray of SEGMENT_DTYPE
+            Records.
         """
 
-        # Create metadata group
         grp = hf.require_group(group_name)
 
-        # Write simple numeric fields directly
         grp.create_dataset("start_time", data=metadata["start_time"])
         grp.create_dataset("end_time", data=metadata["end_time"])
 
-        # Write string fields as standalone UTF-8 datasets
-        # Define the target dtype for the HDF5 file: variable-length UTF-8
         dt_str = h5py.string_dtype(encoding="utf-8")
 
         detector_list = [str(x) for x in metadata["detector"]]
         grp.create_dataset("detector", data=detector_list, dtype=dt_str)
 
-        # Data quality flag
         flag_list = [str(x) for x in metadata["flag"]]
         grp.create_dataset("flag", data=flag_list, dtype=dt_str)
 
-        # Observing run
         observing_run_list = [str(x) for x in metadata["observing_run"]]
         grp.create_dataset("observing_run", data=observing_run_list, dtype=dt_str)
 
-        # Store segments data
         seg_grp = grp.require_group("segments")
 
-        # And store a simple index array
         N = len(metadata)
         seg_index = np.zeros(N, dtype="i8")
 
         for i in range(N):
-            # The 'segments' field contains nested arrays (objects) for each record.
+            # Object field: one array of segments per record
             segs = np.asarray(metadata["segments"][i])
             seg_grp.create_dataset(f"{i:05d}", data=segs)
             seg_index[i] = i
@@ -678,25 +779,47 @@ class DataReleaseDownloader:
         grp.create_dataset("segments_index", data=seg_index)
 
     def _savepath_handling(self, dirname):
-        """Make savepath safely"""
-        # Make the save directory
+        """
+        Set ``save_dir`` to ``save_parent_dir / dirname`` and create it.
+
+        Parameters
+        ----------
+        dirname : str
+            Name of the directory.
+        """
         self.save_dir = Path(self.save_parent_dir) / dirname
         if not os.path.exists(self.save_dir):
             self.save_dir.mkdir(parents=True, exist_ok=False)
 
     def _h5py_mkfile(self, filename):
-        # Make and persist open the h5py file
+        """Open ``save_dir / filename`` as a new HDF5 file."""
         filepath = self.save_dir / filename
         return h5py.File(filepath, "w")
 
     def _save_segment(self, hf, idx, data, det, run, chunk_metadata):
-        """Save data into hdf5 dataset"""
+        """
+        Write one segment as a gzip dataset with its metadata.
+
+        Parameters
+        ----------
+        hf : h5py.File
+            Open file.
+        idx : int
+            Segment index; the dataset name.
+        data : numpy.ndarray or None
+            Samples; nothing is written for None.
+        det : str
+            Detector prefix.
+        run : str
+            Observing run.
+        chunk_metadata : dict
+            Attributes of the segment.
+        """
         if data is None or not isinstance(data, np.ndarray):
             return
 
         seg_grp = hf.require_group("segments")
-        # TODO: Padded names go up to max 99999 segments
-        # This should be good enough; generalise this later if needed
+        # Zero-padded to five digits
         name = f"{idx:05d}"
 
         dset = seg_grp.create_dataset(
@@ -707,7 +830,6 @@ class DataReleaseDownloader:
             chunks=True,
         )
 
-        # Attach metadata for *this* chunk
         for k, v in chunk_metadata.items():
             dset.attrs[k] = v
 
@@ -717,49 +839,40 @@ class DataReleaseDownloader:
 
     def _fetcher(self, segments, det, run):
         """
-        Download GWOSC segments for a detector and store either:
-        - one HDF5 per chunk (default)
-        - or a single monolithic HDF5 with all samples appended
+        Download one detector's segments and store them.
 
-        Args:
-            GPS_boundaries (_type_): _description_
-            num_workers (int, optional): _description_. Defaults to 4.
-            det (str, optional): _description_. Defaults to "".
-            run (str, optional): _description_. Defaults to "".
-            parent_dir (str, optional): _description_. Defaults to "".
-            monolithic_file (_type_, optional): _description_. Defaults to True.
+        Monolithic: one HDF5 file, or one ``.bin`` file with JSON lists
+        of the saved and the failed segments. Otherwise one HDF5 file
+        per segment.
 
+        Parameters
+        ----------
+        segments : numpy.ndarray, shape ``(N, 2)``
+            GPS ``[start, end]`` of each segment, before the trim.
+        det : str
+            Detector prefix.
+        run : str
+            Observing run.
         """
 
-        # logger.info(
-        #    f"Fetching GWOSC data for detector {det} ({run}) "
-        #    f"using {self.num_workers} worker(s)"
-        # )
-
-        # Setup monolithic file
         if self.monolithic and not self.save_bin:
-            # Make save dir
             self._savepath_handling(self.release_dirname)
-            # Make save file
             hf = self._h5py_mkfile(f"data_{det}_{run}.h5")
-            # Store full metadata ONCE for the full dataset
+            # Records of the full dataset, stored once
             self._save_metadata(hf, "metadata", self.full_metadata)
 
         elif self.monolithic and self.save_bin:
             self._savepath_handling(self.release_dirname)
             bin_fh = self._bin_open(f"data_{det}_{run}.bin")
-            # reset cursors
             self._bin_metadata = []
             self._failed_metadata = []
             self._bin_sample_cursor = 0
             self._bin_byte_cursor = 0
 
         else:
-            # Make save dir
             self._savepath_handling(f"data_release_{det}_{run}")
 
-        # Download (MP or non-MP)
-        # Split segment downloads into separate tasks
+        # One task per segment, for a single worker
         tasks = ((self.dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
 
         if self.num_workers > 1:
@@ -769,8 +882,8 @@ class DataReleaseDownloader:
                 f"({n_cross} cross-file segments split across adjacent files)"
             )
 
-            # Helper: save one complete (n, data, meta) to bin or HDF5
             def _save_one(n, data, metadata):
+                """Save one complete segment to the output file."""
                 if self.save_bin:
                     if data is None or not isinstance(data, np.ndarray):
                         b0, b1 = float(segments[n][0]), float(segments[n][1])
@@ -785,11 +898,8 @@ class DataReleaseDownloader:
                         return
                     nsamp, nbytes, dt, checksum = self._save_segment_bin(bin_fh, data)
                     seg_meta = {
-                        # Position in the saved metadata, not the GWOSC enumeration
-                        # index `n`. Segments are saved in parallel-completion order
-                        # and some `n` fail, so labelling by slot keeps the index a
-                        # dense 0..N-1 regardless of order. Downstream (recolour /
-                        # segment PSDs) treats segment_index as a positional key.
+                        # Position in the saved metadata, not n: a dense
+                        # 0..N-1 key whatever the order or failures
                         "segment_index": len(self._bin_metadata),
                         "detector": det,
                         "observing_run": run,
@@ -814,11 +924,11 @@ class DataReleaseDownloader:
                 else:
                     self._save_segment(hf, n, data, det, run, metadata)
 
-            # Accumulator for cross-file partial pieces: n → {kind: (raw, sr, b0, b1)}
+            # Cross-file pieces: n -> {kind: (raw, sr, b0, b1)}
             partials = {}
 
             def _combine_and_save(n, parts, pbar):
-                """Concatenate first+second raw pieces, downsample, save."""
+                """Join the two raw pieces, downsample and save."""
                 fr, sr, b0, b1 = parts["first"]
                 sr_r, b0_r, b1_r = parts["second"][1], parts["second"][2], parts["second"][3]
                 sec_raw = parts["second"][0]
@@ -864,8 +974,7 @@ class DataReleaseDownloader:
                     tqdm(total=len(segments)) as pbar:
                 pbar.set_description(f"GWOSC-FILE {det}")
 
-                # Submit in bounded batches so completed-future results don't
-                # accumulate unboundedly in memory while the main thread saves.
+                # Bounded batches keep finished results from piling up
                 _BATCH = self.num_workers * 4
                 file_items = list(file_tasks.items())
 
@@ -881,8 +990,7 @@ class DataReleaseDownloader:
 
                     for future in as_completed(futures):
                         items = future.result()
-                        # Drop the reference immediately so GC can reclaim the
-                        # extracted arrays before moving to the next future.
+                        # Release the result so its arrays can be freed
                         futures.pop(future, None)
 
                         for item in items:
@@ -916,8 +1024,7 @@ class DataReleaseDownloader:
                             continue
                         nsamp, nbytes, dt, checksum = self._save_segment_bin(bin_fh, data)
                         seg_meta = {
-                            # Position-based index (see _save_one) — slot in the
-                            # saved metadata, so order/failures never leave gaps.
+                            # Positional index, as in _save_one
                             "segment_index": len(self._bin_metadata),
                             "detector": det,
                             "observing_run": run,
@@ -952,7 +1059,7 @@ class DataReleaseDownloader:
                         hf.close()
                     pbar.update()
 
-        # Close monolithic output file
+        # Close the monolithic output file
         if self.monolithic and not self.save_bin:
             hf.close()
 
@@ -973,26 +1080,40 @@ class DataReleaseDownloader:
                 json.dump(self.full_metadata, f, indent=2)
 
     def _validate_segments(self, segments, det, run):
-        """Validate segments based on trimmed duration and good download"""
+        """
+        Mask of the segments long enough and available at both edges.
+
+        Sets ``durations`` to the post-trim durations.
+
+        Parameters
+        ----------
+        segments : numpy.ndarray, shape ``(N, 2)``
+            GPS ``[start, end]`` of each segment.
+        det : str
+            Detector prefix.
+        run : str
+            Observing run.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(N,)``
+            True for a valid segment.
+        """
         det_start = segments[:, 0]
         det_end = segments[:, 1]
         self.durations = det_end - det_start
-        # Include corrupt_rmlength in durations
+        # Durations after the trim of both edges
         self.durations = self.durations - (2.0 * self.trim)
 
-        # Get valid mask based on minimum segment duration
         duration_mask = self.durations >= self.minimum_segment_duration
 
-        # Prepare all edge checks
+        # One second at each edge is fetched to check availability
         edge_times = []
         for idx, (start, end) in enumerate(zip(det_start, det_end)):
-            # Get 1 second near the edges to check segment validity
             edge_times.append((idx, start, start + 1))
             edge_times.append((idx, end - 1, end))
 
-        # Get validity mask for segment availability
         edge_ok = np.ones(segments.shape[0], dtype=bool)
-        # Parallel fetch
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             futures = {
                 executor.submit(self._fetch_data, self.dcfg, det, t0, t1): idx
@@ -1008,37 +1129,36 @@ class DataReleaseDownloader:
                 if not ok:
                     edge_ok[idx] = False
 
-        # Create the final mask after duration and edge checks
         return duration_mask & edge_ok
 
     def _clean_record(self, record):
-        """Check valid segments and prune record"""
+        """
+        Keep only the valid segments of a record.
+
+        Parameters
+        ----------
+        record : numpy.void of SEGMENT_DTYPE
+            Record of one detector and run.
+
+        Returns
+        -------
+        numpy.void or None
+            The pruned record, or None if it has no segments.
+        """
         run = record["observing_run"]
         det = record["detector"]
         segments = record["segments"]
 
         if segments.size == 0:
-            # logger.warning(f"Segments empty for {det} in {run}. Skipping.")
             return None
 
-        # logger.info(f"Downloading segments from {det} for {run}")
-
-        # Validate if segments are okay to download
         final_mask = self._validate_segments(segments, det, run)
 
-        # Store valid boundaries
         record["segments"] = segments[final_mask]
         total_valid_duration = self.durations[final_mask].sum()
         available_valid_duration = self.durations.sum()
 
-        # logger.info(
-        #    f"{det} {run}: Available = {available_valid_duration}, "
-        #    f"Valid = {total_valid_duration}."
-        # )
-        # logger.warning("Min duration & data availability might reduce valid duration.")
         return record
-
-    ## --- Main function for end user ---
 
     def retry_and_append(
         self,
@@ -1049,7 +1169,10 @@ class DataReleaseDownloader:
         run: str,
     ):
         """
-        Download missing/failed segments and append them to an existing .bin file.
+        Download segments and append them to an existing ``.bin`` file.
+
+        ``seg_json_path`` gains the new entries, and the segments that
+        still fail are written to ``*_retry_failed.json`` beside it.
 
         Parameters
         ----------
@@ -1064,9 +1187,10 @@ class DataReleaseDownloader:
         run : str
             Observing run label (e.g. ``"O3b"``).
 
-        After this call ``seg_json_path`` is updated with new entries appended
-        and a ``*_retry_failed.json`` is written with any segments that still
-        could not be downloaded.
+        Raises
+        ------
+        ValueError
+            If ``segments_to_retry`` is not of shape ``(N, 2)``.
         """
         bin_path = Path(bin_path)
         seg_json_path = Path(seg_json_path)
@@ -1079,15 +1203,14 @@ class DataReleaseDownloader:
             last = max(existing_meta, key=lambda m: m["byte_offset"])
             byte_cursor = last["byte_offset"] + last["byte_length"]
             sample_cursor = last["sample_start_idx"] + last["nsamples"]
-            # Continue the dense 0..N-1 sequence by count (not max+1) so appended
-            # retries stay positional regardless of order or prior gaps.
+            # By count, continuing the dense 0..N-1 sequence
             next_seg_idx = len(existing_meta)
         else:
             byte_cursor = 0
             sample_cursor = 0
             next_seg_idx = 0
 
-        # Sanity check: cursor must match actual file size
+        # The cursor follows the actual file size
         actual_size = bin_path.stat().st_size
         if byte_cursor != actual_size:
             print(
@@ -1118,6 +1241,7 @@ class DataReleaseDownloader:
         with open(bin_path, "ab") as bin_fh:
 
             def _save_retry(n, data, metadata):
+                """Append one segment, or record its failure."""
                 nonlocal byte_cursor, sample_cursor, next_seg_idx
                 if data is None or not isinstance(data, np.ndarray):
                     still_failed.append({
@@ -1159,6 +1283,7 @@ class DataReleaseDownloader:
                 next_seg_idx += 1
 
             def _combine_retry(n, parts, pbar):
+                """Join the two raw pieces, downsample and append."""
                 fr, sr, b0, b1 = parts["first"]
                 sec_raw = parts["second"][0]
                 if fr is None or sec_raw is None:
@@ -1251,23 +1376,18 @@ class DataReleaseDownloader:
 
     def download(self):
         """
-        Download all segments from GWOSC and save to disk.
+        Download every record of ``full_metadata``.
 
-        Iterates over every (detector, observing-run, segments) record in
-        :attr:`full_metadata`, calling :meth:`_fetcher` for each.  Records
-        with ``None`` value are skipped silently.  Output is written to the
-        ``data_release/`` sub-directory under :attr:`save_parent_dir`.
+        Each record goes through :meth:`_fetcher`.
+
+        A None record is skipped. Monolithic output goes to
+        ``release_dirname`` under ``save_parent_dir``.
         """
-        # Iterate and download records
         for record in self.full_metadata:
 
-            # Cleanup the record
-            # record = self._clean_record(record)
-            # Ignore if empty record
             if record == None:
                 continue
 
-            # Call fetcher to download valid data
             self._fetcher(
                 record["segments"],
                 record["detector"],

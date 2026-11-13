@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Seeded, batched sampler of waveform parameters from a checked prior,
+with its transforms, constraints and target scaling.
+
 Filename        : distributions.py
 Description     : Short description of the file
 
@@ -31,14 +34,12 @@ Documentation:
 
 """
 
-# Packages
 import math
 
 import torch
 
 from typing import Any, Dict
 
-# LOCAL
 from sage.data.waveform.distributions import (
     angular,
     cosmology,
@@ -47,12 +48,8 @@ from sage.data.waveform.distributions import (
     uniform,
 )
 
-
-# Conversions
 from sage.core.conversions import distance_from_chirp_distance_mchirp, mchirp_from_mass1_mass2
 from sage.data.waveform.conversions import mass1_mass2_to_mchirp_q
-
-# Transformation constraints
 import sage.data.waveform.constraints as constraints
 
 def spherical_to_cartesian(radial, polar, azimuthal):
@@ -64,7 +61,7 @@ def spherical_to_cartesian(radial, polar, azimuthal):
     radial : torch.Tensor
         Spin magnitude.
     polar : torch.Tensor
-        Polar angle (inclination) in radians.
+        Polar angle in radians.
     azimuthal : torch.Tensor
         Azimuthal angle in radians.
 
@@ -108,16 +105,15 @@ def prior_sampler(prior: Dict[str, Any], seed: int, device, dtype) -> "Distribut
 
 class NamedConstraint:
     """
-    Reference to a named constraint function defined in
-    :mod:`sage.data.waveform.constraints`.
+    A constraint of :mod:`sage.data.waveform.constraints`, by name.
 
     Parameters
     ----------
     name : str
-        Name of the constraint function (must appear in
-        ``constraints._NAMED_CONSTRAINTS``).
+        Name of the constraint function, one of
+        ``constraints._NAMED_CONSTRAINTS``.
     params : list or None
-        Additional parameter names passed to the constraint function.
+        Passed to the constraint function as ``extra_params``.
     """
 
     def __init__(self, name, params=None):
@@ -127,33 +123,23 @@ class NamedConstraint:
 
 class DistributionSampler(torch.nn.Module):
     """
-    Batched waveform-parameter sampler driven by a YAML prior configuration.
+    Batched sampler of waveform parameters from a prior.
 
-    Reads a dictionary that describes:
-
-    * **priors** — per-parameter distributions (uniform, sin-angle,
-      solid-angle, sky, uniform-radius, …).
-    * **waveform_transforms** — deterministic reparametrisations applied
-      after sampling (spherical → Cartesian spins, m1/m2 → mchirp/q,
-      chirp-distance → luminosity distance).
-    * **constraints** — named masks; samples outside them are rejected and
-      drawn again (e.g. ``mass_order`` for m1 ≥ m2).
-
-    After construction, :meth:`compile_target_scaling` must be called once
-    to set the target scaling used by :meth:`scale_targets` /
-    :meth:`unscale_targets`.
+    Draws every prior, rejects samples outside the named constraints and
+    applies the waveform transforms. :meth:`compile_target_scaling` sets
+    the scaling of :meth:`scale_targets` and :meth:`unscale_targets`.
 
     Parameters
     ----------
     config : dict
-        Parsed YAML dictionary with keys ``"priors"``,
-        ``"waveform_transforms"`` (optional), and ``"constraints"`` (optional).
-    device : str
-        Torch device for all sampled tensors.
+        Checked prior with keys ``"variable_params"``, ``"priors"`` and
+        optionally ``"waveform_transforms"`` and ``"constraints"``.
+    device : str or torch.device
+        Device of the samples.
     dtype : torch.dtype
-        Floating-point dtype for all sampled tensors.
+        Dtype of the samples.
     generator : torch.Generator
-        Seeded generator used for all random draws.
+        Seeded generator of every draw.
 
     Attributes
     ----------
@@ -161,18 +147,23 @@ class DistributionSampler(torch.nn.Module):
         Sorted list of all parameter names produced by this sampler
         (includes derived quantities from transforms).
     param_index : dict[str, int]
-        Mapping from parameter name to column index in the output tensor.
+        Column of each parameter in the output tensor.
     num_params : int
         Total number of parameters in the output batch.
     bounds : dict[str, tuple]
         Theoretical ``(min, max)`` bounds for every parameter.
+
+    Raises
+    ------
+    ValueError
+        If a distribution or constraint is unknown, or a parameter's
+        bounds have ``max <= min``.
     """
 
     def __init__(self, config: Dict[str, Any], device, dtype, generator):
 
         super().__init__()
 
-        # Generator
         self.generator = generator
 
         self.cfg = config
@@ -186,10 +177,9 @@ class DistributionSampler(torch.nn.Module):
         self.transforms = []
         self.constraints = []
 
-        ## Fix parameters
+        # Names of the sampled and the derived parameters
         self.param_names = []
 
-        # Priors
         for pname, pcfg in self.cfg["priors"].items():
 
             if pcfg["name"] == "uniform_solidangle":
@@ -203,7 +193,6 @@ class DistributionSampler(torch.nn.Module):
             else:
                 self.param_names.append(pname)
 
-        # Transforms
         for _, tcfg in self.cfg.get("waveform_transforms", {}).items():
 
             name = tcfg["name"]
@@ -231,10 +220,37 @@ class DistributionSampler(torch.nn.Module):
 
     @staticmethod
     def get_named_constraints():
-        """Return the list of built-in named constraint identifiers."""
+        """
+        Names of the constraints in :mod:`constraints`.
+
+        Returns
+        -------
+        list of str
+            The constraint names.
+        """
         return constraints._NAMED_CONSTRAINTS
 
     def _make_dist(self, name, args):
+        """
+        Distribution of one prior.
+
+        Parameters
+        ----------
+        name : str
+            Distribution name.
+        args : dict
+            The prior's settings other than ``name``.
+
+        Returns
+        -------
+        object
+            Distribution with a ``sample`` method.
+
+        Raises
+        ------
+        ValueError
+            If the distribution is unknown.
+        """
         if name == "uniform":
             return uniform.Uniform(args["min"], args["max"])
         if name == "uniform_angle":
@@ -258,12 +274,14 @@ class DistributionSampler(torch.nn.Module):
         raise ValueError(f"Unknown distribution {name}")
 
     def _build_distributions(self):
+        """Build the distribution of each prior in ``distributions``."""
         for pname, pcfg in self.cfg["priors"].items():
             name = pcfg["name"]
             args = {k: v for k, v in pcfg.items() if k != "name"}
             self.distributions[pname] = self._make_dist(name, args)
 
     def _build_transforms(self):
+        """Collect the configured transforms in ``transforms``."""
         for _, tcfg in self.cfg.get("waveform_transforms", {}).items():
             name = tcfg["name"]
 
@@ -277,11 +295,19 @@ class DistributionSampler(torch.nn.Module):
                 self.transforms.append(("distance", tcfg))
 
     def _build_constraints(self):
+        """
+        Collect the configured constraints in ``constraints``.
+
+        Raises
+        ------
+        ValueError
+            If a constraint is not a named constraint.
+        """
         self.constraints = []
 
         for c in self.cfg.get("constraints", []):
 
-            # a named constraint is a mask; samples outside it are rejected (_sample_accepted)
+            # A mask; _sample_accepted rejects the samples outside it
             if c["name"] in constraints._NAMED_CONSTRAINTS:
                 self.constraints.append(NamedConstraint(c["name"], c.get("params")))
 
@@ -331,7 +357,14 @@ class DistributionSampler(torch.nn.Module):
         return params
 
     def _apply_transforms(self, params):
+        """
+        Apply the transforms to ``params`` in place.
 
+        Parameters
+        ----------
+        params : torch.Tensor, shape ``(N, num_params)``
+            Samples; the derived columns are overwritten.
+        """
         for tname, cfg in self.transforms:
             if tname == "spin_cartesian":
                 r_idx = self.param_index[cfg["radial"]]
@@ -366,7 +399,19 @@ class DistributionSampler(torch.nn.Module):
                 params[:, self.param_index["distance"]] = d
 
     def _within_constraints(self, params):
-        """Mask of the samples that satisfy every constraint."""
+        """
+        Mask of the samples that satisfy every constraint.
+
+        Parameters
+        ----------
+        params : torch.Tensor, shape ``(N, num_params)``
+            Samples.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(N,)``
+            True where every constraint holds.
+        """
         keep = torch.ones(params.shape[0], dtype=torch.bool, device=params.device)
         for c in self.constraints:
             keep &= getattr(constraints, c.name)(params, self.param_index, c.params)
@@ -376,9 +421,19 @@ class DistributionSampler(torch.nn.Module):
         """
         ``N`` raw samples within every constraint.
 
-        Rejection sampling as ``pycbc.distributions.joint.JointDistribution.rvs``:
-        each round draws ``ndraw`` samples from every prior and keeps those
-        within the constraints, in order.
+        Rejection sampling as PyCBC's ``JointDistribution.rvs``: each
+        round draws from every prior and keeps the samples within the
+        constraints, in order.
+
+        Parameters
+        ----------
+        N : int
+            Number of samples.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(N, num_params)``
+            Raw samples, before the transforms.
         """
         if not self.constraints:
             return self._sample_base(N)
@@ -392,22 +447,28 @@ class DistributionSampler(torch.nn.Module):
             kmax = min(nkeep, remaining)
             out[kmin:kmin + kmax] = scratch[keep][:kmax]
             remaining = max(0, remaining - nkeep)
-            # to try to speed up next go around, we'll increase the draw
-            # size by the fraction of values that were kept, but cap at 1e6
+            # to try to speed up next go around, we'll increase the
+            # draw size by the fraction of values that were kept, but
+            # cap at 1e6
             ndraw = int(min(1e6, ndraw * math.ceil(ndraw / (nkeep + 1.0))))
         return out
 
     def theoretical_bounds(self):
         """
-        Compute analytic lower/upper bounds for all parameters
-        based on YAML priors + constraints + deterministic transforms.
+        Analytic ``(min, max)`` bounds of the parameters.
+
+        From the priors, the ``mass_order`` constraint and the
+        transforms.
+
+        Returns
+        -------
+        dict[str, tuple]
+            Bounds of each bounded parameter, in ``param_names`` order.
         """
 
         bounds = {}
 
         priors = self.cfg["priors"]
-
-        ## BASE PRIORS
 
         for pname, pcfg in priors.items():
 
@@ -436,19 +497,15 @@ class DistributionSampler(torch.nn.Module):
                 bounds[pcfg["polar-angle"]] = (0.0, torch.pi)
                 bounds[pcfg["azimuthal-angle"]] = (0.0, 2 * torch.pi)
 
-        ## MASS ORDER CONSTRAINT (configured only)
-
         constrained = {c["name"] for c in self.cfg.get("constraints", [])}
         transforms = list(self.cfg.get("waveform_transforms", {}).values())
         if "mass_order" in constrained:
             m1_min, m1_max = bounds["mass1"]
             m2_min, m2_max = bounds["mass2"]
 
-            # enforce m1 >= m2
+            # m1 >= m2
             bounds["mass1"] = (max(m1_min, m2_min), m1_max)
             bounds["mass2"] = (m2_min, min(m2_max, m1_max))
-
-        ## DERIVED MASS PARAMETERS (the mass transform)
 
         if any(t["name"] == "mass1_mass2_to_mchirp_q" for t in transforms):
 
@@ -459,7 +516,7 @@ class DistributionSampler(torch.nn.Module):
             q_min = m1_min / m2_max
             bounds["q"] = (max(1.0, q_min) if "mass_order" in constrained else q_min, m1_max / m2_min)
 
-            # Extremes occur on boundary
+            # mchirp rises with each mass; extremes are at the corners
             candidates = [
                 mchirp_from_mass1_mass2(m1_min, m2_min),
                 mchirp_from_mass1_mass2(m1_min, m2_max),
@@ -469,29 +526,22 @@ class DistributionSampler(torch.nn.Module):
 
             bounds["mchirp"] = (min(candidates), max(candidates))
 
-        ## DISTANCE (the distance transform)
-
         if any(t["name"] == "chirp_distance_to_distance" for t in transforms):
 
             cd_min, cd_max = bounds["chirp_distance"]
             mc_min, mc_max = bounds["mchirp"]
 
-            # distance from chirp distance
             d_min = distance_from_chirp_distance_mchirp(cd_min, mc_min)
             d_max = distance_from_chirp_distance_mchirp(cd_max, mc_max)
 
             bounds["distance"] = (d_min, d_max)
 
-        ## SPIN CARTESIAN COMPONENTS (each transform's own keys)
-
         for tcfg in transforms:
             if tcfg["name"] == "spherical_to_cartesian":
                 a_max = bounds[tcfg["radial"]][1]
-                # since spherical: x, y, z in [-a, a]
+                # Each Cartesian component lies in [-a_max, a_max]
                 for key in ("x", "y", "z"):
                     bounds[tcfg[key]] = (-a_max, a_max)
-
-        ## Ensure ordering consistent with param_names
 
         ordered_bounds = {
             name: bounds[name] for name in self.param_names if name in bounds
@@ -501,8 +551,10 @@ class DistributionSampler(torch.nn.Module):
 
     def compile_target_scaling(self, targets, dtype):
         """
-        Scale ``targets`` to [-1, 1] from their bounds: ``(x - offset) / scale``,
-        offset the middle of the bounds and scale half their width.
+        Register the buffers that scale ``targets`` to [-1, 1].
+
+        ``(x - offset) / scale``, with the offset the middle of the
+        bounds and the scale half their width.
 
         Parameters
         ----------
@@ -525,19 +577,44 @@ class DistributionSampler(torch.nn.Module):
         self.register_buffer("_target_scales", torch.tensor([(b - a) / 2 for a, b in zip(lows, highs)], dtype=dtype))
 
     def scale_targets(self, batch: torch.Tensor):
-        """The targets of a ``(B, num_params)`` batch, scaled to [-1, 1] (``compile_target_scaling``)."""
+        """
+        The targets of a batch, scaled to [-1, 1].
+
+        Parameters
+        ----------
+        batch : torch.Tensor, shape ``(B, num_params)``
+            Parameter batch.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, n_targets)``
+            Scaled targets, in the order given to
+            :meth:`compile_target_scaling`.
+        """
         return (batch.index_select(1, self._target_indices) - self._target_offsets) / self._target_scales
 
     def unscale_targets(self, scaled: torch.Tensor):
-        """Physical values of a ``(B, targets)`` batch of scaled targets."""
+        """
+        Physical values of scaled targets.
+
+        Parameters
+        ----------
+        scaled : torch.Tensor, shape ``(B, n_targets)``
+            Scaled targets.
+
+        Returns
+        -------
+        torch.Tensor, shape ``(B, n_targets)``
+            Targets in physical units.
+        """
         return scaled * self._target_scales + self._target_offsets
 
     def forward(self, N: int):
         """
-        Sample a batch of ``N`` waveform parameters from the configured prior.
+        Sample a batch of ``N`` waveform parameters from the prior.
 
-        Applies constraints (rejection sampling) and deterministic transforms
-        (e.g. mchirp/q, Cartesian spins, luminosity distance) in order.
+        Draws within the constraints by rejection sampling, then applies
+        the transforms.
 
         Parameters
         ----------
@@ -550,9 +627,7 @@ class DistributionSampler(torch.nn.Module):
             Complete parameter batch with all transforms applied.
         """
         params = self._sample_accepted(N)
-        # NOTE: Just so I remove panic for future me
-        # Tensors are mutable and passed by reference
-        # So we don't need to return params from appply_transforms
+        # Transforms write into params in place
         self._apply_transforms(params)
 
         return params

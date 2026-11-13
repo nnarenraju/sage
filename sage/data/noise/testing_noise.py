@@ -2,17 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Testing-only noise sampler.
-
-``TestNoiseSampler`` samples noise windows exactly like ``MemmapNoiseSampler`` but
-also exposes each window's PROVENANCE -- per-detector ``(run, segment, start)`` --
-via ``last_provenance``, so a flagged window can later be re-read verbatim from the
-memmaps (see ``sage.factory.testing.reconstruct_noise``).
-
-It SUBCLASSES ``MemmapNoiseSampler`` and overrides only the batch read + queue pop,
-so the base sampler used by training/validation is left completely untouched. It
-always draws the true background: no hard-noise biasing and no recolour
-postprocess (both irrelevant to a sensitivity/FAR measurement).
+Noise sampler for offline testing that records where each window came
+from, so a window can be re-read later
+(:func:`sage.factory.testing.reconstruct_noise`).
 """
 
 import numpy as np
@@ -23,19 +15,35 @@ from ._pycbc_lazy import dyn_range_fac
 
 
 class TestNoiseSampler(MemmapNoiseSampler):
-    """Provenance-exposing noise sampler for offline testing (see module docstring)."""
+    """
+    ``MemmapNoiseSampler`` that records each batch's provenance.
+
+    Batches are random windows without hard-window replay or
+    postprocess; ``last_provenance`` holds the per-detector
+    ``(run, segment, start)`` of the last batch popped.
+    """
 
     def __init__(self, *args, **kwargs):
-        # Set before super().__init__ so it exists before the prefetch thread runs.
+        # Set before the prefetch thread starts in super().__init__
         self.last_provenance = None
         super().__init__(*args, **kwargs)
 
     def _read_batch(self, batch_size):
-        """Read one batch AND its provenance -> ``(FD tensor (B,D,F), prov dict)``.
+        """
+        Read one batch of random windows and its provenance.
 
-        Mirrors ``MemmapNoiseSampler._read_batch`` for the plain-background path
-        (no hard-noise bias, no postprocess), and additionally returns the
-        per-detector ``(run, segment, start)`` used for each window.
+        Parameters
+        ----------
+        batch_size : int
+            Number of windows.
+
+        Returns
+        -------
+        batch : torch.Tensor, shape ``(B, D, F)``
+            ``rfft`` of the windows.
+        prov : dict
+            ``"start"``, ``"segment"`` and ``"run"``, each ``(B, D)``
+            int64.
         """
         B, D, seq_len = batch_size, self.n_detectors, self.seq_len
         start_indices, segment_indices, run_indices = self._sample_starts_batch(B)
@@ -46,6 +54,7 @@ class TestNoiseSampler(MemmapNoiseSampler):
         mmaps = self.mmaps
 
         def _read_window(job):
+            """Read window ``i`` of detector ``d`` into ``arrs``."""
             d, i = job
             s = int(start_indices[d][i]); r = int(run_indices[d][i])
             arrs[d][i] = mmaps[d][r][s:s + seq_len]
@@ -58,7 +67,7 @@ class TestNoiseSampler(MemmapNoiseSampler):
                 "segment": np.empty((B, D), dtype=np.int64),
                 "run":     np.empty((B, D), dtype=np.int64)}
         for d in range(D):
-            arrs[d] /= dyn_range_fac()                 # restore original scale
+            arrs[d] /= dyn_range_fac()                 # undo the scaling
             cpu_tensor = torch.from_numpy(arrs[d])
             if pin:
                 cpu_tensor = cpu_tensor.pin_memory()
@@ -71,7 +80,14 @@ class TestNoiseSampler(MemmapNoiseSampler):
         return batch_tensor, prov
 
     def sample_batch(self):
-        """Pop a batch from the prefetch queue and stash its provenance."""
+        """
+        Pop a batch from the prefetch queue and keep its provenance.
+
+        Returns
+        -------
+        torch.Tensor
+            FD noise batch.
+        """
         batch_tensor, prov = self.queue.get()
         self.last_provenance = prov
         return batch_tensor

@@ -2,23 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-Lazy access to pycbc constants for the noise package.
+Lazy access to pycbc's ``DYN_RANGE_FAC`` for the noise package.
 
-pycbc is an *optional* dependency (declared under the ``lal`` extra in
-``pyproject.toml``). Several noise modules only need pycbc's dynamic-range
-constant, and only when actually reading real noise — not at import time. Routing
-that constant through this helper keeps ``import sage.data.noise`` working in a
-pycbc-free environment (e.g. the lightweight CI), deferring the heavy import to
-the first noise read.
+pycbc is imported on the first call, not when ``sage.data.noise`` is
+imported.
 """
 
 _DYN_RANGE_FAC = None
 
 
 def dyn_range_fac():
-    """Return pycbc's ``DYN_RANGE_FAC``, importing pycbc lazily on first use."""
+    """
+    pycbc's ``DYN_RANGE_FAC``, importing pycbc on the first call.
+
+    Returns
+    -------
+    float
+        The dynamic-range factor.
+    """
     global _DYN_RANGE_FAC
     if _DYN_RANGE_FAC is None:
+        # Deferred: importing the noise package does not load pycbc
         from pycbc import DYN_RANGE_FAC
         _DYN_RANGE_FAC = DYN_RANGE_FAC
     return _DYN_RANGE_FAC

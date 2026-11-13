@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Batched PyTorch port of LALSimulation's IMRPhenomPv2 precessing
+frequency-domain waveform, built on the IMRPhenomD port.
+
 Filename        : IMRPhenomPv2.py
 Description     : Batched PyTorch port of the IMRPhenomPv2 precessing
                   frequency-domain waveform (LALSimIMRPhenomP.c),
@@ -69,7 +72,7 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
     reference_frequency_in_hz : float
         Reference frequency of the waveform phase.
     targets : list of str
-        Point-estimate targets, in head order.
+        Point-estimate targets, in head order; must include mchirp.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -77,6 +80,12 @@ class IMRPhenomPv2(IMRPhenomD.IMRPhenomD, torch.nn.Module):
     append_per_det_targets : bool
         Append per-detector targets after the class column (masker
         only).
+
+    Raises
+    ------
+    ValueError
+        If targets lacks mchirp or the prior lacks a waveform
+        parameter.
     """
 
     GRAPH_READY = True

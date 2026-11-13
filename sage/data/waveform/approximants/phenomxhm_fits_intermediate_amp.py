@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+IMRPhenomXHM parameter-space fits of the intermediate amplitude
+at the collocation points.
+
 Filename      : phenomxhm_fits_intermediate_amp.py
 Description   : IMRPhenomXHM intermediate amplitude fits at the
                 collocation points (version 122022), ported from

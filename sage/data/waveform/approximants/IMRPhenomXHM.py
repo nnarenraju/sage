@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Batched PyTorch port of LALSimulation's IMRPhenomXHM aligned-spin
+multimode frequency-domain waveform, built on the IMRPhenomXAS port.
+
 Filename      : IMRPhenomXHM.py
 Description   : Batched PyTorch port of LALSimulation's IMRPhenomXHM
                 multimode waveform (LALSimIMRPhenomXHM.c and its
@@ -485,6 +488,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
         im_l3m2lp3 = (af*(12.45701482868677 - 29.398484595717147*af + 18.26221675782779*x2 + 1.9308599142669403*x3 - 3.159763242921214*x4 - 0.0910871567367674*x5)) / (345.52914639836257 - 815.4349339779621*af + 538.3888932415709*x2 - 69.3840921447381*x4 + 1.*x6)
         # mixingCoeffs are COMPLEX8 in LAL
         def complex8(re, im):
+            """Complex value rounded through float32, as COMPLEX8."""
             return torch.complex(re.float().to(af.dtype), im.float().to(af.dtype))
 
         a222 = complex8(re_l2m2lp2, im_l2m2lp2)
@@ -1993,6 +1997,7 @@ class IMRPhenomXHM(IMRPhenomXAS):
         val, der : torch.Tensor, shape (B, 1)
         """
         def cabs_s2s(f):
+            """Modulus of the spheroidal-to-spherical rotation at f."""
             return torch.abs(self._spheroidal_to_spherical(
                 f, derived, pWFHM, amp, spheroidal, amp22_coeffs, phase22_coeffs))
 
@@ -2422,7 +2427,8 @@ class IMRPhenomXHM(IMRPhenomXAS):
         Raises
         ------
         ValueError
-            If any transverse spin is non-zero.
+            If any transverse spin or tidal parameter is non-zero, or
+            LAL rejects the parameters.
         """
         theta = waveform_utils.aligned_layout(
             theta, waveform_utils.ALIGNED_COLUMNS,

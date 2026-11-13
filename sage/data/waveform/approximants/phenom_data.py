@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+IMRPhenomD data tables: the QNM ringdown and damping frequencies
+against final spin, and the phenomenological coefficient fits.
+
 Filename        : qnm_data.py
 Description     : Short description of the file
 
@@ -31,11 +34,11 @@ terms cover those derived portions only.
 
 """
 
-# Packages
 import torch
 
-# Primary cite: Tables taken from https://git.ligo.org/lscsoft/lalsuite/-/blob/master/lalsimulation/lib/LALSimIMRPhenomD.h
-# Secondary cite: Arrays taken from https://github.com/tedwards2412/ripple/blob/main/src/ripplegw/waveforms/IMRPhenomD_QNMdata.py
+# Tables from LALSimIMRPhenomD.h (lalsuite, lalsimulation/lib); arrays
+# as in ripple (github.com/tedwards2412/ripple,
+# src/ripplegw/waveforms/IMRPhenomD_QNMdata.py)
 
 _QNMData_a = torch.tensor(
     [

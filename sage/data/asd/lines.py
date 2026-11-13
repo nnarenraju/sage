@@ -2,9 +2,7 @@
 Spectral lines in strain: Thomson's multitaper harmonic F-test, and
 their excision from a fiducial ASD.
 
-Thomson, D. J. (1982), Proc. IEEE 70(9), 1055-1096. Tapers and
-eigencoefficients from ``multitaper`` (Prieto, G. A. (2022), Seismol.
-Res. Lett. 93(3), 1922-1929).
+Tapers and eigencoefficients from ``multitaper``.
 """
 
 import numpy as np
@@ -117,8 +115,7 @@ def excision_weight(lines: np.ndarray, bins: int, half: int) -> np.ndarray:
     Whitening weight that excises lines without sharp spectral edges.
 
     Zero within ``half`` bins of each line, rising to one over the next
-    ``half`` bins with a raised-cosine (Hann) edge (window method;
-    Harris, F. J. (1978), Proc. IEEE 66(1), 51-83).
+    ``half`` bins with a raised-cosine (Hann) edge.
 
     Parameters
     ----------

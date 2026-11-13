@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
+Log-log spline smoothing of an amplitude spectral density.
+
 Filename        : smoothing.py
 Description     : Log-log spline smoothing of a spectral density.
 
@@ -23,7 +25,6 @@ Documentation: NULL
 
 """
 
-# Packages
 import numpy as np
 
 from scipy.interpolate import UnivariateSpline
@@ -31,40 +32,24 @@ from scipy.interpolate import UnivariateSpline
 
 class LogSplineSmoothing:
     """
-    Spectral smoother based on a univariate spline fit in log-log space.
+    Spectral smoother: a univariate spline fit in log-log space.
 
-    Transforms both frequency and amplitude to log scale before fitting a
-    :class:`scipy.interpolate.UnivariateSpline`, then exponentiates the
-    result back.  Log-log fitting suits detector spectra because their
-    broad-band structure follows approximate power laws, so the spline needs
-    fewer knots and produces a more physically plausible smooth curve than a
-    linear-domain fit would.
-
-    In Sage this is always handed an ASD (see
-    :class:`~sage.data.primer.get_asds.EstimateASD`), which matters for the
-    choice of ``smooth_factor``: the usable strength is roughly 0.001 x
-    ``len(freqs)`` on an ASD versus 0.004 on a PSD, since the log-domain
-    residuals are half as large.  The maths itself is domain agnostic.
-
-    Frequencies below ``noise_low_frequency_cutoff`` are excluded from the
-    spline fit (the seismic wall makes the estimate unreliable there); the
-    original values are returned unchanged for those bins.
+    Fits :class:`scipy.interpolate.UnivariateSpline` to log amplitude
+    against log frequency above ``noise_low_frequency_cutoff``; bins
+    below it are returned unchanged. In Sage the input is an ASD.
 
     Parameters
     ----------
     smooth_factor : float or None
-        Smoothing parameter passed to :class:`~scipy.interpolate.UnivariateSpline`
-        as ``s``.  Larger values produce smoother output.  If ``None``, a
-        heuristic ``0.2 * n_points`` is used on the first call.
-    upweight_regions : list[tuple[float, float]] or None
-        Optional list of ``(f_low, f_high)`` frequency bands to upweight
-        (weight 2 vs. default 1) so the spline tracks those regions more
-        closely (e.g. the detector's most sensitive band).
+        Spline smoothing condition ``s``; larger is smoother. If
+        ``None``, ``0.2`` times the number of fitted points is used on
+        the first call.
+    upweight_regions : list of tuple of float or None
+        ``(f_low, f_high)`` bands fitted with weight 2 instead of 1.
     return_coeffs : bool
-        Unused placeholder for future coefficient export (default ``False``).
+        Stored but unused.
     noise_low_frequency_cutoff : float
-        Frequency (Hz) below which values are not used for fitting
-        (default ``15.0``).
+        Frequency (Hz) below which bins are not fitted.
     """
 
     def __init__(
@@ -81,38 +66,35 @@ class LogSplineSmoothing:
 
     def smooth(self, freqs, asd, smooth_factor=None):
         """
-        Smooth a noisy spectral estimate using a spline in log-log space.
+        Smooth a spectrum with a spline in log-log space.
+
+        A truthy ``smooth_factor`` replaces the stored one for this and
+        later calls.
 
         Parameters
         ----------
-        freqs : (F,) array
-            Frequency array (must be > 0).
-        asd : (F,) array
-            Spectral values, an ASD in Sage's pipeline (must be > 0).
+        freqs : numpy.ndarray, shape ``(F,)``
+            Frequencies (Hz); fitted bins must be > 0.
+        asd : numpy.ndarray, shape ``(F,)``
+            Spectral values, an ASD in Sage.
         smooth_factor : float or None
-            Smoothing strength. Larger = smoother.
-            If None, an automatic heuristic is used.
+            Spline smoothing condition ``s``; ``None`` keeps the stored
+            value.
 
         Returns
         -------
-        asd_smooth : (F,) array
-            Smoothed spectrum (same shape as input).
+        numpy.ndarray, shape ``(F,)``
+            Copy of ``asd`` with the fitted bins smoothed.
         """
-
-        # remove zero freq if present
         f = freqs
         p = asd
 
-        # Floor before masking
-        # float32 normal range is upto ~1e-38
-        # float32 subnormal range is till ~1e-45
-        # so we pick the smallest representable value > 0
+        # Floor before the log
         p = np.maximum(p, 1e-60)
 
-        # define cutoff
         mask = f >= self.noise_low_frequency_cutoff
 
-        # only use trusted region for fitting
+        # Fit only above the cutoff
         f = f[mask]
         p = p[mask]
 
@@ -120,28 +102,24 @@ class LogSplineSmoothing:
         logp = np.log(p)
 
         if smooth_factor is None and self.smooth_factor is None:
-            # heuristic: proportional to number of points
             self.smooth_factor = len(logf) * 0.2
         elif smooth_factor:
             self.smooth_factor = smooth_factor
 
-        # default weights
         weights = np.ones_like(logp)
 
-        # upweight special regions in freq space
         if self.upweight_regions is not None:
             for f_low, f_high in self.upweight_regions:
                 line_mask = (f >= f_low) & (f <= f_high)
                 weights[line_mask] = 2
 
-        # Number and placement of knots might differ between spectra
-        # Use LSQUnivariateSpline if you want to keep these fixed
+        # Knot number and placement can differ between spectra
         spline = UnivariateSpline(logf, logp, s=self.smooth_factor, w=weights)
 
         logp_smooth = spline(logf)
         asd_smooth = np.exp(logp_smooth)
 
-        # put back DC if needed
+        # Bins below the cutoff keep their input values
         out = asd.copy()
         out[mask] = asd_smooth
 

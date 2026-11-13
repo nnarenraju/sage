@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+IMRPhenomXHM parameter-space fits of the intermediate phase
+derivative at the collocation points.
+
 Filename      : phenomxhm_fits_intermediate_phase.py
 Description   : IMRPhenomXHM intermediate phase-derivative fits at the
                 collocation points (version 122019), ported from

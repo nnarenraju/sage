@@ -2,28 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Hard-negative noise mining with CMA-MAE (pyribs), backed by a file-resident
+Hard-negative noise mining with CMA-MAE (pyribs): per-detector start
+times encoded as bounded genotypes, scored by a model, and stored in a
 :class:`~sage.data.noise.hard_bank.HardMiningBank`.
-
-One miner, continuous across training:
-
-  * **Cold start (once):** random per-detector start times are scored by the
-    current model; a fresh IncrementalPCA + CVT centroids are fit from the
-    warmup embeddings; CMA-MAE explores; hard windows (ranking stat >= keep
-    threshold) and a diverse subset of their embeddings are written to the bank.
-  * **Every warm round:** the persisted IncrementalPCA and the start-time /
-    embedding banks are loaded from the file.  CMA-ES is seeded from known-hard
-    start times *and* the CVT centroids from the accumulated embedding bank; the
-    PCA is ``partial_fit`` (never refit from scratch); a **novelty bonus** drives
-    the search toward embedding regions the bank does not yet cover (new glitch
-    families) while the *keep* gate still requires a high raw ranking stat.
-  * **Re-evaluation:** every round, the entire start-time bank is re-scored with
-    the current model and the ranking stats are appended (tagged with the model
-    epoch), so a family's hardness trajectory across training is recoverable.
-
-ALL CMA / archive / QD machinery is pyribs (CMA-MAE + CVT archives).  What lives
-here is only the gravitational-wave glue: the bounded genotype <-> per-detector
-start-time codec, the black-box ``evaluate_fn`` seam, and the bank bookkeeping.
 """
 
 import numpy as np
@@ -39,25 +20,43 @@ from sage.core.pipeline import GWBatch
 
 
 def make_miner_preprocessor(processor):
-    """Build ``preprocess_fn(noise_fd) -> net_input`` mirroring the training
-    noise pipeline (whitening -> IFFT -> multirate), so the miner scores noise
-    shaped exactly like what the model sees in training. Batches enter in the
-    processor's input state.
+    """
+    Build a function mapping an FD noise batch to the network input.
+
+    Parameters
+    ----------
+    processor : callable
+        Training data processor; batches enter in its input state.
+
+    Returns
+    -------
+    callable
+        ``preprocess_fn(noise_fd) -> network input``.
     """
     def preprocess_fn(noise_fd):
+        """Run ``noise_fd`` through the processor."""
         return processor(GWBatch(noise_fd, state=processor.input_state)).to_network_input()
 
     return preprocess_fn
 
 
 class _StartTimeCodec:
-    """Bounded genotype ``[0, 1]^D`` <-> per-detector ``(start, segment)``.
+    """
+    Map between genotypes in ``[0, 1]^D`` and per-detector windows.
 
-    Each genotype component is a fraction in ``[0, 1]`` (the emitter is bounded,
-    so we just clip -- no sigmoid/logit map).  The fraction indexes linearly into
-    the detector's valid window-start positions, respecting segment boundaries.
-    Segments the noise sampler never draws (``segment_probs`` 0: bad time, too
-    short) have no valid start.
+    Each component indexes linearly into the first
+    ``nsamples - seq_len`` start offsets of each segment of its
+    detector; segments with ``segment_probs`` 0 have none.
+
+    Parameters
+    ----------
+    seg_index : list of numpy.ndarray
+        Per-detector segment tables (fields ``idx``, ``start``,
+        ``nsamples`` and optionally ``run``).
+    seq_len : int
+        Window length in samples.
+    segment_probs : list of numpy.ndarray
+        Per-detector sampling probability of each segment.
     """
 
     def __init__(self, seg_index, seq_len, segment_probs):
@@ -72,9 +71,8 @@ class _StartTimeCodec:
             self.cum_valid.append(cum)
             self.abs_starts.append(seg_arr["start"].astype(np.int64))
             self.seg_ids.append(seg_arr["idx"].astype(np.int64))
-            # Pooled segment tables carry a run id (5a); a window's identity is
-            # (run, segment, start) since segment ids collide across runs. Tolerate
-            # a legacy run-less table (all run 0).
+            # Segment ids repeat across pooled runs, so each carries its
+            # run id; a table without a run field is run 0
             self.run_ids.append(
                 seg_arr["run"].astype(np.int64) if "run" in seg_arr.dtype.names
                 else np.zeros(len(seg_arr), dtype=np.int64)
@@ -83,14 +81,27 @@ class _StartTimeCodec:
             self.N.append(int(cum[-1]))
 
     def decode(self, genotypes):
-        """(B, D) fractions -> (starts, segs, runs), each (B, D) int64."""
+        """
+        Windows of the given genotypes.
+
+        Parameters
+        ----------
+        genotypes : array-like, shape ``(B, D)``
+            Fractions, clipped to ``[0, 1]``.
+
+        Returns
+        -------
+        starts, segs, runs : numpy.ndarray, shape ``(B, D)``
+            Absolute start indices, segment ids and run ids, int64; zero
+            for a detector without valid starts.
+        """
         g = np.clip(np.asarray(genotypes, dtype=np.float64), 0.0, 1.0)
         B = g.shape[0]
         starts = np.zeros((B, self.D), dtype=np.int64)
         segs = np.zeros((B, self.D), dtype=np.int64)
         runs = np.zeros((B, self.D), dtype=np.int64)
         for d in range(self.D):
-            if self.N[d] <= 0:                      # detector with no valid window
+            if self.N[d] <= 0:                      # no valid start
                 continue
             lin = np.clip((g[:, d] * self.N[d]).astype(np.int64), 0, self.N[d] - 1)
             arr = np.clip(
@@ -105,7 +116,21 @@ class _StartTimeCodec:
         return starts, segs, runs
 
     def encode(self, starts, segs, runs):
-        """(B, D) (starts, segs, runs) -> (B, D) genotype fractions in [0, 1]."""
+        """
+        Genotypes of the given windows.
+
+        A ``(run, segment)`` not in the table maps to the first segment.
+
+        Parameters
+        ----------
+        starts, segs, runs : array-like, shape ``(B, D)``
+            Absolute start indices, segment ids and run ids.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(B, D)``
+            Fractions in ``[0, 1]``.
+        """
         starts = np.asarray(starts, dtype=np.int64)
         segs = np.asarray(segs, dtype=np.int64)
         runs = np.asarray(runs, dtype=np.int64)
@@ -114,7 +139,7 @@ class _StartTimeCodec:
         for d in range(self.D):
             if self.N[d] <= 0:
                 continue
-            # Key by (run, segment): segment ids alone collide across pooled runs.
+            # Segment ids repeat across runs: key by (run, segment)
             key_to_pos = {(int(r), int(s)): i for i, (r, s)
                           in enumerate(zip(self.run_ids[d], self.seg_ids[d]))}
             arr = np.array(
@@ -124,43 +149,58 @@ class _StartTimeCodec:
             )
             off = starts[:, d] - self.abs_starts[d][arr]
             lin = self.cum_valid[d][arr] + off
-            # map to the *centre* of the linear bin so decode (which floors
-            # g*N) recovers exactly this position -- makes decode∘encode stable.
+            # Centre of the linear bin, so decode (which floors g * N)
+            # recovers this position
             g[:, d] = np.clip((lin.astype(np.float64) + 0.5) / max(self.N[d], 1),
                               0.0, 1.0)
         return g
 
 
 class CMAMAEMiner:
-    """Continuous CMA-MAE hard-negative miner backed by a :class:`HardMiningBank`.
+    """
+    CMA-MAE hard-negative miner storing its results in a hard bank.
+
+    A cold round fits a new IncrementalPCA of the model embeddings; warm
+    rounds update the stored PCA, seed the search from banked windows
+    and add a novelty bonus for embeddings far from the bank.
 
     Parameters
     ----------
     detectors : list[str]
-        Detector names; ``D = len(detectors)`` sets the search dimension.
-    seg_index : list of structured np.ndarray
-        Per-detector segment tables (fields ``idx/start/end/nsamples``).
-    segment_probs : list of np.ndarray
-        Per-detector sampling probability of each segment, from the noise
-        sampler; segments it never draws are never mined.
+        Detector names; their number is the search dimension.
+    seg_index : list of numpy.ndarray
+        Per-detector segment tables of the noise sampler.
+    segment_probs : list of numpy.ndarray
+        Per-detector sampling probability of each segment; segments
+        with probability 0 are never mined.
     seq_len : int
         Window length in samples.
     bank : HardMiningBank
-        The file-resident store (start-times, embeddings, PCA, re-eval history).
+        Store of start times, embeddings, PCA and re-evaluations.
     keep_threshold : float or None
-        Windows scoring ``>=`` this (in raw ``evaluate_fn`` units, i.e. the
-        detection logit) are kept.  ``None`` -> ``-inf`` (keep everything).
+        Windows with raw ``evaluate_fn`` score >= this are kept;
+        ``None`` keeps every window.
     descriptor_dim : int
-        PCA-reduced embedding width (must match the bank's ``P``).
-    n_cells, learning_rate, threshold_min, n_emitters, emitter_batch_size,
-    sigma0, n_warmup :
-        CMA-MAE / CVT / CMA-ES settings (see pyribs).  ``learning_rate`` < 1 =>
-        CMA-MAE; ``= 1`` => CMA-ME.
+        PCA-reduced embedding width; must match the bank's.
+    n_cells : int
+        Number of CVT archive cells, at most the number of measures.
+    learning_rate : float
+        Archive learning rate (pyribs); below 1 is CMA-MAE, 1 CMA-ME.
+    threshold_min : float
+        Archive minimum threshold, lowered below the warmup scores.
+    n_emitters : int
+        Number of CMA-ES emitters.
+    emitter_batch_size : int
+        Solutions per emitter and iteration.
+    sigma0 : float
+        Initial CMA-ES step size.
+    n_warmup : int
+        Windows scored before the search; at least ``n_cells``.
     novelty_weight : float
-        Strength of the novelty bonus added to the optimisation objective in
-        warm rounds (pushes the search toward embedding regions the bank does
-        not yet cover).  The *keep* gate still uses the raw ranking stat only.
+        Weight of the novelty bonus in the search objective; the keep
+        gate uses the raw score only.
     seed : int or None
+        Base seed of each round's random streams.
     """
 
     def __init__(
@@ -202,10 +242,20 @@ class CMAMAEMiner:
         self.seed = seed
         self._rng = np.random.default_rng(seed)
 
-    # ------------------------------------------------------------------ helpers
     def _seed_genotypes(self, n):
-        """Random genotypes, half replaced (warm) by ones encoded from the
-        bank's known-hard start times so the search resumes near hard regions."""
+        """
+        Random genotypes; for a warm bank up to half are banked.
+
+        Parameters
+        ----------
+        n : int
+            Number of genotypes.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(n, D)``
+            Genotypes.
+        """
         g = self._rng.random((n, self.D))
         if not self.bank.is_cold:
             k = min(n // 2, self.bank.n_starts)
@@ -216,28 +266,55 @@ class CMAMAEMiner:
 
     @staticmethod
     def _novelty(measures, covered):
-        """Min distance of each measure row to the ``covered`` set (0 if empty)."""
+        """
+        Distance of each measure row to the nearest ``covered`` row.
+
+        Parameters
+        ----------
+        measures : numpy.ndarray, shape ``(B, P)``
+            Measures to score.
+        covered : numpy.ndarray, shape ``(M, P)``, or None
+            Covered set; ``None`` or empty gives zeros.
+
+        Returns
+        -------
+        numpy.ndarray, shape ``(B,)``
+            Euclidean distances.
+        """
         if covered is None or len(covered) == 0:
             return np.zeros(len(measures), dtype=np.float64)
         d2 = ((measures[:, None, :] - covered[None, :, :]) ** 2).sum(-1)
         return np.sqrt(d2.min(1))
 
-    # ------------------------------------------------------------------ mining
     def mine(self, evaluate_fn, n_iters, epoch):
-        """Run one mining round and append results to the bank.
-
-        Returns a small stats dict for logging.
         """
-        # Per-round seed: each mine round (one per scheduled epoch) explores
-        # deterministically but differently, and re-mining the same epoch after a
-        # restart reproduces exactly. The bank state itself resumes via its HDF5
-        # file, independent of this seed.
+        Run one mining round and append the kept windows to the bank.
+
+        Parameters
+        ----------
+        evaluate_fn : callable
+            ``evaluate_fn(starts, segs, runs) -> (scores, embeddings)``.
+        n_iters : int
+            Ask-tell iterations after the warmup.
+        epoch : int
+            Training epoch; sets the round seed and tags the bank rows.
+
+        Returns
+        -------
+        dict
+            Round statistics for logging.
+
+        Raises
+        ------
+        AssertionError
+            If a cold round's embedding width is below
+            ``descriptor_dim``.
+        """
+        # Seed per round: the same epoch reproduces, epochs differ
         round_seed = None if self.seed is None else self.seed + epoch * 100003
         self._rng = np.random.default_rng(round_seed)
 
-        # Continuous learning: load the persisted PCA + embedding bank if they
-        # exist (decoupled from whether any hard starts were kept yet), so a
-        # round that keeps zero starts never resets the PCA from scratch.
+        # The stored PCA is reused even if no start was kept yet
         ipca = self.bank.load_pca()
         cold = ipca is None
         covered = (self.bank.read_embeddings()[0]
@@ -246,12 +323,13 @@ class CMAMAEMiner:
         kept_s, kept_g, kept_r, kept_sc, kept_m = [], [], [], [], []
 
         def _collect(starts, segs, runs, scores, measures):
+            """Store the windows scoring >= ``keep_threshold``."""
             m = scores >= self.keep_threshold
             if m.any():
                 kept_s.append(starts[m]); kept_g.append(segs[m]); kept_r.append(runs[m])
                 kept_sc.append(scores[m]); kept_m.append(measures[m])
 
-        # ── warmup: score random/seeded windows, (cold) fit / (warm) update PCA ─
+        # Warmup: score random and seeded windows, update the PCA
         g0 = self._seed_genotypes(self.n_warmup)
         s0, seg0, run0 = self.codec.decode(g0)
         sc0, emb0 = evaluate_fn(s0, seg0, run0)
@@ -259,19 +337,18 @@ class CMAMAEMiner:
         emb0 = np.asarray(emb0, np.float64)
 
         if ipca is None:
-            # bank storage width (P) is fixed at descriptor_dim, so the realized
-            # PCA must produce exactly that many components -- guard the model
-            # embedding width so add_embeddings can't silently reshape-corrupt.
+            # The bank stores descriptor_dim components, so the model
+            # embedding must be at least that wide
             assert emb0.shape[1] >= self.descriptor_dim, (
                 f"model embedding width {emb0.shape[1]} < descriptor_dim "
                 f"{self.descriptor_dim}; lower descriptor_dim"
             )
             ipca = IncrementalPCA(n_components=self.descriptor_dim)
-        ipca.partial_fit(emb0)                       # continuous, never from scratch
+        ipca.partial_fit(emb0)                       # update, not refit
         meas0 = ipca.transform(emb0)
         _collect(s0, seg0, run0, sc0, meas0)
 
-        # ── CVT centroids: cold from warmup; warm seeded by the bank's diversity ─
+        # CVT centroids from the warmup measures and the bank embeddings
         cset = meas0 if (covered is None or len(covered) == 0) else \
             np.concatenate([covered[:, :meas0.shape[1]], meas0], 0)
         n_cells = min(self.n_cells, len(cset))
@@ -282,11 +359,9 @@ class CMAMAEMiner:
         ranges = list(zip(cset.min(0) - 0.1 * span - 1e-6,
                           cset.max(0) + 0.1 * span + 1e-6))
 
-        # Floor the CMA-MAE cell threshold below the warmup score range so the
-        # archive always populates from the first generations -- even when the
-        # model scores low (early epochs / untrained). An empty archive crashes
-        # the CMA-ES restart (sample_elites). The KEEP gate (keep_threshold on
-        # the RAW score) is separate and unaffected by this.
+        # Cell threshold below the warmup scores, so the archive fills
+        # from the first generation; an empty archive fails the CMA-ES
+        # restart (sample_elites). The keep gate is separate.
         thr_min = self.threshold_min
         finite = sc0[np.isfinite(sc0)]
         if finite.size:
@@ -307,24 +382,23 @@ class CMAMAEMiner:
         ]
         scheduler = Scheduler(archive, emitters)
 
-        # covered set for the novelty bonus = bank embeddings (fixed this round)
+        # Novelty is measured against the bank embeddings of this round
         cov = None if (covered is None or len(covered) == 0) else \
             covered[:, :meas0.shape[1]]
 
-        # ── ask / evaluate / tell ──────────────────────────────────────────────
+        # Ask, evaluate, tell
         for _ in range(int(n_iters)):
             sols = scheduler.ask()
             starts, segs, runs = self.codec.decode(sols)
             scores, emb = evaluate_fn(starts, segs, runs)
             scores = np.asarray(scores, np.float64).reshape(-1)
             meas = ipca.transform(np.asarray(emb, np.float64))
-            # objective = hardness + novelty (drives search to hard AND new);
-            # keep gate below still uses the RAW score only.
+            # Objective: score plus novelty; keep gate: score only
             obj = scores + self.novelty_weight * self._novelty(meas, cov)
             scheduler.tell(obj, meas)
             _collect(starts, segs, runs, scores, meas)
 
-        # ── persist: PCA, hard start-times, diverse+hard embeddings ────────────
+        # Store the PCA, the kept start times and their embeddings
         self.bank.save_pca(ipca)
         n_starts = n_emb = 0
         if kept_s:
@@ -333,27 +407,40 @@ class CMAMAEMiner:
             runs = np.concatenate(kept_r, 0)
             scores = np.concatenate(kept_sc, 0)
             meas = np.concatenate(kept_m, 0)
-            # de-dup identical (run, seg, start) windows, keep the highest score
+            # One row per (run, seg, start) window, at its highest score
             key = np.concatenate([runs, segs, starts], axis=1)
             order = np.argsort(-scores)
             _, uniq = np.unique(key[order], axis=0, return_index=True)
             sel = order[uniq]
             self.bank.append_starts(starts[sel], segs[sel], runs[sel], scores[sel], epoch)
             n_starts = len(sel)
-            # embeddings: bank applies its own novelty (distance) + cap gate
+            # The bank applies its own novelty and capacity gate
             n_emb = self.bank.add_embeddings(meas[sel], scores[sel], epoch)
         return {"epoch": epoch, "cold": cold,
                 "kept_starts": int(n_starts), "kept_embeddings": int(n_emb),
                 "bank_starts": self.bank.n_starts,
                 "bank_embeddings": self.bank.n_embeddings}
 
-    # ------------------------------------------------------------- re-evaluation
     def reevaluate(self, evaluate_fn, model_epoch, batch_size=4096):
-        """Re-score the ENTIRE start-time bank with the current model and append
-        the ranking stats as a new ``eval_stats`` column (tagged ``model_epoch``).
+        """
+        Re-score every banked window and append the scores to the bank.
 
-        Lets us track how each window's / family's hardness moves as training
-        progresses.  No-op on a cold (empty) bank.
+        The scores form a new ``eval_stats`` column tagged
+        ``model_epoch``. An empty bank is left unchanged.
+
+        Parameters
+        ----------
+        evaluate_fn : callable
+            ``evaluate_fn(starts, segs, runs) -> (scores, embeddings)``.
+        model_epoch : int
+            Epoch of the model doing the scoring.
+        batch_size : int
+            Windows per ``evaluate_fn`` call.
+
+        Returns
+        -------
+        dict
+            Re-evaluation statistics for logging.
         """
         N = self.bank.n_starts
         if N == 0:

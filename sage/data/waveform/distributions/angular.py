@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
+Angle priors: uniform, sin and cos angles, and a solid angle uniform
+over the sphere.
+
 Filename        : angular.py
 Description     : Short description of the file
 
@@ -23,30 +26,51 @@ Documentation: NULL
 
 """
 
-# Packages
 import torch
 
-# LOCAL
 from .uniform import Uniform
 
 
 class UniformAngle:
-    """GPU-friendly uniform distribution with optional arbitrary bounds and cyclic domain."""
+    """
+    Angle uniform on ``[lower, upper)``.
+
+    Parameters
+    ----------
+    lower : float
+        Lower bound in radians.
+    upper : float
+        Upper bound in radians.
+    cyclic_domain : bool
+        Whether to wrap the samples into ``[lower, upper)``.
+    """
 
     def __init__(self, lower=0.0, upper=2 * torch.pi, cyclic_domain=True):
-        """
-        Args:
-            lower (float): lower bound (radians)
-            upper (float): upper bound (radians)
-            cyclic_domain (bool): whether to wrap samples into [lower, upper)
-        """
         self.lower = lower
         self.upper = upper
         self.cyclic = cyclic_domain
         self.range = upper - lower
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
-        """Draw *shape* samples uniformly from ``[lower, upper)``."""
+        """
+        Angles drawn uniformly from ``[lower, upper)``.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Shape of the draw.
+        device : str or torch.device or None
+            Device of the draw.
+        dtype : torch.dtype
+            Dtype of the draw.
+        generator : torch.Generator or None
+            Generator of the draw.
+
+        Returns
+        -------
+        torch.Tensor
+            Angles in radians, of shape ``shape``.
+        """
         x = (
             torch.rand(
                 shape,
@@ -62,19 +86,28 @@ class UniformAngle:
         return x
 
     def wrap(self, x):
-        """Wrap values into [lower, upper)"""
+        """
+        ``x`` wrapped into ``[lower, upper)``.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Angles in radians.
+
+        Returns
+        -------
+        torch.Tensor
+            The wrapped angles.
+        """
         return (x - self.lower) % self.range + self.lower
 
 
 class SinAngle(UniformAngle):
     """
-    Isotropic polar-angle sampler for inclination-like parameters.
+    Polar angle with PDF proportional to sin(theta) on ``[low, high]``.
 
-    Draws samples from the distribution whose PDF is proportional to
-    ``sin(theta)`` over ``[low, high]``.  This is the correct prior for an
-    angle that is uniform over a sphere (e.g. binary inclination, source sky
-    polar angle).  Sampling is done via the inverse-CDF method in
-    ``cos(theta)`` space.
+    The isotropic prior of an inclination-like angle, drawn by the
+    inverse CDF uniform in ``cos(theta)``.
 
     Parameters
     ----------
@@ -87,7 +120,6 @@ class SinAngle(UniformAngle):
     PI = torch.pi
 
     def __init__(self, low=0.0, high=torch.pi):
-        # domain [0, pi]
         self.low = float(low)
         self.high = float(high)
 
@@ -95,7 +127,25 @@ class SinAngle(UniformAngle):
         self.cos_high = torch.cos(torch.tensor(self.low))
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
-        """Draw *shape* polar angles with the sin-angle prior (isotropic sphere)."""
+        """
+        Polar angles drawn from the sin-angle prior.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Shape of the draw.
+        device : str or torch.device or None
+            Device of the draw.
+        dtype : torch.dtype
+            Dtype of the draw.
+        generator : torch.Generator or None
+            Generator of the draw.
+
+        Returns
+        -------
+        torch.Tensor
+            Angles in radians, of shape ``shape``.
+        """
         # uniform in cos(theta)
         u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
         cos_theta = u * (self.cos_high - self.cos_low) + self.cos_low
@@ -108,12 +158,10 @@ class SinAngle(UniformAngle):
 
 class CosAngle(SinAngle):
     """
-    Isotropic azimuthal-like angle sampler for declination-type parameters.
+    Angle with PDF proportional to ``cos(theta)`` on ``[low, high]``.
 
-    Draws samples whose PDF is proportional to ``cos(theta)`` over
-    ``[-pi/2, pi/2]`` — the correct isotropic prior for declination or
-    elevation angles.  Sampling uses the inverse-CDF method in ``sin(theta)``
-    space, which is the dual of :class:`SinAngle`.
+    The isotropic prior of a declination-like angle, drawn by the
+    inverse CDF uniform in ``sin(theta)``.
 
     Parameters
     ----------
@@ -133,7 +181,25 @@ class CosAngle(SinAngle):
         self.sin_high = torch.sin(torch.tensor(self.high))
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
-        """Draw *shape* declination angles with the cos-angle prior (isotropic sphere)."""
+        """
+        Declination-like angles drawn from the cos-angle prior.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Shape of the draw.
+        device : str or torch.device or None
+            Device of the draw.
+        dtype : torch.dtype
+            Dtype of the draw.
+        generator : torch.Generator or None
+            Generator of the draw.
+
+        Returns
+        -------
+        torch.Tensor
+            Angles in radians, of shape ``shape``.
+        """
         # uniform in sin(theta)
         u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
         sin_theta = u * (self.sin_high - self.sin_low) + self.sin_low
@@ -146,25 +212,21 @@ class CosAngle(SinAngle):
 
 class UniformSolidAngle:
     """
-    Joint sampler for a pair of angles that is uniform over the full sphere.
+    Pair of angles uniform over the sphere.
 
-    Combines :class:`SinAngle` for the polar angle (inclination / sky
-    colatitude) and :class:`UniformAngle` for the azimuthal angle (right
-    ascension / polarisation) to produce an isotropic orientation prior.
-    The ``sample`` method returns a dict keyed by the names given at
-    construction, making it easy to merge into a broader parameter dict.
+    :class:`SinAngle` for the polar angle and :class:`UniformAngle` for
+    the azimuthal angle.
 
     Parameters
     ----------
     polar_name : str
-        Key for the polar-angle output (default ``"theta"``).
+        Key of the polar angle in the draw.
     azimuthal_name : str
-        Key for the azimuthal-angle output (default ``"phi"``).
+        Key of the azimuthal angle in the draw.
     polar_bounds : tuple[float, float]
-        ``(low, high)`` in radians for the polar angle (default ``(0, pi)``).
+        ``(low, high)`` of the polar angle in radians.
     azimuthal_bounds : tuple[float, float]
-        ``(low, high)`` in radians for the azimuthal angle
-        (default ``(0, 2*pi)``).
+        ``(low, high)`` of the azimuthal angle in radians.
     """
 
     def __init__(
@@ -177,18 +239,29 @@ class UniformSolidAngle:
         self.polar_name = polar_name
         self.azimuthal_name = azimuthal_name
 
-        # reuse your fast samplers
         self.polar_sampler = SinAngle(*polar_bounds)
         self.azimuth_sampler = UniformAngle(*azimuthal_bounds)
 
     def sample(self, shape, device=None, dtype=torch.float32, generator=None):
         """
-        Draw *shape* angle pairs and return them as a dict.
+        Polar and azimuthal angles, keyed by their names.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Shape of the draw.
+        device : str or torch.device or None
+            Device of the draw.
+        dtype : torch.dtype
+            Dtype of the draw.
+        generator : torch.Generator or None
+            Generator of the draw.
 
         Returns
         -------
         dict[str, torch.Tensor]
-            ``{polar_name: theta, azimuthal_name: phi}`` each of shape *shape*.
+            ``{polar_name: theta, azimuthal_name: phi}``, each of shape
+            ``shape``.
         """
         theta = self.polar_sampler.sample(
             shape,
