@@ -1,4 +1,5 @@
-"""The machine file and the data layout under its ``data_dir``.
+"""
+The machine file and the data layout under its ``data_dir``.
 
 ``~/.config/sage/machine.yaml`` holds only ``data_dir``; every
 observing run's data and every fiducial live at fixed places below it.
@@ -33,9 +34,11 @@ def read_data_dir() -> Path:
     Raises
     ------
     FileNotFoundError
-        If the machine file is missing or ``data_dir`` is not a directory.
+        If the machine file is missing or ``data_dir`` is not a
+        directory.
     ValueError
-        If ``data_dir`` is empty.
+        If ``data_dir`` is missing or empty, or the file holds another
+        key.
     """
     if not MACHINE_FILE.exists():
         raise FileNotFoundError(f"{MACHINE_FILE} missing; run `sage setup`")
@@ -89,7 +92,18 @@ def observing_run_dir(data_dir: Path, run: str, part: str) -> Path:
 
 
 def gwosc_label(run: str) -> str:
-    """An observing run as GWOSC writes it in file names, e.g. ``O3b``."""
+    """
+    An observing run as GWOSC writes it in file names, e.g. ``O3b``.
+
+    Parameters
+    ----------
+    run : str
+        Observing run, in any case.
+
+    Returns
+    -------
+    str
+    """
     return run[0].upper() + run[1:].lower()
 
 
@@ -138,7 +152,21 @@ def search_strain_file(data_dir: Path, run: str, detector: str) -> Path:
 
 
 def asd_dir(data_dir: Path, run: str) -> Path:
-    """ASDs built from one observing run's strain, ``<data_dir>/asds/<run>``."""
+    """
+    Directory of the ASDs built from one observing run's strain.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run.
+
+    Returns
+    -------
+    Path
+        ``<data_dir>/asds/<run>``, with the run in lower case.
+    """
     return Path(data_dir) / "asds" / run.lower()
 
 
@@ -156,61 +184,189 @@ def fiducial_dir(data_dir: Path, runs: list) -> Path:
     Returns
     -------
     Path
-        ``<data_dir>/asds/<run>/fiducial`` for one run, ``<data_dir>/asds/<run>+<run>.../fiducial``
-        for a pool, the runs sorted.
+        ``<data_dir>/asds/<runs>/fiducial``, where ``<runs>`` is the
+        sorted, lower-case run names joined by ``+``.
     """
     return Path(data_dir) / "asds" / "+".join(sorted({run.lower() for run in runs})) / "fiducial"
 
 
 def segments_file(path: Path) -> Path:
-    """The ``_segments.json`` sidecar of a strain or per-segment ASD ``.bin`` file."""
+    """
+    The ``_segments.json`` sidecar of a strain or per-segment ASD file.
+
+    Parameters
+    ----------
+    path : Path
+        The ``.bin`` file.
+
+    Returns
+    -------
+    Path
+    """
     path = Path(path)
     return path.parent / f"{path.stem}_segments.json"
 
 
 def failed_file(path: Path) -> Path:
-    """The ``_failed_segments.json`` list of pieces a strain file's download could not fetch."""
+    """
+    The ``_failed_segments.json`` list of pieces a download missed.
+
+    Parameters
+    ----------
+    path : Path
+        The strain file.
+
+    Returns
+    -------
+    Path
+    """
     path = Path(path)
     return path.parent / f"{path.stem}_failed_segments.json"
 
 
 def bad_time_file(path: Path) -> Path:
-    """The ``_bad_time.json`` data-quality time of a strain ``.bin`` file."""
+    """
+    The ``_bad_time.json`` data-quality time of a strain file.
+
+    Parameters
+    ----------
+    path : Path
+        The strain ``.bin`` file.
+
+    Returns
+    -------
+    Path
+    """
     path = Path(path)
     return path.parent / f"{path.stem}_bad_time.json"
 
 
 def zero_runs_file(path: Path) -> Path:
-    """The ``_zero_runs.json`` spans of exactly-zero samples in a strain ``.bin`` file."""
+    """
+    The ``_zero_runs.json`` spans of exactly-zero strain samples.
+
+    Parameters
+    ----------
+    path : Path
+        The strain ``.bin`` file.
+
+    Returns
+    -------
+    Path
+    """
     path = Path(path)
     return path.parent / f"{path.stem}_zero_runs.json"
 
 
 def dataset_file(data_dir: Path, run: str) -> Path:
-    """Record of an observing run's strain, ``<data_dir>/<run>/training/dataset.yaml``."""
+    """
+    Record of an observing run's training strain.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run.
+
+    Returns
+    -------
+    Path
+        ``<data_dir>/<run>/training/dataset.yaml``.
+    """
     return observing_run_dir(data_dir, run, "training") / "dataset.yaml"
 
 
 def search_dataset_file(data_dir: Path, run: str) -> Path:
-    """Search strain record, ``<data_dir>/<run>/search/dataset.yaml``."""
+    """
+    Record of an observing run's search strain.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run.
+
+    Returns
+    -------
+    Path
+        ``<data_dir>/<run>/search/dataset.yaml``.
+    """
     return observing_run_dir(data_dir, run, "search") / "dataset.yaml"
 
 
 def asds_file(data_dir: Path, run: str) -> Path:
-    """Record of an observing run's ASDs, ``<data_dir>/asds/<run>/asds.yaml``."""
+    """
+    Record of an observing run's ASDs.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory from the machine file.
+    run : str
+        Observing run.
+
+    Returns
+    -------
+    Path
+        ``<data_dir>/asds/<run>/asds.yaml``.
+    """
     return asd_dir(data_dir, run) / "asds.yaml"
 
 
 def segment_asd_file(asd_dir: Path, detector: str) -> Path:
-    """Per-segment ASDs of one detector, ``<asd_dir>/segment_psds/data_<detector>_psds.bin``."""
+    """
+    Per-segment ASD file of one detector.
+
+    Parameters
+    ----------
+    asd_dir : Path
+        ASD directory of an observing run.
+    detector : str
+        Detector, e.g. ``"H1"``.
+
+    Returns
+    -------
+    Path
+        ``<asd_dir>/segment_psds/data_<detector>_psds.bin``.
+    """
     return Path(asd_dir) / "segment_psds" / f"data_{detector}_psds.bin"
 
 
 def recolour_bank_file(asd_dir: Path, detector: str) -> Path:
-    """Recolour ASD bank of one detector, ``<asd_dir>/recolour_psds/raw_<detector>_psds.bin``; ``.json`` beside it."""
+    """
+    Recolour ASD bank of one detector; its ``.json`` sits beside it.
+
+    Parameters
+    ----------
+    asd_dir : Path
+        ASD directory of an observing run.
+    detector : str
+        Detector, e.g. ``"H1"``.
+
+    Returns
+    -------
+    Path
+        ``<asd_dir>/recolour_psds/raw_<detector>_psds.bin``.
+    """
     return Path(asd_dir) / "recolour_psds" / f"raw_{detector}_psds.bin"
 
 
 def fiducial_file(fiducial_dir: Path, detector: str) -> Path:
-    """Fiducial ASD of one detector, ``<fiducial_dir>/fiducial_<detector>_psd.bin``; ``.json`` beside it."""
+    """
+    Fiducial ASD of one detector; its ``.json`` sits beside it.
+
+    Parameters
+    ----------
+    fiducial_dir : Path
+        Fiducial directory, from :func:`fiducial_dir`.
+    detector : str
+        Detector, e.g. ``"H1"``.
+
+    Returns
+    -------
+    Path
+        ``<fiducial_dir>/fiducial_<detector>_psd.bin``.
+    """
     return Path(fiducial_dir) / f"fiducial_{detector}_psd.bin"

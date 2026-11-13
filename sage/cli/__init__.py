@@ -2,8 +2,9 @@
 The ``sage`` command line: ``sage <command>``, also ``sgw <command>``,
 ``sage-<command>`` and ``python -m sage <command>``.
 
-Every command acts on the current directory unless given one and ends by
-printing the next command; every error ends with the exact command that fixes it.
+Every command acts on the current directory unless given one and ends
+by printing the next command; every error ends with the exact command
+that fixes it.
 """
 
 import sys
@@ -35,7 +36,7 @@ def main(argv: list | None = None) -> int:
     Returns
     -------
     int
-        Exit status: 0, or 1 after an error.
+        Exit status: 0, or 1 after a ``CommandError``.
     """
     if argv is None:
         argv = sys.argv[1:]

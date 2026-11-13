@@ -1,4 +1,4 @@
-"""``sage slurm-chain``: submit a user's SLURM job script as a chain of jobs."""
+"""``sage slurm-chain``: submit a SLURM job script as a job chain."""
 
 import argparse
 from pathlib import Path
@@ -11,7 +11,20 @@ from sage.utils.slurm.chain import JOB_LOGS, chain
 
 @command("slurm-chain", "Submit your SLURM job script several times, each job after the previous one ends")
 def chain_jobs(arguments: list) -> None:
-    """Submit ``script`` ``--jobs`` times as a dependency chain (SLURM ``afterany``)."""
+    """
+    Submit a job script ``--jobs`` times as an ``afterany`` chain.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage slurm-chain``.
+
+    Raises
+    ------
+    CommandError
+        If the script is missing, has no run directory at or above
+        it, ``--jobs`` < 1, SLURM is absent or a submission fails.
+    """
     parser = argparse.ArgumentParser(
         prog="sage slurm-chain",
         description="Submit your SLURM job script several times, each job after the previous one ends."
@@ -24,7 +37,7 @@ def chain_jobs(arguments: list) -> None:
     script = Path(options.script)
     if not script.is_file():
         raise CommandError(f"no job script {script}", f"sage slurm-chain <your job script> --jobs {options.jobs}")
-    run_dir = find_run_dir(script.resolve().parent)  # output: its logs/jobs
+    run_dir = find_run_dir(script.resolve().parent)  # job output: its logs/jobs
     if not (run_dir / "run.yaml").exists():
         raise CommandError(
             f"{script}: a job script lives in or below the run directory "

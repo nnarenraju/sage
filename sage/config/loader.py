@@ -1,4 +1,5 @@
-"""Read a run file: one level of ``extends``, values typed by the schema.
+"""
+Run file reader: one level of ``extends``, values typed by the schema.
 
 Plain YAML scalars are read as strings and converted by the type each
 setting declares, so ``2e-4`` is a number and ``yes`` is never a bool.
@@ -28,15 +29,37 @@ _StringLoader.yaml_implicit_resolvers = {}
 
 
 class _Dumper(yaml.SafeDumper):
-    """Block mappings, list items indented under their key."""
+    """YAML dumper with block mappings and list items indented."""
 
     def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
-        """Indent block sequences, which PyYAML leaves flush by default."""
+        """
+        Indent block sequences, which PyYAML leaves flush by default.
+
+        Parameters
+        ----------
+        flow : bool
+            Whether the node is a flow collection.
+        indentless : bool
+            Ignored; sequences are always indented.
+        """
         return super().increase_indent(flow, False)
 
 
 def _represent_list(dumper: yaml.SafeDumper, values: list) -> yaml.Node:
-    """A list, inline when every item is a scalar."""
+    """
+    YAML node of a list, inline when every item is a scalar.
+
+    Parameters
+    ----------
+    dumper : yaml.SafeDumper
+        The dumper.
+    values : list
+        List to represent.
+
+    Returns
+    -------
+    yaml.Node
+    """
     inline = all(not isinstance(item, (dict, list)) for item in values)
     return dumper.represent_sequence("tag:yaml.org,2002:seq", values, flow_style=inline)
 
@@ -46,8 +69,9 @@ _Dumper.add_representer(list, _represent_list)
 
 def yaml_text(values: dict) -> str:
     """
-    A mapping as YAML text: indented mappings, lists of scalars inline,
-    a blank line between top-level keys.
+    A mapping as YAML text, with a blank line between top-level keys.
+
+    Mappings are indented and lists of scalars written inline.
 
     Parameters
     ----------
@@ -90,7 +114,7 @@ def read_yaml(path: Path) -> dict:
 
 def read_yaml_text(text: str, where: str) -> dict:
     """
-    Read YAML text whose top level is a mapping, every scalar as a string.
+    Read YAML text with a top-level mapping, every scalar as a string.
 
     Parameters
     ----------
@@ -161,7 +185,19 @@ def suggestion(name: str, valid: list) -> str:
 
 
 def preset_names(kind: str) -> list:
-    """Names of the ``"runs"`` or ``"priors"`` presets."""
+    """
+    Names of the ``"runs"`` or ``"priors"`` presets.
+
+    Parameters
+    ----------
+    kind : str
+        ``"runs"`` or ``"priors"``.
+
+    Returns
+    -------
+    list of str
+        Sorted preset names.
+    """
     return sorted(p.stem for p in (PRESETS / kind).glob("*.yaml"))
 
 
@@ -211,6 +247,11 @@ def read_extending(path: Path, kind: str) -> dict:
     -------
     dict
         Merged contents, not yet checked.
+
+    Raises
+    ------
+    ValueError
+        If the extended preset is unknown or extends another preset.
     """
     values = read_yaml(path)
     name = values.pop("extends", None)
@@ -221,12 +262,11 @@ def read_extending(path: Path, kind: str) -> dict:
 
 def spec_from_hint(hint: Any, where: str) -> Any:
     """
-    The spec of a type hint, with typing forms reduced to what YAML can hold.
+    Spec of a type hint, with typing forms reduced to what YAML holds.
 
-    ``Optional[X]`` is ``X`` or ``null``; a ``Union`` drops ``torch.Tensor``
-    and members with no YAML form, and becomes a :class:`OneOf` if several
-    remain; ``Literal`` gives its choices; ``list[X]``, ``Iterable[X]`` and
-    ``tuple[X, ...]`` are lists of ``X``.
+    ``Optional[X]`` adds ``null``; a ``Union`` drops ``torch.Tensor``
+    and members with no YAML form; ``Literal`` gives its choices;
+    ``list[X]``, ``Iterable[X]`` and ``tuple[X, ...]`` are lists.
 
     Parameters
     ----------
@@ -277,9 +317,9 @@ def convert(value: Any, spec: Any, where: str) -> Any:
     ----------
     value : Any
         Value as read from YAML.
-    spec : type, tuple, list, dict or OneOf
-        Declared type, allowed strings, list of a spec, nested schema, or
-        alternatives tried in order.
+    spec : type, tuple, list, dict, OneOf or NULL
+        Declared type, allowed strings, list of a spec, nested schema,
+        alternatives tried in order, or YAML ``null``.
     where : str
         Dotted location, for error messages.
 
@@ -336,7 +376,21 @@ def convert(value: Any, spec: Any, where: str) -> Any:
 
 
 def all_defaulted(spec: Any) -> bool:
-    """Whether a spec is a group whose every setting has a default (or is such a group)."""
+    """
+    Whether a spec is a group whose settings all have defaults.
+
+    A nested group counts when it is itself such a group; an empty,
+    open-ended or name-selected group never does.
+
+    Parameters
+    ----------
+    spec : Any
+        Spec from the schema.
+
+    Returns
+    -------
+    bool
+    """
     if not isinstance(spec, dict) or not spec or "..." in spec or list(spec) == ["name"]:
         return False
     return all(
@@ -354,12 +408,13 @@ def check(values: Any, schema: dict, where: str) -> dict:
     values : Any
         Mapping as read from YAML.
     schema : dict
-        Spec of every setting. A key ending in ``?`` is optional; a spec
-        ``(type, value)`` is optional with that default, and a group whose
-        settings all have defaults may be left out; a ``"..."`` key
-        keeps any further keys unconverted; a schema whose only key is
-        ``name``, mapping names to schemas, picks one by name. Where the
-        schema has a ``name``, a plain name stands for ``{name: <name>}``.
+        Spec of every setting. A key ending in ``?`` is optional; a
+        spec ``(type, value)`` is optional with that default, and a
+        group whose settings all have defaults may be left out; a
+        ``"..."`` key keeps any further keys unconverted; a schema whose
+        only key is ``name``, mapping names to schemas, picks one by
+        name. Where the schema has a ``name``, a plain name stands for
+        ``{name: <name>}``.
     where : str
         Dotted location, for error messages; empty for the whole file.
 
@@ -371,7 +426,8 @@ def check(values: Any, schema: dict, where: str) -> dict:
     Raises
     ------
     ValueError
-        On a non-mapping, an unknown name or setting, or a missing setting.
+        On a non-mapping, an unknown name or setting, or a missing
+        setting.
     """
     label = where or "run file"
     if "name" in schema and isinstance(values, str):
@@ -424,7 +480,7 @@ def check(values: Any, schema: dict, where: str) -> dict:
 
 def component_arguments(cls: Any, parameters: dict, provided: set, where: str) -> dict:
     """
-    Check a component's parameters against its class or function and convert them.
+    Check a component's parameters against its signature; convert them.
 
     Parameters
     ----------
@@ -445,7 +501,8 @@ def component_arguments(cls: Any, parameters: dict, provided: set, where: str) -
     Raises
     ------
     ValueError
-        On an unknown or missing parameter, or a value of the wrong type.
+        On an unknown or missing parameter, a parameter without a type
+        hint or with a hint that has no YAML form, or a wrong value.
     """
     signature = inspect.signature(cls.__init__ if inspect.isclass(cls) else cls).parameters
     settable = {
@@ -464,7 +521,8 @@ def component_arguments(cls: Any, parameters: dict, provided: set, where: str) -
         if name not in parameters:
             if parameter.default is inspect.Parameter.empty:
                 if parameter.annotation is not inspect.Parameter.empty:
-                    spec_from_hint(parameter.annotation, f"{where}.{name}")  # no YAML form: say so
+                    # Raises first if the hint has no YAML form
+                    spec_from_hint(parameter.annotation, f"{where}.{name}")
                 raise ValueError(f"{where}: missing parameter {name!r}")
             continue
         if parameter.annotation is inspect.Parameter.empty:
@@ -489,22 +547,32 @@ def load_run(path: Path) -> dict:
     -------
     dict
         Every section, with values converted to their declared types.
+
+    Raises
+    ------
+    ValueError
+        If the file or its preset is invalid.
     """
     return check(read_extending(Path(path), "runs"), SECTIONS, "")
 
 
 def load_run_record(text: str) -> dict:
     """
-    Check the resolved run file a checkpoint carries (complete, no ``extends``).
+    Check the resolved run file that a checkpoint carries.
 
     Parameters
     ----------
     text : str
-        ``resolved/run.yaml`` contents.
+        ``resolved/run.yaml`` contents; complete, with no ``extends``.
 
     Returns
     -------
     dict
         Every section, with values converted to their declared types.
+
+    Raises
+    ------
+    ValueError
+        If the record is not a valid run file.
     """
     return check(read_yaml_text(text, "checkpoint record run.yaml"), SECTIONS, "")

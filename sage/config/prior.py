@@ -1,4 +1,5 @@
-"""Prior files: a preset, or a run-directory file that may extend one.
+"""
+Prior files: a preset, or a run-directory file that may extend one.
 
 Presets live in ``sage/presets/priors/``. Prior ``min`` and ``max`` are
 read as floats; every other value is a string.
@@ -26,7 +27,7 @@ TRANSFORM_KEYS = {
     "chirp_distance_to_distance": set(),
 }
 CONSTRAINT_KEYS = {"params"}
-# pycbc.distributions.sky_location.UniformSky: the angles' names when not given.
+# Default angle names of pycbc.distributions.sky_location.UniformSky
 SKY_NAMES = {"polar-angle": "dec", "azimuthal-angle": "ra"}
 NUMERIC_KEYS = {"min", "max"}
 
@@ -66,9 +67,12 @@ def validate_prior(config: Dict[str, Any]) -> None:
     Raises
     ------
     ValueError
-        On an unknown key, distribution, transform or constraint, a missing
-        required key, a transform used before its inputs exist, an output
-        produced twice, or ``variable_params`` not matching the priors.
+        On an unknown key, distribution or transform, a missing
+        top-level key, ``variable_params`` not matching the priors, a
+        transform before its inputs exist, or an output produced twice.
+    KeyError
+        If a ``uniform_solidangle`` prior or ``spherical_to_cartesian``
+        transform lacks one of its keys.
     """
     check_keys("the prior file", config, TOP_LEVEL_KEYS)
     missing = sorted(REQUIRED_TOP_LEVEL_KEYS - set(config))
@@ -143,7 +147,8 @@ def check_prior(config: Dict[str, Any]) -> Dict[str, Any]:
     Returns
     -------
     dict
-        The same prior with numeric entries converted and the sky angles named.
+        The prior with ``min`` and ``max`` as floats and the default
+        ``uniform_sky`` angle names filled in.
 
     Raises
     ------
@@ -179,6 +184,11 @@ def load_prior_file(path: Path) -> Dict[str, Any]:
     -------
     dict
         Checked prior.
+
+    Raises
+    ------
+    ValueError
+        If the extended preset is unknown or the prior is invalid.
     """
     return check_prior(read_extending(Path(path), "priors"))
 
@@ -198,6 +208,13 @@ def load_prior(setting: str, run_dir: Path) -> Dict[str, Any]:
     -------
     dict
         Checked prior.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the named ``.yaml`` file does not exist.
+    ValueError
+        If the preset is unknown or the prior is invalid.
     """
     if setting.endswith(".yaml"):
         path = Path(run_dir) / setting

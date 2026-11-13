@@ -1,4 +1,7 @@
-"""``sage download`` and ``sage build-asds``: data and ASDs in the data directory."""
+"""
+``sage download`` and ``sage build-asds``: data and ASDs in the data
+directory.
+"""
 
 import argparse
 import os
@@ -10,16 +13,37 @@ from sage.config import machine
 from sage.config.run_dir import find_run_dir
 from sage.core.progress import print_steps
 
-# Source: runs/<run>/dataset.py.
 WORKERS = 16
 
 
 def directory_needs(directory: Path, data_dir: Path, name: str) -> tuple:
     """
-    What the run directory reads: per observing run its detectors and whether it reads the per-segment
-    ASDs and the bank (the recolour target's, and those the fiducial pools), then the fiducial's runs and
-    detectors. A run read only for the fiducial covers the detectors GWOSC lists for it.
-    ``name`` is the command asking, for the fix of an invalid run file.
+    What a run directory reads, per observing run and for the fiducial.
+
+    A run read only for the fiducial covers the detectors GWOSC lists
+    for it.
+
+    Parameters
+    ----------
+    directory : Path
+        Run directory.
+    data_dir : Path
+        The machine's data directory.
+    name : str
+        Command asking, for the fix of an invalid run file.
+
+    Returns
+    -------
+    tuple
+        ``(needs, (fiducial runs, detectors))``. ``needs`` maps each
+        observing run to ``(detectors, segments, bank)``: whether it
+        reads the per-segment ASDs, and needs its recolour bank (as the
+        recolour target or a run the fiducial pools).
+
+    Raises
+    ------
+    CommandError
+        If the run file is invalid.
     """
     from sage.data.download import run_detectors
     from sage.factory.build import asd_runs, bank_runs, strain_runs
@@ -42,7 +66,28 @@ def directory_needs(directory: Path, data_dir: Path, name: str) -> tuple:
 
 
 def run_needs(run: str, detectors: list | None, data_dir: Path) -> dict:
-    """The given detectors of an observing run, or every detector GWOSC lists for it."""
+    """
+    The given detectors of an observing run, or every one GWOSC lists.
+
+    Parameters
+    ----------
+    run : str
+        Observing run, in any case.
+    detectors : list of str or None
+        Detectors; None takes every detector GWOSC lists for the run.
+    data_dir : Path
+        The machine's data directory.
+
+    Returns
+    -------
+    dict
+        Lower-case run name -> detectors.
+
+    Raises
+    ------
+    CommandError
+        If the run is neither recorded nor listed by GWOSC.
+    """
     from sage.data.download import gwosc_runs, recorded_gwosc, run_detectors
 
     if recorded_gwosc(data_dir, run.lower()) is None:
@@ -56,7 +101,22 @@ def run_needs(run: str, detectors: list | None, data_dir: Path) -> dict:
 
 @command("download", "Download the data an observing run or a run directory needs", journey=3)
 def download(arguments: list) -> None:
-    """Download, build or adopt data in the data directory; each run's numbers are recorded beside it."""
+    """
+    Download the data an observing run or a run directory needs.
+
+    Each run's numbers are recorded beside its data.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage download``.
+
+    Raises
+    ------
+    CommandError
+        If the data directory is not set or writable, GWOSC cannot be
+        reached or the request is invalid.
+    """
     from requests.exceptions import RequestException
 
     parser = argparse.ArgumentParser(prog="sage download", description="Download the data an observing run or a run "
@@ -101,7 +161,23 @@ def download(arguments: list) -> None:
 
 
 def fetch(options: argparse.Namespace, data_dir: Path, again: str) -> None:
-    """Download or adopt the strain ``options.target`` needs; print summaries."""
+    """
+    Download or adopt the strain ``options.target`` needs; print it.
+
+    Parameters
+    ----------
+    options : argparse.Namespace
+        Options of ``sage download``.
+    data_dir : Path
+        The machine's data directory.
+    again : str
+        The command as given, for the fix of a failed download.
+
+    Raises
+    ------
+    CommandError
+        If the target or options are invalid or data is missing.
+    """
     from sage.data.download import TRAINING_STEPS, download_run
 
     target = Path(options.target)
@@ -155,7 +231,21 @@ def fetch(options: argparse.Namespace, data_dir: Path, again: str) -> None:
 
 
 def fetch_search(options: argparse.Namespace, data_dir: Path) -> None:
-    """Download or resume an observing run's search strain; print its summary."""
+    """
+    Download or resume an observing run's search strain; print it.
+
+    Parameters
+    ----------
+    options : argparse.Namespace
+        Options of ``sage download``.
+    data_dir : Path
+        The machine's data directory.
+
+    Raises
+    ------
+    CommandError
+        If GWOSC does not list the run or one of the detectors.
+    """
     from sage.data.download import download_search, gwosc_detectors, gwosc_runs
     from sage.search.dataprep.release import DOWNLOAD_STEPS
 
@@ -200,7 +290,20 @@ def fetch_search(options: argparse.Namespace, data_dir: Path) -> None:
     journey=4,
 )
 def build_asds(arguments: list) -> None:
-    """Build or adopt ASDs for observing runs, or every ASD a run directory reads."""
+    """
+    Build or adopt ASDs for observing runs, or every one a run reads.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage build-asds``.
+
+    Raises
+    ------
+    CommandError
+        If the data directory is not set or writable, or the request
+        is invalid.
+    """
     parser = argparse.ArgumentParser(
         prog="sage build-asds",
         description="Build the per-segment ASDs, recolour bank or fiducial from "
@@ -259,7 +362,24 @@ def build_asds(arguments: list) -> None:
 def build_directory(
     options: argparse.Namespace, directory: Path, data_dir: Path
 ) -> None:
-    """Build or adopt every ASD the run directory reads; print each part."""
+    """
+    Build or adopt every ASD the run directory reads; print each part.
+
+    Parameters
+    ----------
+    options : argparse.Namespace
+        Options of ``sage build-asds``.
+    directory : Path
+        Run directory.
+    data_dir : Path
+        The machine's data directory.
+
+    Raises
+    ------
+    CommandError
+        If there is no ``run.yaml``, an observing-run option is given
+        or strain is missing.
+    """
     from sage.data.download import build_asds as build, build_fiducials
 
     if not (directory / "run.yaml").exists():
@@ -303,7 +423,21 @@ def build_directory(
 
 
 def build_runs(options: argparse.Namespace, data_dir: Path) -> None:
-    """Build or adopt one kind of ASD for the observing runs; print each record."""
+    """
+    Build or adopt one kind of ASD for observing runs; print records.
+
+    Parameters
+    ----------
+    options : argparse.Namespace
+        Options of ``sage build-asds``.
+    data_dir : Path
+        The machine's data directory.
+
+    Raises
+    ------
+    CommandError
+        If no kind is named, or strain or ASDs are missing.
+    """
     from sage.data.download import (
         BANK_STEPS,
         FIDUCIAL_STEPS,

@@ -19,7 +19,21 @@ from sage.utils.slurm import query
     journey=1,
 )
 def setup(arguments: list) -> None:
-    """Write the machine file; ``data_dir`` is left empty unless given."""
+    """
+    Write the machine file; ``data_dir`` is left empty unless given.
+
+    An existing machine file is kept when ``--data-dir`` is not given.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage setup``.
+
+    Raises
+    ------
+    CommandError
+        If ``--data-dir`` is not a directory.
+    """
     parser = argparse.ArgumentParser(
         prog="sage setup",
         description="Write the machine file: the directory for all data.",
@@ -52,7 +66,20 @@ def setup(arguments: list) -> None:
 
 @command("machine", "Show the machine file and check its data directory")
 def show_machine(arguments: list) -> None:
-    """Print the machine file and check that its data directory can be read and written."""
+    """
+    Print the machine file, its data directory and the scheduler.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage machine``.
+
+    Raises
+    ------
+    CommandError
+        If the machine file is missing or invalid, or its data
+        directory cannot be read and written.
+    """
     parser = argparse.ArgumentParser(prog="sage machine", description="Show the machine file and check its data directory.")
     parser.parse_args(arguments)
 
@@ -78,7 +105,22 @@ def show_machine(arguments: list) -> None:
 
 
 def qos_text(name: str, limits: dict) -> str:
-    """A QOS and its limits, e.g. ``normal (wall 2-00:00:00, per user cpu=10000, 500 jobs)``."""
+    """
+    A QOS and its limits, e.g. ``normal (wall 2-00:00:00, 500 jobs)``.
+
+    Parameters
+    ----------
+    name : str
+        QOS name.
+    limits : dict
+        QOS name -> ``max_wall``, ``max_per_user``, ``max_jobs``, as
+        ``query.parse_qos_limits`` returns.
+
+    Returns
+    -------
+    str
+        The name, followed by its non-empty limits if it has any.
+    """
     if name not in limits:
         return name
     entry = limits[name]
@@ -89,7 +131,16 @@ def qos_text(name: str, limits: dict) -> str:
 
 
 def slurm_report() -> list:
-    """Lines on what the SLURM cluster offers; a query the site refuses is reported as unavailable."""
+    """
+    Lines on the SLURM partitions, accounts and QOS of this cluster.
+
+    A query the site refuses is reported as unavailable.
+
+    Returns
+    -------
+    list of str
+        Report lines.
+    """
     lines = ["Scheduler: SLURM"]
     try:
         partitions = query.parse_partitions(query.run(query.PARTITIONS))

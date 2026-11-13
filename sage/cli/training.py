@@ -1,4 +1,7 @@
-"""``sage check``, ``sage train``, ``sage stop``, ``sage status`` and ``sage log``: training a run and following it."""
+"""
+``sage prepare``, ``check``, ``train``, ``stop``, ``status`` and
+``log``: training a run and following it.
+"""
 
 import argparse
 import collections
@@ -40,7 +43,22 @@ JOB_START = re.compile(r" \| Run .* from epoch \d+, seed ")
 
 
 def on(name: str, directory: str) -> str:
-    """``sage <name>`` on ``directory``, omitted if found from here."""
+    """
+    The ``sage <name>`` command for ``directory``.
+
+    Parameters
+    ----------
+    name : str
+        Command name.
+    directory : str
+        Run directory.
+
+    Returns
+    -------
+    str
+        ``sage <name>``, followed by ``directory`` unless it is the run
+        directory found from the current directory.
+    """
     here = os.path.abspath(find_run_dir("."))
     if os.path.abspath(directory) == here:
         return f"sage {name}"
@@ -48,7 +66,27 @@ def on(name: str, directory: str) -> str:
 
 
 def parse(name: str, summary: str, arguments: list, *options) -> argparse.Namespace:
-    """Parse a run-directory command's arguments; each option is ``(flags, keywords)``."""
+    """
+    Parse a run-directory command's arguments.
+
+    Parameters
+    ----------
+    name : str
+        Command name.
+    summary : str
+        One-line description, without the final full stop.
+    arguments : list of str
+        Command-line arguments after ``sage <name>``.
+    *options : tuple
+        Further options, each ``(flags, keywords)`` for
+        ``ArgumentParser.add_argument``.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed options; ``directory`` is the run directory found from
+        the one given.
+    """
     parser = argparse.ArgumentParser(prog=f"sage {name}", description=f"{summary}.")
     parser.add_argument(
         "directory",
@@ -64,7 +102,24 @@ def parse(name: str, summary: str, arguments: list, *options) -> argparse.Namesp
 
 
 def seconds(duration: str) -> float:
-    """A duration such as ``47h``, ``90m`` or ``2d`` in seconds."""
+    """
+    A duration such as ``47h``, ``90m`` or ``2d`` in seconds.
+
+    Parameters
+    ----------
+    duration : str
+        A number followed by one unit of ``UNITS``.
+
+    Returns
+    -------
+    float
+        Duration in seconds.
+
+    Raises
+    ------
+    ValueError
+        If ``duration`` is not a number followed by one unit.
+    """
     match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhd])", duration)
     if match is None:
         raise ValueError(f"--stop-after {duration}: give a number and one unit of {', '.join(UNITS)}, e.g. 47h")
@@ -72,7 +127,28 @@ def seconds(duration: str) -> float:
 
 
 def checked_settings(name: str, directory: str) -> dict:
-    """The run's settings, after the checks ``sage <name>`` makes first: run file, machine file, settings, data."""
+    """
+    The run's settings, after the checks ``sage <name>`` makes first.
+
+    Checks the run file, the machine file, the settings and the data.
+
+    Parameters
+    ----------
+    name : str
+        Command making the checks, for the fix it prints.
+    directory : str
+        Run directory.
+
+    Returns
+    -------
+    dict
+        Settings from ``check_run``.
+
+    Raises
+    ------
+    CommandError
+        If a check fails, with the command that fixes it.
+    """
     from sage.factory.train_run import check_data, check_run
 
     run_file = Path(directory) / "run.yaml"
@@ -97,7 +173,21 @@ def checked_settings(name: str, directory: str) -> dict:
 
 
 def device_available(settings: dict, fix: str = "run it on a machine that has it, e.g. from your job script") -> None:
-    """Refuse a device or precision this machine lacks."""
+    """
+    Refuse a device or precision this machine lacks.
+
+    Parameters
+    ----------
+    settings : dict
+        Run settings; ``train`` names the device and precision.
+    fix : str
+        Fix printed with the error.
+
+    Raises
+    ------
+    CommandError
+        If ``check_device`` rejects the ``train`` settings.
+    """
     from sage.factory.build import check_device
 
     try:
@@ -107,7 +197,31 @@ def device_available(settings: dict, fix: str = "run it on a machine that has it
 
 
 def explained(name: str, directory: str, function, *args):
-    """``function(*args)``, with a changed record turned into the command that fixes it."""
+    """
+    Call ``function(*args)``, turning a run-state error into its fix.
+
+    Parameters
+    ----------
+    name : str
+        Command being run, for the fix it prints.
+    directory : str
+        Run directory.
+    function : callable
+        Function to call.
+    *args
+        Arguments of ``function``.
+
+    Returns
+    -------
+    object
+        What ``function`` returns.
+
+    Raises
+    ------
+    CommandError
+        On ``AlreadyRunning``, ``NotPrepared``, ``SettingsChanged`` or
+        ``StateMismatch``, with the command that fixes it.
+    """
     from sage.factory.train_run import AlreadyRunning
 
     try:
@@ -124,9 +238,22 @@ def explained(name: str, directory: str, function, *args):
 
 def checked_step(name: str, directory: str) -> None:
     """
-    Run every start-up check and one real training step, and print the loss; write only ``flags/checked``.
+    Run every start-up check and one training step; print the loss.
 
-    The check is small; without a visible GPU it runs on the CPU.
+    Writes only ``flags/checked``. The check is small; without a visible
+    GPU it runs on the CPU.
+
+    Parameters
+    ----------
+    name : str
+        Command running the check, for the fix it prints.
+    directory : str
+        Run directory.
+
+    Raises
+    ------
+    CommandError
+        If a check fails, with the command that fixes it.
     """
     import torch
 
@@ -148,7 +275,7 @@ def checked_step(name: str, directory: str) -> None:
     started = []
 
     def progress(index: int) -> None:
-        """Print the time the previous step took, then the step starting."""
+        """Print the previous step's duration, then the next step."""
         if started:
             print(f"  done in {time.monotonic() - started[-1]:.1f} s", flush=True)
         print(f"[{index + 1}/{len(CHECK_STEPS)}] {CHECK_STEPS[index]}", flush=True)
@@ -164,7 +291,21 @@ def checked_step(name: str, directory: str) -> None:
 
 @command("prepare", "Check the run and write every setting it uses to resolved/", journey=5)
 def prepare(arguments: list) -> None:
-    """Write ``resolved/``: settings with every default, prior, fiducial copy and derived values; rerun after edits."""
+    """
+    Write ``resolved/``: settings, prior, fiducial copy, derived values.
+
+    Rerun after editing ``run.yaml``, until training starts.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage prepare``.
+
+    Raises
+    ------
+    CommandError
+        If a check fails or training has started, with the fix.
+    """
     from sage.factory.train_run import prepare_run
 
     options = parse("prepare", "Check the run and write every setting it uses to resolved/", arguments)
@@ -188,7 +329,21 @@ def prepare(arguments: list) -> None:
 
 @command("check", "Run every start-up check and one real training step; marks the run checked", journey=6)
 def check(arguments: list) -> None:
-    """Check the run as ``sage train`` would start it and take one training step: on a GPU if one is visible."""
+    """
+    Check the run as ``sage train`` starts it; take one training step.
+
+    The step runs on the GPU if one is visible, else on the CPU.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage check``.
+
+    Raises
+    ------
+    CommandError
+        If a check fails, with the command that fixes it.
+    """
     options = parse("check", "Run every start-up check and one real training step; marks the run checked", arguments)
     checked_step("check", options.directory)
     print()
@@ -197,7 +352,22 @@ def check(arguments: list) -> None:
 
 @command("train", "Train the run, resuming from its latest checkpoint", journey=7)
 def train(arguments: list) -> None:
-    """Train the run to its last epoch, then run the final check; ``--stop-after`` ends a job segment early."""
+    """
+    Train the run to its last epoch, then run the final check.
+
+    ``--stop-after`` ends a job segment early.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage train``.
+
+    Raises
+    ------
+    CommandError
+        If ``--stop-after`` is invalid, ``flags/stop`` exists or a
+        check fails, with the command that fixes it.
+    """
     from sage.factory.train_run import STOP_FLAG, flag, train_run
     from sage.utils.checkpoint import next_epoch
 
@@ -230,7 +400,21 @@ def train(arguments: list) -> None:
 
 @command("stop", "Stop the run's training after its current epoch")
 def stop(arguments: list) -> None:
-    """Write ``flags/stop``: training saves after its current epoch and exits, and no later job trains on."""
+    """
+    Write ``flags/stop``: training stops after its current epoch.
+
+    No later job trains on while the flag exists.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage stop``.
+
+    Raises
+    ------
+    CommandError
+        If the directory has no ``run.yaml``.
+    """
     from sage.factory.train_run import STOP_FLAG, flag
 
     options = parse("stop", "Stop the run's training after its current epoch", arguments)
@@ -246,7 +430,21 @@ def stop(arguments: list) -> None:
 
 
 def flag_lines(directory: str, zone: zoneinfo.ZoneInfo) -> list:
-    """The run's flags with when each was set (in ``zone``), and how to train on after ``sage stop``."""
+    """
+    Lines on the run's flags, when each was set and how to resume.
+
+    Parameters
+    ----------
+    directory : str
+        Run directory.
+    zone : zoneinfo.ZoneInfo
+        Time zone of the times shown.
+
+    Returns
+    -------
+    list of str
+        Report lines; empty without flags.
+    """
     from sage.factory.train_run import FLAGS_DIR, STOP_FLAG, flag
 
     lines = []
@@ -337,7 +535,22 @@ def finish_time(directory: Path, settings: dict, done: int) -> datetime.datetime
 
 @command("status", "Show how far the run has trained and its latest losses")
 def status(arguments: list) -> None:
-    """Print the epochs trained, the latest and lowest losses, the final check and when the log was last written."""
+    """
+    Print the epochs trained, latest and lowest losses and final check.
+
+    Also prints the estimated finish time of a running job and when the
+    log was last written.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage status``.
+
+    Raises
+    ------
+    CommandError
+        If training has not started and there is no ``run.yaml``.
+    """
     from sage.config.loader import load_run_record
     from sage.factory.build import validates
     from sage.factory.train_run import FINAL_CHECK_ESTIMATE, RUNNING_FLAG, flag
@@ -409,7 +622,21 @@ def status(arguments: list) -> None:
 
 @command("log", "Print the end of the run's log, or follow it")
 def log(arguments: list) -> None:
-    """Print the last lines of ``logs/run.log``; with ``--follow``, keep printing new lines until Ctrl-C."""
+    """
+    Print the last lines of ``logs/run.log``, or follow it.
+
+    With ``--follow``, new lines are printed until Ctrl-C.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage log``.
+
+    Raises
+    ------
+    CommandError
+        If there is no log yet or ``--lines`` is below 1.
+    """
     options = parse(
         "log", "Print the end of the run's log, or follow it", arguments,
         (["--lines"], {"type": int, "default": 20, "help": "lines to print (default: 20)"}),

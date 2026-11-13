@@ -1,4 +1,7 @@
-"""``sage search-init`` and ``sage search``: searches of observing runs inside a run."""
+"""
+``sage search-init``, ``search`` and ``statmap``: searches of observing
+runs inside a run directory.
+"""
 
 import argparse
 import os
@@ -17,7 +20,20 @@ from sage.core.progress import print_steps
     "Make a search of an observing run with one of the run's stored checkpoints",
 )
 def search_init(arguments: list) -> None:
-    """Check the run, checkpoint and search data, then write ``search.yaml``."""
+    """
+    Check the run, checkpoint and search data; write ``search.yaml``.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage search-init``.
+
+    Raises
+    ------
+    CommandError
+        If the run, checkpoint, machine file or search data is missing
+        or invalid, or the search exists.
+    """
     # Deferred: both import pycbc.
     from sage.data.download import DATASET
     from sage.search.settings import (
@@ -90,7 +106,20 @@ def search_init(arguments: list) -> None:
 
 @command("search", "Run or resume a search made by sage search-init")
 def search(arguments: list) -> None:
-    """Check the search and its data, then score zero-lag and the background."""
+    """
+    Check the search and its data, then score zero-lag and background.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage search``.
+
+    Raises
+    ------
+    CommandError
+        If the search, machine file or data is missing or invalid, its
+        GPU is not visible or ``search.yaml`` changed.
+    """
     # Deferred: these import torch and pycbc.
     import torch
 
@@ -166,7 +195,20 @@ def search(arguments: list) -> None:
 
 @command("statmap", "False-alarm rates of a search's triggers, from its finished rows")
 def statmap(arguments: list) -> None:
-    """Rank the finished zero-lag triggers against the background."""
+    """
+    Rank the finished zero-lag triggers against the background.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage statmap``.
+
+    Raises
+    ------
+    CommandError
+        If the search has no scores, the machine file is invalid or
+        ``run_statmap`` rejects the options.
+    """
     # Deferred: imports torch and pycbc.
     from sage.search.statmap import CLUSTERING, REMOVE_NA, STEPS, run_statmap
 

@@ -1,12 +1,9 @@
-"""The run directory record, under ``resolved/``.
+"""
+Writing and checking the run directory record under ``resolved/``.
 
-``run.yaml`` (every setting used, defaults included), ``prior.yaml``,
-``derived.yaml`` (values computed from them), ``versions.yaml`` (code and
-libraries, one entry per job segment) and ``fiducial/`` (the ASDs used).
-``sage prepare`` writes all but ``versions.yaml``; training refuses a
-record that no longer matches ``run.yaml``. Training counts as started
-once ``checkpoints/`` holds a checkpoint; from then on the settings,
-prior and derived values may not change.
+``run.yaml``, ``prior.yaml``, ``derived.yaml``, ``versions.yaml`` (one
+entry per job segment) and ``fiducial/``. Once ``checkpoints/`` holds a
+checkpoint, the settings, prior and derived values may not change.
 """
 
 import datetime
@@ -27,16 +24,16 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 class SettingsChanged(ValueError):
-    """The settings, prior or derived values differ from the record after training started."""
+    """Settings, prior or derived values changed once training began."""
 
 
 class NotPrepared(Exception):
-    """Training has not started and ``resolved/`` is missing or no longer matches ``run.yaml``."""
+    """Before training, ``resolved/`` is missing or out of date."""
 
 
 class StateMismatch(ValueError):
     """
-    The settings differ from a checkpoint's in a way its saved state cannot take.
+    Settings differ from a checkpoint's in a way its state cannot take.
 
     Parameters
     ----------
@@ -79,7 +76,18 @@ def find_run_dir(directory: str | Path) -> Path:
 
 
 def training_started(run_dir: Path) -> bool:
-    """Whether ``checkpoints/`` holds a checkpoint."""
+    """
+    Whether ``checkpoints/`` holds a checkpoint.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+
+    Returns
+    -------
+    bool
+    """
     return any((Path(run_dir) / "checkpoints").glob("*.pt"))
 
 
@@ -112,7 +120,7 @@ def differences(old: dict, new: dict, where: str = "") -> list:
 
 def write_yaml(path: Path, values: dict) -> None:
     """
-    Write a mapping as block YAML with short scalar lists inline.
+    Write a mapping as block YAML with scalar lists inline.
 
     Parameters
     ----------
@@ -127,7 +135,7 @@ def write_yaml(path: Path, values: dict) -> None:
 
 def check_record(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
     """
-    Check that a started run's settings and prior resolve exactly as recorded.
+    Check that a started run's settings and prior match the record.
 
     Parameters
     ----------
@@ -138,14 +146,15 @@ def check_record(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
     prior : dict
         Checked prior, from ``load_prior``.
     resolve : callable
-        Fills a loaded run file's components (``build.resolve_settings``).
+        Fills a loaded run file's components
+        (``build.resolve_settings``).
 
     Raises
     ------
     SettingsChanged
         If the settings or prior differ from the record.
     ValueError
-        If the record is missing.
+        If ``resolved/run.yaml`` or ``resolved/prior.yaml`` is missing.
     """
     run_dir = Path(run_dir)
     records = {"run.yaml": (settings, lambda path: resolve(load_run(path))), "prior.yaml": (prior, load_prior_file)}
@@ -163,7 +172,7 @@ def check_record(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
 
 def prepare_run_dir(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
     """
-    Record the resolved settings and prior, or check them against the record.
+    Record the resolved settings and prior, or check them once started.
 
     Before training starts the record is rewritten; after, both must
     resolve exactly as recorded (``check_record``).
@@ -177,12 +186,14 @@ def prepare_run_dir(run_dir: Path, settings: dict, prior: dict, resolve) -> None
     prior : dict
         Checked prior, from ``load_prior``.
     resolve : callable
-        Fills a loaded run file's components (``build.resolve_settings``).
+        Fills a loaded run file's components
+        (``build.resolve_settings``).
 
     Raises
     ------
     SettingsChanged
-        If training has started and the settings or prior differ from the record.
+        If training has started and the settings or prior differ from
+        the record.
     ValueError
         If checkpoints exist without a record.
     """
@@ -210,14 +221,18 @@ def check_prepared(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
     prior : dict
         Checked prior, from ``load_prior``.
     resolve : callable
-        Fills a loaded run file's components (``build.resolve_settings``).
+        Fills a loaded run file's components
+        (``build.resolve_settings``).
 
     Raises
     ------
     NotPrepared
-        If training has not started and the record is missing or differs.
+        If training has not started and the record is missing or
+        differs.
     SettingsChanged
         If training has started and the settings or prior differ.
+    ValueError
+        If training has started and the record is missing.
     """
     run_dir = Path(run_dir)
     if training_started(run_dir):
@@ -251,6 +266,8 @@ def check_derived(run_dir: Path, derived: dict) -> None:
         If training has not started and the values differ.
     SettingsChanged
         If training has started and the values differ.
+    FileNotFoundError
+        If ``resolved/derived.yaml`` is missing.
     """
     changed = differences(yaml.safe_load((Path(run_dir) / "resolved" / "derived.yaml").read_text()), derived)
     if changed and not training_started(run_dir):
@@ -264,20 +281,24 @@ def check_derived(run_dir: Path, derived: dict) -> None:
 
 def record_derived(run_dir: Path, derived: dict) -> None:
     """
-    Record the values derived from the settings, or check them on resume.
+    Record the derived values, or check them once training has started.
 
     Parameters
     ----------
     run_dir : Path
         Run directory.
     derived : dict
-        Window geometry, multirate bins, target scaling, flat-tail start,
-        stream seeds.
+        Window geometry, multirate bins, target scaling, flat-tail
+        start epoch and seeds.
 
     Raises
     ------
     SettingsChanged
-        If training has started and the derived values differ from the record.
+        If training has started and the derived values differ from the
+        record.
+    FileNotFoundError
+        If training has started and ``resolved/derived.yaml`` is
+        missing.
     """
     if training_started(run_dir):
         check_derived(run_dir, derived)
@@ -286,15 +307,47 @@ def record_derived(run_dir: Path, derived: dict) -> None:
 
 
 def git(*args) -> str:
-    """Output of a git command in the Sage checkout."""
+    """
+    Output of a git command in the Sage checkout.
+
+    Parameters
+    ----------
+    *args : str
+        Git arguments.
+
+    Returns
+    -------
+    str
+        Standard output.
+
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If git exits with an error.
+    OSError
+        If git cannot be run.
+    """
     return subprocess.run(
         ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True
     ).stdout
 
 
 def code_differs(commit: str) -> bool:
-    """Whether the code under ``sage/`` differs from ``commit`` in any way
-    (other commits, uncommitted edits or new files)."""
+    """
+    Whether the code under ``sage/`` differs from ``commit``.
+
+    Differences are any committed or uncommitted edits, and untracked
+    files that git does not ignore.
+
+    Parameters
+    ----------
+    commit : str
+        Commit to compare with.
+
+    Returns
+    -------
+    bool
+    """
     diff = subprocess.run(["git", "-C", str(REPO), "diff", "--quiet", commit, "--", "sage"], capture_output=True)
     return diff.returncode != 0 or bool(git("ls-files", "--others", "--exclude-standard", "--", "sage").strip())
 
@@ -321,7 +374,21 @@ def code_version() -> dict:
 
 
 def environment(device) -> dict:
-    """Python, PyTorch, CUDA, PyCBC and LALSuite versions and the device in use."""
+    """
+    Python, PyTorch, CUDA, PyCBC and LALSuite versions, and the device.
+
+    Parameters
+    ----------
+    device : str or torch.device
+        Training device.
+
+    Returns
+    -------
+    dict
+        ``python``, ``torch``, ``cuda``, ``pycbc``, ``lalsuite`` and
+        ``device`` (the GPU name for CUDA, else the device type).
+    """
+    # Deferred: heavy imports used only here
     import lal
     import pycbc
 
@@ -348,6 +415,11 @@ def record_versions(run_dir: Path, start_epoch: int, device) -> None:
         Epoch this segment starts at.
     device : str or torch.device
         Training device.
+
+    Raises
+    ------
+    RuntimeError
+        If Sage is not running from a git checkout.
     """
     path = Path(run_dir) / "resolved" / "versions.yaml"
     segments = yaml.safe_load(path.read_text())["segments"] if path.exists() else []

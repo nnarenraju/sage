@@ -1,4 +1,7 @@
-"""``sage init``, ``sage copy-prior`` and ``sage list``: making and reading a run directory."""
+"""
+``sage init``, ``copy-prior``, ``list`` and ``clone``: making and
+reading run directories.
+"""
 
 import argparse
 import inspect
@@ -15,7 +18,24 @@ from sage.config.run_dir import find_run_dir
 
 
 def parameters(cls, provided: set, overrides: dict | None = None) -> str:
-    """Each parameter a run file may set for ``cls``, with its default, or marked required."""
+    """
+    Each parameter a run file may set for ``cls``, with its default.
+
+    Parameters
+    ----------
+    cls : type
+        Component class.
+    provided : set of str
+        Parameters Sage passes itself, left out.
+    overrides : dict or None
+        Defaults Sage uses instead of the signature's.
+
+    Returns
+    -------
+    str
+        ``name=default`` or ``name (required)`` per parameter, or
+        ``no parameters``.
+    """
     overrides = overrides or {}
     parts = []
     for name, parameter in inspect.signature(cls.__init__).parameters.items():
@@ -31,7 +51,20 @@ def parameters(cls, provided: set, overrides: dict | None = None) -> str:
 
 
 def components(thing: str) -> list:
-    """``(name, parameters)`` of every model, loss, waveform, optimiser or schedule."""
+    """
+    Every model, loss, waveform, optimiser or schedule, with parameters.
+
+    Parameters
+    ----------
+    thing : str
+        ``models``, ``losses``, ``waveforms``, ``optimisers`` or
+        ``schedules``.
+
+    Returns
+    -------
+    list of tuple
+        ``(name, parameters text)`` per component.
+    """
     from sage.factory import build
 
     if thing == "schedules":
@@ -53,7 +86,19 @@ def components(thing: str) -> list:
 
 
 def data_lines() -> list:
-    """What is downloaded under the machine's data directory."""
+    """
+    What is downloaded under the machine's data directory.
+
+    Returns
+    -------
+    list of str
+        Report lines: each top-level directory and its subdirectories.
+
+    Raises
+    ------
+    CommandError
+        If the machine file is missing or invalid.
+    """
     try:
         data_dir = machine.read_data_dir()
     except (FileNotFoundError, ValueError) as error:
@@ -70,7 +115,19 @@ THINGS = ("presets", "priors", "models", "losses", "waveforms", "optimisers", "s
 
 @command("list", "List presets, priors, models, losses, waveforms, optimisers, schedules, ASDs or data")
 def list_things(arguments: list) -> None:
-    """Print the available presets, components, analytic ASDs or downloaded data."""
+    """
+    Print the presets, components, analytic ASDs or downloaded data.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage list``.
+
+    Raises
+    ------
+    CommandError
+        If the thing to list is unknown.
+    """
     parser = argparse.ArgumentParser(prog="sage list", description="List what a run file can name, or what is downloaded.")
     parser.add_argument("thing", help=", ".join(THINGS))
     options = parser.parse_args(arguments)
@@ -96,7 +153,22 @@ def list_things(arguments: list) -> None:
 
 @command("init", "Make a run directory from a run preset", journey=2)
 def init_run(arguments: list) -> None:
-    """Make a run directory whose ``run.yaml`` extends a run preset; without a preset, list them."""
+    """
+    Make a run directory whose ``run.yaml`` extends a run preset.
+
+    Without ``--preset``, the run presets are listed instead.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage init``.
+
+    Raises
+    ------
+    CommandError
+        If there are no presets, the preset is unknown or ``run.yaml``
+        exists.
+    """
     parser = argparse.ArgumentParser(prog="sage init", description="Make a run directory whose run.yaml extends a run preset.")
     parser.add_argument("directory", help="run directory to make; its name is the run's name")
     parser.add_argument("--preset", help="run preset to extend (listed when not given)")
@@ -127,7 +199,19 @@ def init_run(arguments: list) -> None:
 
 @command("copy-prior", "Copy a prior preset into the run directory to edit it")
 def copy_prior(arguments: list) -> None:
-    """Write a prior preset to ``prior.yaml`` in the run directory, unchanged, for editing."""
+    """
+    Copy a prior preset to ``prior.yaml`` in the run directory.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage copy-prior``.
+
+    Raises
+    ------
+    CommandError
+        If the preset is unknown or ``prior.yaml`` exists.
+    """
     parser = argparse.ArgumentParser(prog="sage copy-prior", description="Copy a prior preset into the run directory to edit it.")
     parser.add_argument("preset", help="prior preset")
     parser.add_argument(
@@ -155,7 +239,23 @@ def copy_prior(arguments: list) -> None:
 
 @command("clone", "Start a new run directory from a stored checkpoint of another run")
 def clone_run(arguments: list) -> None:
-    """Copy a run's ``run.yaml`` and one stored checkpoint into a new run directory, with its full state or weights only."""
+    """
+    Start a new run directory from a stored checkpoint of another run.
+
+    Copies ``run.yaml`` and the checkpoint, with its full state or the
+    weights only.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage clone``.
+
+    Raises
+    ------
+    CommandError
+        If the old run is invalid or has no such checkpoint, the new
+        directory is not empty or the state cannot take the settings.
+    """
     from sage.config.run_dir import StateMismatch
     from sage.factory.clone import EpochUnavailable, clone_run as clone
     from sage.factory.train_run import check_run

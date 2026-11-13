@@ -1,4 +1,7 @@
-"""``sage validate``, ``sage plot`` and ``sage compare``: looking at trained runs."""
+"""
+``sage validate``, ``benchmark``, ``plot`` and ``compare``: looking at
+trained runs.
+"""
 
 import argparse
 import shlex
@@ -11,7 +14,23 @@ from sage.config.run_dir import SettingsChanged, find_run_dir
 
 @command("validate", "Validate one stored checkpoint on the run's final validation set")
 def validate(arguments: list) -> None:
-    """Validate ``best.pt``, a stored epoch or ``ema_calibrated.pt`` and add the pass to ``results/validate.h5``."""
+    """
+    Validate one stored checkpoint on the final validation set.
+
+    The checkpoint is ``best.pt``, a stored epoch or
+    ``ema_calibrated.pt``; the pass is added to ``results/validate.h5``.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage validate``.
+
+    Raises
+    ------
+    CommandError
+        If the checkpoint is unavailable or a check fails, with the
+        command that fixes it.
+    """
     from sage.config.run_dir import training_started
     from sage.core.logger import setup_logging
     from sage.factory.clone import EpochUnavailable, stored_checkpoints
@@ -54,7 +73,23 @@ def validate(arguments: list) -> None:
 
 @command("benchmark", "Benchmark one stored checkpoint on MLGWSC-1 dataset 4 against every team")
 def benchmark(arguments: list) -> None:
-    """Search MLGWSC-1 dataset 4 with one stored checkpoint and evaluate it as MLGWSC-1 does, against every team."""
+    """
+    Benchmark one stored checkpoint on MLGWSC-1 dataset 4.
+
+    Searches the dataset with the checkpoint and evaluates it as
+    MLGWSC-1 does, against every team.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage benchmark``.
+
+    Raises
+    ------
+    CommandError
+        If no benchmark is named, the checkpoint is unavailable or a
+        check fails, with the command that fixes it.
+    """
     from sage.benchmark.mlgwsc1.mlgwsc1 import benchmark as mlgwsc1
     from sage.cli.data import WORKERS
     from sage.config.run_dir import training_started
@@ -64,7 +99,7 @@ def benchmark(arguments: list) -> None:
     summary = "Benchmark one stored checkpoint on MLGWSC-1 dataset 4 against every team"
     options = parse(
         "benchmark", summary, arguments,
-        (["--mlgwsc1"], {"action": "store_true", "help": "the MLGWSC-1 dataset 4 benchmark (Schaefer et al. 2023)"}),
+        (["--mlgwsc1"], {"action": "store_true", "help": "the MLGWSC-1 dataset 4 benchmark"}),
         (["--from-epoch"], {"type": int, "help": "a stored epoch instead of best.pt"}),
         (["--ema-calibrated"], {"action": "store_true", "help": "ema_calibrated.pt instead of best.pt"}),
         (["--workers"], {"type": int, "default": WORKERS, "help": f"processes for the injection SNRs (default: {WORKERS})"}),
@@ -94,7 +129,20 @@ def benchmark(arguments: list) -> None:
 
 @command("plot", "Draw the run's validation figures into results/plots", journey=8)
 def plot(arguments: list) -> None:
-    """Draw the figure suite for the best validated epoch, or another validation group."""
+    """
+    Draw the figures of the best validated epoch, or another group.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage plot``.
+
+    Raises
+    ------
+    CommandError
+        If the run has no ``run.yaml`` or validation results, the group
+        is unknown or a results file cannot be read.
+    """
     import matplotlib
 
     from sage.plotting.manager import ValidationPlotManager
@@ -126,7 +174,20 @@ def plot(arguments: list) -> None:
 
 @command("compare", "Score several runs' best.pt on identical validation windows")
 def compare(arguments: list) -> None:
-    """Score every run on the first run's validation windows; print and save the recovered-fraction report."""
+    """
+    Score runs on the first run's windows; print and save the report.
+
+    Parameters
+    ----------
+    arguments : list of str
+        Command-line arguments after ``sage compare``.
+
+    Raises
+    ------
+    CommandError
+        If a run is missing, not started, named like another or does
+        not share the first run's windows, or the output exists.
+    """
     from sage.config.run_dir import training_started
     from sage.core.logger import setup_logging
     from sage.factory.compare import INCOMPLETE_FILE, OUTPUT_FILE, REPORT_FILE, WindowMismatch, compare_runs

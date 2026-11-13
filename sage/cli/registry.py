@@ -2,7 +2,7 @@
 
 import difflib
 
-# Command name -> {"function", "summary", "journey"}; filled as the command modules are imported.
+# Name -> {"function", "summary", "journey"}; filled on module import
 COMMANDS = {}
 
 
@@ -24,7 +24,21 @@ class CommandError(Exception):
 
 
 def closest(name: str, valid: list) -> str | None:
-    """The accepted name closest to ``name`` (as ``loader.suggestion`` matches), or None."""
+    """
+    The accepted name closest to ``name``, as ``loader.suggestion``.
+
+    Parameters
+    ----------
+    name : str
+        Unknown name.
+    valid : list of str
+        Accepted names.
+
+    Returns
+    -------
+    str or None
+        The closest accepted name, or None if none is close.
+    """
     close = difflib.get_close_matches(name, valid, n=1)
     return close[0] if close else None
 
@@ -40,9 +54,16 @@ def command(name: str, summary: str, journey: int | None = None):
     summary : str
         One-line description.
     journey : int or None
-        Position in the journey ``sage`` prints; None for commands outside it.
+        Position in the journey ``sage`` prints; None for a command
+        outside it.
+
+    Returns
+    -------
+    callable
+        Decorator that registers the function and returns it unchanged.
     """
     def register(function):
+        """Add ``function`` to ``COMMANDS`` and return it."""
         COMMANDS[name] = {"function": function, "summary": summary, "journey": journey}
         return function
 

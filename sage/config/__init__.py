@@ -1,4 +1,5 @@
-"""Run settings: read and check a run file; record it in the run directory."""
+"""Run settings: read and check a run file, and record it in the run
+directory."""
 
 from sage.config.loader import load_run
 from sage.config.run_dir import prepare_run_dir

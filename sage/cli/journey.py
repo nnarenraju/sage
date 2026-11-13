@@ -1,4 +1,7 @@
-"""What ``sage`` alone prints: the journey through the commands, and the next one to run."""
+"""
+What ``sage`` alone prints: the journey through the commands and the
+next one to run.
+"""
 
 from importlib.metadata import version
 from pathlib import Path
@@ -11,7 +14,19 @@ from sage.config.run_dir import find_run_dir
 
 
 def next_command(directory: Path = Path(".")) -> str:
-    """The command to run next, from the state of the machine and of ``directory``."""
+    """
+    The command to run next, from the machine and run directory state.
+
+    Parameters
+    ----------
+    directory : Path
+        Directory at or below the run directory.
+
+    Returns
+    -------
+    str
+        The next command, with placeholders where it needs input.
+    """
     directory = find_run_dir(directory)
     try:
         machine.read_data_dir()
@@ -27,7 +42,14 @@ def next_command(directory: Path = Path(".")) -> str:
 
 
 def journey() -> str:
-    """The journey (registered commands in order), the other commands and the next one to run."""
+    """
+    The journey text: commands in order, the others and the next one.
+
+    Returns
+    -------
+    str
+        Text printed by ``sage`` alone or ``sage help``.
+    """
     steps = sorted((entry["journey"], name, entry["summary"]) for name, entry in COMMANDS.items()
                    if entry["journey"] is not None)
     width = max(len(name) for _, name, _ in steps)

@@ -1,12 +1,9 @@
-"""Settings each run-file section accepts, and the type each is read as.
+"""
+Settings each run-file section accepts, and the type each is read as.
 
-A spec is a type (``float``), a tuple of allowed strings, a one-element
-list for a list of that spec, a ``(type, value)`` pair for a setting with
-a default, a dict for a nested group, or :class:`OneOf` alternatives tried
-in order. In a group, a key ending in ``?`` is optional and a ``"..."`` key
-keeps further keys unconverted (a component's parameters, checked against
-the component). A group whose only key is ``name`` maps each name to its
-own schema. A group whose settings all have defaults may be left out.
+A spec is a type, a tuple of allowed strings, a one-element list (a list
+of that spec), a ``(type, default)`` pair, a dict group or ``OneOf``;
+:func:`sage.config.loader.check` gives the rules for group keys.
 """
 
 from typing import Any
@@ -15,7 +12,7 @@ from sage.core.hardcode import _DETECTORS, PYCBC_FILTER_DURATION
 
 
 class OneOf:
-    """Spec met by the first of several specs that converts the value."""
+    """Spec met by the first of several specs that converts a value."""
 
     def __init__(self, *specs):
         self.specs = specs
@@ -35,7 +32,18 @@ NULL = Null()
 
 
 def describe(spec: Any) -> str:
-    """A spec in words, for error messages."""
+    """
+    A spec in words, for error messages.
+
+    Parameters
+    ----------
+    spec : Any
+        Spec from the schema.
+
+    Returns
+    -------
+    str
+    """
     if isinstance(spec, list):
         return f"a list of {describe(spec[0])}"
     if isinstance(spec, tuple):
@@ -55,8 +63,9 @@ DATA = {
     "dtype": ("float32", "float64"),
 }
 
-# Shares of the non-astrophysical class: of the noise windows, of signal-in-one-detector pairs among them,
-# and of arrival times inside the delta_tc band.
+# Shares of the non-astrophysical class: of the noise windows, of
+# signal-in-one-detector pairs among them, and of arrival times inside
+# the delta_tc band
 NON_ASTROPHYSICAL = {
     "noise_share": float,
     "signal_noise_share": float,
@@ -110,7 +119,7 @@ MULTIRATE = {
     "post_merger_leeway_in_s": float,
 }
 
-# Ordered steps, applied in the order listed.
+# Steps, applied in the order listed
 PREPROCESS = [
     {
         "name": {
@@ -121,8 +130,8 @@ PREPROCESS = [
     }
 ]
 
-# A named network, loss, optimiser and schedule; parameters are checked against
-# each __init__ (a PyTorch schedule also takes step_every).
+# A named network, loss, optimiser and schedule; parameters are checked
+# against each __init__ (a PyTorch schedule also takes step_every)
 MODEL = COMPONENT
 LOSS = COMPONENT
 OPTIMISER = COMPONENT
@@ -136,7 +145,8 @@ TRAIN = {
     "device": str,
     "precision": ("bf16", "fp16", "fp32"),
     "clip_norm": float,
-    # false, or torch.compile arguments (mode required), checked against torch.compile
+    # false, or torch.compile arguments (mode required), checked against
+    # torch.compile
     "compile": OneOf(bool, {"mode": str, "...": None}),
     "seed": int,
     "keep_checkpoints": OneOf(int, ("all",)),
@@ -150,7 +160,8 @@ VALIDATION = {
     "snr": COMPONENT,
 }
 
-# `enabled: true` alone gives production mining; every other knob defaults to it.
+# `enabled: true` alone gives production mining; every other setting
+# defaults to its production value
 MINING = {
     "enabled": bool,
     "start_epoch": (int, 3),
@@ -178,7 +189,7 @@ MINING = {
     },
 }
 
-# `enabled: true` alone gives production EMA.
+# `enabled: true` alone gives production EMA
 EMA = {
     "enabled": bool,
     "decay": (float, 0.9999),
