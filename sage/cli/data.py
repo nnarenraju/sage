@@ -125,8 +125,8 @@ def download(arguments: list) -> None:
         "target",
         nargs="?",
         default=".",
-        help="observing run (e.g. o3b), or a run directory or a directory "
-        "inside it (default: here)",
+        help="observing run (e.g. o3b) with --train or --search, or a run "
+        "directory or a directory inside it (default: here)",
     )
     data = parser.add_mutually_exclusive_group()
     data.add_argument(
@@ -180,30 +180,26 @@ def fetch(options: argparse.Namespace, data_dir: Path, again: str) -> None:
     """
     from sage.data.download import TRAINING_STEPS, download_run
 
+    # --train or --search names an observing run, even where a
+    # directory has the same name; a run directory takes neither
     target = Path(options.target)
-    if target.is_dir():
+    if options.search:
+        fetch_search(options, data_dir)
+        return
+    if options.train:
+        needs = run_needs(options.target, options.detectors, data_dir)
+        following = (f"sage build-asds <run directory>, or by observing run: "
+                     f"sage build-asds {options.target.lower()} --segments")
+    elif target.is_dir():
         target = find_run_dir(target)
         if not (target / "run.yaml").exists():
             raise CommandError(f"no run.yaml in {target}", "sage init <directory> --preset <name>")
         if options.detectors:
             raise CommandError("--detectors applies to an observing run; a run directory reads its own",
                                on("download", options.target))
-        if options.search:
-            raise CommandError(
-                "a run directory reads training data; search data is downloaded "
-                "by observing run",
-                "sage download <observing run> --search",
-            )
         needs = directory_needs(target, data_dir, "download")[0]
         needs = {run: detectors for run, (detectors, _, _) in needs.items()}
         following = on("build-asds", str(target))
-    elif options.search:
-        fetch_search(options, data_dir)
-        return
-    elif options.train:
-        needs = run_needs(options.target, options.detectors, data_dir)
-        following = (f"sage build-asds <run directory>, or by observing run: "
-                     f"sage build-asds {options.target.lower()} --segments")
     else:
         raise CommandError(
             "name the data to download: --train or --search",
@@ -313,8 +309,9 @@ def build_asds(arguments: list) -> None:
         "targets",
         nargs="*",
         default=["."],
-        help="observing runs (e.g. o3b; the runs to pool with --fiducial), or a "
-        "run directory or a directory inside it (default: here)",
+        help="observing runs (e.g. o3b; the runs to pool with --fiducial) with "
+        "--segments, --recolour-bank or --fiducial, or a run directory or a "
+        "directory inside it (default: here)",
     )
     kind = parser.add_mutually_exclusive_group()
     kind.add_argument(
@@ -352,8 +349,11 @@ def build_asds(arguments: list) -> None:
             f"chmod u+rwx {data_dir}",
         )
 
+    # A kind names observing runs, even where a directory has the same
+    # name; a run directory takes none
     first = Path(options.targets[0])
-    if len(options.targets) == 1 and first.is_dir():
+    kind = options.segments or options.recolour_bank or options.fiducial
+    if not kind and len(options.targets) == 1 and first.is_dir():
         build_directory(options, find_run_dir(first), data_dir)
     else:
         build_runs(options, data_dir)
@@ -377,8 +377,8 @@ def build_directory(
     Raises
     ------
     CommandError
-        If there is no ``run.yaml``, an observing-run option is given
-        or strain is missing.
+        If there is no ``run.yaml``, ``--detectors`` is given or strain
+        is missing.
     """
     from sage.data.download import build_asds as build, build_fiducials
 
@@ -386,11 +386,10 @@ def build_directory(
         raise CommandError(
             f"no run.yaml in {directory}", "sage init <directory> --preset <name>"
         )
-    kinds = options.segments or options.recolour_bank or options.fiducial
-    if kinds or options.detectors:
+    if options.detectors:
         raise CommandError(
-            "a run directory builds every ASD it reads; --segments, --recolour-bank, "
-            "--fiducial and --detectors apply to observing runs",
+            "a run directory builds every ASD it reads; --detectors applies to "
+            "observing runs",
             on("build-asds", str(directory)),
         )
 

@@ -125,3 +125,19 @@ def test_executables():
     pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text()
     scripts = set(re.findall(r'^(\S+) = "sage\.cli:main"$', pyproject, flags=re.M))
     assert scripts == {"sage", "sgw", "sage-help", *(f"sage-{name}" for name in COMMANDS)}
+
+
+def test_observing_run_named_like_directory(tmp_path, monkeypatch):
+    """A data flag names an observing run, even beside a same-named directory."""
+    from sage.cli import data
+
+    monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "machine.yaml")
+    assert main(["setup", "--data-dir", str(tmp_path)]) == 0
+    (tmp_path / "o3a").mkdir()
+    monkeypatch.chdir(tmp_path)
+    called = []
+    monkeypatch.setattr(data, "fetch_search", lambda options, data_dir: called.append("search"))
+    monkeypatch.setattr(data, "build_runs", lambda options, data_dir: called.append("runs"))
+    assert main(["download", "o3a", "--search"]) == 0
+    assert main(["build-asds", "o3a", "--segments"]) == 0
+    assert called == ["search", "runs"]
