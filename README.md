@@ -1,7 +1,7 @@
 ## Physics-informed Learning for Gravitational Wave Discovery
 
 <p align="left">
-  <img src="docs/_static/rectangular_logo.png" alt="SAGE logo" width="800"/>
+  <img src="https://raw.githubusercontent.com/nnarenraju/sage/main/docs/_static/rectangular_logo.png" alt="SAGE logo" width="800"/>
 </p>
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20375078-blue)](https://doi.org/10.5281/zenodo.20375078)
@@ -10,7 +10,7 @@
 [![codecov](https://codecov.io/github/nnarenraju/sage/branch/main/graph/badge.svg?token=RLAAMEZEZ6)](https://codecov.io/github/nnarenraju/sage)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-orange)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/nnarenraju/sage/blob/main/LICENSE)
 
 Sage is an end-to-end, physics-informed machine-learning framework for
 gravitational-wave discovery. It takes public detector data all the way to a
@@ -39,7 +39,7 @@ The methods are described in:
 ## Results
 
 <p align="center">
-  <img src="docs/_static/sensitive_distance_ML_comparison.png" alt="Sensitive distance against false-alarm rate" width="700"/>
+  <img src="https://raw.githubusercontent.com/nnarenraju/sage/main/docs/_static/sensitive_distance_ML_comparison.png" alt="Sensitive distance against false-alarm rate" width="700"/>
 </p>
 
 Sensitive distance against false-alarm rate on the MLGWSC-1 challenge's most
@@ -47,7 +47,7 @@ realistic injection study (IMRPhenomXPHM signals in 1 month of real O3a
 noise): Sage against PyCBC and the other machine-learning searches.
 
 <p align="center">
-  <img src="docs/_static/compare_hexbinned_sage_pycbc.png" alt="Injections found by Sage and by PyCBC" width="700"/>
+  <img src="https://raw.githubusercontent.com/nnarenraju/sage/main/docs/_static/compare_hexbinned_sage_pycbc.png" alt="Injections found by Sage and by PyCBC" width="700"/>
 </p>
 
 Injections found by Sage and by PyCBC at one false alarm per month on the same
@@ -146,7 +146,7 @@ If you use Sage in your research, please cite:
 
 ## License
 
-Sage is released under the [GNU General Public License v3.0](LICENSE).
+Sage is released under the [GNU General Public License v3.0](https://github.com/nnarenraju/sage/blob/main/LICENSE).
 
 ---
 
