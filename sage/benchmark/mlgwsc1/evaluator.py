@@ -207,7 +207,7 @@ def _plot(
     """
     Histogram, scatter or line of ``y`` against ``x`` on ``ax``.
 
-    A legend is always drawn.
+    A legend is drawn when ``label`` is given.
 
     Parameters
     ----------
@@ -244,7 +244,7 @@ def _plot(
     ax.grid(True, which="both")
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    if label != "" or label != None:
+    if label:
         ax.legend()
 
     if save_file != "":

@@ -25,6 +25,8 @@ Documentation: NULL
 
 """
 
+import numpy as np
+
 
 class SinusoidGenerator:
     """
@@ -195,7 +197,8 @@ class SinusoidGenerator:
         Returns
         -------
         numpy.ndarray, shape (2, N)
-            Time series of each detector.
+            Time series of each detector; the second detector is offset
+            by the light travel time.
         """
         detectors = special["dets"]
         sample_length = special["data_cfg"].signal_length  # seconds
@@ -213,7 +216,7 @@ class SinusoidGenerator:
         )
         # Add dt to start time for detector offset
         signal_det2 = self.add_zero_padding(
-            signal, start_time, sample_length, sample_rate
+            signal, start_time + dt, sample_length, sample_rate
         )
         # Add whiten padding separately
         if not self.no_whitening:
