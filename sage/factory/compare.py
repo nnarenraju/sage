@@ -31,6 +31,7 @@ from sage.factory.build import (
     build_signal,
     check_device,
     precision_setup,
+    replay_settings,
     resolve_settings,
 )
 from sage.factory.train_run import check_data, check_run
@@ -247,7 +248,7 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
         if found:
             raise WindowMismatch(f"{run.path} does not share the windows of {first.path}: " + "; ".join(found))
 
-    train, validation, replay = reference["train"], reference["validation"], reference["mining"]["replay"]
+    train, validation = reference["train"], reference["validation"]
     _, _, dtype = build_data(reference["data"])
     signal = build_signal(
         {**reference["signal"], "snr": validation["snr"]}, prior, first.window, first.detectors, first.asds,
@@ -255,7 +256,7 @@ def compare_runs(run_dirs: list, output_dir: Path, noise_windows: int, signal_wi
     )
     noise = build_noise_stream(
         reference["noise"], "validation", data_dir, first.window, first.detectors, train["batch_size"], seed, 0,
-        replay["start_jitter_in_s"], replay["focal_gamma"], device, dtype,
+        *replay_settings(reference), device, dtype,
     )
     output_dir.mkdir(parents=True)
     incomplete = output_dir / INCOMPLETE_FILE

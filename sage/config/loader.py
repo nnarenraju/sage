@@ -408,13 +408,13 @@ def check(values: Any, schema: dict, where: str) -> dict:
     values : Any
         Mapping as read from YAML.
     schema : dict
-        Spec of every setting. A key ending in ``?`` is optional; a
-        spec ``(type, value)`` is optional with that default, and a
-        group whose settings all have defaults may be left out; a
-        ``"..."`` key keeps any further keys unconverted; a schema whose
-        only key is ``name``, mapping names to schemas, picks one by
-        name. Where the schema has a ``name``, a plain name stands for
-        ``{name: <name>}``.
+        Spec of every setting. A key ending in ``?`` is optional and
+        stays absent when left out; a spec ``(type, value)`` is optional
+        with that default, and any other group whose settings all have
+        defaults is filled in when left out; a ``"..."`` key keeps any
+        further keys unconverted; a schema whose only key is ``name``,
+        mapping names to schemas, picks one by name. Where the schema
+        has a ``name``, a plain name stands for ``{name: <name>}``.
     where : str
         Dotted location, for error messages; empty for the whole file.
 
@@ -472,7 +472,7 @@ def check(values: Any, schema: dict, where: str) -> dict:
             )
         elif key in values:
             converted[key] = convert(values[key], spec, prefix + key)
-        elif key in defaulted_groups:
+        elif key in defaulted_groups and key not in optional:
             converted[key] = check({}, spec, prefix + key)
     converted.update({key: value for key, value in values.items() if key not in fields})
     return converted

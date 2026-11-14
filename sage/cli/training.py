@@ -482,11 +482,12 @@ def finish_time(directory: Path, settings: dict, done: int) -> datetime.datetime
     datetime.datetime or None
         Finish time in UTC; None before the first epoch has finished.
     """
-    # Deferred: train_run imports torch.
+    # Deferred: build and train_run import torch.
+    from sage.factory.build import section_on
     from sage.factory.train_run import FINAL_CHECK_ESTIMATE, RUNNING_FLAG, flag
 
     cycle = [settings["validation"]["every_n_epochs"]]
-    if settings["mining"]["enabled"]:
+    if section_on(settings, "mining"):
         cycle.append(settings["mining"]["every_n_epochs"])
     mean = epoch_seconds(directory / "logs" / "run.log", math.lcm(*cycle))
     estimate = directory / "results" / FINAL_CHECK_ESTIMATE

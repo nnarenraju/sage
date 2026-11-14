@@ -160,10 +160,10 @@ VALIDATION = {
     "snr": COMPONENT,
 }
 
-# `enabled: true` alone gives production mining; every other setting
-# defaults to its production value
+# Optional: a present section mines unless `enabled: false`; every
+# other setting defaults to its production value
 MINING = {
-    "enabled": bool,
+    "enabled": (bool, True),
     "start_epoch": (int, 3),
     "every_n_epochs": (int, 4),
     "iterations": (int, 8000),
@@ -189,9 +189,10 @@ MINING = {
     },
 }
 
-# `enabled: true` alone gives production EMA
+# Optional: a present section averages unless `enabled: false`, with
+# production values by default
 EMA = {
-    "enabled": bool,
+    "enabled": (bool, True),
     "decay": (float, 0.9999),
     "calibration_batches": (int, 500),
 }
@@ -204,9 +205,10 @@ SECTIONS = {
     "model": MODEL,
     "loss": LOSS,
     "optimiser": OPTIMISER,
-    "schedule": SCHEDULE,
+    # Optional: without it the learning rate stays the optimiser's
+    "schedule?": SCHEDULE,
     "train": TRAIN,
     "validation": VALIDATION,
-    "mining": MINING,
-    "ema": EMA,
+    "mining?": MINING,
+    "ema?": EMA,
 }

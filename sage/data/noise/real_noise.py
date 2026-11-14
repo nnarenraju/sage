@@ -401,10 +401,12 @@ class MemmapNoiseSampler(torch.nn.Module):
         Maximum number of batches held in the prefetch queue.
     read_workers : int
         Threads reading windows from disk.
-    hard_start_jitter_s : float
-        Replayed hard windows are shifted by up to this many seconds.
-    hard_focal_gamma : float
+    hard_start_jitter_s : float or None
+        Replayed hard windows are shifted by up to this many seconds;
+        None when nothing is replayed.
+    hard_focal_gamma : float or None
         Focal weighting exponent of hard-window replay; 0 is uniform.
+        None when nothing is replayed.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -441,8 +443,8 @@ class MemmapNoiseSampler(torch.nn.Module):
         seed: int,
         prefetch_batches: int,
         read_workers: int,
-        hard_start_jitter_s: float,
-        hard_focal_gamma: float,
+        hard_start_jitter_s: float | None,
+        hard_focal_gamma: float | None,
         device,
         dtype: torch.dtype,
         postprocess_fn=None,
@@ -452,7 +454,9 @@ class MemmapNoiseSampler(torch.nn.Module):
         self.seq_len = window.padded_length_in_samples
         self.sample_rate = float(window.sample_rate_in_hz)
         # Uniform jitter of replayed hard starts, within their segment
-        self._hard_jitter_s = float(hard_start_jitter_s)
+        self._hard_jitter_s = (
+            None if hard_start_jitter_s is None else float(hard_start_jitter_s)
+        )
         self._seg_bounds_lut = None            # built on first jitter
         self.device = device
         self.prefetch_batches = prefetch_batches
@@ -563,7 +567,9 @@ class MemmapNoiseSampler(torch.nn.Module):
         self._hard_bias_prob = 0.0
         self._hard_lock      = threading.Lock()
         # Replay weight of a window with stat s: sigmoid(s)**gamma
-        self._hard_focal_gamma = float(hard_focal_gamma)
+        self._hard_focal_gamma = (
+            None if hard_focal_gamma is None else float(hard_focal_gamma)
+        )
         self._hard_cdf         = None      # rebuilt on dataset swap
 
         # Random reads from network storage are latency-bound, so
@@ -605,7 +611,16 @@ class MemmapNoiseSampler(torch.nn.Module):
         hard_bias_prob : float or None
             Probability that a batch replays hard windows; ``None``
             keeps the current value.
+
+        Raises
+        ------
+        ValueError
+            If the sampler was built without replay settings.
         """
+        if dataset is not None and self._hard_focal_gamma is None:
+            raise ValueError(
+                "this noise sampler was built without replay settings (mining is off)"
+            )
         with self._hard_lock:
             self._hard_dataset = dataset
             self._hard_cdf = self._build_hard_cdf(dataset)

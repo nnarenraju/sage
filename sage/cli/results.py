@@ -33,6 +33,7 @@ def validate(arguments: list) -> None:
     """
     from sage.config.run_dir import training_started
     from sage.core.logger import setup_logging
+    from sage.factory.build import section_on
     from sage.factory.clone import EpochUnavailable, stored_checkpoints
     from sage.factory.train_run import validate_checkpoint
 
@@ -49,7 +50,7 @@ def validate(arguments: list) -> None:
     if not training_started(directory):
         raise CommandError(f"{directory}: no checkpoint to validate yet", on("train", options.directory))
     if options.ema_calibrated and not (directory / "checkpoints" / "ema_calibrated.pt").exists():
-        if not settings["ema"]["enabled"]:
+        if not section_on(settings, "ema"):
             raise CommandError(f"{directory}: EMA is not enabled, so there is no ema_calibrated.pt",
                                on("validate", options.directory))
         raise CommandError(f"{directory}: no ema_calibrated.pt yet; the final check writes it after the last epoch",

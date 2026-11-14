@@ -62,7 +62,9 @@ from sage.factory.build import (
     flat_tail_start_epoch,
     mining_epochs,
     precision_setup,
+    replay_settings,
     resolve_settings,
+    section_on,
     strain_runs,
     validates,
 )
@@ -121,7 +123,7 @@ def derived_values(settings: dict, window, processor, signal) -> dict:
             target: {"offset": float(sampler._target_offsets[i]), "scale": float(sampler._target_scales[i])}
             for i, target in enumerate(targets)
         },
-        "flat_tail_start_epoch": flat_tail_start_epoch(settings["schedule"], settings["train"]["epochs"]),
+        "flat_tail_start_epoch": flat_tail_start_epoch(settings.get("schedule"), settings["train"]["epochs"]),
         "seeds": seeds,
     }
 
@@ -289,12 +291,14 @@ def check_run(run_dir: Path) -> tuple:
         If the prior file is missing.
     """
     settings = load_run(Path(run_dir) / "run.yaml")
-    train, mining = settings["train"], settings["mining"]
+    train = settings["train"]
     check_train(train)
     check_validation(settings["validation"], train["batch_size"])
     check_heads(settings["model"], settings["loss"])
-    if mining["enabled"]:
-        check_mining(mining, settings["noise"], settings["model"], settings["schedule"], train["epochs"])
+    if section_on(settings, "mining"):
+        check_mining(
+            settings["mining"], settings["noise"], settings["model"], settings.get("schedule"), train["epochs"]
+        )
     return settings, load_prior(settings["signal"]["prior"], run_dir)
 
 
@@ -374,7 +378,7 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
         optimiser, schedule and precision, with the batch sizes and
         seed they were built with.
     """
-    train, mining = settings["train"], settings["mining"]
+    train = settings["train"]
     torch.backends.cudnn.benchmark = True
     torch.autograd.set_detect_anomaly(False)
 
@@ -402,7 +406,7 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
         use_scaling(signal, targets, scaling)
     noise = build_noise(
         settings["noise"], data_dir, window, detectors, train["batch_size"], seed, start_epoch,
-        mining["replay"]["start_jitter_in_s"], mining["replay"]["focal_gamma"], device, dtype, small,
+        *replay_settings(settings), device, dtype, small,
     )
     processor = build_preprocess(
         settings["preprocess"], asds, window, signal.param_sampler.bounds,
@@ -415,7 +419,9 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     model = compile_network(network, train)
     loss = build_loss(settings["loss"], targets)
     optimiser = build_optimiser(settings["optimiser"], network)
-    schedule, step_every = build_schedule(settings["schedule"], optimiser, train["epochs"], batches)
+    schedule, step_every = build_schedule(
+        settings.get("schedule"), optimiser, train["epochs"], batches
+    )
     autocast_dtype, scaler = precision_setup(train)
     return SimpleNamespace(
         window=window, detectors=detectors, dtype=dtype, device=device, targets=targets, asds=asds,
@@ -453,7 +459,7 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run, s
     tuple
         ``(signal, noise, placement, non_astrophysical)``.
     """
-    train, replay = settings["train"], settings["mining"]["replay"]
+    train = settings["train"]
     seed, snr = {
         "training": (train["seed"], settings["signal"]["snr"]),
         "validation": (settings["validation"]["seed"], settings["validation"]["snr"]),
@@ -464,7 +470,7 @@ def fresh_streams(role: str, settings: dict, prior: dict, data_dir: Path, run, s
     )
     noise = build_noise_stream(
         settings["noise"], role, data_dir, run.window, run.detectors, train["batch_size"], seed, 0,
-        replay["start_jitter_in_s"], replay["focal_gamma"], run.device, run.dtype, small,
+        *replay_settings(settings), run.device, run.dtype, small,
     )
     non_astrophysical = build_non_astrophysical(
         {**settings["signal"], "snr": snr}, prior, run.window, run.detectors, run.asds,
@@ -497,10 +503,10 @@ def final_check_seconds(settings: dict, pass_seconds: float, epoch_seconds: floa
     float
         Estimated duration in seconds.
     """
-    validation, ema = settings["validation"], settings["ema"]
-    seconds = (2 if ema["enabled"] else 1) * validation["final_samples"] / validation["samples"] * pass_seconds
-    if ema["enabled"]:
-        seconds += ema["calibration_batches"] / batches * epoch_seconds
+    validation, averaging = settings["validation"], section_on(settings, "ema")
+    seconds = (2 if averaging else 1) * validation["final_samples"] / validation["samples"] * pass_seconds
+    if averaging:
+        seconds += settings["ema"]["calibration_batches"] / batches * epoch_seconds
     return seconds
 
 
@@ -576,7 +582,8 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     clock = time.monotonic()
     run_dir = Path(run_dir)
     settings, prior = check_run(run_dir)
-    train, validation, mining, ema = settings["train"], settings["validation"], settings["mining"], settings["ema"]
+    train, validation = settings["train"], settings["validation"]
+    mining_on, averaging = section_on(settings, "mining"), section_on(settings, "ema")
     check_device(train)
     data_dir = read_data_dir()
     check_data(run_dir, settings, data_dir, fiducial=not training_started(run_dir))
@@ -607,21 +614,22 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         # the rest as a resume.
         run.network.load_state_dict(start["model"])
         if full_state:
-            install_full_state(run_dir, start, settings["ema"]["enabled"])
+            install_full_state(run_dir, start, averaging)
 
     callbacks = []
-    if mining["enabled"]:
+    if mining_on:
+        mining = settings["mining"]
         # Not keyed by the segment: the miner reseeds each round from
         # it and the epoch, so a resumed run mines as an uninterrupted
         # one.
         miner = HardMiningCallback(
-            mining, run_dir / "mining" / "bank.h5", mining_epochs(mining, settings["schedule"], train["epochs"]),
+            mining, run_dir / "mining" / "bank.h5", mining_epochs(mining, settings.get("schedule"), train["epochs"]),
             stream_seed(train["seed"], "mining"), run.detectors, run.window.sample_rate_in_hz,
         )
         callbacks.append(miner)
     averager = None
-    if ema["enabled"]:
-        averager = EMACallback(run.network, ema["decay"])
+    if averaging:
+        averager = EMACallback(run.network, settings["ema"]["decay"])
         callbacks.append(averager)
     trainer = trainer_for(run, settings, run.batches, callbacks)
 
@@ -643,7 +651,7 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     losses = HDF5LossLogger(run_dir / "results" / "losses.h5", train["epochs"], run.loss.component_names)
     if start_epoch > 0:
         start_epoch = checkpoints.load_latest(run.device)
-        if mining["enabled"]:
+        if mining_on:
             miner.attach_for_resume(trainer)
 
     longest, estimate = 0.0, None
@@ -799,8 +807,10 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
         if start is not None:
             check_built(derived, start, run.scaler, full_state)
             run.network.load_state_dict(start["model"])
-        ema = settings["ema"]
-        callbacks = [EMACallback(run.network, ema["decay"])] if ema["enabled"] else []
+        averaging = section_on(settings, "ema")
+        callbacks = (
+            [EMACallback(run.network, settings["ema"]["decay"])] if averaging else []
+        )
         ema_model = callbacks[0].ema_model if callbacks else None
         if started:
             CheckpointManager(
@@ -913,16 +923,16 @@ def final_check(
         Device the checkpoints are loaded onto.
     """
     live_noise.shutdown()
-    checkpoints, ema = run_dir / "checkpoints", settings["ema"]
+    checkpoints, averaging = run_dir / "checkpoints", section_on(settings, "ema")
     result = {"samples": settings["validation"]["final_samples"]}
     groups = {"best.pt": "final_best"}
-    if ema["enabled"]:
+    if averaging:
         state = torch.load(checkpoints / "ema.pt", map_location=device, weights_only=False)
         network.load_state_dict(state["model"])
         signal, noise, placement, non_astrophysical = fresh_samplers("training")
         inputs = calibration_inputs(
             signal, noise, processor, signal_batch_size, len(settings["signal"]["targets"]),
-            ema["calibration_batches"], placement, non_astrophysical,
+            settings["ema"]["calibration_batches"], placement, non_astrophysical,
         )
         layers = recalibrate_batchnorm(network, inputs)
         noise.shutdown()
@@ -939,9 +949,9 @@ def final_check(
         losses = dict(zip(loss.component_names, validate.loss_components[0].tolist()))
         result[file] = {"epoch": state["epoch"], "loss": losses}
 
-    if ema["enabled"]:
+    if averaging:
         result["ema_calibrated.pt"].update(
-            batchnorm_layers_recalibrated=layers, calibration_batches=ema["calibration_batches"],
+            batchnorm_layers_recalibrated=layers, calibration_batches=settings["ema"]["calibration_batches"],
         )
         ema_total, best_total = (result[file]["loss"]["total"] for file in ("ema_calibrated.pt", "best.pt"))
         result["lower_total_loss"] = "ema_calibrated.pt" if ema_total <= best_total else "best.pt"

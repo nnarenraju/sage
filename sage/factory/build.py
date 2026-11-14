@@ -621,8 +621,9 @@ def build_noise_stream(
     seed, epoch : int
         The noise and recolour streams are
         ``stream_seed(seed, <stream>, epoch)``.
-    hard_start_jitter_s, hard_focal_gamma : float
-        Replay of mined windows; see ``MemmapNoiseSampler``.
+    hard_start_jitter_s, hard_focal_gamma : float or None
+        Replay of mined windows (``replay_settings``); see
+        ``MemmapNoiseSampler``.
     device : str or torch.device
         Device of the batches.
     dtype : torch.dtype
@@ -831,7 +832,7 @@ def resolve_settings(settings: dict) -> dict:
     dict
         The same settings; ``signal.waveform``, ``signal.projection``,
         ``signal.snr``, ``model``, ``loss``, ``optimiser``,
-        ``schedule`` and ``validation.snr`` resolved.
+        ``schedule`` (when present) and ``validation.snr`` resolved.
     """
     signal = settings["signal"]
     return {
@@ -847,7 +848,11 @@ def resolve_settings(settings: dict) -> dict:
         "model": resolve_model(settings["model"]),
         "loss": resolve_loss(settings["loss"]),
         "optimiser": resolve_optimiser(settings["optimiser"]),
-        "schedule": resolve_schedule(settings["schedule"]),
+        **(
+            {"schedule": resolve_schedule(settings["schedule"])}
+            if "schedule" in settings
+            else {}
+        ),
         "validation": {
             **settings["validation"],
             "snr": resolve_component(
@@ -1074,15 +1079,18 @@ def resolve_schedule(schedule: dict) -> dict:
 
 
 def build_schedule(
-    schedule: dict, optimiser: torch.optim.Optimizer, num_epochs: int, steps_per_epoch: int
+    schedule: dict | None, optimiser: torch.optim.Optimizer, num_epochs: int, steps_per_epoch: int
 ) -> tuple:
     """
     Build the learning-rate schedule the ``schedule`` section names.
 
+    Without the section, the learning rate stays the optimiser's:
+    ``ConstantLR`` with factor 1, stepped every epoch.
+
     Parameters
     ----------
-    schedule : dict
-        Checked ``schedule`` section.
+    schedule : dict or None
+        Checked ``schedule`` section; None without one.
     optimiser : torch.optim.Optimizer
         Optimiser it drives; its learning rate is the peak.
     num_epochs, steps_per_epoch : int
@@ -1095,6 +1103,8 @@ def build_schedule(
     step_every : str
         ``batch``, ``epoch`` or ``metric``.
     """
+    if schedule is None:
+        return lr_scheduler.ConstantLR(optimiser, factor=1.0), "epoch"
     settings = resolve_schedule(schedule)
     cls = SCHEDULES[settings["name"]]
     parameters = {key: value for key, value in settings.items() if key not in ("name", "step_every")}
@@ -1103,14 +1113,14 @@ def build_schedule(
     return cls(optimiser, **parameters), settings["step_every"]
 
 
-def flat_tail_start_epoch(schedule: dict, num_epochs: int):
+def flat_tail_start_epoch(schedule: dict | None, num_epochs: int):
     """
     First epoch of the schedule's flat tail, or None if it has none.
 
     Parameters
     ----------
-    schedule : dict
-        Checked ``schedule`` section.
+    schedule : dict or None
+        Checked ``schedule`` section; None without one.
     num_epochs : int
         Epochs in the run.
 
@@ -1120,6 +1130,8 @@ def flat_tail_start_epoch(schedule: dict, num_epochs: int):
         ``num_epochs - flat_tail_epochs`` for
         ``WarmupPolynomialDecayFlatTail``, else None.
     """
+    if schedule is None:
+        return None
     settings = resolve_schedule(schedule)
     if SCHEDULES[settings["name"]] is not WarmupPolynomialDecayFlatTail:
         return None
@@ -1261,7 +1273,47 @@ def validates(epoch: int, validation: dict, epochs: int) -> bool:
     return epoch % validation["every_n_epochs"] == 0 or epoch == epochs - 1
 
 
-def mining_epochs(mining: dict, schedule: dict, num_epochs: int) -> list:
+def section_on(settings: dict, name: str) -> bool:
+    """
+    Whether the optional ``mining`` or ``ema`` section is on.
+
+    Parameters
+    ----------
+    settings : dict
+        Settings from ``load_run``.
+    name : str
+        ``mining`` or ``ema``.
+
+    Returns
+    -------
+    bool
+        True if the section is present and not ``enabled: false``.
+    """
+    return name in settings and settings[name]["enabled"]
+
+
+def replay_settings(settings: dict) -> tuple:
+    """
+    Start jitter and focal gamma of mined-window replay.
+
+    Parameters
+    ----------
+    settings : dict
+        Settings from ``load_run``.
+
+    Returns
+    -------
+    tuple
+        ``(start_jitter_in_s, focal_gamma)``; ``(None, None)`` when
+        mining is off, so nothing is replayed.
+    """
+    if not section_on(settings, "mining"):
+        return None, None
+    replay = settings["mining"]["replay"]
+    return replay["start_jitter_in_s"], replay["focal_gamma"]
+
+
+def mining_epochs(mining: dict, schedule: dict | None, num_epochs: int) -> list:
     """
     Epochs after which a mining round runs.
 
@@ -1270,8 +1322,10 @@ def mining_epochs(mining: dict, schedule: dict, num_epochs: int) -> list:
 
     Parameters
     ----------
-    mining, schedule : dict
-        Checked ``mining`` and ``schedule`` sections.
+    mining : dict
+        Checked ``mining`` section.
+    schedule : dict or None
+        Checked ``schedule`` section; None without one.
     num_epochs : int
         Epochs in the run.
 
@@ -1284,14 +1338,16 @@ def mining_epochs(mining: dict, schedule: dict, num_epochs: int) -> list:
     return list(range(mining["start_epoch"], num_epochs if stop is None else stop, mining["every_n_epochs"]))
 
 
-def check_mining(mining: dict, noise: dict, model: dict, schedule: dict, num_epochs: int) -> None:
+def check_mining(mining: dict, noise: dict, model: dict, schedule: dict | None, num_epochs: int) -> None:
     """
     Start-up checks of an enabled ``mining`` section.
 
     Parameters
     ----------
-    mining, noise, model, schedule : dict
+    mining, noise, model : dict
         Checked sections of the run file.
+    schedule : dict or None
+        Checked ``schedule`` section; None without one.
     num_epochs : int
         Epochs in the run.
 

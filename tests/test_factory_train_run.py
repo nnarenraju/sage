@@ -336,6 +336,28 @@ def test_non_astrophysical(tmp_path, monkeypatch):
         assert np.isfinite(file["validation"]["loss"][0]).all()
 
 
+def test_without_optional_sections(tmp_path, monkeypatch):
+    """No schedule, mining or ema: a constant learning rate and best.pt alone."""
+    use_machine(tmp_path, monkeypatch)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    optional = ("schedule:", "mining:", "ema:")
+    text = "".join(line for line in RUN.splitlines(keepends=True) if not line.startswith(optional))
+    (run_dir / "run.yaml").write_text(text)
+    try:
+        train_run(run_dir)
+    finally:
+        setup_logging(None, console=False)
+    record = yaml.safe_load((run_dir / "resolved" / "run.yaml").read_text())
+    assert not {"schedule", "mining", "ema"} & set(record)
+    state = torch.load(run_dir / "checkpoints" / "latest.pt", weights_only=False)
+    assert state["optimiser"]["param_groups"][0]["lr"] == record["optimiser"]["lr"]
+    stored = sorted(path.name for path in (run_dir / "checkpoints").glob("*.pt"))
+    assert stored == ["best.pt", "epoch_0000.pt", "latest.pt"]
+    final = json.loads((run_dir / "results" / "final_check.json").read_text())
+    assert set(final) == {"samples", "best.pt"}
+
+
 def test_recovered_fractions():
     """Recovered fractions at fixed false-alarm probabilities."""
     background, foreground = np.arange(1000.0), np.array([998.5, 999.5, 990.0, 1.0])
