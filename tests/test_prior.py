@@ -81,8 +81,10 @@ def test_mass_order_rejects(tmp_path):
 
 
 def test_broad_preset():
-    """bbh_broad differs from bbh_narrow only in the masses."""
+    """bbh_broad differs from bbh_narrow only in the masses and delta_tc."""
     narrow, broad = (load_prior(name, Path("."))["priors"] for name in ("bbh_narrow", "bbh_broad"))
     assert broad["mass1"] == broad["mass2"] == {"name": "uniform", "min": 5.0, "max": 100.0}
-    assert {**broad, "mass1": narrow["mass1"], "mass2": narrow["mass2"]} == narrow
+    assert broad["delta_tc"] == {"name": "uniform", "min": 18.0, "max": 18.2}
+    unchanged = {"mass1": narrow["mass1"], "mass2": narrow["mass2"], "delta_tc": narrow["delta_tc"]}
+    assert {**broad, **unchanged} == narrow
 

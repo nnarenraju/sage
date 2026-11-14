@@ -19,8 +19,8 @@ priors:
 
   delta_tc:
     name: uniform
-    min: 11.0
-    max: 11.2
+    min: 18.0
+    max: 18.2
 
   mass1:
     name: uniform

@@ -44,7 +44,7 @@ def test_check_search_data(tmp_path):
 
 def test_unknown_checkpoint(tmp_path, monkeypatch, capsys):
     """search-init names the closest stored checkpoint."""
-    (tmp_path / "run.yaml").write_text("extends: hl\n")
+    (tmp_path / "run.yaml").write_text("extends: two_detector\n")
     (tmp_path / "checkpoints").mkdir()
     (tmp_path / "checkpoints" / "best.pt").touch()
     monkeypatch.chdir(tmp_path)

@@ -40,7 +40,7 @@ def test_plot(tmp_path, capsys):
     """sage plot draws the lowest-loss epoch, or a named group."""
     run = tmp_path / "run"
     (run / "results").mkdir(parents=True)
-    (run / "run.yaml").write_text("extends: hl\n")
+    (run / "run.yaml").write_text("extends: two_detector\n")
     generator = torch.Generator().manual_seed(0)
     losses = HDF5LossLogger(run / "results" / "losses.h5", 4, ["total", "classification", "delta_tc", "mchirp"])
     for epoch, total in enumerate([0.5, 0.4, 0.35, 0.37]):
@@ -66,7 +66,7 @@ def test_non_astrophysical(tmp_path):
     """Plots draw with class-2 windows in the pass."""
     run = tmp_path / "run"
     (run / "results").mkdir(parents=True)
-    (run / "run.yaml").write_text("extends: hl\n")
+    (run / "run.yaml").write_text("extends: two_detector\n")
     losses = HDF5LossLogger(run / "results" / "losses.h5", 1, ["total", "classification", "delta_tc", "mchirp"])
     for split in ("training", "validation"):
         losses.log(torch.tensor([[0.5, 0.3, 0.1, 0.05]]), 0, split)
