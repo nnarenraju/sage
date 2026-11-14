@@ -96,8 +96,9 @@ class TimelineQuery:
 
     Parameters
     ----------
-    detector : str or list of str
-        Detector prefixes (e.g. ``"H1"``, ``["H1", "L1"]``).
+    detector : str or list of str or None
+        Detector prefixes (e.g. ``"H1"``, ``["H1", "L1"]``); None queries
+        every detector Sage knows.
     observing_run : str or list of str or None
         Observing-run labels (e.g. ``"O3a"``, ``"O3b"``).
     start, end : float or None
@@ -138,7 +139,8 @@ class TimelineQuery:
 
         self.data_quality_flag = self._to_seq(dq_flag)
         self.detector = self._to_seq(detector)
-        _check_detector_prefixes(self.detector)
+        if self.detector is not None:
+            _check_detector_prefixes(self.detector)
 
         self.timeline = []
         self.auto_clean = auto_clean_empty_timelines
@@ -345,8 +347,6 @@ class TimelineQuery:
         """
         Case 3, detectors only: <DET>_DATA over all GPS times.
 
-        Queries every detector in ``_DETECTORS``; ``dets`` is not used.
-
         Parameters
         ----------
         dets : sequence of str
@@ -356,7 +356,7 @@ class TimelineQuery:
         logger.warning("Only dets provided; this will likely download a lot of data!")
         start = 0
         end = 999_999_999_999
-        self._case_5_handle(start, end, dets=_DETECTORS, flags=None)
+        self._case_5_handle(start, end, dets=dets, flags=None)
 
     def _case_4_handle(self, runs, dets=None, flags=None):
         """

@@ -880,6 +880,15 @@ class DataReleaseDownloader:
         # One task per segment, for a single worker
         tasks = ((self.dcfg, i, b0, b1, det) for i, (b0, b1) in enumerate(segments))
 
+        def _save_h5(n, data, metadata):
+            """Save one segment to the monolithic file, or its own file."""
+            if self.monolithic:
+                self._save_segment(hf, n, data, det, run, metadata)
+                return
+            chunk = self._h5py_mkfile(f"data_{det}_{run}_chunk_{n}.hdf")
+            self._save_segment(chunk, n, data, det, run, metadata)
+            chunk.close()
+
         if self.num_workers > 1:
             file_tasks, n_cross = self._resolve_and_group(segments, det, run)
             print(
@@ -928,7 +937,7 @@ class DataReleaseDownloader:
                     self._bin_sample_cursor += nsamp
                     self._bin_byte_cursor += nbytes
                 else:
-                    self._save_segment(hf, n, data, det, run, metadata)
+                    _save_h5(n, data, metadata)
 
             # Cross-file pieces: n -> {kind: (raw, sr, b0, b1)}
             partials = {}
@@ -1062,9 +1071,7 @@ class DataReleaseDownloader:
                             )
                             time.sleep(self.proxy_reset_sleep)
                     else:
-                        hf = self._h5py_mkfile(f"data_{det}_{run}_chunk_{n}.hdf")
-                        self._save_segment(hf, n, data, det, run, metadata)
-                        hf.close()
+                        _save_h5(n, data, metadata)
                     pbar.update()
 
         # Close the monolithic output file
