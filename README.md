@@ -12,162 +12,113 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-orange)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-Sage is a machine-learning based search pipeline for compact binary coalescence
-signals in gravitational-wave detector data. It includes tools for realistic
-noise handling, waveform generation, detector projection, whitening, signal
-compression, training, validation, and diagnostic studies.
+Sage is an end-to-end, physics-informed machine-learning framework for
+gravitational-wave discovery. It takes public detector data all the way to a
+trained neural network and a complete search of an observing run, with every
+step in between included and built on PyTorch. Each part is modular and
+designed to mitigate learning biases, so Sage can be used as it is or adapted
+to new detectors, sources and ideas.
+
+| Feature | What you get |
+|---|---|
+| **From scratch to a search in a few commands** | A run is a folder made from a YAML preset. From download to a trained network and a searched observing run in a few commands. |
+| **Waveforms in PyTorch, checked against LAL** | Batched ports of IMRPhenomD, Pv2, XAS, XP, XHM, XPHM and XAS_NRTidalv3, all agreeing with LALSimulation. |
+| **Full searches with false-alarm rates** | Search a whole observing run with a time-slide background; every clustered trigger gets a false-alarm rate, with data-quality vetoes and hierarchical removal. |
+| **More than a yes/no** | Point estimates of chosen GW parameters, each with a Gaussian width, alongside the detection statistic. |
+| **Proven sensitivity** | In the [paper](https://journals.aps.org/prd/abstract/10.1103/zwj9-ycyz), about 11% more signals found than PyCBC matched filtering at one false alarm per month on the MLGWSC-1 challenge. |
+| **Benchmark in one command** | Compare a trained Sage network with PyCBC and the MLGWSC-1 teams on their most realistic injection study (IMRPhenomXPHM signals in 1 month of real O3a noise). |
+| **Diagnostics** | `sage plot` draws about 25 validation figures, and `sage compare` scores several runs on identical windows. |
+| **Built for clusters** | Resume from the last saved epoch across job time limits, `--stop-after` to end a job cleanly, and SLURM job chaining. |
 
 The methods are described in:
 
 [Identifying and Mitigating Machine Learning Biases for the Gravitational Wave Detection Problem](https://journals.aps.org/prd/abstract/10.1103/zwj9-ycyz)
 
-**Abstract**
+---
 
-Sage is a complete, end-to-end machine-learning pipeline for gravitational-wave compact binary coalescence detection. Training operates entirely on-the-fly — no pre-computed datasets required — with waveforms and noise windows generated per batch to eliminate data-reuse biases. Sage systematically identifies and mitigates 11 interconnected supervised-learning biases that degrade detection performance and generalisation. On the Machine Learning Gravitational-Wave Search Challenge injection study, Sage detects ~11.2% more signals than benchmark PyCBC matched-filtering and ~48.3% more than the previous best-performing ML pipeline at a false alarm rate of one per month, while remaining robust to out-of-distribution PSDs and non-Gaussian transient artefacts.
+## Results
 
-The repository contains the research code used for the Sage pipeline, including:
+<p align="center">
+  <img src="docs/_static/sensitive_distance_ML_comparison.png" alt="Sensitive distance against false-alarm rate" width="700"/>
+</p>
 
-- Automated download and preparation of GWOSC data releases, segments, and PSDs.
-- Realistic noise simulation: real strain, coloured, recoloured, and glitch-injected noise.
-- Binary black hole waveform generation (IMRPhenomD/PhenomPv2), multi-detector projection, and SNR utilities.
-- Signal processing: whitening, inverse spectrum truncation, time-domain multirate sampling, and prior-median heterodyning.
-- Modular neural network architectures with interchangeable frontends, backends, and attention mechanisms.
-- Training loops with on-the-fly data generation, schedulers, callbacks, and checkpointing.
-- Google Colab tutorials, reproducibility notebooks, and run scripts for paper-style experiments.
-- Diagnostic plotting tools for ranking statistics, efficiency curves, ROC curves, and parameter studies.
+Sensitive distance against false-alarm rate on the MLGWSC-1 challenge's most
+realistic injection study (IMRPhenomXPHM signals in 1 month of real O3a
+noise): Sage against PyCBC and the other machine-learning searches.
 
-All modules are optimised for CPU and GPU (PyTorch compile-friendly) usage.
+<p align="center">
+  <img src="docs/_static/compare_hexbinned_sage_pycbc.png" alt="Injections found by Sage and by PyCBC" width="700"/>
+</p>
+
+Injections found by Sage and by PyCBC at one false alarm per month on the same
+study, against chirp mass, mass ratio, aligned spins and SNR. Red cells hold
+more injections found by Sage, blue cells more found by PyCBC; Sage finds 946
+that PyCBC misses, and PyCBC 513 that Sage misses.
+
+See the [paper](https://journals.aps.org/prd/abstract/10.1103/zwj9-ycyz) for more.
 
 ---
 
 ## Installation
 
-Sage is currently intended for local editable installs.
-
-**Option A — conda (recommended for GPU clusters)**
-
-The [`utils/environment.yml`](utils/environment.yml) file defines the full
-conda environment (Python 3.11, LALSuite, PyCBC, GWpy, and JupyterLab).
-[`utils/create_env.sh`](utils/create_env.sh) automates the three-step setup:
-conda packages → PyTorch CUDA wheel → editable Sage install.
-
-```bash
-git clone https://github.com/nnarenraju/sage.git
-cd sage/utils
-bash create_env.sh
-conda activate sage
-```
-
-**Option B — pip only**
+Sage needs Python 3.10 or newer, and a CUDA GPU to train networks and run
+searches.
 
 ```bash
 git clone https://github.com/nnarenraju/sage.git
 cd sage
-python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-PyTorch installation can depend on your CUDA version. If needed, install the
-appropriate PyTorch build first using the command from
-[pytorch.org](https://pytorch.org/get-started/locally/), then install the
-remaining requirements.
-
-A CUDA-capable GPU is strongly recommended for on-the-fly waveform generation,
-training, and large injection studies.
+If your CUDA version needs a particular PyTorch build, install it first with
+the command from [pytorch.org](https://pytorch.org/get-started/locally/).
 
 ---
 
-## Repository Structure
+## Usage
 
-```
-sage/
-├── sage/
-│   ├── architecture/       # Frontend, backend, attention, and full networks
-│   ├── benchmark/          # Benchmark integrations and comparison utilities
-│   ├── core/               # Config, logging, constants, interpolation
-│   ├── data/
-│   │   ├── noise/          # Real noise samplers, hard mining, glitch handling
-│   │   ├── primer/         # Data download and preparation utilities
-│   │   ├── psd/            # PSD generation and loading
-│   │   └── waveform/       # Parameter sampling, waveforms, projection, SNR
-│   ├── dsp/                # FFT, whitening, PSDs, multirate
-│   ├── exec/               # Pipeline orchestration
-│   ├── factory/            # Training, validation, schedulers, callbacks
-│   ├── plotting/           # Diagnostic and publication plotting
-│   ├── presets/            # Run and prior presets
-│   └── utils/              # Checkpointing, timing, Condor utilities
-├── repro/                  # Reproducibility notebooks and configuration
-├── notebooks/              # Exploratory notebooks
-├── tests/                  # Lightweight tests and smoke checks
-└── docs/                   # Sphinx/ReadTheDocs documentation source
+A first run with the `quick` preset: a short H1-L1 run trained on O3b noise
+and validated on O3a. `sage <command> --help` explains any command.
+
+### Initialisation
+
+```bash
+sage setup --data-dir /path/to/data   # once per machine: where all data goes
+sage init my_run --preset quick       # make my_run/ and its run.yaml, which extends the preset
+cd my_run
 ```
 
----
+### Download and building
 
-## Colab Tutorials
+```bash
+sage download                         # the training strain run.yaml needs, GWOSC events cut out
+sage build-asds                       # the per-segment ASDs, recolour banks and fiducial run.yaml needs
+```
 
-No local install needed — run Sage on a free Google Colab T4 GPU:
+### Training, validation and plotting
 
-| | Notebook | |
-|---|---|---|
-| 1 | Signal generation with IMRPhenomD | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/01_signal_generation.ipynb) |
-| 2 | Realistic data simulation and whitening | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/02_data_simulation.ipynb) |
-| 3 | Training and evaluating a GW detector | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/03_training_and_evaluation.ipynb) |
+```bash
+sage prepare                          # check the run and record every setting
+sage train                            # train and validate; resumes from the last checkpoint
+sage plot                             # validation figures in results/plots
+```
 
----
+### Search
 
-## Quick Start
+Search an observing run with the trained network:
 
-The full User Guide is available at **[sage-gw.readthedocs.io](https://sage-gw.readthedocs.io/en/latest/)**.
-Run `sage` to see the steps from a new machine to a trained network.
+```bash
+sage download o3a --search --detectors H1 L1   # whole O3a segments, nothing cut out
+sage search-init o3a --checkpoint best         # a search with the run's best.pt
+sage search o3a_best                           # score zero-lag and the background
+sage statmap o3a_best                          # false-alarm rates of the triggers
+```
 
 ---
 
 ## Documentation
 
 Full API documentation is available at **[sage-gw.readthedocs.io](https://sage-gw.readthedocs.io/en/latest/)**.
-
----
-
-## Testing
-
-A minimal smoke test that the package imports and the main training path is
-wired up:
-
-```bash
-python -c "
-import sage.dsp
-from sage.data.waveform import read_from_config, IMRPhenomPv2
-from sage.data.noise import MemmapNoiseSampler
-from sage.factory.training import SageVanillaTraining
-print('Sage imports: OK')
-"
-```
-
-Run the test suite with pytest:
-
-```bash
-pytest tests/ -v
-```
-
-For a broad syntax check:
-
-```bash
-python -m py_compile $(find sage -name '*.py')
-```
-
----
-
-## Contributing
-
-Contributions are welcome. Please open an issue first to discuss substantial
-changes, then submit a pull request against the `main` branch.
-
-1. Fork the repository and create a feature branch from `main`.
-2. Add or update tests for behaviour that changes.
-3. Run the relevant tests and syntax checks.
-4. Update documentation and docstrings when applicable.
-5. Open a pull request with a clear description of the motivation and approach.
 
 ---
 
