@@ -1,0 +1,142 @@
+# Made from the three_class preset by sage init.
+
+data:
+  detectors: [H1, L1]
+  sample_rate_in_hz: 2048.0
+  sample_length_in_s: 12.0
+  padding_length_in_s: 2.0
+  dtype: float32
+
+signal:
+  low_frequency_cutoff_in_hz: 20.0
+  reference_frequency_in_hz: 20.0
+  waveform:
+    name: IMRPhenomPv2
+  projection:
+    name: constant
+  snr:
+    name: halfnorm
+    scale: 4.0
+    loc: 5.0
+  targets: [delta_tc, mchirp]
+  non_astrophysical:
+    noise_share: 0.2
+    signal_noise_share: 0.8
+    in_band_share: 0.75
+
+noise:
+  training:
+    name: real
+    runs: [o3b]
+  validation:
+    name: real
+    runs: [o3a]
+  recolour:
+    target: o3a
+    probability: 0.37
+    asd_jitter_gain: 0.5
+    validation: false
+  fiducial: [o3a, o3b]
+  prefetch_batches: 8
+  read_workers: 16
+
+preprocess:
+  - name: whiten
+  - name: multirate
+    lowest_sample_rate_in_hz: 64.0
+    nyquist_margin_in_hz: 20.0
+    min_bin_length_in_s: 0.05
+    pre_merger_leeway_in_s: 0.0
+    post_merger_leeway_in_s: 0.0
+
+model:
+  name: MSCNN1Datt_2DResNetCBAM
+  frontend_filters: 32
+  frontend_kernel: 64
+  backend_resnet_size: 50
+  norm_type: instancenorm
+  dropout: 0.0
+  use_blurpool: true
+  use_resnet_cd: true
+
+loss:
+  name: BCE_PE_Sigma
+  regression_weight: 0.005
+  coupling_weight: 0.005
+  beta: 0.5
+  sigma_min: 0.001
+  sigma_max: 10.0
+  confidence_weighting: true
+
+optimiser:
+  name: AdamW
+  lr: 0.0002
+  betas: [0.9, 0.999]
+  eps: 1.0e-08
+  weight_decay: 0.0001
+  amsgrad: false
+  maximize: false
+  foreach: null
+  capturable: false
+  differentiable: false
+
+schedule:
+  name: WarmupPolynomialDecayFlatTail
+  warmup_steps: 20000
+  warmup_start_factor: 0.001
+  decay_power: 2.0
+  min_lr: 1.0e-06
+  flat_tail_epochs: 4
+
+train:
+  epochs: 128
+  samples_per_epoch: 2000000
+  batch_size: 64
+  signal_fraction: 0.5
+  device: cuda
+  precision: bf16
+  clip_norm: 100.0
+  compile:
+    mode: max-autotune
+    fullgraph: 'true'
+    dynamic: 'true'
+  seed: 150914
+  keep_checkpoints: 2
+
+validation:
+  samples: 200000
+  every_n_epochs: 5
+  final_samples: 20000000
+  seed: 170817
+  snr:
+    name: halfnorm
+    scale: 4.0
+    loc: 5.0
+
+mining:
+  enabled: true
+  start_epoch: 3
+  every_n_epochs: 4
+  iterations: 8000
+  keep_threshold: 1.0
+  replay:
+    probability: 0.2
+    replays_per_epoch: 2.0
+    focal_gamma: 3.0
+    start_jitter_in_s: 2.0
+  archive:
+    n_cells: 2048
+    descriptor_dim: 8
+    novelty_dist: 0.15
+    novelty_weight: 1.5
+    max_embeddings: 50000
+  emitter:
+    n_emitters: 1
+    batch_size: 72
+    learning_rate: 0.1
+    warmup: 2048
+
+ema:
+  enabled: true
+  decay: 0.9999
+  calibration_batches: 500

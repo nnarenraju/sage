@@ -232,6 +232,17 @@ html {
     border-color: #ddeee6;
 }
 
+/* Tables with the wrap class wrap their text, so they fit the page;
+   code in them stays on one line */
+.rst-content table.docutils.wrap td,
+.rst-content table.docutils.wrap th {
+    white-space: normal;
+}
+
+.rst-content table.docutils.wrap td code {
+    white-space: nowrap;
+}
+
 /* ----------------------------------------------------------
    Admonitions
    ---------------------------------------------------------- */
