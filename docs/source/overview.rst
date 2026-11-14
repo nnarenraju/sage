@@ -1,2 +1,2 @@
-How Sage Works
-==============
+About This Guide
+================
