@@ -17,6 +17,7 @@ import torch
 import yaml
 
 from sage.config.loader import load_run_record
+from sage.config.prior import PRIOR_FILE
 from sage.config.run_dir import StateMismatch, differences, training_started, write_yaml
 from sage.factory.build import build_data, resolve_settings
 from sage.utils.checkpoint import TRAINING_ONLY, next_epoch
@@ -280,7 +281,7 @@ def clone_run(old_dir: Path, new_dir: Path, settings: dict, full_state: bool, fr
     if mismatches:
         raise StateMismatch(f"{old_dir}/run.yaml differs from {path.name} (epoch {epoch}) in settings its saved state "
                             f"cannot take: {'; '.join(mismatches)}", not state_mismatches(new, record, False))
-    start, prior = new_dir / START_DIR, settings["signal"]["prior"]
+    start, prior = new_dir / START_DIR, settings["signal"].get("prior", PRIOR_FILE)
     copies = [(old_dir / "run.yaml", new_dir / "run.yaml"), (path, start / "start.pt")]
     copies += prior_copy(old_dir, new_dir, prior) if prior.endswith(".yaml") else []
     if full_state and state["best_validation_loss"] != float("inf"):

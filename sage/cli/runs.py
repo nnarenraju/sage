@@ -14,6 +14,7 @@ from sage.cli.registry import CommandError, closest, command
 from sage.config import machine
 from sage.config import loader
 from sage.config.loader import suggestion
+from sage.config.prior import PRIOR_FILE
 from sage.config.run_dir import find_run_dir
 
 
@@ -154,11 +155,12 @@ def list_things(arguments: list) -> None:
 @command("init", "Make a run directory with every setting of a run preset", journey=2)
 def init_run(arguments: list) -> None:
     """
-    Make a run directory holding a run preset's settings and its prior.
+    Make a run directory holding a run preset's settings and a prior.
 
     ``run.yaml`` gets every setting, each component's parameters
-    included, and ``prior.yaml`` a copy of the preset's prior. Without
-    ``--preset``, the run presets are listed instead.
+    included, and ``prior.yaml`` a copy of the ``--prior`` preset, by
+    default the run preset's. Without ``--preset``, the run presets are
+    listed instead.
 
     Parameters
     ----------
@@ -168,8 +170,8 @@ def init_run(arguments: list) -> None:
     Raises
     ------
     CommandError
-        If there are no presets, the preset is unknown or ``run.yaml``
-        or ``prior.yaml`` exists.
+        If there are no presets, a preset is unknown or ``run.yaml`` or
+        ``prior.yaml`` exists.
     """
     from sage.factory.build import resolve_settings
 
@@ -180,6 +182,9 @@ def init_run(arguments: list) -> None:
     parser.add_argument("directory", help="run directory to make; its name is the run's name")
     parser.add_argument(
         "--preset", help="run preset to start from (listed when not given)"
+    )
+    parser.add_argument(
+        "--prior", help="prior preset to copy into prior.yaml (default: the run preset's)"
     )
     options = parser.parse_args(arguments)
 
@@ -194,7 +199,12 @@ def init_run(arguments: list) -> None:
         match = closest(options.preset, names)
         raise CommandError(f"unknown run preset {options.preset!r}; {suggestion(options.preset, names)}",
                            f"sage init {directory} --preset {match}" if match else "sage list presets")
-    run_file, prior_file = directory / "run.yaml", directory / "prior.yaml"
+    priors = loader.preset_names("priors")
+    if options.prior is not None and options.prior not in priors:
+        match = closest(options.prior, priors)
+        fix = f"sage init {directory} --preset {options.preset} --prior {match}" if match else "sage list priors"
+        raise CommandError(f"unknown prior preset {options.prior!r}; {suggestion(options.prior, priors)}", fix)
+    run_file, prior_file = directory / "run.yaml", directory / PRIOR_FILE
     for path in (run_file, prior_file):
         if path.exists():
             fix = f"sage init <new directory> --preset {options.preset}"
@@ -202,14 +212,15 @@ def init_run(arguments: list) -> None:
 
     preset = loader.PRESETS / "runs" / f"{options.preset}.yaml"
     settings = resolve_settings(loader.load_run(preset))
-    prior = settings["signal"]["prior"]
-    settings = {**settings, "signal": {**settings["signal"], "prior": prior_file.name}}
+    # The run reads prior.yaml, so run.yaml names no prior
+    signal = {key: value for key, value in settings["signal"].items() if key != "prior"}
+    prior = options.prior or settings["signal"]["prior"]
     directory.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(loader.PRESETS / "priors" / f"{prior}.yaml", prior_file)
     header = f"# Made from the {options.preset} preset by sage init.\n\n"
-    run_file.write_text(header + loader.yaml_text(settings))
+    run_file.write_text(header + loader.yaml_text({**settings, "signal": signal}))
     print(f"Made {directory}: run.yaml, every setting of the {options.preset} preset, "
-          f"and prior.yaml, its {prior} prior")
+          f"and prior.yaml, the {prior} prior")
     print(f"Next: cd {directory} && sage download")
 
 

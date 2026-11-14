@@ -73,7 +73,9 @@ NON_ASTROPHYSICAL = {
 }
 
 SIGNAL = {
-    "prior": str,
+    # A prior preset or a .yaml file in the run directory; without it the
+    # run reads its prior.yaml
+    "prior?": str,
     "low_frequency_cutoff_in_hz": float,
     "reference_frequency_in_hz": float,
     "waveform": COMPONENT,

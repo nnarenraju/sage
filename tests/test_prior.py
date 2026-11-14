@@ -1,12 +1,20 @@
-"""Tests for sage.config.prior: prior presets, extends and checks."""
+"""Tests for sage.config.prior: prior presets, prior files and checks."""
 
 from pathlib import Path
 
 import pytest
 import torch
+import yaml
 
+from sage.config.loader import merge, read_preset
 from sage.config.prior import load_prior
 from sage.data.waveform.sampler import prior_sampler
+
+
+def write_prior(directory, changes):
+    """Write bbh_narrow with ``changes`` merged in, as a whole prior file."""
+    prior = merge(read_preset("priors", "bbh_narrow"), changes)
+    (directory / "prior.yaml").write_text(yaml.safe_dump(prior, sort_keys=False))
 
 
 def test_preset_numbers():
@@ -17,30 +25,23 @@ def test_preset_numbers():
     assert prior["sky"] == {"name": "uniform_sky", "polar-angle": "dec", "azimuthal-angle": "ra"}
 
 
-def test_file_extends_preset(tmp_path):
-    """A prior file extending a preset overrides only what it sets."""
-    (tmp_path / "prior.yaml").write_text(
-        "extends: bbh_narrow\npriors:\n  mass1:\n    max: 60\n"
-    )
-    priors = load_prior("prior.yaml", tmp_path)["priors"]
-    assert priors["mass1"] == {"name": "uniform", "min": 7.0, "max": 60.0}
-    assert priors["mass2"]["max"] == 50.0
+def test_extends_refused(tmp_path):
+    """A prior file is whole: it cannot extend a preset."""
+    (tmp_path / "prior.yaml").write_text("extends: bbh_narrow\n")
+    with pytest.raises(ValueError, match=r"unknown key\(s\) \['extends'\]"):
+        load_prior("prior.yaml", tmp_path)
 
 
 def test_min_not_number(tmp_path):
     """A non-numeric bound is refused."""
-    (tmp_path / "prior.yaml").write_text(
-        "extends: bbh_narrow\npriors:\n  delta_tc:\n    min: early\n"
-    )
+    write_prior(tmp_path, {"priors": {"delta_tc": {"min": "early"}}})
     with pytest.raises(ValueError, match="prior 'delta_tc': min must be a number, got 'early'"):
         load_prior("prior.yaml", tmp_path)
 
 
 def test_variable_params_mismatch(tmp_path):
     """variable_params that differ from the priors are refused."""
-    (tmp_path / "prior.yaml").write_text(
-        "extends: bbh_narrow\nvariable_params: [mass1, mass2]\n"
-    )
+    write_prior(tmp_path, {"variable_params": ["mass1", "mass2"]})
     with pytest.raises(ValueError, match="variable_params does not match"):
         load_prior("prior.yaml", tmp_path)
 
@@ -48,11 +49,9 @@ def test_variable_params_mismatch(tmp_path):
 def test_sky_names(tmp_path):
     """Sky angles may be renamed; the sampler uses the new names."""
     renamed = {"dec": "declination", "ra": "right_ascension"}
-    names = "".join(f"  - {renamed.get(n, n)}\n" for n in load_prior("bbh_narrow", tmp_path)["variable_params"])
-    (tmp_path / "prior.yaml").write_text(
-        f"extends: bbh_narrow\nvariable_params:\n{names}priors:\n  sky:\n"
-        "    polar-angle: declination\n    azimuthal-angle: right_ascension\n"
-    )
+    names = [renamed.get(n, n) for n in load_prior("bbh_narrow", tmp_path)["variable_params"]]
+    sky = {"polar-angle": "declination", "azimuthal-angle": "right_ascension"}
+    write_prior(tmp_path, {"variable_params": names, "priors": {"sky": sky}})
     sampler = prior_sampler(load_prior("prior.yaml", tmp_path), 0, "cpu", torch.float32)
     declination = sampler(1000)[:, sampler.param_index["declination"]]
     assert "dec" not in sampler.param_index and declination.abs().max() <= torch.pi / 2
@@ -60,7 +59,7 @@ def test_sky_names(tmp_path):
 
 def test_bounds_follow_constraints(tmp_path):
     """Bounds follow the constraints, mass ordering included."""
-    (tmp_path / "prior.yaml").write_text("extends: bbh_narrow\nconstraints: []\n")
+    write_prior(tmp_path, {"constraints": []})
     bounds = prior_sampler(load_prior("prior.yaml", tmp_path), 0, "cpu", torch.float32).bounds
     # Without constraints there is no mass ordering.
     assert bounds["mass1"] == (7.0, 50.0) and bounds["q"] == (7.0 / 50.0, 50.0 / 7.0)
@@ -70,9 +69,7 @@ def test_bounds_follow_constraints(tmp_path):
 
 def test_mass_order_rejects(tmp_path):
     """Mass ordering rejects draws rather than swapping masses."""
-    (tmp_path / "prior.yaml").write_text(
-        "extends: bbh_narrow\npriors:\n  mass1: {min: 10, max: 30}\n  mass2: {min: 5, max: 50}\n"
-    )
+    write_prior(tmp_path, {"priors": {"mass1": {"min": "10", "max": "30"}, "mass2": {"min": "5", "max": "50"}}})
     sampler = prior_sampler(load_prior("prior.yaml", tmp_path), 0, "cpu", torch.float32)
     draws = sampler(10_000)
     mass1, mass2 = draws[:, sampler.param_index["mass1"]], draws[:, sampler.param_index["mass2"]]

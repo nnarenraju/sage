@@ -1,5 +1,5 @@
 """
-Prior files: a preset, or a run-directory file that may extend one.
+Prior files: a preset, or a run directory's ``prior.yaml``.
 
 Presets live in ``sage/presets/priors/``. Prior ``min`` and ``max`` are
 read as floats; every other value is a string.
@@ -8,7 +8,7 @@ read as floats; every other value is a string.
 from pathlib import Path
 from typing import Any, Dict
 
-from sage.config.loader import read_extending, read_preset
+from sage.config.loader import read_preset, read_yaml
 
 TOP_LEVEL_KEYS = {"variable_params", "priors", "waveform_transforms", "constraints"}
 REQUIRED_TOP_LEVEL_KEYS = {"variable_params", "priors"}
@@ -30,6 +30,8 @@ CONSTRAINT_KEYS = {"params"}
 # Default angle names of pycbc.distributions.sky_location.UniformSky
 SKY_NAMES = {"polar-angle": "dec", "azimuthal-angle": "ra"}
 NUMERIC_KEYS = {"min", "max"}
+# The prior a run reads when its run.yaml names none
+PRIOR_FILE = "prior.yaml"
 
 
 def check_keys(where: str, given, allowed: set) -> None:
@@ -173,7 +175,7 @@ def check_prior(config: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_prior_file(path: Path) -> Dict[str, Any]:
     """
-    Read a prior file, merged onto the preset it extends, and check it.
+    Read a prior file and check it.
 
     Parameters
     ----------
@@ -188,9 +190,9 @@ def load_prior_file(path: Path) -> Dict[str, Any]:
     Raises
     ------
     ValueError
-        If the extended preset is unknown or the prior is invalid.
+        If the prior is invalid.
     """
-    return check_prior(read_extending(Path(path), "priors"))
+    return check_prior(read_yaml(Path(path)))
 
 
 def load_prior(setting: str, run_dir: Path) -> Dict[str, Any]:

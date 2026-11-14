@@ -9,7 +9,7 @@ from sage.cli import main
 from sage.cli.registry import COMMANDS
 from sage.cli.training import epoch_seconds
 from sage.config import loader, machine
-from sage.config.prior import load_prior
+from sage.config.prior import PRIOR_FILE, load_prior
 from sage.config.run_dir import find_run_dir
 from sage.factory.build import resolve_settings
 
@@ -67,19 +67,24 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     (presets / "runs").mkdir(parents=True)
     (presets / "priors").mkdir()
     (presets / "runs" / "tiny.yaml").write_text(RUN)
-    shutil.copyfile(loader.PRESETS / "priors" / "bbh_narrow.yaml", presets / "priors" / "bbh_narrow.yaml")
+    for prior in ("bbh_narrow", "bbh_broad"):
+        shutil.copyfile(loader.PRESETS / "priors" / f"{prior}.yaml", presets / "priors" / f"{prior}.yaml")
     monkeypatch.setattr(loader, "PRESETS", presets)
     monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "machine.yaml")
     machine.write_machine_file(tmp_path)
     run_dir = tmp_path / "run"
     assert main(["list", "presets"]) == 0 and "tiny" in capsys.readouterr().out
     assert main(["init", str(run_dir), "--preset", "tiny"]) == 0
-    # Every setting of the preset, its prior copied beside it.
+    # Every setting of the preset but its prior, which is copied beside it.
     preset = resolve_settings(loader.load_run(presets / "runs" / "tiny.yaml"))
-    assert resolve_settings(loader.load_run(run_dir / "run.yaml")) == {
-        **preset, "signal": {**preset["signal"], "prior": "prior.yaml"}
-    }
+    signal = {key: value for key, value in preset["signal"].items() if key != "prior"}
+    assert resolve_settings(loader.load_run(run_dir / "run.yaml")) == {**preset, "signal": signal}
     assert (run_dir / "prior.yaml").read_bytes() == (presets / "priors" / "bbh_narrow.yaml").read_bytes()
+    # --prior copies another prior preset.
+    assert main(["init", str(tmp_path / "broad"), "--preset", "tiny", "--prior", "bbh_broad"]) == 0
+    assert (tmp_path / "broad" / "prior.yaml").read_bytes() == (presets / "priors" / "bbh_broad.yaml").read_bytes()
+    assert main(["init", str(tmp_path / "typo"), "--preset", "tiny", "--prior", "bbh_brod"]) == 1
+    assert "fix: sage init" in capsys.readouterr().err and not (tmp_path / "typo").exists()
     # A second init does not overwrite the run file.
     assert main(["init", str(run_dir), "--preset", "tiny"]) == 1
     capsys.readouterr()
@@ -105,7 +110,8 @@ def test_run_presets(tmp_path):
     for name in loader.preset_names("runs"):
         assert main(["init", str(tmp_path / name), "--preset", name]) == 0
         settings = resolve_settings(loader.load_run(tmp_path / name / "run.yaml"))
-        load_prior(settings["signal"]["prior"], tmp_path / name)
+        assert "prior" not in settings["signal"]
+        load_prior(PRIOR_FILE, tmp_path / name)
 
 
 def test_epoch_seconds(tmp_path):

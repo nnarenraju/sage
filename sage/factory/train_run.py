@@ -26,7 +26,7 @@ from sage.config.machine import (
     fiducial_dir,
     read_data_dir,
 )
-from sage.config.prior import load_prior
+from sage.config.prior import PRIOR_FILE, load_prior
 from sage.config.run_dir import (
     check_derived,
     check_record,
@@ -299,7 +299,7 @@ def check_run(run_dir: Path) -> tuple:
         check_mining(
             settings["mining"], settings["noise"], settings["model"], settings.get("schedule"), train["epochs"]
         )
-    return settings, load_prior(settings["signal"]["prior"], run_dir)
+    return settings, load_prior(settings["signal"].get("prior", PRIOR_FILE), run_dir)
 
 
 def check_data(run_dir: Path, settings: dict, data_dir: Path, fiducial: bool = False) -> None:
