@@ -35,6 +35,7 @@ import hashlib
 import warnings
 import tempfile
 import collections
+import contextlib
 
 import numpy as np
 import urllib.request
@@ -603,12 +604,13 @@ class DataReleaseDownloader:
         return file_tasks, n_cross
 
     @staticmethod
-    def _download_and_extract_file(url, task_groups, cfg, max_retries=5):
+    def _download_and_extract_file(url, task_groups, cfg, scratch_dir, max_retries=5):
         """
         Download one GWOSC 4096 s HDF5 file and extract its slices.
 
         A segment inside the file is downsampled here; a cross-file
-        segment gives its raw piece in this file.
+        segment gives its raw piece in this file. The file is staged in
+        ``scratch_dir`` and removed once read.
 
         Parameters
         ----------
@@ -620,6 +622,8 @@ class DataReleaseDownloader:
             same, ending here.
         cfg : DownloadConfig
             Download settings.
+        scratch_dir : Path
+            Existing directory for the downloaded file.
         max_retries : int
             Attempts at the file download.
 
@@ -638,7 +642,7 @@ class DataReleaseDownloader:
         for attempt in range(max_retries):
             tmp_path = None
             try:
-                with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix=".hdf5", dir=scratch_dir, delete=False) as tmp:
                     tmp_path = tmp.name
 
                 session = DataReleaseDownloader._make_retry_session()
@@ -986,6 +990,9 @@ class DataReleaseDownloader:
                     })
                 pbar.update()
 
+            # GWOSC files are staged in the release directory
+            scratch_dir = self.save_dir / "scratch"
+            scratch_dir.mkdir(exist_ok=True)
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor, \
                     tqdm(total=len(segments)) as pbar:
                 pbar.set_description(f"GWOSC-FILE {det}")
@@ -999,7 +1006,7 @@ class DataReleaseDownloader:
                     futures = {
                         executor.submit(
                             DataReleaseDownloader._download_and_extract_file,
-                            url, tasks, self.dcfg, self.max_retries,
+                            url, tasks, self.dcfg, scratch_dir, self.max_retries,
                         ): url
                         for url, tasks in batch
                     }
@@ -1028,6 +1035,9 @@ class DataReleaseDownloader:
                                 partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
                                 if "first" in partials[n]:
                                     _combine_and_save(n, partials.pop(n), pbar)
+            # Kept if another download is still staging files here
+            with contextlib.suppress(OSError):
+                scratch_dir.rmdir()
         else:
             with tqdm(total=len(segments)) as pbar:
                 pbar.set_description("DET_SCIENCE_DATA GWOSC")
@@ -1341,6 +1351,9 @@ class DataReleaseDownloader:
                     })
                 pbar.update()
 
+            # GWOSC files are staged beside the strain file
+            scratch_dir = bin_path.parent / "scratch"
+            scratch_dir.mkdir(exist_ok=True)
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor, \
                     tqdm(total=len(retry_segs), desc=f"RETRY {detector}") as pbar:
                 _BATCH = self.num_workers * 4
@@ -1351,7 +1364,7 @@ class DataReleaseDownloader:
                     futures = {
                         executor.submit(
                             DataReleaseDownloader._download_and_extract_file,
-                            url, tasks, self.dcfg, self.max_retries,
+                            url, tasks, self.dcfg, scratch_dir, self.max_retries,
                         ): url
                         for url, tasks in batch
                     }
@@ -1374,6 +1387,9 @@ class DataReleaseDownloader:
                                 partials.setdefault(n, {})["second"] = (raw, sr, b0, b1)
                                 if "first" in partials[n]:
                                     _combine_retry(n, partials.pop(n), pbar)
+            # Kept if another download is still staging files here
+            with contextlib.suppress(OSError):
+                scratch_dir.rmdir()
 
         # Persist updated metadata
         all_meta = existing_meta + new_meta
