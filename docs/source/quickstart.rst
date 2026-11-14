@@ -47,8 +47,8 @@ Get the data
    sage build-asds
 
 ``sage download`` fetches from GWOSC the strain the run needs: O3a and O3b,
-for H1 and L1. ``sage build-asds`` then builds from it the noise spectra the
-run whitens with. Both read ``run.yaml``, and both resume if stopped.
+for H1 and L1. ``sage build-asds`` then builds from it the amplitude spectral
+densities (ASDs) the run whitens with. Both read ``run.yaml``, and both resume if stopped.
 
 Train
 -----
