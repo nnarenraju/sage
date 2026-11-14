@@ -1,49 +1,15 @@
 """
-What ``sage`` alone prints: the journey through the commands and the
-next one to run.
+What ``sage`` alone prints: the journey through the commands.
 """
 
 from importlib.metadata import version
-from pathlib import Path
-
-import yaml
 
 from sage.cli.registry import COMMANDS
-from sage.config import machine
-from sage.config.run_dir import find_run_dir
-
-
-def next_command(directory: Path = Path(".")) -> str:
-    """
-    The command to run next, from the machine and run directory state.
-
-    Parameters
-    ----------
-    directory : Path
-        Directory at or below the run directory.
-
-    Returns
-    -------
-    str
-        The next command, with placeholders where it needs input.
-    """
-    directory = find_run_dir(directory)
-    try:
-        machine.read_data_dir()
-    except (FileNotFoundError, ValueError, yaml.YAMLError):
-        return "sage setup"
-    if not (Path(directory) / "run.yaml").exists():
-        return "sage init <directory> --preset <name>"
-    if not (Path(directory) / "resolved" / "derived.yaml").exists():
-        return "sage prepare"
-    if not (Path(directory) / "results" / "final_check.json").exists():
-        return "sage train"
-    return "sage plot"
 
 
 def journey() -> str:
     """
-    The journey text: commands in order, the others and the next one.
+    The journey text: the commands in order, then the others.
 
     Returns
     -------
@@ -59,5 +25,5 @@ def journey() -> str:
     if others:
         width = max(len(name) for name, _ in others)
         lines += ["", "Other commands:"] + [f"  sage {name:<{width}}  {summary}" for name, summary in others]
-    lines += ["", "Help on a command: sage <command> --help", f"Next: {next_command()}"]
+    lines += ["", "Help on a command: sage <command> --help"]
     return "\n".join(lines)

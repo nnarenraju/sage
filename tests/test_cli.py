@@ -33,11 +33,11 @@ ema: {enabled: true}
 
 
 def test_journey(capsys, tmp_path, monkeypatch):
-    """With no command, sage prints the journey ending at sage setup."""
+    """With no command, sage prints the journey, starting at sage setup."""
     monkeypatch.setattr(machine, "MACHINE_FILE", tmp_path / "machine.yaml")
     assert main([]) == 0
     out = capsys.readouterr().out
-    assert "1. sage setup" in out and out.rstrip().endswith("Next: sage setup")
+    assert "1. sage setup" in out and out.rstrip().endswith("sage <command> --help")
 
 
 def test_unknown_command(capsys):

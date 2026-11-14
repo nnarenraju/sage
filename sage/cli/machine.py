@@ -6,7 +6,6 @@ from pathlib import Path
 
 import yaml
 
-from sage.cli.journey import next_command
 from sage.cli.registry import CommandError, command
 from sage.config import machine
 from sage.utils.schedulers import schedulers
@@ -101,7 +100,6 @@ def show_machine(arguments: list) -> None:
         print("\n".join(slurm_report()))
     if "htcondor" in found:
         print("Scheduler: HTCondor (its queries are not available yet)")
-    print(f"Next: {next_command()}")
 
 
 def qos_text(name: str, limits: dict) -> str:
