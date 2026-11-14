@@ -1,6 +1,7 @@
 """End-to-end tests of sage.factory.train_run and the sage check, train,
 status, log, clone, validate and compare commands on synthetic noise."""
 
+import dataclasses
 import json
 import os
 import shutil
@@ -13,9 +14,12 @@ import torch
 import yaml
 
 from sage.cli import main
-from sage.config import machine
+from sage.config import load_run, machine
+from sage.config.loader import yaml_text
 from sage.core.logger import setup_logging
+from sage.factory.build import build_data, resolve_settings
 from sage.factory.callbacks import EMACallback
+from sage.factory.clone import state_mismatches
 from sage.factory.compare import compare_runs, recovered_fractions
 from sage.factory.train_run import RUNNING_FLAG, STOP_FLAG, final_check_seconds, flag, train_run
 from sage.utils.checkpoint import CheckpointManager
@@ -280,6 +284,19 @@ def test_clone(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "stored epochs: 0, 1" in err and "model.frontend_filters: 16 -> 8" in err and not (tmp_path / "other").exists()
     assert f"fix: sage clone {old} <new directory> --full-state" in err
+
+
+def test_clone_optional_schedule(tmp_path):
+    """Full-state checks compare an absent schedule instead of failing."""
+    path = tmp_path / "run.yaml"
+    path.write_text("".join(line for line in RUN.splitlines(keepends=True) if not line.startswith("schedule:")))
+    without = resolve_settings(load_run(path))
+    window = dataclasses.asdict(build_data(without["data"])[0])
+    record = {"run": yaml_text(without), "derived": yaml_text({"window": window})}
+    assert state_mismatches(without, record, full_state=True) == []
+    path.write_text(RUN)
+    changes = state_mismatches(resolve_settings(load_run(path)), record, full_state=True)
+    assert [change.split(":")[0] for change in changes] == ["schedule"]
 
 
 def test_flags(tmp_path, monkeypatch, capsys):

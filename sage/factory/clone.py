@@ -7,9 +7,7 @@ prior file it names), the start checkpoint under ``clone/`` and
 """
 
 import dataclasses
-import functools
 import json
-import operator
 import os
 import shutil
 from pathlib import Path
@@ -87,6 +85,29 @@ def start_checkpoint(run_dir: Path, from_epoch: int | None) -> tuple:
     return epoch, stored[epoch]
 
 
+def setting_at(settings: dict, location: str) -> dict:
+    """
+    One setting as ``{location: value}``; empty where it is absent.
+
+    Parameters
+    ----------
+    settings : dict
+        Resolved settings.
+    location : str
+        Dotted location, e.g. ``train.epochs``.
+
+    Returns
+    -------
+    dict
+    """
+    values = settings
+    for key in location.split("."):
+        if not isinstance(values, dict) or key not in values:
+            return {}
+        values = values[key]
+    return {location: values}
+
+
 def state_mismatches(settings: dict, record: dict, full_state: bool) -> list:
     """
     Changes from a checkpoint's settings its saved state cannot take.
@@ -109,9 +130,7 @@ def state_mismatches(settings: dict, record: dict, full_state: bool) -> list:
     old = resolve_settings(load_run_record(record["run"]))
     found = []
     for location in BREAKING + (FULL_STATE_BREAKING if full_state else ()):
-        keys = location.split(".")
-        before, after = (functools.reduce(operator.getitem, keys, values) for values in (old, settings))
-        found += differences({location: before}, {location: after})
+        found += differences(setting_at(old, location), setting_at(settings, location))
     window = dataclasses.asdict(build_data(settings["data"])[0])
     return found + differences(yaml.safe_load(record["derived"])["window"], window, "window")
 
