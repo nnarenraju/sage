@@ -1,5 +1,6 @@
 """Tests for sage.config: run files, extends and value checking."""
 
+import importlib.metadata
 from pathlib import Path
 
 import pytest
@@ -315,6 +316,7 @@ def test_derived_changed(tmp_path):
 
 def test_code_change_recorded(tmp_path, monkeypatch):
     """A resumed run on changed code goes on and records the change."""
+    monkeypatch.setattr("sage.config.run_dir.REPO", Path(__file__).resolve().parents[1])
     differs = {"now": False}
     monkeypatch.setattr("sage.config.run_dir.code_differs", lambda commit: differs["now"])
     record_versions(tmp_path, 0, "cpu")
@@ -324,6 +326,15 @@ def test_code_change_recorded(tmp_path, monkeypatch):
     path = tmp_path / "resolved" / "versions.yaml"
     changed = [s["sage_uncommitted_changes"] for s in yaml.safe_load(path.read_text())["segments"]]
     assert changed == [False, True]
+
+
+def test_installed_version_recorded(tmp_path, monkeypatch):
+    """Outside a git checkout, the installed version is recorded."""
+    monkeypatch.setattr("sage.config.run_dir.REPO", tmp_path / "site-packages")
+    record_versions(tmp_path, 0, "cpu")
+    segment = yaml.safe_load((tmp_path / "resolved" / "versions.yaml").read_text())["segments"][0]
+    assert segment["sage_version"] == importlib.metadata.version("sage-gw")
+    assert "sage_commit" not in segment
 
 
 class Component:

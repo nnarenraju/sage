@@ -7,6 +7,7 @@ checkpoint, the settings, prior and derived values may not change.
 """
 
 import datetime
+import importlib.metadata
 import os
 import platform
 import shutil
@@ -354,22 +355,29 @@ def code_differs(commit: str) -> bool:
 
 def code_version() -> dict:
     """
-    The Sage commit and whether ``sage/`` holds uncommitted changes.
+    The Sage code a job runs: its commit, or its installed version.
+
+    A git checkout of Sage (``.git`` beside ``sage/``) gives the commit
+    and whether ``sage/`` holds uncommitted changes; an installed
+    package gives its version, and git is not asked.
 
     Returns
     -------
     dict
-        ``commit``, ``uncommitted_changes``.
+        ``commit`` and ``uncommitted_changes`` from a checkout,
+        ``version`` from an installed package.
 
     Raises
     ------
     RuntimeError
-        If Sage is not running from a git checkout.
+        If git cannot read the commit of a checkout.
     """
+    if not (REPO / ".git").exists():
+        return {"version": importlib.metadata.version("sage-gw")}
     try:
         commit = git("rev-parse", "HEAD").strip()
     except (OSError, subprocess.CalledProcessError) as error:
-        raise RuntimeError(f"cannot read the Sage version with git in {REPO}: {error}") from None
+        raise RuntimeError(f"cannot read the Sage commit with git in {REPO}: {error}") from None
     return {"commit": commit, "uncommitted_changes": code_differs(commit)}
 
 
@@ -419,17 +427,16 @@ def record_versions(run_dir: Path, start_epoch: int, device) -> None:
     Raises
     ------
     RuntimeError
-        If Sage is not running from a git checkout.
+        If git cannot read the commit of a checkout.
     """
     path = Path(run_dir) / "resolved" / "versions.yaml"
     segments = yaml.safe_load(path.read_text())["segments"] if path.exists() else []
-    version = code_version()
+    version = {f"sage_{key}": value for key, value in code_version().items()}
     segments.append(
         {
             "started": datetime.datetime.now().isoformat(timespec="seconds"),
             "start_epoch": start_epoch,
-            "sage_commit": version["commit"],
-            "sage_uncommitted_changes": version["uncommitted_changes"],
+            **version,
             **environment(device),
         }
     )
