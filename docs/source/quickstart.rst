@@ -1,65 +1,93 @@
 Quick Start
 ===========
 
-Getting started
-----------------
+This guide runs Sage from scratch in the shortest way: from a new machine to
+a trained network and the triggers of a search of real observing-run data.
+Every step is one or a few commands, and nothing needs changing on the way.
 
-The :doc:`User Guide <overview>` covers the full pipeline from data download to training
-and evaluation. For complete, working examples of how Sage is configured and run in
-practice, see the scripts under
-`runs/ <https://github.com/nnarenraju/sage/tree/main/runs>`_.
+It uses a *preset*, a ready-made set of settings. The ``quick`` preset is the
+smallest: a network for the H1 and L1 detectors, trained on O3b noise and
+validated on O3a.
 
-Colab tutorials
----------------
+``sage`` alone lists every command, and ``sage <command> --help`` explains
+one.
 
-No local install needed — run Sage on a free Google Colab T4 GPU:
+Set up the machine
+------------------
 
-.. list-table::
-   :header-rows: 1
-   :widths: 5 60 35
+.. code-block:: bash
 
-   * - #
-     - Notebook
-     - Launch
-   * - 1
-     - Signal generation with IMRPhenomD
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/01_signal_generation.ipynb
-          :alt: Open In Colab
-   * - 2
-     - Realistic data simulation and whitening
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/02_data_simulation.ipynb
-          :alt: Open In Colab
-   * - 3
-     - Training and evaluating a GW detector
-     - .. image:: https://colab.research.google.com/assets/colab-badge.svg
-          :target: https://colab.research.google.com/github/nnarenraju/sage/blob/main/notebooks/colab/03_training_and_evaluation.ipynb
-          :alt: Open In Colab
+   sage setup --data-dir /path/to/data
 
-Repository layout
------------------
+This tells Sage where to keep everything it downloads and builds. It is done
+once per machine.
 
-.. code-block:: text
+Make a run
+----------
 
-    sage/
-    ├── sage/
-    │   ├── architecture/       # Frontend, backend, attention, and full networks
-    │   ├── benchmark/          # Benchmark integrations and comparison utilities
-    │   ├── core/               # Config, logging, constants, interpolation
-    │   ├── data/
-    │   │   ├── noise/          # Real noise samplers and glitch handling
-    │   │   ├── primer/         # Data download and preparation utilities
-    │   │   ├── psd/            # PSD generation and loading
-    │   │   └── waveform/       # Parameter sampling, waveforms, projection, SNR
-    │   ├── dsp/                # FFT, whitening, PSDs, multirate, multibanding
-    │   ├── exec/               # Pipeline orchestration
-    │   ├── factory/            # Training, validation, schedulers, callbacks
-    │   ├── plotting/           # Diagnostic and publication plotting
-    │   ├── presets/            # Named run presets (being rebuilt from runs/)
-    │   └── utils/              # Checkpointing, timing, Condor utilities
-    ├── runs/                   # Run scripts for specific experiments
-    ├── repro/                  # Reproducibility notebooks and configuration
-    ├── notebooks/              # Exploratory notebooks
-    ├── tests/                  # Lightweight tests and smoke checks
-    └── docs/                   # Sphinx/ReadTheDocs documentation source
+.. code-block:: bash
+
+   sage init my_run --preset quick
+   cd my_run
+
+This makes the run directory ``my_run/`` with two files:
+
+* ``run.yaml``: every setting of the run;
+* ``prior.yaml``: the distribution the training signals are drawn from.
+
+Both can be used as they are. To change the run, edit them now, before the
+next steps.
+
+Get the data
+------------
+
+.. code-block:: bash
+
+   sage download
+   sage build-asds
+
+``sage download`` fetches from GWOSC the strain the run needs: O3a and O3b,
+for H1 and L1. ``sage build-asds`` then builds from it the noise spectra the
+run whitens with. Both read ``run.yaml``, and both resume if stopped.
+
+Train
+-----
+
+.. code-block:: bash
+
+   sage train
+   sage plot
+
+``sage train`` trains the network on a GPU and validates it as it goes. It
+resumes if stopped, and ``sage status`` shows how far it has got. ``sage
+plot`` then draws the validation figures into ``results/plots/``.
+
+Search
+------
+
+To search all of O3a with the trained network:
+
+.. code-block:: bash
+
+   sage download o3a --search --detectors H1 L1
+   sage search-init o3a --checkpoint best
+
+``sage download ... --search`` fetches O3a for searching, with nothing cut
+out. ``sage search-init`` makes the search ``search/o3a_best/``, using the
+network of the best validated epoch, ``best.pt``.
+
+In ``search/o3a_best/search.yaml``, set ``live_time_in_years: 0.5``, for six
+months of background. Then:
+
+.. code-block:: bash
+
+   sage search o3a_best
+   sage statmap o3a_best
+
+``sage search`` scores every window of O3a where both detectors have data,
+then the background: the same data with L1 shifted against H1, which tells
+how often noise alone makes a trigger. It resumes if stopped.
+
+``sage statmap`` gives every trigger its false-alarm rate, in
+``search/o3a_best/statmap/``. It reads only finished scores, so it can run
+while the search is still going.
