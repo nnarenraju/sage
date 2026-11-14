@@ -418,7 +418,7 @@ def build_directory(
         raise CommandError(str(error), on("download", str(directory))) from None
     print(f"Fiducial ASDs checked: {fiducial_dir}")
     print()
-    print(f"Next: {on('prepare', str(directory))}")
+    print(f"Next: {on('check', str(directory))}")
 
 
 def build_runs(options: argparse.Namespace, data_dir: Path) -> None:
@@ -479,7 +479,7 @@ def build_runs(options: argparse.Namespace, data_dir: Path) -> None:
             raise CommandError(str(error), fix) from None
         print(f"Fiducial ASDs checked: {fiducial}")
         print()
-        print("Next: sage prepare <run directory>")
+        print("Next: sage check <run directory>")
         return
 
     kind = "per-segment ASDs" if options.segments else "recolour bank"

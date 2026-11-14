@@ -1,6 +1,6 @@
 """
-``sage prepare``, ``check``, ``train``, ``stop``, ``status`` and
-``log``: training a run and following it.
+``sage check``, ``train``, ``stop``, ``status`` and ``log``: training
+a run and following it.
 """
 
 import argparse
@@ -19,7 +19,7 @@ import yaml
 
 from sage.cli.registry import CommandError, command
 from sage.config import machine
-from sage.config.run_dir import NotPrepared, SettingsChanged, StateMismatch, find_run_dir, training_started
+from sage.config.run_dir import SettingsChanged, StateMismatch, find_run_dir, training_started
 from sage.core.progress import print_steps
 
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -162,7 +162,8 @@ def checked_settings(name: str, directory: str) -> dict:
         raise CommandError(f"the data directory {data_dir} is not readable here", f"chmod u+rx {data_dir}")
     try:
         settings = check_run(Path(directory))[0]
-        check_data(Path(directory), settings, data_dir)
+        fiducial = not training_started(directory)
+        check_data(Path(directory), settings, data_dir, fiducial=fiducial)
     except machine.MissingASDs as error:
         raise CommandError(str(error), on("build-asds", directory)) from None
     except machine.MissingData as error:
@@ -219,8 +220,8 @@ def explained(name: str, directory: str, function, *args):
     Raises
     ------
     CommandError
-        On ``AlreadyRunning``, ``NotPrepared``, ``SettingsChanged`` or
-        ``StateMismatch``, with the command that fixes it.
+        On ``AlreadyRunning``, ``SettingsChanged`` or ``StateMismatch``,
+        with the command that fixes it.
     """
     from sage.factory.train_run import AlreadyRunning
 
@@ -228,8 +229,6 @@ def explained(name: str, directory: str, function, *args):
         return function(*args)
     except AlreadyRunning as error:
         raise CommandError(str(error), on("status", directory)) from None
-    except NotPrepared as error:
-        raise CommandError(str(error), on("prepare", directory)) from None
     except SettingsChanged as error:
         raise CommandError(str(error), f"sage clone {directory} <new directory> --full-state") from None
     except StateMismatch as error:
@@ -289,45 +288,7 @@ def checked_step(name: str, directory: str) -> None:
     print(f"All checks passed; one training step on {device}: loss {loss:.5f}. Wrote flags/checked")
 
 
-@command("prepare", "Check the run and write every setting it uses to resolved/", journey=5)
-def prepare(arguments: list) -> None:
-    """
-    Write ``resolved/``: settings, prior, fiducial copy, derived values.
-
-    Rerun after editing ``run.yaml``, until training starts.
-
-    Parameters
-    ----------
-    arguments : list of str
-        Command-line arguments after ``sage prepare``.
-
-    Raises
-    ------
-    CommandError
-        If a check fails or training has started, with the fix.
-    """
-    from sage.factory.train_run import prepare_run
-
-    options = parse("prepare", "Check the run and write every setting it uses to resolved/", arguments)
-    directory = Path(options.directory)
-    checked_settings("prepare", options.directory)
-    if training_started(directory):
-        raise CommandError(f"{directory}: training has started, so its record in resolved/ is fixed",
-                           f"sage clone {options.directory} <new directory> --full-state")
-    try:
-        prepare_run(directory)
-    except machine.MissingASDs as error:
-        raise CommandError(str(error), on("build-asds", options.directory)) from None
-    except machine.MissingData as error:
-        raise CommandError(str(error), on("download", options.directory)) from None
-    except StateMismatch as error:
-        raise CommandError(str(error), f"edit {directory / 'run.yaml'} back as above, then: "
-                           f"{on('prepare', options.directory)}") from None
-    print(f"Wrote {directory / 'resolved'}: run.yaml, prior.yaml, derived.yaml and fiducial/")
-    print(f"Next: {on('check', options.directory)}")
-
-
-@command("check", "Run every start-up check and one real training step; marks the run checked", journey=6)
+@command("check", "Run every start-up check and one real training step; marks the run checked", journey=5)
 def check(arguments: list) -> None:
     """
     Check the run as ``sage train`` starts it; take one training step.
@@ -350,7 +311,7 @@ def check(arguments: list) -> None:
     print(f"Next: {on('train', options.directory)}")
 
 
-@command("train", "Train the run, resuming from its latest checkpoint", journey=7)
+@command("train", "Train the run, resuming from its latest checkpoint", journey=6)
 def train(arguments: list) -> None:
     """
     Train the run to its last epoch, then run the final check.
@@ -433,6 +394,9 @@ def flag_lines(directory: str, zone: zoneinfo.ZoneInfo) -> list:
     """
     Lines on the run's flags, when each was set and how to resume.
 
+    ``checked`` is listed only while the settings and prior equal those
+    ``sage check`` passed.
+
     Parameters
     ----------
     directory : str
@@ -445,15 +409,20 @@ def flag_lines(directory: str, zone: zoneinfo.ZoneInfo) -> list:
     list of str
         Report lines; empty without flags.
     """
-    from sage.factory.train_run import FLAGS_DIR, STOP_FLAG, flag
+    from sage.factory.train_run import (
+        CHECKED_FLAG, FLAGS_DIR, STOP_FLAG, checked_changes, flag
+    )
 
-    lines = []
+    lines, changes = [], checked_changes(directory)
     flags = sorted((Path(directory) / FLAGS_DIR).glob("*"))
+    flags = [path for path in flags if path.name != CHECKED_FLAG or not changes]
     if flags:
         set_at = lambda path: datetime.datetime.fromtimestamp(path.stat().st_mtime, zone)
         lines.append("Flags: " + ", ".join(f"{path.name} (since {set_at(path):%Y-%m-%d %H:%M:%S %Z})" for path in flags))
     if flag(directory, STOP_FLAG).exists():
         lines.append(f"Stopped by sage stop; to train on: rm {flag(directory, STOP_FLAG)} && {on('train', directory)}")
+    if changes:
+        lines.append(f"Changed since sage check ({'; '.join(changes)}); to check: {on('check', directory)}")
     return lines
 
 

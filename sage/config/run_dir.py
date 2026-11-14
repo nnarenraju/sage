@@ -28,10 +28,6 @@ class SettingsChanged(ValueError):
     """Settings, prior or derived values changed once training began."""
 
 
-class NotPrepared(Exception):
-    """Before training, ``resolved/`` is missing or out of date."""
-
-
 class StateMismatch(ValueError):
     """
     Settings differ from a checkpoint's in a way its state cannot take.
@@ -171,7 +167,7 @@ def check_record(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
             )
 
 
-def prepare_run_dir(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
+def record_settings(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
     """
     Record the resolved settings and prior, or check them once started.
 
@@ -206,53 +202,9 @@ def prepare_run_dir(run_dir: Path, settings: dict, prior: dict, resolve) -> None
     write_yaml(run_dir / "resolved" / "prior.yaml", prior)
 
 
-def check_prepared(run_dir: Path, settings: dict, prior: dict, resolve) -> None:
-    """
-    Check that ``resolved/`` is the current record of the run.
-
-    Before training starts it must exist and match ``run.yaml`` and the
-    prior (``sage prepare``); after, ``check_record`` applies.
-
-    Parameters
-    ----------
-    run_dir : Path
-        Run directory.
-    settings : dict
-        Resolved settings, ``resolve(load_run(...))``.
-    prior : dict
-        Checked prior, from ``load_prior``.
-    resolve : callable
-        Fills a loaded run file's components
-        (``build.resolve_settings``).
-
-    Raises
-    ------
-    NotPrepared
-        If training has not started and the record is missing or
-        differs.
-    SettingsChanged
-        If training has started and the settings or prior differ.
-    ValueError
-        If training has started and the record is missing.
-    """
-    run_dir = Path(run_dir)
-    if training_started(run_dir):
-        check_record(run_dir, settings, prior, resolve)
-        return
-    for name in ("run.yaml", "prior.yaml", "derived.yaml", "fiducial"):
-        if not (run_dir / "resolved" / name).exists():
-            raise NotPrepared(f"{run_dir}: not prepared (resolved/{name} is missing)")
-    records = {"run.yaml": (settings, lambda path: resolve(load_run(path))), "prior.yaml": (prior, load_prior_file)}
-    for name, (values, load) in records.items():
-        changed = differences(load(run_dir / "resolved" / name), values)
-        if changed:
-            source = "run.yaml" if name == "run.yaml" else "the prior"
-            raise NotPrepared(f"{run_dir}: {source} changed since sage prepare ({'; '.join(changed)})")
-
-
 def check_derived(run_dir: Path, derived: dict) -> None:
     """
-    Check that the run's derived values equal ``resolved/derived.yaml``.
+    Check that a started run's derived values equal the record.
 
     Parameters
     ----------
@@ -263,16 +215,12 @@ def check_derived(run_dir: Path, derived: dict) -> None:
 
     Raises
     ------
-    NotPrepared
-        If training has not started and the values differ.
     SettingsChanged
-        If training has started and the values differ.
+        If the values differ from ``resolved/derived.yaml``.
     FileNotFoundError
         If ``resolved/derived.yaml`` is missing.
     """
     changed = differences(yaml.safe_load((Path(run_dir) / "resolved" / "derived.yaml").read_text()), derived)
-    if changed and not training_started(run_dir):
-        raise NotPrepared(f"{run_dir}: derived values differ from those sage prepare wrote ({'; '.join(changed)})")
     if changed:
         raise SettingsChanged(
             f"{run_dir}: derived values differ after training started ({'; '.join(changed)}); "

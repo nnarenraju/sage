@@ -8,7 +8,7 @@ import torch
 import yaml
 from torch.optim import lr_scheduler
 
-from sage.config import load_run, prepare_run_dir
+from sage.config import load_run, record_settings
 from sage.config import loader
 from sage.config.prior import load_prior, load_prior_file
 from sage.config.run_dir import record_derived, record_versions
@@ -252,7 +252,7 @@ def test_merge_replaces_lists():
 def record(run_dir, text, prior=PRIOR):
     """Resolve a run file and record it in ``run_dir``."""
     settings = resolve_settings(load_run(write(run_dir, "run.yaml", text)))
-    prepare_run_dir(run_dir, settings, prior, resolve_settings)
+    record_settings(run_dir, settings, prior, resolve_settings)
     return settings
 
 

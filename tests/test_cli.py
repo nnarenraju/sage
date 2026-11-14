@@ -62,7 +62,7 @@ def test_machine_file(capsys, tmp_path, monkeypatch):
 
 
 def test_run_directory(capsys, tmp_path, monkeypatch):
-    """init, copy-prior, prepare, stop and check on a new run."""
+    """init, stop and check on a new run."""
     presets = tmp_path / "presets"
     (presets / "runs").mkdir(parents=True)
     (presets / "priors").mkdir()
@@ -74,14 +74,15 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     run_dir = tmp_path / "run"
     assert main(["list", "presets"]) == 0 and "tiny" in capsys.readouterr().out
     assert main(["init", str(run_dir), "--preset", "tiny"]) == 0
-    assert "extends: tiny" in (run_dir / "run.yaml").read_text()
+    # Every setting of the preset, its prior copied beside it.
+    preset = resolve_settings(loader.load_run(presets / "runs" / "tiny.yaml"))
+    assert resolve_settings(loader.load_run(run_dir / "run.yaml")) == {
+        **preset, "signal": {**preset["signal"], "prior": "prior.yaml"}
+    }
+    assert (run_dir / "prior.yaml").read_bytes() == (presets / "priors" / "bbh_narrow.yaml").read_bytes()
     # A second init does not overwrite the run file.
     assert main(["init", str(run_dir), "--preset", "tiny"]) == 1
-    assert main(["copy-prior", "bbh_narrow", str(run_dir)]) == 0
-    assert (run_dir / "prior.yaml").read_bytes() == (presets / "priors" / "bbh_narrow.yaml").read_bytes()
     capsys.readouterr()
-    assert main(["prepare", str(run_dir)]) == 1  # the data directory is empty
-    assert capsys.readouterr().err.endswith(f"fix: sage download {run_dir}\n")
     assert main(["stop", str(run_dir)]) == 0 and main(["train", str(run_dir)]) == 1
     assert capsys.readouterr().err.endswith(f"fix: rm {run_dir / 'flags' / 'stop'} && sage train {run_dir}\n")
     assert main(["check", str(run_dir)]) == 1  # the data directory is empty

@@ -127,7 +127,7 @@ def benchmark(arguments: list) -> None:
     print(f"Next: {on('status', options.directory)}")
 
 
-@command("plot", "Draw the run's validation figures into results/plots", journey=8)
+@command("plot", "Draw the run's validation figures into results/plots", journey=7)
 def plot(arguments: list) -> None:
     """
     Draw the figures of the best validated epoch, or another group.

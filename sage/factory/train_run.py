@@ -1,5 +1,5 @@
 """
-Prepare, check, train and validate a run from its run directory.
+Check, train and validate a run from its run directory.
 
 Every random stream has its own seed (``sage.core.seed.stream_seed``).
 """
@@ -17,7 +17,8 @@ from types import SimpleNamespace
 import torch
 import yaml
 
-from sage.config import load_run, prepare_run_dir
+from sage.config import load_run, record_settings
+from sage.config.loader import yaml_text
 from sage.config.machine import (
     MissingASDs,
     MissingData,
@@ -28,8 +29,8 @@ from sage.config.machine import (
 from sage.config.prior import load_prior
 from sage.config.run_dir import (
     check_derived,
-    check_prepared,
     check_record,
+    differences,
     record_derived,
     record_fiducial,
     record_versions,
@@ -78,7 +79,8 @@ logger = get_logger(__name__)
 FLAGS_DIR = "flags"  # empty files named for what is happening in the run directory
 STOP_FLAG = "stop"  # written by `sage stop`; training stops before its next epoch
 RUNNING_FLAG = "running"  # present while a job trains the run
-CHECKED_FLAG = "checked"  # written by a passed `sage check`; removed by `sage prepare`
+# Written by a passed `sage check`; holds the settings and prior it checked
+CHECKED_FLAG = "checked"
 # In results/; written at every validation pass
 FINAL_CHECK_ESTIMATE = "final_check_estimate.json"
 
@@ -309,8 +311,8 @@ def check_data(run_dir: Path, settings: dict, data_dir: Path, fiducial: bool = F
     data_dir : Path
         The machine's data directory.
     fiducial : bool
-        Include the fiducial ASDs, which ``sage prepare`` copies;
-        training reads the copy.
+        Include the fiducial ASDs, which training copies before its
+        first checkpoint and reads from then on.
 
     Raises
     ------
@@ -339,70 +341,6 @@ def check_data(run_dir: Path, settings: dict, data_dir: Path, fiducial: bool = F
         recorded = yaml.safe_load(dataset_file(data_dir, run).read_text())["sample_rate_in_hz"]
         if recorded != sample_rate:
             raise ValueError(f"{run} strain is at {recorded} Hz; data.sample_rate_in_hz is {sample_rate}")
-
-
-def prepare_run(run_dir: Path) -> dict:
-    """
-    Check the run and write its record under ``resolved/``.
-
-    Writes the resolved settings, the prior, a copy of the fiducial
-    ASDs and the derived values, built on the CPU as training builds
-    them, and removes ``flags/checked``.
-
-    Parameters
-    ----------
-    run_dir : Path
-        Run directory holding ``run.yaml``.
-
-    Returns
-    -------
-    dict
-        The resolved settings.
-
-    Raises
-    ------
-    ValueError
-        On invalid settings, or if training has started.
-    MissingData
-        If a file the run reads is missing from the data directory.
-    StateMismatch
-        If a clone's settings or multirate bins differ from its start
-        checkpoint.
-    """
-    run_dir = Path(run_dir)
-    settings, prior = check_run(run_dir)
-    if training_started(run_dir):
-        raise ValueError(f"{run_dir}: training has started, so its record in resolved/ is fixed")
-    data_dir = read_data_dir()
-    check_data(run_dir, settings, data_dir, fiducial=True)
-    resolved = resolve_settings(settings)
-    start, full_state = clone_start(run_dir) or (None, False)
-    if start is not None:
-        check_start(resolved, start, full_state)
-
-    prepare_run_dir(run_dir, resolved, prior, resolve_settings)
-    flag(run_dir, CHECKED_FLAG).unlink(missing_ok=True)
-    detectors = settings["data"]["detectors"]
-    fiducial = record_fiducial(run_dir, fiducial_dir(data_dir, settings["noise"]["fiducial"]), detectors)
-    window, detectors, dtype = build_data(settings["data"])
-    asds = read_fiducial_asds(fiducial, detectors, window, "cpu")
-    train = settings["train"]
-    signal = build_signal(
-        settings["signal"], prior, window, detectors, asds,
-        round(train["batch_size"] * train["signal_fraction"]), train["seed"], 0, "cpu", dtype,
-    )
-    scaling = recorded_scaling(run_dir, start)
-    if scaling is not None:
-        use_scaling(signal, list(settings["signal"]["targets"]), scaling)
-    processor = build_preprocess(
-        settings["preprocess"], asds, window, signal.param_sampler.bounds,
-        settings["signal"]["low_frequency_cutoff_in_hz"], ProcessingState(Grid.FD_UNIFORM), "cpu", dtype,
-    )
-    derived = derived_values(settings, window, processor, signal)
-    if start is not None:
-        check_built(derived, start, None, False)
-    record_derived(run_dir, derived)
-    return resolved
 
 
 def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiducial: Path, start_epoch: int,
@@ -602,7 +540,10 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     """
     Train a run from ``run.yaml``, resuming from its latest checkpoint.
 
-    Once the run is trained to the end (``results/final_check.json``
+    Until the first checkpoint, ``resolved/`` is rewritten: the
+    resolved settings, the prior, a copy of the fiducial ASDs and the
+    derived values; from then on the run is checked against it. Once
+    the run is trained to the end (``results/final_check.json``
     written), only the settings are checked. Training stops before an
     epoch while ``flags/stop`` exists in ``run_dir``.
 
@@ -623,9 +564,6 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         or a device or precision not available here (``check_device``).
     MissingData
         If a file the run reads is missing from the data directory.
-    NotPrepared
-        If training has not started and ``resolved/`` is missing or
-        differs from the settings.
     SettingsChanged
         If the settings, prior or derived values changed after training
         started.
@@ -641,10 +579,10 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
     train, validation, mining, ema = settings["train"], settings["validation"], settings["mining"], settings["ema"]
     check_device(train)
     data_dir = read_data_dir()
-    check_data(run_dir, settings, data_dir)
+    check_data(run_dir, settings, data_dir, fiducial=not training_started(run_dir))
     start, full_state = clone_start(run_dir) or (None, False)
     changes = None if start is None else check_start(resolve_settings(settings), start, full_state)
-    check_prepared(run_dir, resolve_settings(settings), prior, resolve_settings)
+    record_settings(run_dir, resolve_settings(settings), prior, resolve_settings)
     if next_epoch(run_dir) == train["epochs"] and (run_dir / "results" / "final_check.json").exists():
         return
 
@@ -654,12 +592,16 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
         logger.info("Starting from the cloned epoch %d (%s); settings changed: %s", start["epoch"],
                     "full state" if full_state else "weights only", "; ".join(changes) or "none")
     record_versions(run_dir, start_epoch, train["device"])
-    fiducial = run_dir / "resolved" / "fiducial"
+    fiducial = record_fiducial(
+        run_dir,
+        fiducial_dir(data_dir, settings["noise"]["fiducial"]),
+        settings["data"]["detectors"],
+    )
     run = build_run(run_dir, settings, prior, data_dir, fiducial, start_epoch, recorded_scaling(run_dir, start))
     derived = derived_values(settings, run.window, run.processor, run.signal)
     if start is not None:
         check_built(derived, start, run.scaler, full_state)
-    check_derived(run_dir, derived)
+    record_derived(run_dir, derived)
     if start is not None:
         # The EMA below starts from these weights; full state restores
         # the rest as a resume.
@@ -751,10 +693,10 @@ def train_run(run_dir: Path, stop_after: float | None = None) -> None:
 
 # What sage check does, in order
 CHECK_STEPS = (
-    "Check the settings, prior and the record from sage prepare",
+    "Check the settings and prior, and a started run's record in resolved/",
     "Check the data files",
     "Build the samplers, preprocessing and network",
-    "Check the derived values against resolved/derived.yaml",
+    "Compute the derived values; a started run's match resolved/derived.yaml",
     "Take one training step",
     "Build the validation streams",
 )
@@ -798,9 +740,10 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
     """
     Run the start-up checks of ``train_run`` and one training step.
 
-    Writes only ``flags/checked``. A started run is checked as its next
-    segment would be and steps from its latest checkpoint; the step
-    trains without mining, which would write the bank.
+    Writes only ``flags/checked``, holding the settings and prior
+    checked. A started run is checked as its next segment would be and
+    steps from its latest checkpoint; the step trains without mining,
+    which would write the bank.
 
     Parameters
     ----------
@@ -819,15 +762,17 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
 
     Raises
     ------
-    ValueError, MissingData, NotPrepared, SettingsChanged, StateMismatch
+    ValueError, MissingData, SettingsChanged, StateMismatch
         As ``train_run``.
     """
     report = progress or (lambda index: None)
     run_dir = Path(run_dir)
     report(0)
     settings, prior = check_run(run_dir)
+    checked = checked_record(settings, prior)
     started = training_started(run_dir)
-    check_prepared(run_dir, resolve_settings(settings), prior, resolve_settings)
+    if started:
+        check_record(run_dir, resolve_settings(settings), prior, resolve_settings)
     start, full_state = clone_start(run_dir) or (None, False)
     if start is not None:
         check_start(resolve_settings(settings), start, full_state)
@@ -835,8 +780,12 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
     check_device(settings["train"])
     report(1)
     data_dir = read_data_dir()
-    check_data(run_dir, settings, data_dir)
-    fiducial = run_dir / "resolved" / "fiducial"
+    check_data(run_dir, settings, data_dir, fiducial=not started)
+    fiducial = (
+        run_dir / "resolved" / "fiducial"
+        if started
+        else fiducial_dir(data_dir, settings["noise"]["fiducial"])
+    )
     start_epoch = start["epoch"] + 1 if full_state else next_epoch(run_dir)
     report(2)
     run = build_run(
@@ -845,7 +794,8 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
     try:
         report(3)
         derived = derived_values(settings, run.window, run.processor, run.signal)
-        check_derived(run_dir, derived)
+        if started:
+            check_derived(run_dir, derived)
         if start is not None:
             check_built(derived, start, run.scaler, full_state)
             run.network.load_state_dict(start["model"])
@@ -870,8 +820,57 @@ def check_training(run_dir: Path, cpu: bool = False, progress=None) -> float:
     finally:
         run.noise.shutdown()
     flag(run_dir, CHECKED_FLAG).parent.mkdir(exist_ok=True)
-    flag(run_dir, CHECKED_FLAG).touch()
+    flag(run_dir, CHECKED_FLAG).write_text(yaml_text(checked))
     return float(trainer.loss_components[epoch][0])
+
+
+def checked_record(settings: dict, prior: dict) -> dict:
+    """
+    The resolved settings and prior as ``flags/checked`` holds them.
+
+    Parameters
+    ----------
+    settings, prior : dict
+        From ``check_run``.
+
+    Returns
+    -------
+    dict
+        ``run`` and ``prior``, as read back from YAML.
+    """
+    record = {"run": resolve_settings(settings), "prior": prior}
+    return yaml.safe_load(yaml_text(record))
+
+
+def checked_changes(run_dir: Path) -> list | None:
+    """
+    Differences from the settings and prior ``sage check`` passed.
+
+    Values are compared, so comments and layout do not count.
+
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+
+    Returns
+    -------
+    list of str or None
+        One entry per difference, or the reason the settings cannot be
+        compared; None without ``flags/checked``.
+    """
+    path = flag(run_dir, CHECKED_FLAG)
+    if not path.exists():
+        return None
+    checked = yaml.safe_load(path.read_text())
+    if checked is None:
+        return ["flags/checked holds no settings"]
+    try:
+        current = checked_record(*check_run(run_dir))
+    except (ValueError, FileNotFoundError, yaml.YAMLError) as error:
+        return [str(error)]
+    run = differences(checked["run"], current["run"])
+    return run + differences(checked["prior"], current["prior"], "prior")
 
 
 def final_check(

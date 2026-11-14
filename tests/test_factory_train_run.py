@@ -17,7 +17,7 @@ from sage.config import machine
 from sage.core.logger import setup_logging
 from sage.factory.callbacks import EMACallback
 from sage.factory.compare import compare_runs, recovered_fractions
-from sage.factory.train_run import RUNNING_FLAG, STOP_FLAG, final_check_seconds, flag, prepare_run, train_run
+from sage.factory.train_run import RUNNING_FLAG, STOP_FLAG, final_check_seconds, flag, train_run
 from sage.utils.checkpoint import CheckpointManager
 
 RUN = """
@@ -102,29 +102,28 @@ def use_machine(tmp_path, monkeypatch):
 
 
 def test_train_run(tmp_path, monkeypatch, capsys):
-    """prepare, check, train and validate a run, and its outputs."""
+    """check, train and validate a run, and its outputs."""
     use_machine(tmp_path, monkeypatch)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "run.yaml").write_text(RUN)
     files = lambda: {path: path.stat().st_mtime_ns for path in run_dir.rglob("*") if path.is_file()}
     try:
-        assert main(["check", str(run_dir)]) == 1  # not prepared
-        assert capsys.readouterr().err.endswith(f"fix: sage prepare {run_dir}\n")
-        assert main(["prepare", str(run_dir)]) == 0
-        prepared = files()
-        # Defaults are filled in.
-        assert "amsgrad: false" in (run_dir / "resolved" / "run.yaml").read_text()
         checked = run_dir / "flags" / "checked"
         # check writes only its flag.
-        assert main(["check", str(run_dir)]) == 0 and set(files()) == set(prepared) | {checked}
-        (run_dir / "run.yaml").write_text(RUN.replace("epochs: 1", "epochs: 2"))
-        assert main(["train", str(run_dir)]) == 1  # run.yaml changed since sage prepare
-        assert capsys.readouterr().err.endswith(f"fix: sage prepare {run_dir}\n")
+        assert main(["check", str(run_dir)]) == 0 and set(files()) == {run_dir / "run.yaml", checked}
+        capsys.readouterr()
+        # A comment changes no value; an epoch count does.
+        (run_dir / "run.yaml").write_text("# edited\n" + RUN)
+        assert main(["status", str(run_dir)]) == 0 and "Flags: checked" in capsys.readouterr().out
+        (run_dir / "run.yaml").write_text(RUN.replace("  epochs: 1\n", "  epochs: 2\n"))
+        assert main(["status", str(run_dir)]) == 0
+        assert "Changed since sage check (train.epochs: 1 -> 2)" in capsys.readouterr().out
         (run_dir / "run.yaml").write_text(RUN)
-        # Stops before epoch 0.
+        # Stops before epoch 0, its record written with defaults filled in.
         assert main(["train", str(run_dir), "--stop-after", "0s"]) == 0
         assert not (run_dir / "checkpoints" / "progress.json").exists()
+        assert "amsgrad: false" in (run_dir / "resolved" / "run.yaml").read_text()
         train_run(run_dir)
         before = files()
         # Trained to the end: returns at once.
@@ -214,7 +213,6 @@ def test_clone(tmp_path, monkeypatch, capsys):
         flag(old, STOP_FLAG).touch()
 
     monkeypatch.setattr(CheckpointManager, "save", save_then_stop)
-    prepare_run(old)
     try:
         train_run(old)  # epoch 0 of 2
     finally:
@@ -242,7 +240,6 @@ def test_clone(tmp_path, monkeypatch, capsys):
             super().__init__(model, decay)
 
     monkeypatch.setattr("sage.factory.train_run.EMACallback", Spy)
-    prepare_run(weights)
     try:
         train_run(weights, stop_after=0.0)
     finally:
@@ -250,7 +247,6 @@ def test_clone(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("sage.factory.train_run.EMACallback", EMACallback)
     assert same(initial[0], torch.load(weights / "clone" / "start.pt", weights_only=False)["model"])
 
-    prepare_run(new)
     try:
         train_run(old)  # resumes at epoch 1
         train_run(new)  # the full-state clone of epoch 0 trains epoch 1
@@ -268,7 +264,6 @@ def test_clone(tmp_path, monkeypatch, capsys):
     last = tmp_path / "last"
     # At the last epoch only the final check is left.
     assert main(["clone", str(old), str(last), "--full-state"]) == 0
-    prepare_run(last)
     try:
         train_run(last)
     finally:
@@ -327,7 +322,6 @@ def test_non_astrophysical(tmp_path, monkeypatch):
     run_dir.mkdir()
     shares = "  non_astrophysical: {noise_share: 0.5, signal_noise_share: 0.8, in_band_share: 0.75}\n"
     (run_dir / "run.yaml").write_text(RUN.replace("  targets: [delta_tc, mchirp]\n", "  targets: [delta_tc, mchirp]\n" + shares))
-    prepare_run(run_dir)
     try:
         train_run(run_dir)
     finally:
@@ -356,7 +350,6 @@ def test_compare(tmp_path, monkeypatch, capsys):
     run = tmp_path / "run"
     run.mkdir()
     (run / "run.yaml").write_text(RUN.replace("epochs: 1", "epochs: 2"))
-    prepare_run(run)
     try:
         train_run(run)  # two validation passes in one segment
         twin = tmp_path / "twin"
@@ -421,7 +414,6 @@ def test_final_check_waits(tmp_path, monkeypatch, capsys):
     (run_dir / "run.yaml").write_text(RUN)
     # Longer than the job.
     monkeypatch.setattr("sage.factory.train_run.final_check_seconds", lambda *args: 1e6)
-    prepare_run(run_dir)
     try:
         assert main(["train", str(run_dir), "--stop-after", "2h"]) == 0
         assert "Stopped before the final check" in capsys.readouterr().out
