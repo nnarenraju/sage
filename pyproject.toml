@@ -55,6 +55,15 @@ dependencies = [
   "pycbc>=2.2",
   # Thomson's F-test for the fiducial's spectral lines (sage.data.asd.lines).
   "multitaper>=1.2",
+  # GWOSC data download and segment preparation (sage.data.primer).
+  "requests>=2.28",
+  "urllib3>=1.26",
+  "gwosc>=0.7",
+  # Quality-diversity hard-noise mining (sage.data.noise.cma_mae_mining).
+  "ribs>=0.7",
+  # The test suite (tests/).
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
 ]
 
 # Every command is `sage <command>`; `sgw` and `sage-<command>` run the same code.
@@ -84,22 +93,6 @@ sage-status = "sage.cli:main"
 sage-stop = "sage.cli:main"
 sage-train = "sage.cli:main"
 sage-validate = "sage.cli:main"
-
-[project.optional-dependencies]
-# GWOSC data download and segment preparation (sage.data.primer).
-download = [
-  "requests>=2.28",
-  "urllib3>=1.26",
-  "gwosc>=0.7",
-]
-# Quality-diversity hard-noise mining (sage.data.noise.cma_mae_mining).
-mining = [
-  "ribs>=0.7",
-]
-dev = [
-  "pytest>=7.0",
-  "pytest-cov>=4.0",
-]
 
 [project.urls]
 Homepage = "https://github.com/nnarenraju/sage"
