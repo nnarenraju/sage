@@ -170,27 +170,32 @@ The methods are described in:
    hardware
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: User Guide
    :hidden:
 
    overview
-   configuration
-   data_priming/index
-   noise_dataset/index
-   signal_dataset/index
-   whitening
-   multirate
-   snr_estimation
-   bbh_params/index
-   otf_data_generation
-   data_transforms
-   architectures/index
-   losses/index
-   optimisers
+   runs/index
+   data
    training
    validation
-   full_run
+   searching
+   search_results
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Methods
+   :hidden:
+
+   methods/data/index
+   methods/signals/index
+   methods/noise/index
+   methods/transforms/index
+   methods/architectures/index
+   methods/losses/index
+   methods/training/index
+   methods/mining/index
+   methods/search/index
 
 .. toctree::
    :maxdepth: 1
@@ -219,6 +224,8 @@ The methods are described in:
    :caption: Reference
    :hidden:
 
+   configuration
+   commands
    benchmarks
    citation
    glossary

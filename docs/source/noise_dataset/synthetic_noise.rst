@@ -1,2 +1,0 @@
-Synthetic Noise Generation
-===========================

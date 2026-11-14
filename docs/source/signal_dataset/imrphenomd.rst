@@ -1,2 +1,0 @@
-IMRPhenomD on GPU
-=================

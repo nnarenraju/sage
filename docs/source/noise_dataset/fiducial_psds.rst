@@ -1,2 +1,0 @@
-Fiducial PSDs & Recolouring PSDs
-=================================

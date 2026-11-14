@@ -1,2 +1,2 @@
-Overview
-========
+How Sage Works
+==============

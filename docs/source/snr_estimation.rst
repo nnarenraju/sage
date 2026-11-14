@@ -1,2 +1,0 @@
-Optimal Network SNR Estimation
-================================

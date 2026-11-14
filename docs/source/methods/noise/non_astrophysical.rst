@@ -1,0 +1,2 @@
+Non-Astrophysical Class
+=======================

@@ -1,2 +1,0 @@
-Splitting into Mini-Segments
-=============================

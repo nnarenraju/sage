@@ -1,2 +1,0 @@
-Whitening Noisy Signals
-========================

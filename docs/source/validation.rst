@@ -1,2 +1,2 @@
-Validation
-===========
+Validation and Figures
+======================

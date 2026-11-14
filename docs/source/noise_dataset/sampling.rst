@@ -1,2 +1,0 @@
-Sampling Noise Batches
-=======================
