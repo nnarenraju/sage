@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +12,8 @@ authors = [
   { name = "Christopher Messenger" },
 ]
 requires-python = ">=3.10"
-license = { text = "GPL-3.0-or-later" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "sage/data/waveform/approximants/THIRD_PARTY_LICENSE"]
 keywords = [
   "gravitational waves",
   "compact binary coalescence",
@@ -26,7 +27,6 @@ keywords = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
