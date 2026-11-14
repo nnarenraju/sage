@@ -8,6 +8,8 @@ read as floats; every other value is a string.
 from pathlib import Path
 from typing import Any, Dict
 
+import yaml
+
 from sage.config.loader import read_preset, read_yaml
 
 TOP_LEVEL_KEYS = {"variable_params", "priors", "waveform_transforms", "constraints"}
@@ -32,6 +34,23 @@ SKY_NAMES = {"polar-angle": "dec", "azimuthal-angle": "ra"}
 NUMERIC_KEYS = {"min", "max"}
 # The prior a run reads when its run.yaml names none
 PRIOR_FILE = "prior.yaml"
+
+
+class PriorError(ValueError):
+    """
+    A run's prior file is missing or invalid.
+
+    Parameters
+    ----------
+    message : str
+        What is wrong.
+    path : Path
+        The prior file.
+    """
+
+    def __init__(self, message: str, path: Path):
+        super().__init__(message)
+        self.path = path
 
 
 def check_keys(where: str, given, allowed: set) -> None:
@@ -213,14 +232,17 @@ def load_prior(setting: str, run_dir: Path) -> Dict[str, Any]:
 
     Raises
     ------
-    FileNotFoundError
-        If the named ``.yaml`` file does not exist.
+    PriorError
+        If the ``.yaml`` file is missing or invalid.
     ValueError
-        If the preset is unknown or the prior is invalid.
+        If the preset is unknown or invalid.
     """
     if setting.endswith(".yaml"):
         path = Path(run_dir) / setting
         if not path.is_file():
-            raise FileNotFoundError(f"signal.prior: no prior file {path}")
-        return load_prior_file(path)
+            raise PriorError(f"no prior file {path}", path)
+        try:
+            return load_prior_file(path)
+        except (ValueError, KeyError, yaml.YAMLError) as error:
+            raise PriorError(f"{path}: {error}", path) from None
     return check_prior(read_preset("priors", setting))

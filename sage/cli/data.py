@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from sage.cli.registry import CommandError, closest, command
-from sage.cli.training import on
+from sage.cli.training import on, settings_fix
 from sage.config import machine
 from sage.config.run_dir import find_run_dir
 from sage.core.progress import print_steps
@@ -52,9 +52,7 @@ def directory_needs(directory: Path, data_dir: Path, name: str) -> tuple:
     try:
         settings = check_run(directory)[0]
     except (ValueError, FileNotFoundError) as error:
-        again = on(name, str(directory))
-        fix = f"edit {directory / 'run.yaml'} as above, then: {again}"
-        raise CommandError(str(error), fix) from None
+        raise CommandError(str(error), settings_fix(error, directory, on(name, str(directory)))) from None
     noise, detectors = settings["noise"], settings["data"]["detectors"]
     strain, asds, banks = strain_runs(noise), asd_runs(noise), bank_runs(noise)
     fiducial = sorted({run.lower() for run in noise["fiducial"]})

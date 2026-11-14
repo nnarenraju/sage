@@ -92,6 +92,17 @@ def test_run_directory(capsys, tmp_path, monkeypatch):
     assert capsys.readouterr().err.endswith(f"fix: rm {run_dir / 'flags' / 'stop'} && sage train {run_dir}\n")
     assert main(["check", str(run_dir)]) == 1  # the data directory is empty
     assert capsys.readouterr().err.endswith(f"fix: sage download {run_dir}\n")
+    # A misspelt component stops even the download, naming run.yaml.
+    run_text, prior_text = (run_dir / "run.yaml").read_text(), (run_dir / "prior.yaml").read_text()
+    (run_dir / "run.yaml").write_text(run_text.replace("IMRPhenomPv2", "IMRPhenomPv3"))
+    assert main(["download", str(run_dir)]) == 1
+    error = capsys.readouterr().err
+    assert "unknown 'IMRPhenomPv3'" in error and f"fix: edit {run_dir / 'run.yaml'} as above" in error
+    # A prior mistake names prior.yaml.
+    (run_dir / "run.yaml").write_text(run_text)
+    (run_dir / "prior.yaml").write_text(prior_text.replace("min: 7.0", "min: seven", 1))
+    assert main(["download", str(run_dir)]) == 1
+    assert f"fix: edit {run_dir / 'prior.yaml'} as above" in capsys.readouterr().err
 
 
 def test_run_dir_from_inside(capsys, tmp_path, monkeypatch):

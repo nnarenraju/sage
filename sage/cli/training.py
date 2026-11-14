@@ -19,6 +19,7 @@ import yaml
 
 from sage.cli.registry import CommandError, command
 from sage.config import machine
+from sage.config.prior import PriorError
 from sage.config.run_dir import SettingsChanged, StateMismatch, find_run_dir, training_started
 from sage.core.progress import print_steps
 
@@ -169,8 +170,31 @@ def checked_settings(name: str, directory: str) -> dict:
     except machine.MissingData as error:
         raise CommandError(str(error), on("download", directory)) from None
     except (ValueError, FileNotFoundError, yaml.YAMLError) as error:
-        raise CommandError(str(error), f"edit {run_file} as above, then: {on(name, directory)}") from None
+        raise CommandError(str(error), settings_fix(error, directory, on(name, directory))) from None
     return settings
+
+
+def settings_fix(error: Exception, directory, again: str) -> str:
+    """
+    The fix for an invalid run: edit the file at fault, then rerun.
+
+    Parameters
+    ----------
+    error : Exception
+        From ``check_run``.
+    directory : str or Path
+        Run directory.
+    again : str
+        Command to rerun.
+
+    Returns
+    -------
+    str
+    """
+    if isinstance(error, PriorError) and not error.path.exists():
+        return f"put the run's prior file back at {error.path}, then: {again}"
+    path = error.path if isinstance(error, PriorError) else Path(directory) / "run.yaml"
+    return f"edit {path} as above, then: {again}"
 
 
 def device_available(settings: dict, fix: str = "run it on a machine that has it, e.g. from your job script") -> None:

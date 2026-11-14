@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from sage.cli.registry import CommandError, closest, command
+from sage.cli.training import settings_fix
 from sage.config import machine
 from sage.config import loader
 from sage.config.loader import suggestion
@@ -269,7 +270,7 @@ def clone_run(arguments: list) -> None:
     try:
         settings = check_run(old)[0]
     except (ValueError, FileNotFoundError, yaml.YAMLError) as error:
-        raise CommandError(str(error), f"edit {old / 'run.yaml'} as above, then: {again}") from None
+        raise CommandError(str(error), settings_fix(error, old, again)) from None
     try:
         epoch, changes = clone(old, new, settings, options.full_state, options.from_epoch)
     except StateMismatch as error:

@@ -286,11 +286,14 @@ def check_run(run_dir: Path) -> tuple:
     Raises
     ------
     ValueError
-        On invalid settings or a heads / loss mismatch.
+        On invalid settings, an unknown component name or parameter, or
+        a heads / loss mismatch.
     FileNotFoundError
         If the prior file is missing.
     """
     settings = load_run(Path(run_dir) / "run.yaml")
+    # Resolving checks each component's name and parameters
+    resolve_settings(settings)
     train = settings["train"]
     check_train(train)
     check_validation(settings["validation"], train["batch_size"])
