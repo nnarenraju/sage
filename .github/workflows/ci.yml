@@ -45,37 +45,30 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e .
 
-      - name: Smoke test core imports
+      - name: Smoke test package imports
         run: |
           python - <<'PY'
-          import sage.dsp
-          from sage.dsp import (
-              FrequencyBand, FrequencyBandLayout, FrequencyMultibandCompressor,
-              describe_layout,
-              make_dyadic_frequency_bands, make_prior_informed_frequency_bands,
-              make_empirical_frequency_bands,
-              heterodyne, apply_phase,
-              analytic_signal, instantaneous_frequency,
-              decimate, halfband_kernel, rate_and_factor,
-          )
-          missing = [n for n in sage.dsp.__all__ if not hasattr(sage.dsp, n)]
-          assert not missing, f"__all__ names missing from sage.dsp: {missing}"
-          print(f"sage.dsp imports OK ({len(sage.dsp.__all__)} public names)")
+          import importlib
+          import pkgutil
+
+          import sage
+
+          names = 0
+          for info in pkgutil.walk_packages(sage.__path__, "sage."):
+              if not info.ispkg:
+                  continue
+              package = importlib.import_module(info.name)
+              public = getattr(package, "__all__", [])
+              missing = [name for name in public if not hasattr(package, name)]
+              assert not missing, f"{info.name}.__all__ names missing: {missing}"
+              names += len(public)
+          print(f"every sage package imports; {names} public names present")
           PY
 
-      - name: Smoke test the documented training-path imports
+      - name: Smoke test the command line
         run: |
-          python - <<'PY'
-          from sage.data.waveform import read_from_config, ConstantProjection, IMRPhenomPv2
-          from sage.data.noise import MemmapNoiseSampler, RecolourPostprocess
-          from sage.dsp.whiten import FiducialWhitening
-          from sage.dsp.multirate_sampling import MultirateSampler, DyadicPyramidBinning
-          from sage.architecture.network import MSCNN1D_2DResNetCBAM_Heteroscedastic
-          from sage.factory.training import SageVanillaTraining
-          from sage.factory.validation import SageVanillaValidation
-          from sage.core.graph import Preprocessor
-          print("training-path imports OK")
-          PY
+          sage --version
+          sage list presets
 
   tests:
     name: Run tests
