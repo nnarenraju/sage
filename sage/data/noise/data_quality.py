@@ -205,10 +205,42 @@ def read_bad_time(path: Path) -> List[Interval]:
     return merge([tuple(interval) for interval in saved["intervals"] + json.loads(zeros.read_text())["intervals"]])
 
 
+def zero_spans(
+    samples: np.ndarray, gps_start: float, sample_rate: float
+) -> List[Interval]:
+    """GPS spans of exactly-zero samples.
+
+    Parameters
+    ----------
+    samples : numpy.ndarray
+        Strain samples.
+    gps_start : float
+        GPS time of the first sample.
+    sample_rate : float
+        Sample rate in Hz.
+
+    Returns
+    -------
+    list of tuple of float
+        ``[start, end)`` of each run of zeros, in order.
+    """
+    zero = samples == 0
+    if not zero.any():
+        return []
+
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], zero.view(np.int8), [0]))))
+    return [
+        (gps_start + first / sample_rate, gps_start + last / sample_rate)
+        for first, last in zip(edges[::2].tolist(), edges[1::2].tolist())
+    ]
+
+
 def zero_runs(path: Path) -> List[Interval]:
     """GPS spans of exactly-zero samples in a strain file.
 
-    Missing data is written as zeros.
+    Missing data is written as zeros. A piece's ``zero_spans``, found
+    in its raw strain at download, are taken as recorded; a piece
+    without them has its stored strain scanned.
 
     Parameters
     ----------
@@ -223,14 +255,12 @@ def zero_runs(path: Path) -> List[Interval]:
     """
     found = []
     for record in bar(json.loads(segments_file(path).read_text()), unit="piece"):
+        if "zero_spans" in record:
+            found += [tuple(span) for span in record["zero_spans"]]
+            continue
         dtype = np.dtype(record["dtype"]).newbyteorder(record["endianness"])
         samples = np.memmap(path, dtype=dtype, mode="r", offset=record["byte_offset"], shape=(record["nsamples"],))
-        zero = samples == 0
-        if not zero.any():
-            continue
-        edges = np.flatnonzero(np.diff(np.concatenate(([0], zero.view(np.int8), [0]))))
-        found += [(record["gps_start"] + first / record["sample_rate"], record["gps_start"] + last / record["sample_rate"])
-                  for first, last in zip(edges[::2].tolist(), edges[1::2].tolist())]
+        found += zero_spans(samples, record["gps_start"], record["sample_rate"])
 
     return merge(found)
 

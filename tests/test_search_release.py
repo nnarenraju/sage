@@ -6,7 +6,8 @@ import h5py
 import numpy as np
 
 from sage.config.machine import zero_runs_file
-from sage.search.dataprep.release import write_zero_runs, zero_spans
+from sage.data.noise.data_quality import zero_spans
+from sage.search.dataprep.release import write_zero_runs
 
 
 def test_zero_spans():

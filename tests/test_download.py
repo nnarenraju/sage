@@ -15,7 +15,7 @@ from sage.cli import main
 from sage.config import machine
 from sage.data import download
 from sage.data.download import DATASET, download_run
-from sage.data.noise.data_quality import FLAGS, read_bad_time, write_zero_runs
+from sage.data.noise.data_quality import FLAGS, read_bad_time, write_zero_runs, zero_runs
 from sage.data.noise.real_noise import MemmapSingleNoiseSampler
 from sage.data.asd.smoothing import LogSplineSmoothing
 from sage.data.asd.get_asds import EstimateASD
@@ -68,6 +68,20 @@ def test_zero_runs(tmp_path, monkeypatch):
         )
 
 
+def test_raw_zero_spans(tmp_path):
+    """Spans recorded from raw strain are taken; others are scanned."""
+    path = write_strain(tmp_path, [40960, 45056])
+    records = json.loads(machine.segments_file(path).read_text())
+    records[0]["zero_spans"] = [[1e9 + 1.0, 1e9 + 2.0]]
+    machine.segments_file(path).write_text(json.dumps(records))
+    samples = np.memmap(path, dtype="<f4", mode="r+")
+    samples[10:20] = 0  # not in the raw spans of the first piece
+    samples[40960 + 100:40960 + 110] = 0
+    samples.flush()
+    start = 1e9 + 600.0
+    assert zero_runs(path) == [(1e9 + 1.0, 1e9 + 2.0), (start + 100 / 2048, start + 110 / 2048)]
+
+
 def test_no_interpolation(tmp_path):
     """interpolate_asd=False: segment ASDs, NaN in bad time, bank."""
     path = write_strain(tmp_path, [40960, 45056])
@@ -89,9 +103,13 @@ def test_no_interpolation(tmp_path):
 
 def test_one_worker(tmp_path, monkeypatch):
     """Single-worker download, offline, with white noise as strain."""
-    noise = lambda det, start, end, cache: TimeSeries(
-        np.random.default_rng(0).standard_normal(int((end - start) * 4096)), sample_rate=4096, t0=start
-    )
+    def noise(det, start, end, cache):
+        """White noise; the first piece has a raw gap of 100 zeros."""
+        samples = np.random.default_rng(0).standard_normal(int((end - start) * 4096))
+        if start == 1e9:
+            samples[5 * 4096:5 * 4096 + 100] = 0
+        return TimeSeries(samples, sample_rate=4096, t0=start)
+
     monkeypatch.setattr(TimeSeries, "fetch_open_data", staticmethod(noise))
     pieces = [(1e9, 1e9 + 32.0), (1e9 + 100.0, 1e9 + 132.0)]
     DataReleaseDownloader(
@@ -101,6 +119,7 @@ def test_one_worker(tmp_path, monkeypatch):
     ).download()
     records = json.loads((tmp_path / "training.part" / "data_H1_O3b_segments.json").read_text())
     assert [record["gps_start"] for record in records] == [1e9 + 0.2, 1e9 + 100.2]
+    assert [record["zero_spans"] for record in records] == [[[1e9 + 5, 1e9 + 5 + 100 / 4096]], []]
 
 
 def unreachable(*args, **kwargs):

@@ -58,6 +58,7 @@ from pycbc import DYN_RANGE_FAC
 
 from sage.core.hardcode import _GWOSC_ARCHIVE_URL
 from sage.core.logger import get_logger
+from sage.data.noise.data_quality import zero_spans
 from sage.dsp.filters import pycbc_downsample
 
 logger = get_logger(__name__)
@@ -358,6 +359,7 @@ class DataReleaseDownloader:
             return n, None, {}
 
         old_sample_rate = 1.0 / data.dt.value
+        spans = zero_spans(data.value, b0, old_sample_rate)
         data = pycbc_downsample(
             data.value,
             old_sample_rate,
@@ -375,6 +377,7 @@ class DataReleaseDownloader:
             "nsamples": len(data),
             "old_sample_rate": old_sample_rate,
             "sample_rate": cfg.sample_rate,
+            "zero_spans": spans,
         }
         return n, data, metadata
 
@@ -670,6 +673,7 @@ class DataReleaseDownloader:
                                 "nsamples": len(data),
                                 "old_sample_rate": sr,
                                 "sample_rate": cfg.sample_rate,
+                                "zero_spans": zero_spans(raw, b0, sr),
                             }
                             results.append(("done", n, data, meta))
                         except Exception:
@@ -917,6 +921,7 @@ class DataReleaseDownloader:
                         "checksum_algorithm": "sha256",
                         "dyn_range_fac": float(DYN_RANGE_FAC),
                         "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
+                        "zero_spans": metadata["zero_spans"],
                     }
                     assert nbytes == nsamp * dt.itemsize
                     self._bin_metadata.append(seg_meta)
@@ -958,6 +963,7 @@ class DataReleaseDownloader:
                         "nsamples": len(data),
                         "old_sample_rate": sr,
                         "sample_rate": self.dcfg.sample_rate,
+                        "zero_spans": zero_spans(raw, b0, sr),
                     }
                     _save_one(n, data, meta)
                 except Exception as exc:
@@ -1042,6 +1048,7 @@ class DataReleaseDownloader:
                             "checksum_algorithm": "sha256",
                             "dyn_range_fac": float(DYN_RANGE_FAC),
                             "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
+                            "zero_spans": metadata["zero_spans"],
                         }
                         assert nbytes == nsamp * dt.itemsize
                         self._bin_metadata.append(seg_meta)
@@ -1278,6 +1285,7 @@ class DataReleaseDownloader:
                     "checksum_algorithm": "sha256",
                     "dyn_range_fac": float(DYN_RANGE_FAC),
                     "noise_low_freq_cutoff": self.noise_low_freq_cutoff,
+                    "zero_spans": metadata["zero_spans"],
                 })
                 byte_cursor += nbytes
                 sample_cursor += nsamp
@@ -1312,6 +1320,7 @@ class DataReleaseDownloader:
                         "nsamples": len(data),
                         "old_sample_rate": sr,
                         "sample_rate": self.dcfg.sample_rate,
+                        "zero_spans": zero_spans(raw, b0, sr),
                     }
                     _save_retry(n, data, meta)
                 except Exception as exc:

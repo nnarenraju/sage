@@ -21,7 +21,7 @@ from pycbc import DYN_RANGE_FAC
 
 from sage.config.machine import bad_time_file, segments_file, zero_runs_file
 from sage.core.progress import bar, step
-from sage.data.noise.data_quality import merge, write_bad_time
+from sage.data.noise.data_quality import merge, write_bad_time, zero_spans
 from sage.dsp.filters import pycbc_downsample
 from sage.search.dataprep.download import (
     Interval,
@@ -136,36 +136,6 @@ def read_strain(
     if n_nan:
         raise ValueError(f"[{gps_start}, {gps_end}) has {n_nan} NaN samples")
     return raw
-
-
-def zero_spans(
-    samples: np.ndarray, gps_start: float, sample_rate: float
-) -> List[Interval]:
-    """GPS spans of exactly-zero samples, as training's ``zero_runs``.
-
-    Parameters
-    ----------
-    samples : numpy.ndarray
-        Strain samples.
-    gps_start : float
-        GPS time of the first sample.
-    sample_rate : float
-        Sample rate in Hz.
-
-    Returns
-    -------
-    list of tuple of float
-        ``[start, end)`` of each run of zeros, in order.
-    """
-    zero = samples == 0
-    if not zero.any():
-        return []
-
-    edges = np.flatnonzero(np.diff(np.concatenate(([0], zero.view(np.int8), [0]))))
-    return [
-        (gps_start + first / sample_rate, gps_start + last / sample_rate)
-        for first, last in zip(edges[::2].tolist(), edges[1::2].tolist())
-    ]
 
 
 def write_zero_runs(strain_path: Path, records: List[dict]) -> None:
