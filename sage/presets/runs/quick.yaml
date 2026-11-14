@@ -1,6 +1,4 @@
-# A quick check of a setup or a code change: hl_mining with small counts, about 10 minutes on one GPU.
-
-# Mining keeps every window it finds, so the bank and its replay are exercised.
+# A short H1-L1 run, trained on O3b noise and validated on O3a.
 data:
   detectors: [H1, L1]
   sample_rate_in_hz: 2048
@@ -27,11 +25,6 @@ noise:
   validation:
     name: real
     runs: [o3a]
-  recolour:
-    target: o3a
-    probability: 0.37
-    asd_jitter_gain: 0.5
-    validation: false
   fiducial: [o3a, o3b]
   prefetch_batches: 8
   read_workers: 16
@@ -50,11 +43,6 @@ model: MSCNN1Datt_2DResNetCBAM
 loss: BCE_PE_Sigma
 
 optimiser: AdamW
-
-schedule:
-  name: WarmupPolynomialDecayFlatTail
-  warmup_steps: 20
-  flat_tail_epochs: 1
 
 train:
   epochs: 6
@@ -78,13 +66,3 @@ validation:
     scale: 4.0
     loc: 5.0
 
-mining:
-  enabled: true
-  start_epoch: 1
-  every_n_epochs: 2
-  iterations: 400
-  keep_threshold: -1.0e+30
-
-ema:
-  enabled: true
-  calibration_batches: 50
