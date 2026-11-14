@@ -403,7 +403,8 @@ def build_directory(
     fiducial_runs, fiducial_detectors = fiducial
     parts.append(f"Build the fiducial pooled over {', '.join(fiducial_runs)} "
                  f"({' '.join(fiducial_detectors)})")
-    print(f"Building every ASD {directory} reads, into {data_dir / 'asds'}:")
+    name = directory.resolve().name
+    print(f"Building every ASD {name} reads, into {data_dir / 'asds'}:")
     print_steps(parts, "A part already built is checked, not built again.")
 
     try:
