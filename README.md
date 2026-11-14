@@ -84,21 +84,20 @@ and validated on O3a. `sage <command> --help` explains any command.
 
 ```bash
 sage setup --data-dir /path/to/data   # once per machine: where all data goes
-sage init my_run --preset quick       # make my_run/ and its run.yaml, which extends the preset
-cd my_run
+sage init my_run --preset quick       # make my_run/: run.yaml, every setting, and prior.yaml
+cd my_run                             # edit either file now to change the run
 ```
 
 ### Download and building
 
 ```bash
 sage download                         # the training strain run.yaml needs, GWOSC events cut out
-sage build-asds                       # the per-segment ASDs, recolour banks and fiducial run.yaml needs
+sage build-asds                       # the ASDs run.yaml needs, built from that strain
 ```
 
 ### Training, validation and plotting
 
 ```bash
-sage prepare                          # check the run and record every setting
 sage train                            # train and validate; resumes from the last checkpoint
 sage plot                             # validation figures in results/plots
 ```
@@ -110,6 +109,7 @@ Search an observing run with the trained network:
 ```bash
 sage download o3a --search --detectors H1 L1   # whole O3a segments, nothing cut out
 sage search-init o3a --checkpoint best         # a search with the run's best.pt
+# set live_time_in_years: 0.5 in search/o3a_best/search.yaml: six months of background
 sage search o3a_best                           # score zero-lag and the background
 sage statmap o3a_best                          # false-alarm rates of the triggers
 ```
