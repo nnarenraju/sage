@@ -28,12 +28,20 @@ Documentation: NULL
 
 from __future__ import annotations
 
+import warnings
+
 import torch
 import torch.nn as nn
 
 from torch.nn import MaxPool1d, BatchNorm1d
 
 from ..antialias import BlurPool1d
+
+# Silences PyTorch's note that same padding with even kernels may copy
+# the input; the result is unchanged
+warnings.filterwarnings(
+    "ignore", "Using padding='same' with even kernel lengths", UserWarning
+)
 
 
 class Conv1dSame(nn.Conv1d):
