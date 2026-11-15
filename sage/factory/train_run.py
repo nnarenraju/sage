@@ -396,7 +396,8 @@ def build_run(run_dir: Path, settings: dict, prior: dict, data_dir: Path, fiduci
     seed = train["seed"]
     # Seeds every GPU too: model initialisation and dropout
     torch.manual_seed(stream_seed(seed, "global", start_epoch))
-    logger.info("Run %s from epoch %d, seed %d", run_dir, start_epoch, seed)
+    name = Path(run_dir).resolve().name
+    logger.info("Run %s from epoch %d, seed %d", name, start_epoch, seed)
 
     signal = build_signal(
         settings["signal"], prior, window, detectors, asds, signal_batch_size, seed, start_epoch, device, dtype

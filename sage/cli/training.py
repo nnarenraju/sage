@@ -367,7 +367,8 @@ def train(arguments: list) -> None:
     directory = Path(options.directory)
     stop_file = flag(directory, STOP_FLAG)
     if stop_file.exists():
-        raise CommandError(f"{directory} was stopped by sage stop", f"rm {stop_file} && {on('train', options.directory)}")
+        name = directory.resolve().name
+        raise CommandError(f"{name} was stopped by sage stop", f"rm {stop_file} && {on('train', options.directory)}")
     settings = checked_settings("train", options.directory)
     device_available(settings)
     explained("train", options.directory, train_run, directory, stop_after)
@@ -556,6 +557,7 @@ def status(arguments: list) -> None:
     )
     zone = zoneinfo.ZoneInfo(TIMEZONES[options.timezone])
     directory = Path(options.directory)
+    name = directory.resolve().name
     done = next_epoch(directory)
     clone_file = directory / "resolved" / "clone.yaml"
     cloned = []
@@ -566,13 +568,13 @@ def status(arguments: list) -> None:
     if done == 0:
         if not (directory / "run.yaml").exists():
             raise CommandError(f"no run.yaml in {directory}", "sage init <directory> --preset <name>")
-        print("\n".join([f"{directory}: training has not started", *cloned, *flag_lines(options.directory, zone)]))
+        print("\n".join([f"{name}: training has not started", *cloned, *flag_lines(options.directory, zone)]))
         print(f"Next: {on('train', options.directory)}")
         return
 
     settings = load_run_record((directory / "resolved" / "run.yaml").read_text())
     epochs = settings["train"]["epochs"]
-    lines = [f"{directory}: {done} of {epochs} epochs trained", *cloned]
+    lines = [f"{name}: {done} of {epochs} epochs trained", *cloned]
     try:
         with h5py.File(directory / "results" / "losses.h5", "r", locking=False) as file:
             training, validation = file["training"]["loss"][:done, 0], file["validation"]["loss"][:done, 0]
