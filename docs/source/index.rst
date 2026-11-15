@@ -177,7 +177,7 @@ The methods are described in:
    overview
    runs/index
    data/index
-   training
+   training/index
    validation
    searching
    search_results
