@@ -300,7 +300,7 @@ def checked_step(name: str, directory: str) -> None:
     def progress(index: int) -> None:
         """Print the previous step's duration, then the next step."""
         if started:
-            print(f"  done in {time.monotonic() - started[-1]:.1f} s", flush=True)
+            print(f"  done in {time.monotonic() - started[-1]:.1f} s\n", flush=True)
         print(f"[{index + 1}/{len(CHECK_STEPS)}] {CHECK_STEPS[index]}", flush=True)
         started.append(time.monotonic())
 
