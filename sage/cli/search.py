@@ -256,15 +256,26 @@ def statmap(arguments: list) -> None:
         f"NA removal {options.remove_na}:"
     )
     print_steps(
-        STEPS, "Only finished rows are read, so this runs while the search scores."
+        STEPS,
+        "Only finished rows are read, so this runs while the search scores. "
+        "It runs with bad time left out, then again with bad time kept and marked.",
     )
-    try:
-        written = run_statmap(
-            directory, options.name, data_dir, options.clustering, options.remove_na
-        )
-    except ValueError as error:
-        fix = f"sage statmap {options.name} --remove-na off"
-        raise CommandError(str(error), fix) from None
-    print()
-    print(f"Wrote {written}")
+    written = []
+    for with_bad_time in (False, True):
+        print("Bad time kept and marked:" if with_bad_time else "Bad time left out:")
+        try:
+            written.append(run_statmap(
+                directory,
+                options.name,
+                data_dir,
+                options.clustering,
+                options.remove_na,
+                with_bad_time,
+            ))
+        except ValueError as error:
+            fix = f"sage statmap {options.name} --remove-na off"
+            raise CommandError(str(error), fix) from None
+        print()
+    for path in written:
+        print(f"Wrote {path}")
 

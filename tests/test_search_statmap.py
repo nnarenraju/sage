@@ -22,26 +22,33 @@ def rows() -> np.ndarray:
     return values
 
 
-def windows(remove_na: str, shift: int = 0, l1_bad: int = None) -> tuple:
+def windows(remove_na: str, shift: int = 0, l1_bad: int = None,
+            with_bad_time: bool = False) -> tuple:
     """Kept windows and live time of a stream; H1 window 4 is bad."""
     clear = {"H1": np.ones(6, dtype=bool), "L1": np.ones(6, dtype=bool)}
     clear["H1"][4] = False
     if l1_bad is not None:
         clear["L1"][l1_bad] = False
     triggers, live_s = stream_triggers(NETWORK, rows(), COLUMNS, 6, GPS, clear,
-                                       shift, 1.0, "greedy", remove_na)
+                                       shift, 1.0, "greedy", remove_na, with_bad_time)
     return triggers["window"].tolist(), live_s, triggers
 
 
 def test_stream_triggers():
-    """Bad time dropped, NA removed around clustering, pairs shifted."""
+    """Bad time dropped or kept and marked, NA removed around clustering,
+    pairs shifted."""
     assert windows("off")[:2] == ([1, 2, 3, 5], 5.0)
+    kept, live_s, triggers = windows("off", with_bad_time=True)
+    assert (kept, live_s) == ([1, 2, 3, 4, 5], 6.0)
+    assert triggers["H1_bad_time"].tolist() == [False, False, False, True, False]
     assert windows("before-clustering")[0] == [0, 2, 3, 5]  # window 0 now leads
     assert windows("after-clustering")[0] == [2, 3, 5]  # window 1 won, then went
     kept, live_s, triggers = windows("off", shift=1, l1_bad=3)
-    assert live_s == 4.0  # pairs 2 (L1 window 3) and 4 (H1 bad) out
+    assert (kept, live_s) == ([1, 3, 5], 4.0)  # H1 4 and L1 3 (partner of 2) out
     assert triggers["partner"].tolist() == [(i + 1) % 6 for i in kept]
     assert np.array_equal(triggers["L1_tc"], GPS[triggers["partner"]])
+    triggers = windows("off", shift=1, l1_bad=3, with_bad_time=True)[2]
+    assert triggers["L1_bad_time"].tolist() == [partner == 3 for partner in triggers["partner"]]
 
 
 def test_hierarchical_rates():

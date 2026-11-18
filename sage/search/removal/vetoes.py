@@ -3,8 +3,8 @@
 Bad time fails CBC Category 2, holds hardware injections or exactly-zero
 strain. A detector's analysed data is the window without its padding at
 either end; any overlap with bad time flags the window (user ruling
-2026-11-13). Flagged windows stay scored, and are left out of
-significance and live time.
+2026-11-13). Flagged windows are still scored; significance leaves them
+out, and a reanalysis keeps them, marked (user ruling 2026-11-17).
 """
 
 from typing import Dict, List

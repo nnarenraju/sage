@@ -1,9 +1,12 @@
 """False-alarm rates of zero-lag triggers against the background.
 
 Reads only finished rows, so it runs while a search is still scoring.
-Windows touching bad time are dropped, each stream is clustered on its
-own, then rates follow PyCBC: inclusive background, ``n_louder``, and
-hierarchical removal of triggers louder than all background.
+Windows touching bad time are dropped from zero-lag, background and
+live time; a reanalysis keeps them, each trigger marked with the
+detectors whose data touches bad time (user ruling 2026-11-17). Each
+stream is clustered on its own, then rates follow PyCBC: inclusive
+background, ``n_louder``, and hierarchical removal of triggers louder
+than all background.
 """
 
 import json
@@ -37,14 +40,14 @@ REMOVAL_WINDOW_S = 1.0
 NA_CUT = 0.0
 
 STEPS = (
-    "Read the finished zero-lag windows and drop those touching bad time",
+    "Read the finished zero-lag windows and mark those touching bad time",
     "Cluster the zero-lag windows",
     "Read the finished background rolls, add up their live time and cluster "
     "each roll on its own",
     "Compute every zero-lag trigger's false-alarm rate against the background",
     "Remove zero-lag triggers louder than all background, one at a time, "
     "recomputing the rates after each",
-    "Write statmap.h5",
+    "Write the statmap file",
 )
 
 
@@ -59,6 +62,7 @@ def stream_triggers(
     stride_s: float,
     clustering: str,
     remove_na: str,
+    with_bad_time: bool,
 ) -> Tuple[Dict[str, np.ndarray], float]:
     """Clustered triggers and live time of a stream's finished rows.
 
@@ -88,21 +92,26 @@ def stream_triggers(
     remove_na : str
         One of ``REMOVE_NA``: when to drop triggers whose NA logit
         exceeds the ranking statistic by more than ``NA_CUT``.
+    with_bad_time : bool
+        Keep pairs touching bad time; otherwise drop them before
+        clustering.
 
     Returns
     -------
     triggers : dict of str to numpy.ndarray
-        Clustered trigger columns.
+        Clustered trigger columns, with ``<detector>_bad_time`` True
+        where that detector's data touches bad time.
     live_time_s : float
-        Finished pairs clear of bad time, times the stride.
+        Pairs analysed, times the stride.
     """
     reference, other = network["detectors"]
     n_windows = len(gps)
     window = np.arange(done)
     partner = (window + shift) % n_windows
-    live = clear[reference][window] & clear[other][partner]
+    if not with_bad_time:
+        live = clear[reference][window] & clear[other][partner]
+        window, partner = window[live], partner[live]
 
-    window, partner = window[live], partner[live]
     outputs = np.asarray(rows[window], dtype=np.float64)
     statistic = outputs[:, columns.index("ranking_statistic")]
     keep = np.ones(len(window), dtype=bool)
@@ -126,6 +135,8 @@ def stream_triggers(
         f"{reference}_tc": gps[window] + offset,
         f"{other}_tc": gps[partner] + offset,
         "ranking_statistic": statistic,
+        f"{reference}_bad_time": ~clear[reference][window],
+        f"{other}_bad_time": ~clear[other][partner],
     }
     if "non_astrophysical_logit" in columns:
         triggers["non_astrophysical_logit"] = outputs[
@@ -145,7 +156,7 @@ def stream_triggers(
     if remove_na == "after-clustering":
         excess = triggers["non_astrophysical_logit"] - triggers["ranking_statistic"]
         triggers = {name: values[excess <= NA_CUT] for name, values in triggers.items()}
-    return triggers, float(live.sum() * stride_s)
+    return triggers, float(len(window) * stride_s)
 
 
 def hierarchical_rates(
@@ -260,10 +271,16 @@ def write_statmap(
 
 
 def run_statmap(
-    run_dir: Path, name: str, data_dir: Path, clustering: str, remove_na: str
+    run_dir: Path,
+    name: str,
+    data_dir: Path,
+    clustering: str,
+    remove_na: str,
+    with_bad_time: bool,
 ) -> Path:
     """
-    False-alarm rates of a search's finished rows; write ``statmap.h5``.
+    False-alarm rates of a search's finished rows; write ``statmap.h5``,
+    or ``statmap_with_bad_time.h5`` for the reanalysis.
 
     Parameters
     ----------
@@ -277,6 +294,8 @@ def run_statmap(
         Key of ``CLUSTERING``.
     remove_na : str
         One of ``REMOVE_NA``.
+    with_bad_time : bool
+        Reanalyse with pairs touching bad time kept.
 
     Returns
     -------
@@ -325,6 +344,7 @@ def run_statmap(
             stride_s,
             clustering,
             remove_na,
+            with_bad_time,
         )
         print(
             f"  {len(foreground['window']):,} triggers in "
@@ -351,6 +371,7 @@ def run_statmap(
                     stride_s,
                     clustering,
                     remove_na,
+                    with_bad_time,
                 )
                 triggers["roll"] = np.full(len(triggers["window"]), number)
                 parts.append(triggers)
@@ -380,7 +401,8 @@ def run_statmap(
         rates = hierarchical_rates(foreground, background, background_s, detectors)
         print(f"  {len(rates[0]) - 1} triggers removed")
 
-    path = directory / "statmap" / f"{clustering}_remove-na-{remove_na}" / "statmap.h5"
+    filename = "statmap_with_bad_time.h5" if with_bad_time else "statmap.h5"
+    path = directory / "statmap" / f"{clustering}_remove-na-{remove_na}" / filename
     attrs = {
         "search": name,
         "checkpoint": str(checkpoint.resolve()),
@@ -388,6 +410,7 @@ def run_statmap(
         "cluster_window_s": CLUSTER_WINDOW_S,
         "remove_na": remove_na,
         "na_cut": NA_CUT,
+        "with_bad_time": with_bad_time,
         "removal_window_s": REMOVAL_WINDOW_S,
         "zerolag_live_time_s": foreground_s,
         "background_live_time_s": background_s,
