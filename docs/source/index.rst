@@ -166,6 +166,7 @@ The methods are described in:
    quickstart
    collaboration
    faq
+   gotchas
    troubleshooting
    hardware
 
@@ -178,7 +179,7 @@ The methods are described in:
    runs/index
    data/index
    training/index
-   validation
+   validation/index
    searching
    search_results
 
